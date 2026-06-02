@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, CheckCircle2, AlertTriangle, XCircle, Download, Clock, HardDrive, Coffee, Terminal } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal } from 'lucide-react';
 
 interface DashboardProps {
   migrationId: string;
@@ -162,8 +162,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   if (!data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <RefreshCw className="w-10 h-10 text-cozy-indigo animate-spin" />
-        <p className="text-slate-400 text-sm font-medium">Dashboard wird vorbereitet...</p>
+        <RefreshCw className="w-10 h-10 text-bauhaus-rust animate-spin" />
+        <p className="font-mono text-xs italic">// INITIALISIERE PROZESS-MONITOR</p>
       </div>
     );
   }
@@ -176,88 +176,96 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const successFiles = Math.max(0, data.processed_files - data.failed_files - data.skipped_files);
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-4 px-2">
-      {/* Background Mode Guarantee Alert (Grab a coffee) */}
-      <div className="mb-6 p-4 bg-cozy-indigo/10 border border-cozy-indigo/25 rounded-2xl flex items-center justify-between text-xs text-cozy-peach font-semibold shadow-md shadow-cozy-indigo/5">
+    <div className="w-full max-w-4xl mx-auto py-2">
+      
+      {/* Background Mode Guarantee Stamp (Grab a coffee) */}
+      <div className="mb-8 p-4 border-2 border-dashed border-bauhaus-ink bg-bauhaus-sand flex items-center justify-between text-xs font-mono font-bold uppercase tracking-wider text-slate-750">
         <div className="flex items-center gap-3">
-          <div className="p-2 bg-cozy-indigo/20 rounded-xl text-white animate-float">
-            <Coffee className="w-4 h-4 text-cozy-peach fill-cozy-peach/20" />
-          </div>
-          <span>Gönn dir einen Kaffee! Die Migration läuft sicher auf dem Server weiter. Du kannst diesen Tab schließen.</span>
+          <Coffee className="w-4 h-4 text-bauhaus-rust shrink-0" />
+          <span>Hintergrund-Lauf aktiv: Du kannst diesen Tab schließen. Der Transfer läuft server-seitig weiter.</span>
         </div>
-        <span className="hidden sm:inline px-3 py-1 rounded-full bg-cozy-mint/15 text-cozy-mint-light font-bold text-[9px] uppercase tracking-wider animate-pulse">Aktiv</span>
+        <span className="hidden sm:inline border border-bauhaus-ink px-2.5 py-0.5 bg-white text-[9px] tracking-widest font-black text-slate-500 uppercase">
+          STAMP.RUN
+        </span>
       </div>
 
       {/* PAUSED CONNECTION LOSS WARNING */}
       {data.status === 'PAUSED_CONNECTION_LOSS' && (
-        <div className="mb-6 p-5 bg-amber-500/10 border border-amber-500/25 rounded-2xl flex items-start gap-4 text-amber-300 shadow-lg">
-          <AlertTriangle className="w-6 h-6 shrink-0 text-amber-400 animate-bounce" />
-          <div>
-            <h4 className="font-display font-bold text-sm">Verbindung vorübergehend verloren</h4>
-            <p className="text-xs text-amber-400/80 mt-1 leading-relaxed">
-              Eine Nextcloud-Instanz antwortet gerade nicht. Keine Sorge: Das System pausiert und prüft die Erreichbarkeit alle 60 Sekunden. Sobald die Server wieder antworten, wird der Transfer exakt am Abbruchpunkt fortgesetzt.
+        <div className="mb-8 p-5 border-2 border-bauhaus-yellow bg-white shadow-flat rounded-none flex items-start gap-4">
+          <AlertTriangle className="w-6 h-6 shrink-0 text-bauhaus-yellow animate-bounce" />
+          <div className="font-mono text-xs">
+            <h4 className="font-bold text-bauhaus-ink uppercase tracking-wide">// VERBINDUNGSABBRUCH ZUR INSTANZ</h4>
+            <p className="text-slate-650 mt-1.5 leading-relaxed">
+              Eine Instanz antwortet nicht. Das System pausiert temporär und prüft die Erreichbarkeit selbstständig alle 60 Sekunden. Sobald die Server wieder antworten, wird der Transfer exakt am Abbruchpunkt fortgesetzt.
             </p>
           </div>
         </div>
       )}
 
-      {/* Main Grid */}
-      <div className="grid md:grid-cols-3 gap-6">
+      {/* Main Print Grid */}
+      <div className="grid md:grid-cols-3 gap-8">
+        
         {/* Progress & Metrics */}
-        <div className="md:col-span-2 space-y-6">
-          <div className="cozy-glass p-6 rounded-3xl border border-slate-850 relative overflow-hidden">
-            <div className="flex items-center justify-between mb-5">
+        <div className="md:col-span-2 space-y-8">
+          
+          {/* Main metric card */}
+          <div className="border-2 border-bauhaus-ink bg-white p-6 shadow-flat rounded-none relative overflow-hidden">
+            <div className="flex items-end justify-between mb-5 border-b border-bauhaus-ink pb-4">
               <div>
-                <span className="text-[11px] font-display font-semibold text-slate-405 uppercase tracking-wider">Fortschritt (Datenmenge)</span>
-                <h3 className="text-4xl font-display font-extrabold text-slate-100 mt-1">{byteProgressPercent}%</h3>
+                <span className="font-mono text-[10px] font-bold text-slate-500 uppercase tracking-widest">Fortschritt</span>
+                <h3 className="font-serif font-black text-6xl text-bauhaus-ink mt-1.5 leading-none">
+                  {byteProgressPercent}%
+                </h3>
               </div>
               <div className="text-right">
-                <span className="text-[11px] font-display font-semibold text-slate-405 uppercase tracking-wider">Geschwindigkeit</span>
-                <p className="text-lg font-bold text-cozy-mint-light mt-1 font-mono">{formatSize(speed)}/s</p>
+                <span className="font-mono text-[10px] font-bold text-slate-500 uppercase tracking-widest">Übertragungs-Rate</span>
+                <p className="font-mono text-sm font-bold text-bauhaus-moss mt-1.5">
+                  {formatSize(speed)}/Sek
+                </p>
               </div>
             </div>
 
-            {/* Glowing Progress Bar (Bytes) */}
-            <div className="w-full bg-slate-950/70 rounded-full h-4 mb-5 overflow-hidden border border-slate-850 p-0.5">
+            {/* Flat block-fill Progress Bar */}
+            <div className="w-full bg-bauhaus-sand border-2 border-bauhaus-ink h-7 p-0.5 mb-5 rounded-none">
               <div
-                className="bg-gradient-to-r from-cozy-indigo via-cozy-coral to-cozy-peach h-full rounded-full transition-all duration-500 ease-out shadow-sm"
+                className="bg-bauhaus-rust h-full transition-all duration-300 ease-out"
                 style={{ width: `${byteProgressPercent}%` }}
               ></div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 text-xs font-semibold text-slate-400">
+            <div className="grid grid-cols-2 gap-4 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-600">
               <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-cozy-indigo" />
-                <span>Übertragen: <strong className="text-slate-200 font-mono">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
+                <HardDrive className="w-4 h-4 text-bauhaus-ink" />
+                <span>Gesamtvolumen: <strong className="text-bauhaus-ink">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
               </div>
               <div className="flex items-center gap-2 justify-end">
-                <Clock className="w-4 h-4 text-cozy-coral" />
-                <span>Restlaufzeit: <strong className="text-slate-200">{eta}</strong></span>
+                <Clock className="w-4 h-4 text-bauhaus-ink" />
+                <span>Restlaufzeit: <strong className="text-bauhaus-ink">{eta}</strong></span>
               </div>
             </div>
           </div>
 
-          {/* Live Messaging Log Console */}
-          <div className="cozy-glass p-5 rounded-3xl border border-slate-850 flex flex-col h-[280px]">
-            <div className="flex items-center gap-2 mb-3 pb-2.5 border-b border-slate-900/60">
-              <Terminal className="w-4.5 h-4.5 text-cozy-indigo" />
-              <h4 className="text-xs font-display font-bold text-slate-300 uppercase tracking-wider">Live-Protokoll</h4>
+          {/* Typewriter-Style Live Protocol Feed */}
+          <div className="border-2 border-bauhaus-ink bg-white shadow-flat rounded-none p-5 flex flex-col h-[280px]">
+            <div className="flex items-center gap-2 mb-3 pb-3 border-b border-bauhaus-ink">
+              <Terminal className="w-4.5 h-4.5 text-bauhaus-rust" />
+              <h4 className="font-mono text-xs font-bold text-slate-500 uppercase tracking-widest">Live-Protokoll (Ticker)</h4>
             </div>
             
-            <div className="flex-grow overflow-y-auto scrollbar-cozy space-y-2.5 pr-1 font-mono text-[11px]">
+            <div className="flex-grow overflow-y-auto scrollbar-bauhaus space-y-2 pr-1 font-mono text-[11px]">
               {logs.map((log, index) => (
                 <div 
                   key={index} 
-                  className={`py-1.5 px-3 rounded-lg border leading-relaxed break-all ${
+                  className={`py-1.5 px-3 border border-slate-300 border-dashed leading-relaxed break-all ${
                     log.startsWith('✔') 
-                      ? 'bg-cozy-mint/5 border-cozy-mint/15 text-cozy-mint-light' 
+                      ? 'bg-bauhaus-moss/5 text-bauhaus-moss font-bold border-bauhaus-moss/30' 
                       : log.startsWith('🚀') || log.startsWith('⚡')
-                      ? 'bg-cozy-indigo/5 border-cozy-indigo/15 text-slate-205'
+                      ? 'bg-bauhaus-rust/5 text-bauhaus-rust font-bold border-bauhaus-rust/30'
                       : log.startsWith('❌')
-                      ? 'bg-rose-500/5 border-rose-550/15 text-rose-300'
+                      ? 'bg-rose-500/5 text-rose-700 font-bold border-rose-500/30'
                       : log.startsWith('⚠️')
-                      ? 'bg-amber-500/5 border-amber-500/15 text-amber-300'
-                      : 'bg-slate-950/20 border-slate-900 text-slate-400'
+                      ? 'bg-bauhaus-yellow/5 text-bauhaus-yellow font-bold border-bauhaus-yellow/30'
+                      : 'bg-slate-50 text-slate-600 border-slate-200'
                   }`}
                 >
                   {log}
@@ -268,61 +276,57 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
         </div>
 
-        {/* Status card & Sidebar */}
+        {/* Status card & Sidebar Column */}
         <div className="space-y-6">
-          <div className="cozy-glass p-6 rounded-3xl border border-slate-850 flex flex-col items-center text-center">
-            <span className="text-[11px] font-display font-semibold text-slate-450 uppercase tracking-wider mb-4">Status</span>
+          <div className="border-2 border-bauhaus-ink bg-bauhaus-sand p-6 shadow-flat rounded-none flex flex-col items-center text-center">
+            <span className="font-mono text-[10px] font-bold text-slate-550 uppercase tracking-widest mb-4">// ZUSTANDS-STAMP</span>
             
-            {/* Pulsing Status Glow Circle */}
+            {/* Stamp status badge */}
             {data.status === 'COMPLETED' ? (
-              <div className="p-4 bg-cozy-mint/10 border border-cozy-mint/25 text-cozy-mint-light rounded-full mb-4 shadow-lg shadow-cozy-mint/10">
-                <CheckCircle2 className="w-12 h-12" />
+              <div className="border-4 border-double border-bauhaus-moss text-bauhaus-moss px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat-moss mb-5 rotate-2">
+                BEENDET
               </div>
             ) : data.status === 'FAILED' ? (
-              <div className="p-4 bg-rose-500/10 border border-rose-500/25 text-rose-450 rounded-full mb-4 shadow-lg shadow-rose-500/10">
-                <XCircle className="w-12 h-12" />
+              <div className="border-4 border-double border-bauhaus-rust text-bauhaus-rust px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat-rust mb-5 -rotate-2">
+                FEHLER
               </div>
             ) : data.status === 'PAUSED_CONNECTION_LOSS' ? (
-              <div className="p-4 bg-amber-500/10 border border-amber-500/25 text-amber-450 rounded-full mb-4 animate-pulse shadow-lg shadow-amber-500/10">
-                <AlertTriangle className="w-12 h-12" />
+              <div className="border-4 border-double border-bauhaus-yellow text-bauhaus-yellow px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat mb-5 animate-pulse">
+                PAUSIERT
               </div>
             ) : (
-              <div className="p-4 bg-cozy-indigo/10 border border-cozy-indigo/25 text-cozy-indigo rounded-full mb-4 animate-bounce shadow-lg shadow-cozy-indigo/10">
-                <RefreshCw className="w-12 h-12 animate-spin" />
+              <div className="border-4 border-double border-bauhaus-ink text-bauhaus-ink px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat mb-5 animate-bounce">
+                TRANSFER
               </div>
             )}
 
-            <h4 className="text-base font-display font-extrabold text-slate-100 uppercase tracking-wider">
-              {data.status === 'INDEXING' && 'Indexierung'}
-              {data.status === 'RUNNING' && 'Kopiere Dateien'}
-              {data.status === 'PAUSED_CONNECTION_LOSS' && 'Pausiert'}
-              {data.status === 'COMPLETED' && 'Erfolgreich beendet'}
-              {data.status === 'FAILED' && 'Fehlgeschlagen'}
+            <h4 className="font-mono text-[11px] font-black uppercase text-slate-500 tracking-wider">
+              Systemstatus: {data.status}
             </h4>
 
             {data.error_message && (
-              <p className="text-xs text-rose-400 font-medium mt-3 bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-xl max-w-full break-all leading-normal">
-                {data.error_message}
+              <p className="font-mono text-[10px] text-bauhaus-rust mt-3 bg-white border border-bauhaus-rust p-2.5 leading-normal uppercase">
+                Fehlermeldung: {data.error_message}
               </p>
             )}
 
-            {/* Counters List */}
-            <div className="w-full mt-6 space-y-3.5 text-xs border-t border-slate-900/60 pt-5 text-slate-400">
-              <div className="flex justify-between items-center">
-                <span className="font-medium">Dateien gesamt:</span>
-                <span className="font-bold text-slate-200 font-mono">{data.total_files}</span>
+            {/* Invoiced Counters table */}
+            <div className="w-full mt-6 space-y-2 font-mono text-[11px] border-t-2 border-dashed border-bauhaus-ink pt-5 text-slate-650">
+              <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-300">
+                <span>Dateien gesamt:</span>
+                <span className="font-bold text-bauhaus-ink">{data.total_files}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="font-medium">Kopiert:</span>
-                <span className="font-bold text-cozy-mint-light font-mono">{successFiles}</span>
+              <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-300">
+                <span>Übertragen:</span>
+                <span className="font-bold text-bauhaus-moss">{successFiles}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="font-medium">Übersprungen:</span>
-                <span className="font-bold text-slate-305 font-mono">{data.skipped_files}</span>
+              <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-300">
+                <span>Übersprungen:</span>
+                <span className="font-bold text-bauhaus-ink">{data.skipped_files}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="font-medium">Fehlerhaft:</span>
-                <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-455' : 'text-slate-400'}`}>
+              <div className="flex justify-between items-center py-1">
+                <span>Fehlgeschlagen:</span>
+                <span className={`font-bold ${data.failed_files > 0 ? 'text-bauhaus-rust' : 'text-slate-600'}`}>
                   {data.failed_files}
                 </span>
               </div>
@@ -330,24 +334,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           {/* Action buttons */}
-          <div className="space-y-3">
+          <div className="space-y-4">
             {/* Report Download */}
             {data.failed_files > 0 && (
               <a
                 href={`${apiUrl}/api/migration/${migrationId}/report`}
                 download
-                className="w-full flex items-center justify-center gap-2 py-4 bg-slate-900/40 hover:bg-slate-850/60 border border-slate-800 hover:border-slate-700 text-slate-200 rounded-2xl font-display font-bold transition-all duration-300 shadow-sm text-sm"
+                className="w-full flex items-center justify-center gap-2 py-4 bg-white border-2 border-bauhaus-ink shadow-flat text-bauhaus-ink hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-flat-active active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all duration-150 font-mono text-xs font-bold uppercase tracking-wider text-center"
               >
-                <Download className="w-4 h-4 text-cozy-peach" />
-                Fehler-Protokoll (.CSV)
+                <Download className="w-4 h-4 text-bauhaus-rust" />
+                Fehlerbericht (.CSV)
               </a>
             )}
 
-            {/* Finish/Back button */}
+            {/* Reset Button */}
             {(data.status === 'COMPLETED' || data.status === 'FAILED') && (
               <button
                 onClick={onReset}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-gradient-to-r from-cozy-indigo via-cozy-coral to-cozy-peach text-white rounded-2xl font-display font-bold shadow-lg hover:shadow-cozy-coral/15 transition-all duration-300 hover:scale-102 cursor-pointer text-sm"
+                className="w-full flex items-center justify-center gap-2 py-4 bg-bauhaus-rust text-white border-2 border-bauhaus-ink shadow-flat font-serif text-base font-black uppercase tracking-wider hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-flat-active active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all duration-150 cursor-pointer"
               >
                 Neue Migration starten
               </button>

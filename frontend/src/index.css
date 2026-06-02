@@ -1,186 +1,108 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
+  --font-serif: 'Fraunces', serif;
+  --font-mono: 'Space Mono', monospace;
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-  --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
   
-  --color-cozy-indigo: #6366f1;
-  --color-cozy-coral: #ff7a59;
-  --color-cozy-peach: #ffa384;
-  --color-cozy-mint: #00b894;
-  --color-cozy-mint-light: #55efc4;
-  --color-cozy-dark: #0b0f19;
-  --color-cozy-darker: #060810;
-  
-  --animate-pulse-slow: pulse-slow 8s infinite ease-in-out;
-  --animate-float: float-slow 6s infinite ease-in-out;
-  --animate-bubble-rise: bubble-rise 4s infinite linear;
+  --color-bauhaus-rust: #cb4b36;
+  --color-bauhaus-moss: #2e5339;
+  --color-bauhaus-ink: #111111;
+  --color-bauhaus-paper: #f5f2eb;
+  --color-bauhaus-sand: #ede9df;
+  --color-bauhaus-yellow: #e5b022;
 }
 
-@keyframes pulse-slow {
-  0%, 100% { opacity: 0.4; transform: scale(1); }
-  50% { opacity: 0.8; transform: scale(1.05); }
+@utility shadow-flat {
+  box-shadow: 4px 4px 0px 0px #111111;
 }
 
-@keyframes float-slow {
-  0%, 100% { transform: translateY(0px) rotate(0deg); }
-  50% { transform: translateY(-10px) rotate(1deg); }
+@utility shadow-flat-rust {
+  box-shadow: 4px 4px 0px 0px #cb4b36;
 }
 
-@keyframes bubble-rise {
-  0% { transform: translateY(100px) scale(0.3); opacity: 0; }
-  20% { opacity: 0.8; }
-  80% { opacity: 0.4; }
-  100% { transform: translateY(-120px) scale(1); opacity: 0; }
+@utility shadow-flat-moss {
+  box-shadow: 4px 4px 0px 0px #2e5339;
 }
 
-@utility cozy-glass {
-  background: rgba(11, 15, 25, 0.65);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.5), inset 0 1px 1px 0 rgba(255, 255, 255, 0.05);
+@utility shadow-flat-lg {
+  box-shadow: 6px 6px 0px 0px #111111;
 }
 
-@utility cozy-glass-hover {
-  background: rgba(11, 15, 25, 0.8);
-  border-color: rgba(255, 122, 89, 0.25);
-  box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.6), 0 0 20px 0 rgba(255, 122, 89, 0.05);
+@utility shadow-flat-hover {
+  box-shadow: 6px 6px 0px 0px #111111;
 }
 
-@utility cozy-glass-light {
-  background: rgba(255, 255, 255, 0.02);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+@utility shadow-flat-active {
+  box-shadow: 2px 2px 0px 0px #111111;
 }
 
-@utility shadow-cozy-coral {
-  box-shadow: 0 12px 30px -10px rgba(255, 122, 89, 0.35);
-}
-
-@utility shadow-cozy-indigo {
-  box-shadow: 0 12px 30px -10px rgba(99, 102, 241, 0.35);
-}
-
-@utility shadow-cozy-mint {
-  box-shadow: 0 12px 30px -10px rgba(0, 184, 148, 0.35);
-}
-
-@utility text-glow-coral {
-  text-shadow: 0 0 12px rgba(255, 122, 89, 0.4);
-}
-
-@utility text-glow-mint {
-  text-shadow: 0 0 12px rgba(0, 184, 148, 0.4);
-}
-
-@utility text-glow-indigo {
-  text-shadow: 0 0 12px rgba(99, 102, 241, 0.4);
-}
-
-@utility scrollbar-cozy {
+@utility scrollbar-bauhaus {
   &::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   &::-webkit-scrollbar-track {
-    background: transparent;
+    background: #ede9df;
+    border-left: 1.5px solid #111111;
   }
   &::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 9999px;
-    &:hover {
-      background: rgba(255, 255, 255, 0.2);
-    }
+    background: #111111;
+    border-radius: 0px;
   }
 }
 
 body {
-  background-color: #060810;
-  color: #f1f5f9;
+  background-color: #f5f2eb;
+  color: #111111;
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
   position: relative;
   min-height: 100vh;
 }
 
-/* Warm background grid & glow patterns */
+/* Blueprint structural gridlines overlay */
 body::before {
   content: "";
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.035) 1.5px, transparent 1.5px);
-  background-size: 24px 24px;
+  background-image: 
+    linear-gradient(rgba(17, 17, 17, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(17, 17, 17, 0.025) 1px, transparent 1px);
+  background-size: 32px 32px;
   pointer-events: none;
   z-index: 0;
 }
 
-/* Warm ambient glowing blobs */
-.ambient-glow-coral {
-  position: absolute;
-  top: 10%;
-  right: -10%;
-  width: 50vw;
-  height: 50vw;
-  background: radial-gradient(circle, rgba(255, 122, 89, 0.08) 0%, transparent 70%);
-  filter: blur(80px);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.ambient-glow-indigo {
-  position: absolute;
-  bottom: 10%;
-  left: -10%;
-  width: 50vw;
-  height: 50vw;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.08) 0%, transparent 70%);
-  filter: blur(80px);
-  pointer-events: none;
-  z-index: 0;
-}
-
-.ambient-glow-mint {
-  position: absolute;
-  top: 40%;
-  left: 25%;
-  width: 40vw;
-  height: 40vw;
-  background: radial-gradient(circle, rgba(0, 184, 148, 0.04) 0%, transparent 60%);
-  filter: blur(85px);
-  pointer-events: none;
-  z-index: 0;
-}
-
-/* Custom scrollbar for premium look */
+/* Custom scrollbars */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #060810;
+  background: #ede9df;
+  border-left: 1.5px solid #111111;
+  border-top: 1.5px solid #111111;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 9999px;
-  border: 2px solid #060810;
+  background: #111111;
+  border: 1px solid #ede9df;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #cb4b36;
 }
 
-/* Transition improvements */
-.page-transition-enter {
-  opacity: 0;
-  transform: translateY(10px);
+/* Micro print animation reveals */
+@keyframes text-cursor {
+  from { border-right-color: #111111; }
+  to { border-right-color: transparent; }
 }
-.page-transition-enter-active {
-  opacity: 1;
-  transform: translateY(0);
-  transition: opacity 400ms ease, transform 400ms ease;
+
+.typewriter-cursor {
+  border-right: 2px solid #111111;
+  animation: text-cursor 0.6s step-end infinite;
 }

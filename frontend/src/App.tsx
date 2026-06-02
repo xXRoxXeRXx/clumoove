@@ -46,50 +46,49 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-cozy-darker text-slate-100 flex flex-col font-sans selection:bg-cozy-peach/30 selection:text-cozy-peach overflow-hidden relative">
-      {/* Background Ambient Glows */}
-      <div className="ambient-glow-coral"></div>
-      <div className="ambient-glow-indigo"></div>
-      <div className="ambient-glow-mint"></div>
-
-      {/* Floating Navbar */}
-      <header className="mt-4 mx-4 max-w-5xl md:mx-auto w-[calc(100%-2rem)] md:w-full cozy-glass rounded-2xl sticky top-4 z-50 transition-all duration-300">
-        <div className="px-5 py-3.5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-gradient-to-tr from-cozy-indigo to-cozy-coral rounded-xl text-white shadow-cozy-coral/45 shadow-lg hover:scale-105 hover:rotate-2 transition-all duration-300">
-              <CloudLightning className="w-5 h-5" />
+    <div className="min-h-screen bg-bauhaus-paper text-bauhaus-ink flex flex-col font-sans selection:bg-bauhaus-rust selection:text-white relative z-10 pb-8">
+      
+      {/* Bauhaus Print Masthead Header */}
+      <header className="border-b-2 border-bauhaus-ink bg-bauhaus-paper sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-6 h-20 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {/* Flat block logo with zero border-radius */}
+            <div className="p-3 bg-bauhaus-rust text-bauhaus-paper border-2 border-bauhaus-ink shadow-flat hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-flat-active transition-all duration-150 cursor-pointer">
+              <CloudLightning className="w-6 h-6 stroke-[2.5]" />
             </div>
+            
             <div className="flex flex-col">
-              <span className="font-display font-extrabold text-xl tracking-tight bg-gradient-to-r from-white via-slate-200 to-cozy-peach bg-clip-text text-transparent leading-none">
+              <span className="font-serif font-black text-2xl tracking-tight leading-none uppercase">
                 CloudMove
               </span>
-              <span className="text-[10px] text-slate-450 font-medium tracking-wide mt-0.5">
-                Einfach & Sicher
+              <span className="text-[10px] font-mono font-bold tracking-widest uppercase text-slate-500 mt-1">
+                // SYSTEM.MIGRATION.PROTOCOL
               </span>
             </div>
-            <span className="ml-2 px-2.5 py-0.5 rounded-full bg-cozy-indigo/15 border border-cozy-indigo/25 text-[10px] font-semibold text-cozy-peach tracking-wide">
-              v1.0.0
+            
+            <span className="hidden sm:inline-block ml-3 px-3 py-0.5 border border-bauhaus-ink font-mono text-[9px] font-bold bg-bauhaus-sand">
+              RELEASE v1.0.0
             </span>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-450 bg-slate-900/60 py-1 px-3 rounded-full border border-slate-850">
-              <Info className="w-3.5 h-3.5 text-cozy-indigo" />
-              <span>Nextcloud WebDAV-Brücke</span>
+          <div className="flex items-center gap-6">
+            <div className="hidden md:flex items-center gap-2 font-mono text-xs font-bold text-slate-550">
+              <Info className="w-4 h-4 text-bauhaus-rust" />
+              <span>NEXTCLOUD WEBDAV GATEWAY</span>
             </div>
-            <div className="flex items-center gap-2 bg-cozy-mint/10 border border-cozy-mint/25 py-1 px-3 rounded-full">
-              <span className="w-2 h-2 rounded-full bg-cozy-mint animate-pulse"></span>
-              <span className="text-[10.5px] font-semibold text-cozy-mint-light">API Online</span>
+            
+            {/* Postage stamp style status */}
+            <div className="flex items-center gap-2 border-l border-bauhaus-ink pl-6 h-10">
+              <span className="w-2.5 h-2.5 bg-bauhaus-moss border border-bauhaus-ink"></span>
+              <span className="font-mono text-xs font-bold tracking-wider uppercase text-bauhaus-moss">API.ONLINE</span>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Body with Transition Wrapper */}
-      <main className="flex-grow flex flex-col justify-center px-4 py-8 z-10 relative max-w-5xl w-full mx-auto">
-        <div className="animate-pulse-slow absolute top-1/4 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-cozy-indigo/5 rounded-full filter blur-[100px] pointer-events-none"></div>
-        
-        <div className="w-full transition-all duration-550 ease-in-out">
+      {/* Main Structural Body */}
+      <main className="flex-grow flex flex-col justify-center px-6 py-12 max-w-5xl w-full mx-auto relative z-10">
+        <div className="w-full">
           {step === 'connect' && (
             <ConnectForm onConnectSuccess={handleConnectSuccess} apiUrl={API_URL} />
           )}
@@ -115,13 +114,16 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-900/80 py-8 text-center text-xs text-slate-500 font-medium z-10 bg-cozy-darker/60 backdrop-blur-md">
-        <div className="max-w-5xl mx-auto px-4 space-y-2">
-          <p>© 2026 Multi-Cloud Migrations-Plattform. Mit Liebe zum Detail entwickelt.</p>
-          <p className="text-[11px] text-slate-500 flex items-center justify-center gap-1.5 max-w-md mx-auto leading-relaxed">
-            <span>🛡️</span>
-            <span>Zero-Data-Retention: Ihre Passwörter und Daten fließen verschlüsselt direkt durch den Arbeitsspeicher des Servers und werden niemals gespeichert.</span>
-          </p>
+      <footer className="border-t-2 border-bauhaus-ink py-10 mt-12 bg-bauhaus-sand">
+        <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 font-mono text-[10px] leading-relaxed text-slate-600">
+          <div>
+            <p className="font-bold text-bauhaus-ink uppercase mb-2">// HERAUSGEGEBEN DURCH CLOUDMOVE LABS</p>
+            <p>© 2026 Multi-Cloud Migrations-Plattform. Entworfen nach funktionalen Bauhaus-Prinzipien.</p>
+          </div>
+          <div>
+            <p className="font-bold text-bauhaus-ink uppercase mb-2">// SICHERHEITS-DIREKTIVE</p>
+            <p>Datensätze werden ausschließlich im flüchtigen RAM verarbeitet. Keine permanente Speicherung von Zugangsdaten oder Inhalten (Zero Data Retention Policy).</p>
+          </div>
         </div>
       </footer>
     </div>
