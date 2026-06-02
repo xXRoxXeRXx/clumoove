@@ -1,0 +1,540 @@
+package processor
+
+import (
+	"context"
+	"crypto/md5"
+	"crypto/sha1"
+	"database/sql"
+	"errors"
+	"fmt"
+	"hash"
+	"io"
+	"math"
+	"net"
+	"os"
+	"path"
+	"strings"
+	"time"
+
+	"backend/internal/crypto"
+	"backend/internal/db"
+	"backend/internal/queue"
+	"backend/internal/webdav"
+)
+
+type Processor struct {
+	db       *sql.DB
+	queue    *queue.Queue
+	workerID string
+	secretKey string
+}
+
+func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
+	return &Processor{
+		db:        database,
+		queue:     q,
+		workerID:  workerID,
+		secretKey: secretKey,
+	}
+}
+
+// Start runs the worker dequeue loop and background schedulers
+func (p *Processor) Start(ctx context.Context) {
+	fmt.Printf("[Worker %s] Started and waiting for tasks...\n", p.workerID)
+	
+	// Recover any abandoned tasks on startup
+	if err := p.queue.RecoverAbandonedTasks(ctx, p.workerID); err != nil {
+		fmt.Printf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
+	}
+
+	// Spawn background schedulers
+	go p.RunRetryScheduler(ctx)
+	go p.RunConnectionRecoveryScheduler(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("[Worker %s] Stopping...\n", p.workerID)
+			return
+		default:
+			// Dequeue task (block for 5 seconds)
+			payload, err := p.queue.Dequeue(ctx, p.workerID, 5*time.Second)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				fmt.Printf("[Worker %s] Dequeue error: %v. Sleeping...\n", p.workerID, err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+
+			if payload == nil {
+				continue // No task in queue
+			}
+
+			fmt.Printf("[Worker %s] Processing task %s for migration %s\n", p.workerID, payload.TaskID, payload.MigrationID)
+			
+			err = p.processTask(ctx, payload)
+			if err != nil {
+				fmt.Printf("[Worker %s] Error processing task %s: %v\n", p.workerID, payload.TaskID, err)
+				p.handleTaskFailure(ctx, payload, err)
+			} else {
+				fmt.Printf("[Worker %s] Successfully processed task %s\n", p.workerID, payload.TaskID)
+			}
+		}
+	}
+}
+
+// RunRetryScheduler runs a ticker to scan the DB for tasks waiting for retry
+func (p *Processor) RunRetryScheduler(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.requeueFailedTasks(ctx)
+		}
+	}
+}
+
+func (p *Processor) requeueFailedTasks(ctx context.Context) {
+	query := `
+		SELECT id, migration_id
+		FROM tasks
+		WHERE status = 'FAILED' AND attempts < 3 AND next_retry_at <= $1
+	`
+	rows, err := p.db.QueryContext(ctx, query, time.Now())
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var taskID, migrationID string
+		if err := rows.Scan(&taskID, &migrationID); err != nil {
+			continue
+		}
+
+		// Update status to PENDING
+		updateQuery := `
+			UPDATE tasks
+			SET status = 'PENDING', next_retry_at = NULL
+			WHERE id = $1
+		`
+		_, err := p.db.ExecContext(ctx, updateQuery, taskID)
+		if err != nil {
+			continue
+		}
+
+		// Enqueue back to Redis
+		err = p.queue.Enqueue(ctx, migrationID, taskID)
+		if err != nil {
+			fmt.Printf("[RetryScheduler] Error enqueuing task %s: %v\n", taskID, err)
+		} else {
+			fmt.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
+		}
+	}
+}
+
+// RunConnectionRecoveryScheduler checks paused migrations to test if servers are back online
+func (p *Processor) RunConnectionRecoveryScheduler(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second) // Check every 60s for connection recovery
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.recoverPausedMigrations(ctx)
+		}
+	}
+}
+
+func (p *Processor) recoverPausedMigrations(ctx context.Context) {
+	query := `
+		SELECT id, source_url, source_username, source_password_encrypted,
+		       target_url, target_username, target_password_encrypted
+		FROM migrations
+		WHERE status = 'PAUSED_CONNECTION_LOSS'
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc string
+		if err := rows.Scan(&id, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc); err != nil {
+			continue
+		}
+
+		sPass, err := crypto.Decrypt(sPassEnc, p.secretKey)
+		if err != nil {
+			continue
+		}
+		tPass, err := crypto.Decrypt(tPassEnc, p.secretKey)
+		if err != nil {
+			continue
+		}
+
+		sClient, err := webdav.NewClient(sURL, sUser, sPass)
+		if err != nil {
+			continue
+		}
+		tClient, err := webdav.NewClient(tURL, tUser, tPass)
+		if err != nil {
+			continue
+		}
+
+		sOK, _ := sClient.Connect(ctx)
+		tOK, _ := tClient.Connect(ctx)
+
+		if sOK && tOK {
+			fmt.Printf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
+			updateQuery := `
+				UPDATE migrations
+				SET status = 'RUNNING'
+				WHERE id = $1
+			`
+			_, err = p.db.ExecContext(ctx, updateQuery, id)
+			if err != nil {
+				fmt.Printf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, err)
+			}
+		}
+	}
+}
+
+func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) error {
+	// 1. Fetch Migration from DB
+	mig, err := db.GetMigration(p.db, payload.MigrationID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch migration: %w", err)
+	}
+
+	// If migration is not running (e.g. paused or failed), we put the task back and stop
+	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
+		// Put task back
+		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
+		return fmt.Errorf("migration is in state %s, task skipped for now", mig.Status)
+	}
+
+	// 2. Fetch Task from DB
+	task, err := db.GetTask(p.db, payload.TaskID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch task: %w", err)
+	}
+
+	// Decrypt credentials
+	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, p.secretKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt source password: %w", err)
+	}
+	targetPass, err := crypto.Decrypt(mig.TargetPasswordEncrypted, p.secretKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt target password: %w", err)
+	}
+
+	// Create WebDAV clients
+	sourceClient, err := webdav.NewClient(mig.SourceURL, mig.SourceUsername, sourcePass)
+	if err != nil {
+		return fmt.Errorf("failed to create source client: %w", err)
+	}
+	targetClient, err := webdav.NewClient(mig.TargetURL, mig.TargetUsername, targetPass)
+	if err != nil {
+		return fmt.Errorf("failed to create target client: %w", err)
+	}
+
+	// Update task status to RUNNING in DB
+	task.Status = "RUNNING"
+	_ = db.UpdateTaskStatus(p.db, task)
+
+	// 3. Conflict Resolution
+	targetPath := task.FilePath
+	exists, _, err := targetClient.FileExists(ctx, targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to check if target file exists: %w", err)
+	}
+
+	if exists {
+		switch mig.ConflictStrategy {
+		case "SKIP":
+			task.Status = "SKIPPED"
+			task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
+			_ = db.UpdateTaskStatus(p.db, task)
+			_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, 0, 1, 0)
+			_ = p.queue.Complete(ctx, p.workerID, payload)
+			return nil
+
+		case "OVERWRITE":
+			err = targetClient.DeleteFile(ctx, targetPath)
+			if err != nil {
+				return fmt.Errorf("failed to delete target file for overwrite: %w", err)
+			}
+
+		case "RENAME":
+			// Generate new target name
+			dir := path.Dir(targetPath)
+			ext := path.Ext(targetPath)
+			base := strings.TrimSuffix(path.Base(targetPath), ext)
+			
+			counter := 1
+			for {
+				candidatePath := path.Join(dir, fmt.Sprintf("%s_copy%d%s", base, counter, ext))
+				candidateExists, _, err := targetClient.FileExists(ctx, candidatePath)
+				if err != nil {
+					return fmt.Errorf("failed to check existence of rename candidate: %w", err)
+				}
+				if !candidateExists {
+					targetPath = candidatePath
+					task.FilePath = targetPath
+					break
+				}
+				counter++
+				if counter > 100 {
+					return fmt.Errorf("failed to rename target file after 100 attempts")
+				}
+			}
+		}
+	}
+
+	// 4. Download and Upload stream
+	downloadStream, _, err := sourceClient.StreamDownload(ctx, task.FilePath)
+	if err != nil {
+		return fmt.Errorf("failed to download from source: %w", err)
+	}
+	defer downloadStream.Close()
+
+	// Handle Hash Algorithm Selection
+	var hasher hash.Hash
+	hashAlgo := "SHA1" // Default
+	sourceHashStr := ""
+
+	if task.SourceHash.Valid && task.SourceHash.String != "" {
+		algo, cleanHash := webdav.ParseHashString(task.SourceHash.String)
+		sourceHashStr = cleanHash
+		if algo == "MD5" {
+			hasher = md5.New()
+			hashAlgo = "MD5"
+		} else {
+			hasher = sha1.New()
+			hashAlgo = "SHA1"
+		}
+	} else {
+		// Fallback to fetch hash directly
+		if fetchedHash, err := sourceClient.GetFileHash(ctx, task.FilePath); err == nil {
+			task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
+			algo, cleanHash := webdav.ParseHashString(fetchedHash)
+			sourceHashStr = cleanHash
+			if algo == "MD5" {
+				hasher = md5.New()
+				hashAlgo = "MD5"
+			} else {
+				hasher = sha1.New()
+				hashAlgo = "SHA1"
+			}
+		} else {
+			// If no hash is available on source, use SHA1 for worker hash calculations
+			hasher = sha1.New()
+		}
+	}
+
+	// Setup progress notification channel
+	progressChan := make(chan int64, 10)
+	go func() {
+		// This goroutine updates progress of migration in the DB
+		// Buffer progress updates to reduce database load
+		var bufferedBytes int64
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case bytes, ok := <-progressChan:
+				if !ok {
+					// Final flush
+					if bufferedBytes > 0 {
+						_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, bufferedBytes, 0, 0)
+					}
+					return
+				}
+				bufferedBytes += bytes
+			case <-ticker.C:
+				if bufferedBytes > 0 {
+					_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, bufferedBytes, 0, 0)
+					bufferedBytes = 0
+				}
+			}
+		}
+	}()
+
+	// io.TeeReader writes all data read from the download stream to the hasher in-memory
+	hashingReader := io.TeeReader(downloadStream, hasher)
+
+	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
+	// If size > 50MB, do chunked upload
+	if task.FileSize > 50*1024*1024 {
+		err = targetClient.StreamUploadChunked(ctx, targetPath, hashingReader, task.FileSize, progressChan)
+	} else {
+		// Simple upload
+		// Wrap with a progress reporting reader
+		progressReader := &ProgressReader{
+			Reader:       hashingReader,
+			ProgressChan: progressChan,
+		}
+		err = targetClient.StreamUpload(ctx, targetPath, progressReader, task.FileSize)
+	}
+	close(progressChan) // Stop progress goroutine
+
+	if err != nil {
+		return fmt.Errorf("upload to target failed: %w", err)
+	}
+
+	// 5. Hash & Integrity Verification
+	workerHashVal := fmt.Sprintf("%x", hasher.Sum(nil))
+	task.WorkerHash = sql.NullString{String: fmt.Sprintf("%s:%s", hashAlgo, workerHashVal), Valid: true}
+
+	var integrityVerified bool
+	targetHashStr := ""
+
+	targetHashVal, err := targetClient.GetFileHash(ctx, targetPath)
+	if err == nil {
+		task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
+		_, targetHashStr = webdav.ParseHashString(targetHashVal)
+		
+		// If we had source hash, 3-way check: source == worker == target
+		if sourceHashStr != "" {
+			integrityVerified = (sourceHashStr == workerHashVal) && (workerHashVal == targetHashStr)
+		} else {
+			// 2-way check: worker == target
+			integrityVerified = (workerHashVal == targetHashStr)
+		}
+	} else {
+		// Fallback: Size verification
+		existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, targetPath)
+		if errExists == nil && existsOnTarget {
+			integrityVerified = (task.FileSize == targetSize)
+			task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
+		} else {
+			integrityVerified = false
+		}
+	}
+
+	if !integrityVerified {
+		return fmt.Errorf("data integrity check failed: hashes or sizes did not match")
+	}
+
+	// Update task to COMPLETED
+	task.Status = "COMPLETED"
+	task.ErrorMessage = sql.NullString{}
+	_ = db.UpdateTaskStatus(p.db, task)
+
+	// Increment processed files count (processed bytes already incremented by progress channel)
+	_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, 0, 0, 0)
+
+	// Delete from reliable queue
+	_ = p.queue.Complete(ctx, p.workerID, payload)
+
+	return nil
+}
+
+func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payload, procErr error) {
+	// 1. Fetch Task
+	task, err := db.GetTask(p.db, payload.TaskID)
+	if err != nil {
+		fmt.Printf("Error fetching task on failure handler: %v\n", err)
+		return
+	}
+
+	task.Attempts++
+	task.ErrorMessage = sql.NullString{String: procErr.Error(), Valid: true}
+
+	// Check if this error is a network connection loss
+	isConnLoss := isNetworkError(procErr)
+
+	if isConnLoss {
+		fmt.Printf("[Worker %s] Connection loss detected: %v\n", p.workerID, procErr)
+		// Pause the migration
+		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "PAUSED_CONNECTION_LOSS", nil)
+		
+		// Move task from processing back to main queue so it can be retried immediately upon resume
+		task.Status = "PENDING"
+		_ = db.UpdateTaskStatus(p.db, task)
+		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
+		return
+	}
+
+	// If it is a normal file transfer failure
+	if task.Attempts < 3 {
+		// Exponential Backoff: 10s, 30s, 90s
+		backoffSec := int(math.Pow(3, float64(task.Attempts))) * 10
+		if backoffSec > 90 {
+			backoffSec = 90
+		}
+		
+		nextRetry := time.Now().Add(time.Duration(backoffSec) * time.Second)
+		task.Status = "FAILED" // Kept as failed until cron schedules retry
+		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
+		_ = db.UpdateTaskStatus(p.db, task)
+		
+		// Remove from active processing queue (will be re-enqueued by manager cron based on next_retry_at)
+		_ = p.queue.Complete(ctx, p.workerID, payload)
+		fmt.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, backoffSec, task.Attempts)
+	} else {
+		// Max retries reached, fail permanently
+		task.Status = "FAILED"
+		task.NextRetryAt = sql.NullTime{}
+		_ = db.UpdateTaskStatus(p.db, task)
+		
+		// Remove from active queue
+		_ = p.queue.Complete(ctx, p.workerID, payload)
+
+		// Increment migration failed files
+		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, 0, 0, 1)
+		fmt.Printf("[Worker %s] Task %s failed permanently after 3 attempts\n", p.workerID, task.ID)
+	}
+}
+
+// ProgressReader wraps io.Reader to notify bytes read
+type ProgressReader struct {
+	Reader       io.Reader
+	ProgressChan chan<- int64
+}
+
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.Reader.Read(p)
+	if n > 0 && pr.ProgressChan != nil {
+		pr.ProgressChan <- int64(n)
+	}
+	return n, err
+}
+
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// Direct type assertions
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "connection refused") || 
+		strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "handshake failure") ||
+		strings.Contains(errStr, "http2: server sent goaway") ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, os.ErrDeadlineExceeded)
+}

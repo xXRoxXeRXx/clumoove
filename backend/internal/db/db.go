@@ -1,0 +1,253 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"time"
+
+	_ "github.com/lib/pq"
+)
+
+type Migration struct {
+	ID                      string         `json:"id"`
+	SourceURL               string         `json:"source_url"`
+	SourceUsername          string         `json:"source_username"`
+	SourcePasswordEncrypted string         `json:"-"`
+	TargetURL               string         `json:"target_url"`
+	TargetUsername          string         `json:"target_username"`
+	TargetPasswordEncrypted string         `json:"-"`
+	Status                  string         `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+	ConflictStrategy        string         `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
+	TotalFiles              int            `json:"total_files"`
+	TotalBytes              int64          `json:"total_bytes"`
+	ProcessedFiles          int            `json:"processed_files"`
+	ProcessedBytes          int64          `json:"processed_bytes"`
+	SkippedFiles            int            `json:"skipped_files"`
+	FailedFiles             int            `json:"failed_files"`
+	ErrorMessage            sql.NullString `json:"error_message"`
+	CreatedAt               time.Time      `json:"created_at"`
+	UpdatedAt               time.Time      `json:"updated_at"`
+}
+
+type Task struct {
+	ID           string         `json:"id"`
+	MigrationID  string         `json:"migration_id"`
+	FilePath     string         `json:"file_path"`
+	FileSize     int64          `json:"file_size"`
+	SourceHash   sql.NullString `json:"source_hash"`
+	WorkerHash   sql.NullString `json:"worker_hash"`
+	TargetHash   sql.NullString `json:"target_hash"`
+	Status       string         `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
+	ErrorMessage sql.NullString `json:"error_message"`
+	Attempts     int            `json:"attempts"`
+	NextRetryAt  sql.NullTime   `json:"next_retry_at"`
+	CreatedAt    time.Time      `json:"created_at"`
+	UpdatedAt    time.Time      `json:"updated_at"`
+}
+
+// InitDB initializes the database connection with startup retries
+func InitDB(connStr string) (*sql.DB, error) {
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Test connection with retry loop (resilient to Docker startup order)
+	var pingErr error
+	for attempt := 1; attempt <= 10; attempt++ {
+		pingErr = db.Ping()
+		if pingErr == nil {
+			// Set connection pool settings
+			db.SetMaxOpenConns(25)
+			db.SetMaxIdleConns(5)
+			db.SetConnMaxLifetime(5 * time.Minute)
+			return db, nil
+		}
+		log.Printf("Waiting for PostgreSQL database to be ready (attempt %d/10): %v\n", attempt, pingErr)
+		time.Sleep(2 * time.Second)
+	}
+
+	return nil, fmt.Errorf("database not ready after 10 attempts: %w", pingErr)
+}
+
+// CreateMigration inserts a new migration job and returns the UUID
+func CreateMigration(db *sql.DB, m *Migration) (string, error) {
+	query := `
+		INSERT INTO migrations (
+			source_url, source_username, source_password_encrypted,
+			target_url, target_username, target_password_encrypted,
+			status, conflict_strategy
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, created_at, updated_at
+	`
+	err := db.QueryRow(
+		query,
+		m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted,
+		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted,
+		m.Status, m.ConflictStrategy,
+	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
+
+	if err != nil {
+		return "", err
+	}
+	return m.ID, nil
+}
+
+// GetMigration retrieves a migration by ID
+func GetMigration(db *sql.DB, id string) (*Migration, error) {
+	query := `
+		SELECT id, source_url, source_username, source_password_encrypted,
+		       target_url, target_username, target_password_encrypted,
+		       status, conflict_strategy, total_files, total_bytes,
+		       processed_files, processed_bytes, skipped_files, failed_files,
+		       error_message, created_at, updated_at
+		FROM migrations WHERE id = $1
+	`
+	var m Migration
+	err := db.QueryRow(query, id).Scan(
+		&m.ID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted,
+		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted,
+		&m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
+		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
+		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// UpdateMigrationStatus updates status and optional error message of a migration
+func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string) error {
+	var sqlErr sql.NullString
+	if errMsg != nil {
+		sqlErr = sql.NullString{String: *errMsg, Valid: true}
+	}
+
+	query := `
+		UPDATE migrations
+		SET status = $1, error_message = $2
+		WHERE id = $3
+	`
+	_, err := db.Exec(query, status, sqlErr, id)
+	return err
+}
+
+// IncrementMigrationProgress increments the counters of a migration in the database
+func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelta int64, skippedDelta int, failedDelta int) error {
+	query := `
+		UPDATE migrations
+		SET processed_files = processed_files + $1,
+		    processed_bytes = processed_bytes + $2,
+		    skipped_files = skipped_files + $3,
+		    failed_files = failed_files + $4
+		WHERE id = $5
+	`
+	_, err := db.Exec(query, filesDelta, bytesDelta, skippedDelta, failedDelta, id)
+	return err
+}
+
+// UpdateMigrationTotals sets the total files and total bytes calculated during indexing
+func UpdateMigrationTotals(db *sql.DB, id string, totalFiles int, totalBytes int64) error {
+	query := `
+		UPDATE migrations
+		SET total_files = $1, total_bytes = $2
+		WHERE id = $3
+	`
+	_, err := db.Exec(query, totalFiles, totalBytes, id)
+	return err
+}
+
+// CreateTask inserts a new task for migration
+func CreateTask(db *sql.DB, t *Task) (string, error) {
+	query := `
+		INSERT INTO tasks (
+			migration_id, file_path, file_size, source_hash, status
+		) VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, created_at, updated_at
+	`
+	err := db.QueryRow(
+		query,
+		t.MigrationID, t.FilePath, t.FileSize, t.SourceHash, t.Status,
+	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
+
+	if err != nil {
+		return "", err
+	}
+	return t.ID, nil
+}
+
+// GetTask retrieves a single task by ID
+func GetTask(db *sql.DB, id string) (*Task, error) {
+	query := `
+		SELECT id, migration_id, file_path, file_size, source_hash, worker_hash, target_hash,
+		       status, error_message, attempts, next_retry_at, created_at, updated_at
+		FROM tasks WHERE id = $1
+	`
+	var t Task
+	err := db.QueryRow(query, id).Scan(
+		&t.ID, &t.MigrationID, &t.FilePath, &t.FileSize, &t.SourceHash, &t.WorkerHash, &t.TargetHash,
+		&t.Status, &t.ErrorMessage, &t.Attempts, &t.NextRetryAt, &t.CreatedAt, &t.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// UpdateTaskStatus updates a task status, hashes, error message, attempts and next retry time
+func UpdateTaskStatus(db *sql.DB, t *Task) error {
+	query := `
+		UPDATE tasks
+		SET status = $1, worker_hash = $2, target_hash = $3, error_message = $4,
+		    attempts = $5, next_retry_at = $6
+		WHERE id = $7
+	`
+	_, err := db.Exec(
+		query,
+		t.Status, t.WorkerHash, t.TargetHash, t.ErrorMessage,
+		t.Attempts, t.NextRetryAt, t.ID,
+	)
+	return err
+}
+
+// GetFailedTasksForReport retrieves all failed tasks of a migration for reporting
+func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
+	query := `
+		SELECT id, file_path, file_size, status, error_message, attempts, updated_at
+		FROM tasks
+		WHERE migration_id = $1 AND status = 'FAILED'
+		ORDER BY file_path ASC
+	`
+	rows, err := db.Query(query, migrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		err := rows.Scan(&t.ID, &t.FilePath, &t.FileSize, &t.Status, &t.ErrorMessage, &t.Attempts, &t.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, t)
+	}
+	return tasks, nil
+}
+
+// DeleteOldMigrations deletes migrations (and their tasks via CASCADE) older than 24 hours
+func DeleteOldMigrations(db *sql.DB) (int64, error) {
+	query := `
+		DELETE FROM migrations
+		WHERE updated_at < $1
+	`
+	cutoff := time.Now().Add(-24 * time.Hour)
+	res, err := db.Exec(query, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}

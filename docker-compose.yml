@@ -1,0 +1,109 @@
+version: '3.8'
+
+networks:
+  migration-network:
+    driver: bridge
+
+services:
+  # Persistent Database
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: migration-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: cloud_migration_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    networks:
+      - migration-network
+
+  # Message Broker & Queue
+  redis-queue:
+    image: redis:7-alpine
+    container_name: migration-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - migration-network
+
+  # Go API Gateway & Backend Control
+  api-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: migration-api
+    restart: unless-stopped
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
+      - REDIS_URL=redis-queue:6379
+      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-default-secret-key-32-chars-long!!}
+      - PORT=8000
+    depends_on:
+      - postgres-db
+      - redis-queue
+    volumes:
+      - ./backend:/app
+    networks:
+      - migration-network
+
+  # Core Migration Engine (Worker)
+  migration-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: migration-worker-1
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
+      - REDIS_URL=redis-queue:6379
+      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-default-secret-key-32-chars-long!!}
+    entrypoint: go run cmd/worker/main.go
+    depends_on:
+      - postgres-db
+      - redis-queue
+    volumes:
+      - ./backend:/app
+    networks:
+      - migration-network
+
+  # Web-Frontend (React SPA)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: migration-frontend
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    command: node node_modules/vite/bin/vite.js --host --port 3000
+    environment:
+      - VITE_API_URL=http://localhost:8001
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      - api-backend
+    networks:
+      - migration-network
+
+volumes:
+  postgres_data:
+  redis_data:
