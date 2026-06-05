@@ -162,8 +162,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   if (!data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <RefreshCw className="w-10 h-10 text-bauhaus-rust animate-spin" />
-        <p className="font-mono text-xs italic">// INITIALISIERE PROZESS-MONITOR</p>
+        <RefreshCw className="w-10 h-10 text-portal-navy animate-spin" />
+        <p className="font-sans text-xs italic text-slate-500">// INITIALISIERE PROZESS-MONITOR</p>
       </div>
     );
   }
@@ -179,93 +179,93 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     <div className="w-full max-w-4xl mx-auto py-2">
       
       {/* Background Mode Guarantee Stamp (Grab a coffee) */}
-      <div className="mb-8 p-4 border-2 border-dashed border-bauhaus-ink bg-bauhaus-sand flex items-center justify-between text-xs font-mono font-bold uppercase tracking-wider text-slate-750">
+      <div className="mb-6 p-4 bg-[#f0f4f8] border border-[#d2d9e0] rounded-lg flex items-center justify-between text-xs text-[#002f6c] font-semibold">
         <div className="flex items-center gap-3">
-          <Coffee className="w-4 h-4 text-bauhaus-rust shrink-0" />
-          <span>Hintergrund-Lauf aktiv: Du kannst diesen Tab schließen. Der Transfer läuft server-seitig weiter.</span>
+          <Coffee className="w-4 h-4 text-portal-orange shrink-0" />
+          <span>Der Migrationstransfer läuft serverseitig. Du kannst diesen Tab bedenkenlos schließen.</span>
         </div>
-        <span className="hidden sm:inline border border-bauhaus-ink px-2.5 py-0.5 bg-white text-[9px] tracking-widest font-black text-slate-500 uppercase">
+        <span className="hidden sm:inline border border-[#002f6c]/20 px-2.5 py-0.5 bg-white text-[9px] tracking-widest font-black text-slate-500 rounded-full">
           STAMP.RUN
         </span>
       </div>
 
       {/* PAUSED CONNECTION LOSS WARNING */}
       {data.status === 'PAUSED_CONNECTION_LOSS' && (
-        <div className="mb-8 p-5 border-2 border-bauhaus-yellow bg-white shadow-flat rounded-none flex items-start gap-4">
-          <AlertTriangle className="w-6 h-6 shrink-0 text-bauhaus-yellow animate-bounce" />
-          <div className="font-mono text-xs">
-            <h4 className="font-bold text-bauhaus-ink uppercase tracking-wide">// VERBINDUNGSABBRUCH ZUR INSTANZ</h4>
-            <p className="text-slate-650 mt-1.5 leading-relaxed">
+        <div className="mb-6 p-5 border border-amber-200 bg-amber-50 rounded-lg flex items-start gap-4">
+          <AlertTriangle className="w-6 h-6 shrink-0 text-amber-600 animate-bounce" />
+          <div className="text-xs leading-relaxed text-slate-700">
+            <h4 className="font-display font-bold text-amber-900 uppercase tracking-wide">Verbindungsabbruch zur Instanz</h4>
+            <p className="text-slate-600 mt-1.5 leading-relaxed">
               Eine Instanz antwortet nicht. Das System pausiert temporär und prüft die Erreichbarkeit selbstständig alle 60 Sekunden. Sobald die Server wieder antworten, wird der Transfer exakt am Abbruchpunkt fortgesetzt.
             </p>
           </div>
         </div>
       )}
 
-      {/* Main Print Grid */}
+      {/* Main Grid */}
       <div className="grid md:grid-cols-3 gap-8">
         
         {/* Progress & Metrics */}
         <div className="md:col-span-2 space-y-8">
           
           {/* Main metric card */}
-          <div className="border-2 border-bauhaus-ink bg-white p-6 shadow-flat rounded-none relative overflow-hidden">
-            <div className="flex items-end justify-between mb-5 border-b border-bauhaus-ink pb-4">
+          <div className="border border-portal-border bg-white p-6 shadow-portal rounded-lg relative overflow-hidden">
+            <div className="flex items-end justify-between mb-5 border-b border-portal-border pb-4">
               <div>
-                <span className="font-mono text-[10px] font-bold text-slate-500 uppercase tracking-widest">Fortschritt</span>
-                <h3 className="font-serif font-black text-6xl text-bauhaus-ink mt-1.5 leading-none">
+                <span className="font-display font-bold text-[10px] text-slate-450 uppercase tracking-wider">Fortschritt</span>
+                <h3 className="font-display font-extrabold text-5xl text-portal-navy mt-1.5 leading-none">
                   {byteProgressPercent}%
                 </h3>
               </div>
-              <div className="text-right">
-                <span className="font-mono text-[10px] font-bold text-slate-500 uppercase tracking-widest">Übertragungs-Rate</span>
-                <p className="font-mono text-sm font-bold text-bauhaus-moss mt-1.5">
-                  {formatSize(speed)}/Sek
+              <div className="text-right font-sans">
+                <span className="font-display font-bold text-[10px] text-slate-450 uppercase tracking-wider">Übertragungs-Rate</span>
+                <p className="text-sm font-bold text-emerald-600 mt-1.5 font-mono">
+                  {formatSize(speed)}/s
                 </p>
               </div>
             </div>
 
-            {/* Flat block-fill Progress Bar */}
-            <div className="w-full bg-bauhaus-sand border-2 border-bauhaus-ink h-7 p-0.5 mb-5 rounded-none">
+            {/* Rounded Progress Bar */}
+            <div className="w-full bg-slate-100 border border-portal-border h-5 p-0.5 mb-5 rounded-full">
               <div
-                className="bg-bauhaus-rust h-full transition-all duration-300 ease-out"
+                className="bg-portal-orange h-full rounded-full transition-all duration-300 ease-out"
                 style={{ width: `${byteProgressPercent}%` }}
               ></div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 font-mono text-[10px] font-bold uppercase tracking-wider text-slate-600">
+            <div className="grid grid-cols-2 gap-4 text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">
               <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-bauhaus-ink" />
-                <span>Gesamtvolumen: <strong className="text-bauhaus-ink">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
+                <HardDrive className="w-4 h-4 text-portal-navy" />
+                <span>Übertragen: <strong className="text-slate-800 font-mono">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
               </div>
               <div className="flex items-center gap-2 justify-end">
-                <Clock className="w-4 h-4 text-bauhaus-ink" />
-                <span>Restlaufzeit: <strong className="text-bauhaus-ink">{eta}</strong></span>
+                <Clock className="w-4 h-4 text-portal-navy" />
+                <span>Restlaufzeit: <strong className="text-slate-800">{eta}</strong></span>
               </div>
             </div>
           </div>
 
           {/* Typewriter-Style Live Protocol Feed */}
-          <div className="border-2 border-bauhaus-ink bg-white shadow-flat rounded-none p-5 flex flex-col h-[280px]">
-            <div className="flex items-center gap-2 mb-3 pb-3 border-b border-bauhaus-ink">
-              <Terminal className="w-4.5 h-4.5 text-bauhaus-rust" />
-              <h4 className="font-mono text-xs font-bold text-slate-500 uppercase tracking-widest">Live-Protokoll (Ticker)</h4>
+          <div className="border border-portal-border bg-white shadow-portal rounded-lg p-5 flex flex-col h-[280px]">
+            <div className="flex items-center gap-2 mb-3 pb-3 border-b border-portal-border">
+              <Terminal className="w-4.5 h-4.5 text-portal-orange" />
+              <h4 className="font-display font-bold text-slate-450 text-[10px] uppercase tracking-wider">Live-Protokoll</h4>
             </div>
             
-            <div className="flex-grow overflow-y-auto scrollbar-bauhaus space-y-2 pr-1 font-mono text-[11px]">
+            <div className="flex-grow overflow-y-auto scrollbar-portal space-y-2 pr-1 font-mono text-[11px]">
               {logs.map((log, index) => (
                 <div 
                   key={index} 
-                  className={`py-1.5 px-3 border border-slate-300 border-dashed leading-relaxed break-all ${
+                  className={`py-1.5 px-3 border border-slate-100 rounded-lg leading-relaxed break-all ${
                     log.startsWith('✔') 
-                      ? 'bg-bauhaus-moss/5 text-bauhaus-moss font-bold border-bauhaus-moss/30' 
+                      ? 'bg-emerald-50 text-emerald-700 font-semibold border-emerald-100' 
                       : log.startsWith('🚀') || log.startsWith('⚡')
-                      ? 'bg-bauhaus-rust/5 text-bauhaus-rust font-bold border-bauhaus-rust/30'
+                      ? 'bg-slate-50 text-slate-700 font-semibold border-slate-150'
                       : log.startsWith('❌')
-                      ? 'bg-rose-500/5 text-rose-700 font-bold border-rose-500/30'
+                      ? 'bg-rose-50 text-rose-700 font-semibold border-rose-100'
                       : log.startsWith('⚠️')
-                      ? 'bg-bauhaus-yellow/5 text-bauhaus-yellow font-bold border-bauhaus-yellow/30'
-                      : 'bg-slate-50 text-slate-600 border-slate-200'
+                      ? 'bg-amber-50 text-amber-700 font-semibold border-amber-100'
+                      : 'bg-slate-50 text-slate-500 border-slate-100'
                   }`}
                 >
                   {log}
@@ -278,55 +278,55 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
         {/* Status card & Sidebar Column */}
         <div className="space-y-6">
-          <div className="border-2 border-bauhaus-ink bg-bauhaus-sand p-6 shadow-flat rounded-none flex flex-col items-center text-center">
-            <span className="font-mono text-[10px] font-bold text-slate-550 uppercase tracking-widest mb-4">// ZUSTANDS-STAMP</span>
+          <div className="border border-portal-border bg-white p-6 shadow-portal rounded-lg flex flex-col items-center text-center">
+            <span className="font-display font-bold text-[10px] text-slate-450 uppercase tracking-widest mb-4">STATUS</span>
             
             {/* Stamp status badge */}
             {data.status === 'COMPLETED' ? (
-              <div className="border-4 border-double border-bauhaus-moss text-bauhaus-moss px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat-moss mb-5 rotate-2">
-                BEENDET
+              <div className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5">
+                ERFOLGREICH BEENDET
               </div>
             ) : data.status === 'FAILED' ? (
-              <div className="border-4 border-double border-bauhaus-rust text-bauhaus-rust px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat-rust mb-5 -rotate-2">
-                FEHLER
+              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5">
+                FEHLGESCHLAGEN
               </div>
             ) : data.status === 'PAUSED_CONNECTION_LOSS' ? (
-              <div className="border-4 border-double border-bauhaus-yellow text-bauhaus-yellow px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat mb-5 animate-pulse">
-                PAUSIERT
+              <div className="bg-amber-50 text-amber-700 border border-amber-250 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5 animate-pulse">
+                VORÜBERGEHEND PAUSIERT
               </div>
             ) : (
-              <div className="border-4 border-double border-bauhaus-ink text-bauhaus-ink px-5 py-2 font-serif font-black text-xl uppercase tracking-widest bg-white shadow-flat mb-5 animate-bounce">
-                TRANSFER
+              <div className="bg-slate-50 text-portal-navy border border-portal-navy/20 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5 animate-pulse">
+                DATEI-TRANSFER
               </div>
             )}
 
-            <h4 className="font-mono text-[11px] font-black uppercase text-slate-500 tracking-wider">
-              Systemstatus: {data.status}
+            <h4 className="font-display font-bold text-slate-700 text-xs tracking-wider uppercase mt-1">
+              Migration: {data.status}
             </h4>
 
             {data.error_message && (
-              <p className="font-mono text-[10px] text-bauhaus-rust mt-3 bg-white border border-bauhaus-rust p-2.5 leading-normal uppercase">
+              <p className="font-sans text-[11px] text-rose-600 mt-3 bg-rose-50 border border-rose-200 p-2.5 rounded-lg leading-normal uppercase">
                 Fehlermeldung: {data.error_message}
               </p>
             )}
 
             {/* Invoiced Counters table */}
-            <div className="w-full mt-6 space-y-2 font-mono text-[11px] border-t-2 border-dashed border-bauhaus-ink pt-5 text-slate-650">
-              <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-300">
+            <div className="w-full mt-6 space-y-2 font-sans text-xs border-t border-slate-100 pt-5 text-slate-500">
+              <div className="flex justify-between items-center py-1 border-b border-slate-100">
                 <span>Dateien gesamt:</span>
-                <span className="font-bold text-bauhaus-ink">{data.total_files}</span>
+                <span className="font-bold text-slate-800 font-mono">{data.total_files}</span>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-300">
+              <div className="flex justify-between items-center py-1 border-b border-slate-100">
                 <span>Übertragen:</span>
-                <span className="font-bold text-bauhaus-moss">{successFiles}</span>
+                <span className="font-bold text-emerald-600 font-mono">{successFiles}</span>
               </div>
-              <div className="flex justify-between items-center py-1 border-b border-dashed border-slate-300">
+              <div className="flex justify-between items-center py-1 border-b border-slate-100">
                 <span>Übersprungen:</span>
-                <span className="font-bold text-bauhaus-ink">{data.skipped_files}</span>
+                <span className="font-bold text-slate-800 font-mono">{data.skipped_files}</span>
               </div>
               <div className="flex justify-between items-center py-1">
                 <span>Fehlgeschlagen:</span>
-                <span className={`font-bold ${data.failed_files > 0 ? 'text-bauhaus-rust' : 'text-slate-600'}`}>
+                <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-slate-600'}`}>
                   {data.failed_files}
                 </span>
               </div>
@@ -340,9 +340,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <a
                 href={`${apiUrl}/api/migration/${migrationId}/report`}
                 download
-                className="w-full flex items-center justify-center gap-2 py-4 bg-white border-2 border-bauhaus-ink shadow-flat text-bauhaus-ink hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-flat-active active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all duration-150 font-mono text-xs font-bold uppercase tracking-wider text-center"
+                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-portal-border rounded-lg shadow-sm text-slate-700 hover:bg-slate-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center"
               >
-                <Download className="w-4 h-4 text-bauhaus-rust" />
+                <Download className="w-4 h-4 text-portal-orange" />
                 Fehlerbericht (.CSV)
               </a>
             )}
@@ -351,7 +351,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             {(data.status === 'COMPLETED' || data.status === 'FAILED') && (
               <button
                 onClick={onReset}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-bauhaus-rust text-white border-2 border-bauhaus-ink shadow-flat font-serif text-base font-black uppercase tracking-wider hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-flat-active active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all duration-150 cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-4 bg-portal-orange text-white rounded-lg font-display text-sm font-bold shadow-sm hover:bg-portal-orange-hover hover:scale-101 active:scale-99 transition-all duration-200 cursor-pointer"
               >
                 Neue Migration starten
               </button>

@@ -1,78 +1,50 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,100..900;1,9..144,100..900&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-serif: 'Fraunces', serif;
-  --font-mono: 'Space Mono', monospace;
+  --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Space Mono', monospace;
   
-  --color-bauhaus-rust: #cb4b36;
-  --color-bauhaus-moss: #2e5339;
-  --color-bauhaus-ink: #111111;
-  --color-bauhaus-paper: #f5f2eb;
-  --color-bauhaus-sand: #ede9df;
-  --color-bauhaus-yellow: #e5b022;
+  --color-portal-navy: #002f6c;
+  --color-portal-orange: #ff6600;
+  --color-portal-orange-hover: #e05300;
+  --color-portal-bg: #f4f6f9;
+  --color-portal-border: #e1e6eb;
 }
 
-@utility shadow-flat {
-  box-shadow: 4px 4px 0px 0px #111111;
+@utility shadow-portal {
+  box-shadow: 0 4px 16px -2px rgba(0, 47, 108, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
 }
 
-@utility shadow-flat-rust {
-  box-shadow: 4px 4px 0px 0px #cb4b36;
+@utility shadow-portal-hover {
+  box-shadow: 0 10px 24px -4px rgba(0, 47, 108, 0.08), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
 }
 
-@utility shadow-flat-moss {
-  box-shadow: 4px 4px 0px 0px #2e5339;
-}
-
-@utility shadow-flat-lg {
-  box-shadow: 6px 6px 0px 0px #111111;
-}
-
-@utility shadow-flat-hover {
-  box-shadow: 6px 6px 0px 0px #111111;
-}
-
-@utility shadow-flat-active {
-  box-shadow: 2px 2px 0px 0px #111111;
-}
-
-@utility scrollbar-bauhaus {
+@utility scrollbar-portal {
   &::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   &::-webkit-scrollbar-track {
-    background: #ede9df;
-    border-left: 1.5px solid #111111;
+    background: #f4f6f9;
   }
   &::-webkit-scrollbar-thumb {
-    background: #111111;
-    border-radius: 0px;
+    background: #cbd5e1;
+    border-radius: 9999px;
+    &:hover {
+      background: #94a3b8;
+    }
   }
 }
 
 body {
-  background-color: #f5f2eb;
-  color: #111111;
+  background-color: #f4f6f9;
+  color: #1f2937;
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   overflow-x: hidden;
   position: relative;
   min-height: 100vh;
-}
-
-/* Blueprint structural gridlines overlay */
-body::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-image: 
-    linear-gradient(rgba(17, 17, 17, 0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(17, 17, 17, 0.025) 1px, transparent 1px);
-  background-size: 32px 32px;
-  pointer-events: none;
-  z-index: 0;
 }
 
 /* Custom scrollbars */
@@ -82,27 +54,15 @@ body::before {
 }
 
 ::-webkit-scrollbar-track {
-  background: #ede9df;
-  border-left: 1.5px solid #111111;
-  border-top: 1.5px solid #111111;
+  background: #f4f6f9;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #111111;
-  border: 1px solid #ede9df;
+  background: #cbd5e1;
+  border-radius: 9999px;
+  border: 2px solid #f4f6f9;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #cb4b36;
-}
-
-/* Micro print animation reveals */
-@keyframes text-cursor {
-  from { border-right-color: #111111; }
-  to { border-right-color: transparent; }
-}
-
-.typewriter-cursor {
-  border-right: 2px solid #111111;
-  animation: text-cursor 0.6s step-end infinite;
+  background: #94a3b8;
 }

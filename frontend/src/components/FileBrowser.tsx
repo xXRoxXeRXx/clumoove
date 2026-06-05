@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, HardDrive, AlertTriangle } from 'lucide-react';
+import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle } from 'lucide-react';
 
 interface CloudFile {
   path: string;
@@ -129,31 +129,31 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const children = directoryContents[file.path] || [];
 
     return (
-      <div key={file.path} className="select-none font-mono text-xs">
+      <div key={file.path} className="select-none font-sans text-xs">
         {/* Row */}
         <div
-          className={`flex items-center gap-3 py-3 px-4 border-b border-dashed border-slate-300 hover:bg-bauhaus-sand/40 cursor-pointer transition-colors ${
-            isSelected ? 'bg-bauhaus-rust/5 font-bold' : ''
+          className={`flex items-center gap-3 py-3.5 px-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 ${
+            isSelected ? 'bg-slate-50 font-semibold' : ''
           }`}
           style={{ paddingLeft: `${depth * 20 + 16}px` }}
           onClick={() => (file.is_dir ? toggleExpand(file.path) : toggleSelect(file.path))}
         >
           {/* Collapse/Expand Arrow */}
           {file.is_dir ? (
-            <span className="w-5 h-5 flex items-center justify-center text-bauhaus-ink hover:text-bauhaus-rust transition-colors">
+            <span className="w-5 h-5 flex items-center justify-center text-slate-500 hover:text-portal-navy transition-colors">
               {isLoading ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-bauhaus-rust" />
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-portal-navy" />
               ) : isExpanded ? (
-                <ChevronDown className="w-4.5 h-4.5 stroke-[2.5]" />
+                <ChevronDown className="w-4.5 h-4.5 stroke-[2]" />
               ) : (
-                <ChevronRight className="w-4.5 h-4.5 stroke-[2.5]" />
+                <ChevronRight className="w-4.5 h-4.5 stroke-[2]" />
               )}
             </span>
           ) : (
             <span className="w-5" />
           )}
 
-          {/* Sharp, Flat Checkbox */}
+          {/* Rounded-md Checkbox */}
           <button
             type="button"
             onClick={(e) => {
@@ -162,37 +162,37 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             }}
             className="focus:outline-none flex items-center justify-center"
           >
-            <div className={`w-5.5 h-5.5 border-2 border-bauhaus-ink rounded-none flex items-center justify-center transition-all ${
+            <div className={`w-5.5 h-5.5 border rounded flex items-center justify-center transition-all duration-200 ${
               isSelected 
-                ? 'bg-bauhaus-rust text-white border-bauhaus-ink' 
-                : 'bg-white border-bauhaus-ink hover:bg-slate-100'
+                ? 'bg-portal-orange text-white border-transparent scale-102 shadow-sm' 
+                : 'bg-white border-slate-300 hover:border-slate-400'
             }`}>
-              {isSelected && <Check className="w-4 h-4 text-white stroke-[3.5]" />}
+              {isSelected && <Check className="w-3.5 h-3.5 text-white stroke-[3.5] animate-pulse" />}
             </div>
           </button>
 
-          {/* Simple ink-outlined Folder/File Icon */}
-          <span className="text-bauhaus-ink">
+          {/* Outline-style Icon */}
+          <span className="text-portal-navy">
             {file.is_dir ? (
               isExpanded ? (
-                <FolderOpen className="w-4.5 h-4.5" />
+                <FolderOpen className="w-5 h-5 text-portal-navy/80" />
               ) : (
-                <Folder className="w-4.5 h-4.5" />
+                <Folder className="w-5 h-5 text-portal-navy/80" />
               )
             ) : (
-              <File className="w-4.5 h-4.5 text-slate-500" />
+              <File className="w-5 h-5 text-slate-400" />
             )}
           </span>
 
           {/* Name & Size */}
           <span className={`text-[12px] truncate flex-grow leading-none ${
-            isSelected ? 'text-bauhaus-ink font-bold' : 'text-slate-800'
+            isSelected ? 'text-portal-navy font-bold' : 'text-slate-800'
           }`}>
             {file.name}
           </span>
           
           {!file.is_dir && (
-            <span className="text-[10px] font-bold text-slate-500 border border-slate-305 px-2 py-0.5 bg-bauhaus-sand">
+            <span className="text-[10px] font-bold text-slate-500 border border-portal-border px-2 py-0.5 bg-slate-50 rounded">
               {formatSize(file.size)}
             </span>
           )}
@@ -200,9 +200,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
         {/* Children (Recursion) */}
         {file.is_dir && isExpanded && children.length > 0 && (
-          <div className="relative pl-2">
+          <div className="relative">
             {/* Visual connector left track */}
-            <div className="absolute left-6 top-0 bottom-4 w-0.5 bg-bauhaus-ink/20"></div>
+            <div className="absolute left-6.5 top-0 bottom-4.5 border-l border-slate-200"></div>
             {children.map((child) => renderNode(child, depth + 1))}
           </div>
         )}
@@ -222,21 +222,19 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     <div className="w-full max-w-4xl mx-auto py-2">
       
       {/* Header */}
-      <div className="flex items-center gap-5 mb-8">
+      <div className="flex items-center gap-4 mb-6">
         <button
           onClick={onBack}
-          className="px-4 py-2 border-2 border-bauhaus-ink bg-white font-mono text-[11px] font-bold uppercase tracking-wider shadow-flat active:translate-x-[2px] active:translate-y-[2px] active:shadow-flat-active transition-all cursor-pointer"
+          className="px-4 py-2 border border-portal-border bg-white text-slate-700 text-xs font-semibold rounded-lg shadow-sm hover:bg-slate-50 hover:border-slate-350 hover:text-slate-900 transition-all flex items-center gap-1.5 cursor-pointer"
         >
-          <span className="flex items-center gap-1.5">
-            <ArrowLeft className="w-4 h-4 stroke-[3]" />
-            Zurück
-          </span>
+          <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
+          <span>Zurück</span>
         </button>
         <div>
-          <h1 className="font-serif font-black text-3xl uppercase tracking-tight text-bauhaus-ink leading-tight">
-            Pfade selektieren
+          <h1 className="font-display font-extrabold text-2xl md:text-3xl text-portal-navy tracking-tight">
+            Dateien auswählen
           </h1>
-          <p className="text-xs font-medium text-slate-650 mt-1">
+          <p className="text-xs font-semibold text-slate-450 mt-1">
             Wähle die Dateibestände für den Übertragungslauf aus.
           </p>
         </div>
@@ -245,67 +243,66 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       <div className="grid md:grid-cols-3 gap-8">
         
         {/* Ledger Browser Tree Card */}
-        <div className="md:col-span-2 border-2 border-bauhaus-ink bg-white shadow-flat rounded-none min-h-[400px] max-h-[600px] overflow-y-auto scrollbar-bauhaus p-0">
-          <div className="bg-bauhaus-sand border-b-2 border-bauhaus-ink px-4 py-2.5 font-mono text-[10px] font-black uppercase text-slate-600 tracking-wider">
-            [ VERZEICHNIS-INDEX ]
+        <div className="md:col-span-2 border border-portal-border bg-white shadow-portal rounded-lg min-h-[400px] max-h-[600px] overflow-y-auto scrollbar-portal p-0">
+          <div className="bg-slate-50 border-b border-portal-border px-4 py-2.5 font-display font-bold text-[10px] uppercase text-slate-500 tracking-wider">
+            Verzeichnis-Index
           </div>
-          <div className="p-2">
+          <div className="p-1">
             {directoryContents['/']?.length > 0 ? (
               directoryContents['/'].map((file) => renderNode(file, 0))
             ) : (
               <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
-                <Folder className="w-10 h-10 text-slate-350" />
-                <p className="font-mono text-xs italic">// KEINE DATEIEN GEFUNDEN</p>
+                <Folder className="w-10 h-10 text-slate-300" />
+                <p className="font-sans text-xs italic text-slate-400">Keine Dateien im Stammverzeichnis gefunden.</p>
               </div>
             )}
           </div>
         </div>
 
-        {/* Configurations Sidebar (Bauhaus Control Column) */}
+        {/* Configurations Sidebar */}
         <div className="space-y-6">
-          <div className="border-2 border-bauhaus-ink bg-bauhaus-sand p-6 shadow-flat rounded-none space-y-6">
+          <div className="bg-white border border-portal-border p-6 shadow-portal rounded-lg space-y-6">
             
-            <div className="flex items-center gap-2 border-b border-bauhaus-ink pb-3 mb-1">
-              <h3 className="font-serif font-black text-lg uppercase tracking-tight">Konfiguration</h3>
+            <div className="flex items-center gap-2 border-b border-portal-border pb-3 mb-1">
+              <h3 className="font-display font-bold text-lg text-portal-navy tracking-tight">Konfiguration</h3>
             </div>
 
             {/* Target Path (Disabled/Standard in MVP) */}
-            <div className="space-y-2 font-mono text-xs">
-              <label className="block font-bold text-slate-500 uppercase tracking-widest">Ziel-Stammverzeichnis</label>
+            <div className="space-y-2 text-xs">
+              <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">Ziel-Stammverzeichnis</label>
               <div className="relative">
-                <HardDrive className="absolute left-3top-1/2 -translate-y-1/2 w-4 h-4 text-bauhaus-ink hidden" />
                 <input
                   type="text"
                   value={targetDir}
-                  className="w-full bg-slate-200/50 border-1.5 border-bauhaus-ink rounded-none py-2 px-3 text-slate-500 cursor-not-allowed"
+                  className="w-full bg-slate-50 border border-portal-border rounded-lg py-2.5 px-3.5 text-slate-500 cursor-not-allowed font-mono text-xs"
                   disabled
                 />
               </div>
               <p className="text-[10px] text-slate-550 leading-relaxed">
-                Kopiert Bestände direkt in das Hauptverzeichnis (/) des Zielsystems.
+                Kopiert Bestände direkt in das Hauptverzeichnis (/) der Zielinstanz.
               </p>
             </div>
 
             {/* Conflict Strategy block selector */}
-            <div className="space-y-3 font-mono text-xs">
-              <label className="block font-bold text-slate-500 uppercase tracking-widest">Kollisions-Behandlung</label>
+            <div className="space-y-3 text-xs">
+              <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">Kollisions-Behandlung</label>
               <div className="space-y-2.5">
                 {/* SKIP card */}
                 <button
                   type="button"
                   onClick={() => setConflictStrategy('SKIP')}
-                  className={`w-full text-left p-3.5 border-1.5 transition-all duration-150 cursor-pointer ${
+                  className={`w-full text-left p-3.5 rounded-lg border transition-all duration-150 cursor-pointer ${
                     conflictStrategy === 'SKIP'
-                      ? 'bg-bauhaus-ink text-white border-bauhaus-ink shadow-none'
-                      : 'bg-white text-bauhaus-ink border-bauhaus-ink hover:bg-slate-100'
+                      ? 'bg-slate-50 border-portal-navy text-portal-navy font-bold'
+                      : 'bg-white text-slate-700 border-portal-border hover:bg-slate-50'
                   }`}
                 >
-                  <div className="flex items-center justify-between font-bold text-xs">
-                    <span>ÜBERSCHREIBEN VERMEIDEN</span>
-                    {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-bauhaus-rust stroke-[3.5]" />}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-display font-bold">Überspringen</span>
+                    {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-portal-orange stroke-[3]" />}
                   </div>
-                  <p className={`text-[10px] mt-1.5 leading-normal ${conflictStrategy === 'SKIP' ? 'text-slate-300' : 'text-slate-500'}`}>
-                    Vorhandene Dateien bleiben unberührt (SKIP).
+                  <p className={`text-[10.5px] mt-1.5 leading-normal ${conflictStrategy === 'SKIP' ? 'text-slate-600' : 'text-slate-450'}`}>
+                    Bereits existierende Dateien werden im Ziel nicht überschrieben.
                   </p>
                 </button>
 
@@ -313,17 +310,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={() => setConflictStrategy('OVERWRITE')}
-                  className={`w-full text-left p-3.5 border-1.5 transition-all duration-150 cursor-pointer ${
+                  className={`w-full text-left p-3.5 rounded-lg border transition-all duration-150 cursor-pointer ${
                     conflictStrategy === 'OVERWRITE'
-                      ? 'bg-bauhaus-ink text-white border-bauhaus-ink shadow-none'
-                      : 'bg-white text-bauhaus-ink border-bauhaus-ink hover:bg-slate-100'
+                      ? 'bg-slate-50 border-portal-navy text-portal-navy font-bold'
+                      : 'bg-white text-slate-700 border-portal-border hover:bg-slate-50'
                   }`}
                 >
-                  <div className="flex items-center justify-between font-bold text-xs">
-                    <span>ZIEL ERSETZEN</span>
-                    {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-bauhaus-rust stroke-[3.5]" />}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-display font-bold">Überschreiben</span>
+                    {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-portal-orange stroke-[3]" />}
                   </div>
-                  <p className={`text-[10px] mt-1.5 leading-normal ${conflictStrategy === 'OVERWRITE' ? 'text-slate-300' : 'text-slate-500'}`}>
+                  <p className={`text-[10.5px] mt-1.5 leading-normal ${conflictStrategy === 'OVERWRITE' ? 'text-slate-600' : 'text-slate-450'}`}>
                     Ersetzt doppelte Dateinamen im Ziel bedingungslos.
                   </p>
                 </button>
@@ -332,17 +329,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={() => setConflictStrategy('RENAME')}
-                  className={`w-full text-left p-3.5 border-1.5 transition-all duration-150 cursor-pointer ${
+                  className={`w-full text-left p-3.5 rounded-lg border transition-all duration-150 cursor-pointer ${
                     conflictStrategy === 'RENAME'
-                      ? 'bg-bauhaus-ink text-white border-bauhaus-ink shadow-none'
-                      : 'bg-white text-bauhaus-ink border-bauhaus-ink hover:bg-slate-100'
+                      ? 'bg-slate-50 border-portal-navy text-portal-navy font-bold'
+                      : 'bg-white text-slate-700 border-portal-border hover:bg-slate-50'
                   }`}
                 >
-                  <div className="flex items-center justify-between font-bold text-xs">
-                    <span>AUTO-NUMMERIERUNG</span>
-                    {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-bauhaus-rust stroke-[3.5]" />}
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-display font-bold">Automatisch umbenennen</span>
+                    {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-portal-orange stroke-[3]" />}
                   </div>
-                  <p className={`text-[10px] mt-1.5 leading-normal ${conflictStrategy === 'RENAME' ? 'text-slate-300' : 'text-slate-500'}`}>
+                  <p className={`text-[10.5px] mt-1.5 leading-normal ${conflictStrategy === 'RENAME' ? 'text-slate-600' : 'text-slate-450'}`}>
                     Fügt Suffixe hinzu (z. B. datei(1).pdf).
                   </p>
                 </button>
@@ -351,8 +348,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </div>
 
           {error && (
-            <div className="p-4 bg-white border-2 border-bauhaus-rust shadow-flat-rust text-xs font-mono font-bold text-bauhaus-rust leading-relaxed flex gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-bauhaus-rust" />
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-xs font-semibold text-rose-700 leading-normal flex gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
               <span>{error}</span>
             </div>
           )}
@@ -361,7 +358,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <button
             onClick={handleStartMigration}
             disabled={starting}
-            className="w-full flex items-center justify-center gap-3 py-5 bg-bauhaus-moss text-white border-2 border-bauhaus-ink shadow-flat hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-flat-active active:translate-x-[4px] active:translate-y-[4px] active:shadow-none transition-all duration-150 font-serif text-lg font-black uppercase tracking-wider cursor-pointer disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 py-4 bg-portal-orange text-white rounded-lg font-display text-base font-bold shadow-sm hover:bg-portal-orange-hover hover:scale-101 transition-all duration-200 cursor-pointer disabled:opacity-50"
           >
             {starting ? (
               <>
@@ -370,7 +367,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               </>
             ) : (
               <>
-                <Play className="w-5 h-5 fill-current stroke-[3]" />
+                <Play className="w-5 h-5 fill-current stroke-[2.5]" />
                 <span>Transfer starten</span>
               </>
             )}
