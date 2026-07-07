@@ -101,9 +101,13 @@ func (p *Processor) RunRetryScheduler(ctx context.Context) {
 
 func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	query := `
-		SELECT id, migration_id
-		FROM tasks
-		WHERE status = 'FAILED' AND attempts < 3 AND next_retry_at <= $1
+		SELECT t.id, t.migration_id
+		FROM tasks t
+		JOIN migrations m ON t.migration_id = m.id
+		WHERE t.status = 'FAILED' 
+		  AND t.attempts < 3 
+		  AND t.next_retry_at <= $1
+		  AND m.status IN ('RUNNING', 'INDEXING')
 	`
 	rows, err := p.db.QueryContext(ctx, query, time.Now())
 	if err != nil {
@@ -223,9 +227,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		return fmt.Errorf("failed to fetch migration: %w", err)
 	}
 
-	// If migration is not running (e.g. paused or failed), we put the task back and stop
+	// If migration is in a terminal state (COMPLETED or FAILED), discard the task from the queue.
+	if mig.Status == "COMPLETED" || mig.Status == "FAILED" {
+		_ = p.queue.Complete(ctx, p.workerID, payload)
+		return nil
+	}
+
+	// If migration is paused, put the task back and stop
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
-		// Put task back
 		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
 		return fmt.Errorf("migration is in state %s, task skipped for now", mig.Status)
 	}
