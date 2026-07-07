@@ -94,10 +94,16 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 				} else {
 					fullPath = strings.TrimSuffix(dirPath, "/") + "/" + f.Name
 				}
+
+				size := f.Size
+				if _, ext := googleDocsExtension(f.MimeType); ext != "" {
+					size = 0 // Google Workspace files do not have a pre-determined export size
+				}
+
 				resources = append(resources, CloudResource{
 					Path:         fullPath,
 					Name:         f.Name,
-					Size:         f.Size,
+					Size:         size,
 					IsDir:        isDir,
 					Hash:         f.Md5Checksum,
 					LastModified: modTime,
@@ -297,16 +303,18 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 		modTime, _ := time.Parse(time.RFC3339, f.ModifiedTime)
 
 		displayName := f.Name
+		size := f.Size
 		if _, ext := googleDocsExtension(f.MimeType); ext != "" {
 			if !strings.HasSuffix(displayName, ext) {
 				displayName += ext
 			}
+			size = 0 // Google Workspace files do not have a pre-determined export size
 		}
 
 		return CloudResource{
 			Path:         path,
 			Name:         displayName,
-			Size:         f.Size,
+			Size:         size,
 			IsDir:        isDir,
 			Hash:         f.Md5Checksum,
 			LastModified: modTime,
