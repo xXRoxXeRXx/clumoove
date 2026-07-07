@@ -58,7 +58,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     );
 
     const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== targetOrigin) return;
+      console.log("ConnectForm handleMessage event:", event);
+      console.log("Event origin:", event.origin, "targetOrigin:", targetOrigin);
+      if (event.origin !== targetOrigin) {
+        console.warn("Event origin does not match targetOrigin. Ignoring.");
+        return;
+      }
       if (event.data && event.data.type === 'oauth-success' && event.data.provider === provider) {
         if (type === 'source') {
           setSourceOAuthUser(event.data.username || provider);

@@ -50,6 +50,10 @@ services:
       - REDIS_URL=redis-queue:6379
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-default-secret-key-32-chars-long!!}
       - PORT=8000
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}
+      - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
     depends_on:
       - postgres-db
       - redis-queue
@@ -70,6 +74,10 @@ services:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis-queue:6379
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-default-secret-key-32-chars-long!!}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}
+      - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
     entrypoint: go run cmd/worker/main.go
     depends_on:
       - postgres-db
