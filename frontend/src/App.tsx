@@ -115,23 +115,6 @@ function App() {
                 Migrations-Portal
               </span>
             </div>
-            
-            <span className="ml-2 px-2.5 py-0.5 bg-white/10 border border-white/20 text-[9px] font-semibold text-slate-100 rounded-full">
-              v1.0.0
-            </span>
-          </div>
-
-          <div className="flex items-center gap-6">
-            <div className="hidden md:flex items-center gap-2 text-xs font-semibold text-slate-300">
-              <Info className="w-4 h-4 text-portal-orange" />
-              <span>WebDAV Datenübertragungsbrücke</span>
-            </div>
-            
-            {/* Status indicator pill */}
-            <div className="flex items-center gap-2 bg-white/10 px-3.5 py-1.5 rounded-full border border-white/10">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span className="font-mono text-[10px] font-bold tracking-wider uppercase text-emerald-400">ONLINE</span>
-            </div>
           </div>
         </div>
       </header>
