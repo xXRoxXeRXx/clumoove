@@ -317,41 +317,57 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	defer downloadStream.Close()
 
 	// Handle Hash Algorithm Selection
-	var hasher hash.Hash
-	hashAlgo := "SHA1" // Default
+	var sourceHasher hash.Hash
+	sourceAlgo := "SHA1" // Default
 	sourceHashStr := ""
 
 	if task.SourceHash.Valid && task.SourceHash.String != "" {
 		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
 		sourceHashStr = cleanHash
-		if algo == "MD5" {
-			hasher = md5.New()
-			hashAlgo = "MD5"
-		} else {
-			hasher = sha1.New()
-			hashAlgo = "SHA1"
-		}
+		sourceAlgo = algo
 	} else {
 		// Fallback to fetch hash directly
 		if fetchedHash, err := sourceClient.GetFileHash(ctx, task.ResourceType, task.FilePath); err == nil {
 			task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
 			algo, cleanHash := storage.ParseHashString(fetchedHash)
 			sourceHashStr = cleanHash
-			if algo == "MD5" {
-				hasher = md5.New()
-				hashAlgo = "MD5"
-			} else {
-				hasher = sha1.New()
-				hashAlgo = "SHA1"
-			}
-		} else {
-			// If no hash is available on source, use SHA1 for worker hash calculations
-			hasher = sha1.New()
+			sourceAlgo = algo
 		}
+	}
+
+	// Instantiate source hasher
+	if sourceAlgo == "MD5" {
+		sourceHasher = md5.New()
+	} else if sourceAlgo == "DROPBOX" {
+		sourceHasher = storage.NewDropboxHasher()
+	} else {
+		sourceHasher = sha1.New()
+		sourceAlgo = "SHA1"
+	}
+
+	// Determine target hasher algorithm
+	var targetHasher hash.Hash
+	targetAlgo := "SHA1" // Default
+	if mig.TargetProvider == "dropbox" {
+		targetAlgo = "DROPBOX"
+		targetHasher = storage.NewDropboxHasher()
+	} else {
+		targetAlgo = "SHA1"
+		targetHasher = sha1.New()
+	}
+
+	// We only need two hashers if the algorithms differ
+	var activeWriter io.Writer
+	if sourceAlgo == targetAlgo {
+		activeWriter = sourceHasher
+		targetHasher = nil // Disable target hasher to save CPU cycles
+	} else {
+		activeWriter = io.MultiWriter(sourceHasher, targetHasher)
 	}
 
 	// Setup progress notification channel
 	progressChan := make(chan int64, 10)
+	defer close(progressChan)
 	go func() {
 		// This goroutine updates progress of migration in the DB
 		// Buffer progress updates to reduce database load
@@ -380,7 +396,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	}()
 
 	// io.TeeReader writes all data read from the download stream to the hasher in-memory
-	hashingReader := io.TeeReader(downloadStream, hasher)
+	hashingReader := io.TeeReader(downloadStream, activeWriter)
 
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
 	// If size > 50MB, do chunked upload
@@ -395,42 +411,52 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		}
 		err = targetClient.StreamUpload(ctx, task.ResourceType, targetPath, progressReader, task.FileSize)
 	}
-	close(progressChan) // Stop progress goroutine
 
 	if err != nil {
 		return fmt.Errorf("upload to target failed: %w", err)
 	}
 
 	// 5. Hash & Integrity Verification
-	workerHashVal := fmt.Sprintf("%x", hasher.Sum(nil))
-	task.WorkerHash = sql.NullString{String: fmt.Sprintf("%s:%s", hashAlgo, workerHashVal), Valid: true}
+	workerSourceHashVal := fmt.Sprintf("%x", sourceHasher.Sum(nil))
+	task.WorkerHash = sql.NullString{String: fmt.Sprintf("%s:%s", sourceAlgo, workerSourceHashVal), Valid: true}
 
 	var integrityVerified bool
-	targetHashStr := ""
+	downloadOK := true
+	if sourceHashStr != "" {
+		downloadOK = (workerSourceHashVal == sourceHashStr)
+	}
 
+	uploadOK := true
 	targetHashVal, err := targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
 	if err == nil {
 		task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
-		_, targetHashStr = storage.ParseHashString(targetHashVal)
-		
-		// If we had source hash, 3-way check: source == worker == target
-		if sourceHashStr != "" {
-			integrityVerified = (sourceHashStr == workerHashVal) && (workerHashVal == targetHashStr)
+		targetReturnedAlgo, cleanTargetHash := storage.ParseHashString(targetHashVal)
+
+		var workerTargetHashVal string
+		if sourceAlgo == targetReturnedAlgo {
+			workerTargetHashVal = workerSourceHashVal
+		} else if targetHasher != nil && targetAlgo == targetReturnedAlgo {
+			workerTargetHashVal = fmt.Sprintf("%x", targetHasher.Sum(nil))
 		} else {
-			// 2-way check: worker == target
-			integrityVerified = (workerHashVal == targetHashStr)
+			// Algorithm mismatch fallback
+			uploadOK = false
+		}
+
+		if uploadOK && workerTargetHashVal != cleanTargetHash {
+			uploadOK = false
 		}
 	} else {
 		// Fallback: Size verification
 		existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 		if errExists == nil && existsOnTarget {
-			integrityVerified = (task.FileSize == targetSize)
+			uploadOK = (task.FileSize == targetSize)
 			task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
 		} else {
-			integrityVerified = false
+			uploadOK = false
 		}
 	}
 
+	integrityVerified = downloadOK && uploadOK
 	if !integrityVerified {
 		return fmt.Errorf("data integrity check failed: hashes or sizes did not match")
 	}

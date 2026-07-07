@@ -697,6 +697,9 @@ func ParseHashString(hashStr string) (string, string) {
 		if len(hashStr) == 40 {
 			return "SHA1", strings.ToLower(hashStr)
 		}
+		if len(hashStr) == 64 {
+			return "DROPBOX", strings.ToLower(hashStr)
+		}
 	}
 	return "UNKNOWN", hashStr
 }

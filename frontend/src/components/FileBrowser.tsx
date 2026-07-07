@@ -10,9 +10,20 @@ interface CloudFile {
   last_modified: string;
 }
 
+interface MigrationConfig {
+  source_url: string;
+  source_username: string;
+  source_password: string;
+  target_url: string;
+  target_username: string;
+  target_password: string;
+  source_provider: 'nextcloud' | 'dropbox';
+  target_provider: 'nextcloud' | 'dropbox';
+}
+
 interface FileBrowserProps {
   initialFiles: CloudFile[];
-  credentials: any;
+  credentials: MigrationConfig;
   apiUrl: string;
   onBack: () => void;
   onStartSuccess: (migrationId: string) => void;
@@ -124,7 +135,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       if (data.success) {
         setDirectoryContents((prev) => ({ ...prev, [folderPath]: data.files || [] }));
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
     } finally {
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
@@ -179,8 +190,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       } else {
         setError(data.error || 'Fehler beim Starten der Migration.');
       }
-    } catch (err: any) {
-      setError(err.message || 'Verbindungsfehler beim Starten der Übertragung.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Verbindungsfehler beim Starten der Übertragung.');
     } finally {
       setStarting(false);
     }
@@ -330,26 +341,30 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               >
                 Dateien
               </button>
-              <button
-                onClick={() => handleTabChange('calendars')}
-                className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
-                  activeTab === 'calendars'
-                    ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
-                    : 'text-slate-500 hover:bg-slate-100'
-                }`}
-              >
-                Kalender ({Object.values(selectedCalendars).filter(Boolean).length})
-              </button>
-              <button
-                onClick={() => handleTabChange('contacts')}
-                className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
-                  activeTab === 'contacts'
-                    ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
-                    : 'text-slate-500 hover:bg-slate-100'
-                }`}
-              >
-                Kontakte ({Object.values(selectedContacts).filter(Boolean).length})
-              </button>
+              {credentials.source_provider !== 'dropbox' && (
+                <>
+                  <button
+                    onClick={() => handleTabChange('calendars')}
+                    className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                      activeTab === 'calendars'
+                        ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
+                        : 'text-slate-500 hover:bg-slate-100'
+                    }`}
+                  >
+                    Kalender ({Object.values(selectedCalendars).filter(Boolean).length})
+                  </button>
+                  <button
+                    onClick={() => handleTabChange('contacts')}
+                    className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                      activeTab === 'contacts'
+                        ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
+                        : 'text-slate-500 hover:bg-slate-100'
+                    }`}
+                  >
+                    Kontakte ({Object.values(selectedContacts).filter(Boolean).length})
+                  </button>
+                </>
+              )}
             </div>
 
             {activeTab !== 'files' && (

@@ -2,14 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,6 +21,7 @@ import (
 	"backend/internal/db"
 	"backend/internal/queue"
 	"backend/internal/storage"
+	"backend/internal/oauth"
 
 	"github.com/gorilla/websocket"
 )
@@ -36,6 +41,7 @@ type APIServer struct {
 
 func main() {
 	log.Println("Starting Migration API Gateway...")
+	oauth.InitConfigs()
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -96,6 +102,8 @@ func main() {
 	mux.HandleFunc("GET /api/migration/{id}", server.handleGetStatus)
 	mux.HandleFunc("GET /api/migration/{id}/report", server.handleDownloadReport)
 	mux.HandleFunc("GET /api/migration/{id}/ws", server.handleWebSocket)
+	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
+	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
 
 	// Middleware (CORS)
 	handler := corsMiddleware(mux)
@@ -683,4 +691,193 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+func generateRandomString(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(b)
+}
+
+func (s *APIServer) getRedirectURI(r *http.Request) string {
+	envRedirect := os.Getenv("OAUTH_REDIRECT_URI")
+	if envRedirect != "" {
+		return envRedirect
+	}
+
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
+}
+
+func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
+	provider := r.URL.Query().Get("provider")
+	if provider == "" {
+		http.Error(w, "Missing provider parameter", http.StatusBadRequest)
+		return
+	}
+
+	origin := r.URL.Query().Get("origin")
+	if origin == "" {
+		if referer := r.Header.Get("Referer"); referer != "" {
+			if parsed, err := url.Parse(referer); err == nil {
+				origin = fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+			}
+		}
+	}
+	if origin == "" {
+		origin = "*"
+	}
+
+	stateToken := generateRandomString(16)
+	if stateToken == "" {
+		http.Error(w, "Failed to generate state token", http.StatusInternalServerError)
+		return
+	}
+
+	cookie := &http.Cookie{
+		Name:     "oauth_state",
+		Value:    stateToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   300,
+	}
+	http.SetCookie(w, cookie)
+
+	stateParam := fmt.Sprintf("%s:%s:%s", stateToken, provider, origin)
+
+	redirectURI := s.getRedirectURI(r)
+	authURL, err := oauth.GetAuthURL(provider, redirectURI, stateParam)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	if code == "" || state == "" {
+		s.renderOAuthResultHTML(w, "", "", "", "*", "Authorization code or state missing")
+		return
+	}
+
+	parts := strings.Split(state, ":")
+	if len(parts) < 3 {
+		s.renderOAuthResultHTML(w, "", "", "", "*", "Invalid state parameter format")
+		return
+	}
+	stateToken := parts[0]
+	provider := parts[1]
+	origin := parts[2]
+
+	cookie, err := r.Cookie("oauth_state")
+	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
+		s.renderOAuthResultHTML(w, "", "", "", "*", "CSRF verification failed: state mismatch")
+		return
+	}
+
+	clearCookie := &http.Cookie{
+		Name:     "oauth_state",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   -1,
+	}
+	http.SetCookie(w, clearCookie)
+
+	redirectURI := s.getRedirectURI(r)
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	tokenResp, err := oauth.ExchangeCode(ctx, provider, code, redirectURI)
+	if err != nil {
+		s.renderOAuthResultHTML(w, "", "", "", origin, fmt.Sprintf("Failed to exchange code: %v", err))
+		return
+	}
+
+	username, err := oauth.GetUserInfo(ctx, provider, tokenResp.AccessToken)
+	if err != nil {
+		username = "OAuth User"
+	}
+
+	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, username, origin)
+}
+
+func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, username, targetOrigin string, errorMsg ...string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	var errStr string
+	if len(errorMsg) > 0 {
+		errStr = errorMsg[0]
+	}
+
+	var script string
+	if errStr != "" {
+		script = fmt.Sprintf(`
+			window.opener.postMessage({
+				type: "oauth-error",
+				error: %q
+			}, %q);
+			window.close();
+		`, errStr, targetOrigin)
+	} else {
+		script = fmt.Sprintf(`
+			window.opener.postMessage({
+				type: "oauth-success",
+				provider: %q,
+				token: %q,
+				username: %q
+			}, %q);
+			window.close();
+		`, provider, token, username, targetOrigin)
+	}
+
+	fmt.Fprintf(w, `
+		<!DOCTYPE html>
+		<html>
+		<head>
+			<title>Authorization Status</title>
+			<style>
+				body {
+					font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+					display: flex;
+					align-items: center;
+					justify-content: center;
+					height: 100vh;
+					margin: 0;
+					background-color: #f8fafc;
+					color: #334155;
+				}
+				.card {
+					background: white;
+					padding: 2rem;
+					border-radius: 8px;
+					box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+					text-align: center;
+				}
+			</style>
+		</head>
+		<body>
+			<div class="card">
+				%s
+			</div>
+			<script>%s</script>
+		</body>
+		</html>
+	`, func() string {
+		if errStr != "" {
+			return fmt.Sprintf("<h3 style='color: #ef4444;'>Authorization Failed</h3><p>%s</p>", errStr)
+		}
+		return "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
+	}(), script)
 }

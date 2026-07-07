@@ -1,8 +1,28 @@
 import React, { useState } from 'react';
 import { Server, ArrowRight, ShieldCheck, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
 
+interface CloudFile {
+  path: string;
+  name: string;
+  size: number;
+  is_dir: boolean;
+  hash: string;
+  last_modified: string;
+}
+
+interface MigrationConfig {
+  source_url: string;
+  source_username: string;
+  source_password: string;
+  target_url: string;
+  target_username: string;
+  target_password: string;
+  source_provider: 'nextcloud' | 'dropbox';
+  target_provider: 'nextcloud' | 'dropbox';
+}
+
 interface ConnectFormProps {
-  onConnectSuccess: (config: any, initialFiles: any[]) => void;
+  onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
   apiUrl: string;
 }
 
@@ -15,14 +35,62 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetUser, setTargetUser] = useState('');
   const [targetPass, setTargetPass] = useState('');
 
+  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox'>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox'>('nextcloud');
+  const [sourceOAuthUser, setSourceOAuthUser] = useState('');
+  const [targetOAuthUser, setTargetOAuthUser] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
+  const openOAuthPopup = (provider: string, type: 'source' | 'target') => {
+    const width = 600;
+    const height = 700;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+
+    const targetOrigin = new URL(apiUrl, window.location.origin).origin;
+
+    window.open(
+      `${apiUrl}/api/oauth/auth?provider=${provider}&origin=${encodeURIComponent(window.location.origin)}`,
+      'OAuth',
+      `width=${width},height=${height},left=${left},top=${top}`
+    );
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== targetOrigin) return;
+      if (event.data && event.data.type === 'oauth-success' && event.data.provider === provider) {
+        if (type === 'source') {
+          setSourceOAuthUser(event.data.username || 'dropbox');
+          setSourceUrl('https://api.dropboxapi.com');
+          setSourceUser(event.data.username || 'dropbox');
+          setSourcePass(event.data.token);
+        } else {
+          setTargetOAuthUser(event.data.username || 'dropbox');
+          setTargetUrl('https://api.dropboxapi.com');
+          setTargetUser(event.data.username || 'dropbox');
+          setTargetPass(event.data.token);
+        }
+        window.removeEventListener('message', handleMessage);
+      } else if (event.data && event.data.type === 'oauth-error') {
+        setError(`OAuth Fehler: ${event.data.error}`);
+        window.removeEventListener('message', handleMessage);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sourceUrl || !sourceUser || !sourcePass || !targetUrl || !targetUser || !targetPass) {
-      setError('Bitte fülle alle Eingabefelder aus.');
+    const finalSourceUrl = sourceProvider === 'dropbox' ? 'https://api.dropboxapi.com' : sourceUrl;
+    const finalSourceUser = sourceProvider === 'dropbox' ? (sourceOAuthUser || 'dropbox') : sourceUser;
+    const finalTargetUrl = targetProvider === 'dropbox' ? 'https://api.dropboxapi.com' : targetUrl;
+    const finalTargetUser = targetProvider === 'dropbox' ? (targetOAuthUser || 'dropbox') : targetUser;
+
+    if (!finalSourceUrl || !finalSourceUser || !sourcePass || !finalTargetUrl || !finalTargetUser || !targetPass) {
+      setError('Bitte fülle alle Eingabefelder aus bzw. autorisiere Dropbox.');
       return;
     }
 
@@ -34,14 +102,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          source_url: sourceUrl,
-          source_username: sourceUser,
+          source_url: finalSourceUrl,
+          source_username: finalSourceUser,
           source_password: sourcePass,
-          target_url: targetUrl,
-          target_username: targetUser,
+          target_url: finalTargetUrl,
+          target_username: finalTargetUser,
           target_password: targetPass,
-          source_provider: 'nextcloud',
-          target_provider: 'nextcloud',
+          source_provider: sourceProvider,
+          target_provider: targetProvider,
         }),
       });
 
@@ -53,22 +121,22 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       if (data.success) {
         onConnectSuccess(
           {
-            source_url: sourceUrl,
-            source_username: sourceUser,
+            source_url: finalSourceUrl,
+            source_username: finalSourceUser,
             source_password: sourcePass,
-            target_url: targetUrl,
-            target_username: targetUser,
+            target_url: finalTargetUrl,
+            target_username: finalTargetUser,
             target_password: targetPass,
-            source_provider: 'nextcloud',
-            target_provider: 'nextcloud',
+            source_provider: sourceProvider,
+            target_provider: targetProvider,
           },
           data.files || []
         );
       } else {
         setError(data.error || 'Verbindung fehlgeschlagen. Bitte prüfe deine Zugangsdaten.');
       }
-    } catch (err: any) {
-      setError(err.message || 'Ein Netzwerkfehler ist aufgetreten. Bitte überprüfe deine Internetverbindung.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ein Netzwerkfehler ist aufgetreten. Bitte überprüfe deine Internetverbindung.');
     } finally {
       setLoading(false);
     }
@@ -125,49 +193,108 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
             <div className="space-y-4 text-xs">
               <div>
-                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nextcloud WebDAV-URL</label>
-                <input
-                  type="url"
-                  placeholder="https://nextcloud.source-domain.de"
-                  value={sourceUrl}
-                  onChange={(e) => setSourceUrl(e.target.value)}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                  required
-                />
+                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Anbieter (Provider)</label>
+                <select
+                  value={sourceProvider}
+                  onChange={(e) => {
+                    const val = e.target.value as 'nextcloud' | 'dropbox';
+                    setSourceProvider(val);
+                    if (val === 'dropbox') {
+                      setSourceUrl('https://api.dropboxapi.com');
+                      setSourceUser('dropbox');
+                      setSourcePass('');
+                      setSourceOAuthUser('');
+                    } else {
+                      setSourceUrl('');
+                      setSourceUser('');
+                      setSourcePass('');
+                    }
+                  }}
+                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                >
+                  <option value="nextcloud">Nextcloud (WebDAV)</option>
+                  <option value="dropbox">Dropbox (OAuth2)</option>
+                </select>
               </div>
 
-              <div>
-                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
-                <input
-                  type="text"
-                  placeholder="benutzername"
-                  value={sourceUser}
-                  onChange={(e) => setSourceUser(e.target.value)}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                  required
-                />
-              </div>
+              {sourceProvider === 'nextcloud' ? (
+                <>
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nextcloud WebDAV-URL</label>
+                    <input
+                      type="url"
+                      placeholder="https://nextcloud.source-domain.de"
+                      value={sourceUrl}
+                      onChange={(e) => setSourceUrl(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
 
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">App-Passwort</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowHelp(!showHelp)}
-                    className="text-[10.5px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
-                  </button>
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                    <input
+                      type="text"
+                      placeholder="benutzername"
+                      value={sourceUser}
+                      onChange={(e) => setSourceUser(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">App-Passwort</label>
+                      <button
+                        type="button"
+                        onClick={() => setShowHelp(!showHelp)}
+                        className="text-[10.5px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
+                      </button>
+                    </div>
+                    <input
+                      type="password"
+                      placeholder="•••• •••• •••• ••••"
+                      value={sourcePass}
+                      onChange={(e) => setSourcePass(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="py-2">
+                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">Dropbox Verbindung</label>
+                  {sourcePass ? (
+                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-4 flex items-center justify-between shadow-sm">
+                      <div className="truncate pr-2">
+                        <p className="font-bold text-[10.5px] uppercase tracking-wider text-emerald-650">Verbunden als</p>
+                        <p className="text-xs font-bold text-slate-700 truncate">{sourceOAuthUser || 'Dropbox Account'}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSourcePass('');
+                          setSourceOAuthUser('');
+                        }}
+                        className="px-3.5 py-1.5 bg-white border border-emerald-250 text-emerald-700 text-xs font-bold rounded shadow-sm hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
+                      >
+                        Trennen
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openOAuthPopup('dropbox', 'source')}
+                      className="w-full py-3.5 px-4 bg-portal-navy text-white font-display font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm hover:bg-portal-navy/90 hover:scale-101 active:scale-99 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4" /> Mit Dropbox verbinden
+                    </button>
+                  )}
                 </div>
-                <input
-                  type="password"
-                  placeholder="•••• •••• •••• ••••"
-                  value={sourcePass}
-                  onChange={(e) => setSourcePass(e.target.value)}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                  required
-                />
-              </div>
+              )}
             </div>
           </div>
 
@@ -185,49 +312,108 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
             <div className="space-y-4 text-xs">
               <div>
-                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nextcloud WebDAV-URL</label>
-                <input
-                  type="url"
-                  placeholder="https://nextcloud.target-domain.de"
-                  value={targetUrl}
-                  onChange={(e) => setTargetUrl(e.target.value)}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                  required
-                />
+                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Anbieter (Provider)</label>
+                <select
+                  value={targetProvider}
+                  onChange={(e) => {
+                    const val = e.target.value as 'nextcloud' | 'dropbox';
+                    setTargetProvider(val);
+                    if (val === 'dropbox') {
+                      setTargetUrl('https://api.dropboxapi.com');
+                      setTargetUser('dropbox');
+                      setTargetPass('');
+                      setTargetOAuthUser('');
+                    } else {
+                      setTargetUrl('');
+                      setTargetUser('');
+                      setTargetPass('');
+                    }
+                  }}
+                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                >
+                  <option value="nextcloud">Nextcloud (WebDAV)</option>
+                  <option value="dropbox">Dropbox (OAuth2)</option>
+                </select>
               </div>
 
-              <div>
-                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
-                <input
-                  type="text"
-                  placeholder="benutzername"
-                  value={targetUser}
-                  onChange={(e) => setTargetUser(e.target.value)}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                  required
-                />
-              </div>
+              {targetProvider === 'nextcloud' ? (
+                <>
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nextcloud WebDAV-URL</label>
+                    <input
+                      type="url"
+                      placeholder="https://nextcloud.target-domain.de"
+                      value={targetUrl}
+                      onChange={(e) => setTargetUrl(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
 
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">App-Passwort</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowHelp(!showHelp)}
-                    className="text-[10.5px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer"
-                  >
-                    <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
-                  </button>
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                    <input
+                      type="text"
+                      placeholder="benutzername"
+                      value={targetUser}
+                      onChange={(e) => setTargetUser(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">App-Passwort</label>
+                      <button
+                        type="button"
+                        onClick={() => setShowHelp(!showHelp)}
+                        className="text-[10.5px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
+                      </button>
+                    </div>
+                    <input
+                      type="password"
+                      placeholder="•••• •••• •••• ••••"
+                      value={targetPass}
+                      onChange={(e) => setTargetPass(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="py-2">
+                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">Dropbox Verbindung</label>
+                  {targetPass ? (
+                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-4 flex items-center justify-between shadow-sm">
+                      <div className="truncate pr-2">
+                        <p className="font-bold text-[10.5px] uppercase tracking-wider text-emerald-650">Verbunden als</p>
+                        <p className="text-xs font-bold text-slate-700 truncate">{targetOAuthUser || 'Dropbox Account'}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTargetPass('');
+                          setTargetOAuthUser('');
+                        }}
+                        className="px-3.5 py-1.5 bg-white border border-emerald-250 text-emerald-700 text-xs font-bold rounded shadow-sm hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
+                      >
+                        Trennen
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openOAuthPopup('dropbox', 'target')}
+                      className="w-full py-3.5 px-4 bg-portal-navy text-white font-display font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm hover:bg-portal-navy/90 hover:scale-101 active:scale-99 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4" /> Mit Dropbox verbinden
+                    </button>
+                  )}
                 </div>
-                <input
-                  type="password"
-                  placeholder="•••• •••• •••• ••••"
-                  value={targetPass}
-                  onChange={(e) => setTargetPass(e.target.value)}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                  required
-                />
-              </div>
+              )}
             </div>
           </div>
         </div>
