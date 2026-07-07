@@ -293,42 +293,51 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	}
 
 	if exists {
-		switch mig.ConflictStrategy {
-		case "SKIP":
-			task.Status = "SKIPPED"
-			task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
-			_ = db.UpdateTaskStatus(p.db, task)
-			_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
-			_ = p.queue.Complete(ctx, p.workerID, payload)
-			return nil
-
-		case "OVERWRITE":
+		// Calendars and contacts are always overwritten: they are dynamic data and
+		// a SKIP would silently leave stale entries from a previous failed run.
+		if task.ResourceType != "files" {
 			err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 			if err != nil {
-				return fmt.Errorf("failed to delete target file for overwrite: %w", err)
+				return fmt.Errorf("failed to delete existing calendar/contact entry for overwrite: %w", err)
 			}
+		} else {
+			switch mig.ConflictStrategy {
+			case "SKIP":
+				task.Status = "SKIPPED"
+				task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
+				_ = db.UpdateTaskStatus(p.db, task)
+				_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
+				_ = p.queue.Complete(ctx, p.workerID, payload)
+				return nil
 
-		case "RENAME":
-			// Generate new target name
-			dir := path.Dir(targetPath)
-			ext := path.Ext(targetPath)
-			base := strings.TrimSuffix(path.Base(targetPath), ext)
-			
-			counter := 1
-			for {
-				candidatePath := path.Join(dir, fmt.Sprintf("%s_copy%d%s", base, counter, ext))
-				candidateExists, _, err := targetClient.FileExists(ctx, task.ResourceType, candidatePath)
+			case "OVERWRITE":
+				err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 				if err != nil {
-					return fmt.Errorf("failed to check existence of rename candidate: %w", err)
+					return fmt.Errorf("failed to delete target file for overwrite: %w", err)
 				}
-				if !candidateExists {
-					targetPath = candidatePath
-					task.FilePath = targetPath
-					break
-				}
-				counter++
-				if counter > 100 {
-					return fmt.Errorf("failed to rename target file after 100 attempts")
+
+			case "RENAME":
+				// Generate new target name
+				dir := path.Dir(targetPath)
+				ext := path.Ext(targetPath)
+				base := strings.TrimSuffix(path.Base(targetPath), ext)
+
+				counter := 1
+				for {
+					candidatePath := path.Join(dir, fmt.Sprintf("%s_copy%d%s", base, counter, ext))
+					candidateExists, _, err := targetClient.FileExists(ctx, task.ResourceType, candidatePath)
+					if err != nil {
+						return fmt.Errorf("failed to check existence of rename candidate: %w", err)
+					}
+					if !candidateExists {
+						targetPath = candidatePath
+						task.FilePath = targetPath
+						break
+					}
+					counter++
+					if counter > 100 {
+						return fmt.Errorf("failed to rename target file after 100 attempts")
+					}
 				}
 			}
 		}
