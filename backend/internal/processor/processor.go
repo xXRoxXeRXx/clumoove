@@ -321,17 +321,19 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	sourceAlgo := "SHA1" // Default
 	sourceHashStr := ""
 
-	if task.SourceHash.Valid && task.SourceHash.String != "" {
+	if task.SourceHash.Valid && task.SourceHash.String != "" && mig.SourceProvider != "webdav" {
 		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
 		sourceHashStr = cleanHash
 		sourceAlgo = algo
 	} else {
 		// Fallback to fetch hash directly
-		if fetchedHash, err := sourceClient.GetFileHash(ctx, task.ResourceType, task.FilePath); err == nil {
-			task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
-			algo, cleanHash := storage.ParseHashString(fetchedHash)
-			sourceHashStr = cleanHash
-			sourceAlgo = algo
+		if mig.SourceProvider != "webdav" {
+			if fetchedHash, err := sourceClient.GetFileHash(ctx, task.ResourceType, task.FilePath); err == nil {
+				task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
+				algo, cleanHash := storage.ParseHashString(fetchedHash)
+				sourceHashStr = cleanHash
+				sourceAlgo = algo
+			}
 		}
 	}
 
@@ -422,28 +424,44 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 
 	var integrityVerified bool
 	downloadOK := true
-	if sourceHashStr != "" {
+	if sourceHashStr != "" && sourceAlgo != "UNKNOWN" {
 		downloadOK = (workerSourceHashVal == sourceHashStr)
 	}
 
 	uploadOK := true
-	targetHashVal, err := targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
-	if err == nil {
+	var targetHashVal string
+	var errTargetHash error
+	if mig.TargetProvider != "webdav" {
+		targetHashVal, errTargetHash = targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
+	} else {
+		errTargetHash = fmt.Errorf("webdav target hash not supported")
+	}
+
+	if errTargetHash == nil {
 		task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
 		targetReturnedAlgo, cleanTargetHash := storage.ParseHashString(targetHashVal)
 
 		var workerTargetHashVal string
-		if sourceAlgo == targetReturnedAlgo {
+		hasMatchingAlgo := false
+		if sourceAlgo == targetReturnedAlgo && sourceAlgo != "UNKNOWN" {
 			workerTargetHashVal = workerSourceHashVal
-		} else if targetHasher != nil && targetAlgo == targetReturnedAlgo {
+			hasMatchingAlgo = true
+		} else if targetHasher != nil && targetAlgo == targetReturnedAlgo && targetAlgo != "UNKNOWN" {
 			workerTargetHashVal = fmt.Sprintf("%x", targetHasher.Sum(nil))
-		} else {
-			// Algorithm mismatch fallback
-			uploadOK = false
+			hasMatchingAlgo = true
 		}
 
-		if uploadOK && workerTargetHashVal != cleanTargetHash {
-			uploadOK = false
+		if hasMatchingAlgo {
+			uploadOK = (workerTargetHashVal == cleanTargetHash)
+		} else {
+			// Algorithm mismatch fallback: verify size
+			existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
+			if errExists == nil && existsOnTarget {
+				uploadOK = (task.FileSize == targetSize)
+				task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
+			} else {
+				uploadOK = false
+			}
 		}
 	} else {
 		// Fallback: Size verification

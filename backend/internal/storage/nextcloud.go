@@ -625,12 +625,6 @@ func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, fileP
 			if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
 				return chk, nil
 			}
-			if chk := headResp.Header.Get("ETag"); chk != "" {
-				etag := strings.Trim(chk, "\"")
-				if len(etag) >= 32 {
-					return etag, nil
-				}
-			}
 		}
 	}
 

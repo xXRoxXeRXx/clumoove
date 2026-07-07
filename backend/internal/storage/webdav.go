@@ -165,10 +165,6 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 					res.LastModified = t
 				}
 			}
-
-			if prop.GetETag != "" {
-				res.Hash = cleanETag(prop.GetETag)
-			}
 		}
 	}
 
@@ -267,10 +263,6 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 					if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
 						res.LastModified = t
 					}
-				}
-
-				if prop.GetETag != "" {
-					res.Hash = cleanETag(prop.GetETag)
 				}
 			}
 		}
@@ -386,70 +378,7 @@ func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 }
 
 func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
-	u := p.buildResourceURL(resourceType, filePath)
-	
-	headReq, err := p.newRequest("HEAD", u, nil)
-	if err == nil {
-		headReq = headReq.WithContext(ctx)
-		if headResp, err := p.HTTPClient.Do(headReq); err == nil {
-			headResp.Body.Close()
-			if headResp.StatusCode >= 200 && headResp.StatusCode < 300 {
-				if chk := headResp.Header.Get("ETag"); chk != "" {
-					return cleanETag(chk), nil
-				}
-				if chk := headResp.Header.Get("Content-MD5"); chk != "" {
-					return chk, nil
-				}
-			}
-		}
-	}
-
-	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
-		<d:propfind xmlns:d="DAV:">
-			<d:prop>
-				<d:getetag/>
-			</d:prop>
-		</d:propfind>`)
-
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Depth", "0")
-	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
-	req = req.WithContext(ctx)
-
-	resp, err := p.HTTPClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("PROPFIND for ETag failed: status %d", resp.StatusCode)
-	}
-
-	var multistatus XMLMultistatus
-	decoder := xml.NewDecoder(resp.Body)
-	if err := decoder.Decode(&multistatus); err != nil {
-		return "", err
-	}
-
-	if len(multistatus.Responses) > 0 {
-		r := multistatus.Responses[0]
-		for _, pstat := range r.Propstat {
-			if strings.Contains(pstat.Status, "200 OK") {
-				if pstat.Prop.GetContentHash != "" {
-					return pstat.Prop.GetContentHash, nil
-				}
-				if pstat.Prop.GetETag != "" {
-					return cleanETag(pstat.Prop.GetETag), nil
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("checksum or ETag not available")
+	return "", fmt.Errorf("checksum not available")
 }
 
 func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
