@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen } from 'lucide-react';
 
 interface CloudFile {
   path: string;
@@ -25,6 +25,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   onBack,
   onStartSuccess,
 }) => {
+  const [activeTab, setActiveTab] = useState<'files' | 'calendars' | 'contacts'>('files');
+  const [calendars, setCalendars] = useState<CloudFile[]>([]);
+  const [contacts, setContacts] = useState<CloudFile[]>([]);
+  const [loadingCalendars, setLoadingCalendars] = useState(false);
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [selectedCalendars, setSelectedCalendars] = useState<Record<string, boolean>>({});
+  const [selectedContacts, setSelectedContacts] = useState<Record<string, boolean>>({});
+
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
   const [directoryContents, setDirectoryContents] = useState<Record<string, CloudFile[]>>({
     '/': initialFiles,
@@ -35,6 +43,66 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [targetDir] = useState('/');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchCalendars = async (force?: boolean) => {
+    if (!force && (calendars.length > 0 || loadingCalendars)) return;
+    setLoadingCalendars(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/browse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_url: credentials.source_url,
+          source_username: credentials.source_username,
+          source_password: credentials.source_password,
+          source_provider: credentials.source_provider,
+          resource_type: 'calendars',
+        }),
+      });
+      if (!response.ok) throw new Error('Fehler beim Laden der Kalender');
+      const data = await response.json();
+      if (data.success) {
+        setCalendars(data.items || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingCalendars(false);
+    }
+  };
+
+  const fetchContacts = async (force?: boolean) => {
+    if (!force && (contacts.length > 0 || loadingContacts)) return;
+    setLoadingContacts(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/browse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_url: credentials.source_url,
+          source_username: credentials.source_username,
+          source_password: credentials.source_password,
+          source_provider: credentials.source_provider,
+          resource_type: 'contacts',
+        }),
+      });
+      if (!response.ok) throw new Error('Fehler beim Laden der Kontakte');
+      const data = await response.json();
+      if (data.success) {
+        setContacts(data.items || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingContacts(false);
+    }
+  };
+
+  const handleTabChange = (tab: 'files' | 'calendars' | 'contacts') => {
+    setActiveTab(tab);
+    if (tab === 'calendars') fetchCalendars();
+    if (tab === 'contacts') fetchContacts();
+  };
 
   const fetchChildren = async (folderPath: string) => {
     if (directoryContents[folderPath] || loadingPaths[folderPath]) return;
@@ -77,8 +145,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const handleStartMigration = async () => {
     const pathsToMigrate = Object.keys(selectedPaths).filter((p) => selectedPaths[p]);
-    if (pathsToMigrate.length === 0) {
-      setError('Bitte wähle mindestens ein Verzeichnis oder eine Datei aus.');
+    const calendarsToMigrate = Object.keys(selectedCalendars).filter((p) => selectedCalendars[p]);
+    const contactsToMigrate = Object.keys(selectedContacts).filter((p) => selectedContacts[p]);
+
+    if (pathsToMigrate.length === 0 && calendarsToMigrate.length === 0 && contactsToMigrate.length === 0) {
+      setError('Bitte wähle mindestens ein Verzeichnis, einen Kalender oder ein Adressbuch aus.');
       return;
     }
 
@@ -93,6 +164,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           ...credentials,
           conflict_strategy: conflictStrategy,
           paths: pathsToMigrate,
+          calendars: calendarsToMigrate,
+          contacts: contactsToMigrate,
         }),
       });
 
@@ -244,17 +317,135 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         
         {/* Ledger Browser Tree Card */}
         <div className="md:col-span-2 border border-portal-border bg-white shadow-portal rounded-lg min-h-[400px] max-h-[600px] overflow-y-auto scrollbar-portal p-0">
-          <div className="bg-slate-50 border-b border-portal-border px-4 py-2.5 font-display font-bold text-[10px] uppercase text-slate-500 tracking-wider">
-            Verzeichnis-Index
+          {/* Tab Switcher */}
+          <div className="flex items-center justify-between border-b border-portal-border bg-slate-50 rounded-t-lg pr-3">
+            <div className="flex flex-1">
+              <button
+                onClick={() => handleTabChange('files')}
+                className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                  activeTab === 'files'
+                    ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
+                    : 'text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                Dateien
+              </button>
+              <button
+                onClick={() => handleTabChange('calendars')}
+                className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                  activeTab === 'calendars'
+                    ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
+                    : 'text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                Kalender ({Object.values(selectedCalendars).filter(Boolean).length})
+              </button>
+              <button
+                onClick={() => handleTabChange('contacts')}
+                className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                  activeTab === 'contacts'
+                    ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
+                    : 'text-slate-500 hover:bg-slate-100'
+                }`}
+              >
+                Kontakte ({Object.values(selectedContacts).filter(Boolean).length})
+              </button>
+            </div>
+
+            {activeTab !== 'files' && (
+              <button
+                onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
+                disabled={loadingCalendars || loadingContacts}
+                className="p-2 text-slate-500 hover:text-portal-navy hover:bg-slate-100 rounded-full transition-colors duration-150 cursor-pointer disabled:opacity-50"
+                title="Aktualisieren"
+              >
+                <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
+              </button>
+            )}
           </div>
+
           <div className="p-1">
-            {directoryContents['/']?.length > 0 ? (
-              directoryContents['/'].map((file) => renderNode(file, 0))
-            ) : (
-              <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
-                <Folder className="w-10 h-10 text-slate-300" />
-                <p className="font-sans text-xs italic text-slate-400">Keine Dateien im Stammverzeichnis gefunden.</p>
-              </div>
+            {activeTab === 'files' && (
+              directoryContents['/']?.length > 0 ? (
+                directoryContents['/'].map((file) => renderNode(file, 0))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
+                  <Folder className="w-10 h-10 text-slate-300" />
+                  <p className="font-sans text-xs italic text-slate-400">Keine Dateien im Stammverzeichnis gefunden.</p>
+                </div>
+              )
+            )}
+
+            {activeTab === 'calendars' && (
+              loadingCalendars ? (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3">
+                  <RefreshCw className="w-8 h-8 text-portal-navy animate-spin" />
+                  <p className="font-sans text-xs italic">Lade Kalender...</p>
+                </div>
+              ) : calendars.length > 0 ? (
+                calendars.map((cal) => (
+                  <div
+                    key={cal.path}
+                    className={`flex items-center gap-3 py-3.5 px-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 ${
+                      selectedCalendars[cal.path] ? 'bg-slate-50 font-semibold' : ''
+                    }`}
+                    onClick={() => setSelectedCalendars(prev => ({ ...prev, [cal.path]: !prev[cal.path] }))}
+                  >
+                    <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
+                      <div className={`w-5.5 h-5.5 border rounded flex items-center justify-center transition-all duration-200 ${
+                        selectedCalendars[cal.path] 
+                          ? 'bg-portal-orange text-white border-transparent' 
+                          : 'bg-white border-slate-300'
+                      }`}>
+                        {selectedCalendars[cal.path] && <Check className="w-3.5 h-3.5 text-white stroke-[3.5]" />}
+                      </div>
+                    </button>
+                    <Calendar className="w-5 h-5 text-portal-navy" />
+                    <span className="text-[12px] text-slate-850 flex-grow">{cal.name}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
+                  <Calendar className="w-10 h-10 text-slate-300" />
+                  <p className="font-sans text-xs italic">Keine Kalender gefunden.</p>
+                </div>
+              )
+            )}
+
+            {activeTab === 'contacts' && (
+              loadingContacts ? (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3">
+                  <RefreshCw className="w-8 h-8 text-portal-navy animate-spin" />
+                  <p className="font-sans text-xs italic">Lade Adressbücher...</p>
+                </div>
+              ) : contacts.length > 0 ? (
+                contacts.map((addr) => (
+                  <div
+                    key={addr.path}
+                    className={`flex items-center gap-3 py-3.5 px-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 ${
+                      selectedContacts[addr.path] ? 'bg-slate-50 font-semibold' : ''
+                    }`}
+                    onClick={() => setSelectedContacts(prev => ({ ...prev, [addr.path]: !prev[addr.path] }))}
+                  >
+                    <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
+                      <div className={`w-5.5 h-5.5 border rounded flex items-center justify-center transition-all duration-200 ${
+                        selectedContacts[addr.path] 
+                          ? 'bg-portal-orange text-white border-transparent' 
+                          : 'bg-white border-slate-300'
+                      }`}>
+                        {selectedContacts[addr.path] && <Check className="w-3.5 h-3.5 text-white stroke-[3.5]" />}
+                      </div>
+                    </button>
+                    <BookOpen className="w-5 h-5 text-portal-navy" />
+                    <span className="text-[12px] text-slate-850 flex-grow">{addr.name}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
+                  <BookOpen className="w-10 h-10 text-slate-300" />
+                  <p className="font-sans text-xs italic">Keine Adressbücher gefunden.</p>
+                </div>
+              )
             )}
           </div>
         </div>

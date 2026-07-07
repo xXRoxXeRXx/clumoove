@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -17,6 +18,8 @@ type Migration struct {
 	TargetURL               string         `json:"target_url"`
 	TargetUsername          string         `json:"target_username"`
 	TargetPasswordEncrypted string         `json:"-"`
+	SourceProvider          string         `json:"source_provider"`
+	TargetProvider          string         `json:"target_provider"`
 	Status                  string         `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
 	ConflictStrategy        string         `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
 	TotalFiles              int            `json:"total_files"`
@@ -39,6 +42,7 @@ type Task struct {
 	WorkerHash   sql.NullString `json:"worker_hash"`
 	TargetHash   sql.NullString `json:"target_hash"`
 	Status       string         `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
+	ResourceType string         `json:"resource_type"` // files, calendars, contacts
 	ErrorMessage sql.NullString `json:"error_message"`
 	Attempts     int            `json:"attempts"`
 	NextRetryAt  sql.NullTime   `json:"next_retry_at"`
@@ -58,6 +62,20 @@ func InitDB(connStr string) (*sql.DB, error) {
 	for attempt := 1; attempt <= 10; attempt++ {
 		pingErr = db.Ping()
 		if pingErr == nil {
+			// Run schema migrations for new columns
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS source_provider TEXT NOT NULL DEFAULT 'nextcloud'`)
+			if err != nil {
+				log.Printf("Failed schema migration (source_provider): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS target_provider TEXT NOT NULL DEFAULT 'nextcloud'`)
+			if err != nil {
+				log.Printf("Failed schema migration (target_provider): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS resource_type TEXT NOT NULL DEFAULT 'files'`)
+			if err != nil {
+				log.Printf("Failed schema migration (resource_type): %v\n", err)
+			}
+
 			// Set connection pool settings
 			db.SetMaxOpenConns(25)
 			db.SetMaxIdleConns(5)
@@ -77,15 +95,15 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 		INSERT INTO migrations (
 			source_url, source_username, source_password_encrypted,
 			target_url, target_username, target_password_encrypted,
-			status, conflict_strategy
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			source_provider, target_provider, status, conflict_strategy
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
 		m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted,
-		m.Status, m.ConflictStrategy,
+		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err != nil {
@@ -99,7 +117,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	query := `
 		SELECT id, source_url, source_username, source_password_encrypted,
 		       target_url, target_username, target_password_encrypted,
-		       status, conflict_strategy, total_files, total_bytes,
+		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
 		       processed_files, processed_bytes, skipped_files, failed_files,
 		       error_message, created_at, updated_at
 		FROM migrations WHERE id = $1
@@ -108,7 +126,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	err := db.QueryRow(query, id).Scan(
 		&m.ID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted,
-		&m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
+		&m.SourceProvider, &m.TargetProvider, &m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
 		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
 		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt,
 	)
@@ -118,20 +136,38 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	return &m, nil
 }
 
-// UpdateMigrationStatus updates status and optional error message of a migration
+// UpdateMigrationStatus updates the status of a migration.
+// If errMsg is non-nil the error_message column is also updated;
+// passing nil leaves any previously recorded error intact.
 func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string) error {
-	var sqlErr sql.NullString
 	if errMsg != nil {
-		sqlErr = sql.NullString{String: *errMsg, Valid: true}
+		query := `
+			UPDATE migrations
+			SET status = $1, error_message = $2
+			WHERE id = $3
+		`
+		_, err := db.Exec(query, status, sql.NullString{String: *errMsg, Valid: true}, id)
+		return err
 	}
-
 	query := `
 		UPDATE migrations
-		SET status = $1, error_message = $2
-		WHERE id = $3
+		SET status = $1
+		WHERE id = $2
 	`
-	_, err := db.Exec(query, status, sqlErr, id)
+	_, err := db.Exec(query, status, id)
 	return err
+}
+
+// GetActiveTaskPath returns the file_path of the first task currently in RUNNING state
+// for the given migration, or an empty string if none exists.
+func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (string, error) {
+	query := `SELECT file_path FROM tasks WHERE migration_id = $1 AND status = 'RUNNING' LIMIT 1`
+	var path string
+	err := db.QueryRowContext(ctx, query, migrationID).Scan(&path)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return path, err
 }
 
 // IncrementMigrationProgress increments the counters of a migration in the database
@@ -163,13 +199,13 @@ func UpdateMigrationTotals(db *sql.DB, id string, totalFiles int, totalBytes int
 func CreateTask(db *sql.DB, t *Task) (string, error) {
 	query := `
 		INSERT INTO tasks (
-			migration_id, file_path, file_size, source_hash, status
-		) VALUES ($1, $2, $3, $4, $5)
+			migration_id, file_path, file_size, source_hash, status, resource_type
+		) VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
-		t.MigrationID, t.FilePath, t.FileSize, t.SourceHash, t.Status,
+		t.MigrationID, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType,
 	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 
 	if err != nil {
@@ -182,13 +218,13 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, migration_id, file_path, file_size, source_hash, worker_hash, target_hash,
-		       status, error_message, attempts, next_retry_at, created_at, updated_at
+		       status, error_message, attempts, next_retry_at, created_at, updated_at, resource_type
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
 		&t.ID, &t.MigrationID, &t.FilePath, &t.FileSize, &t.SourceHash, &t.WorkerHash, &t.TargetHash,
-		&t.Status, &t.ErrorMessage, &t.Attempts, &t.NextRetryAt, &t.CreatedAt, &t.UpdatedAt,
+		&t.Status, &t.ErrorMessage, &t.Attempts, &t.NextRetryAt, &t.CreatedAt, &t.UpdatedAt, &t.ResourceType,
 	)
 	if err != nil {
 		return nil, err

@@ -1,26 +1,22 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/queue"
-	"backend/internal/webdav"
+	"backend/internal/storage"
 
 	"github.com/gorilla/websocket"
 )
@@ -35,6 +31,7 @@ type APIServer struct {
 	db        *sql.DB
 	queue     *queue.Queue
 	secretKey string
+	ctx       context.Context
 }
 
 func main() {
@@ -52,8 +49,7 @@ func main() {
 
 	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
 	if encryptionKey == "" {
-		encryptionKey = "default-secret-key-32-chars-long!!"
-		log.Println("WARNING: ENCRYPTION_SECRET_KEY not set. Using default insecure key.")
+		log.Fatal("ENCRYPTION_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
 	}
 
 	port := os.Getenv("PORT")
@@ -76,15 +72,16 @@ func main() {
 	}
 	log.Println("Connected to Redis.")
 
+	// Context for background processes
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	server := &APIServer{
 		db:        database,
 		queue:     q,
 		secretKey: encryptionKey,
+		ctx:       ctx,
 	}
-
-	// Context for background processes
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Start Garbage Collector (GC)
 	go server.runGarbageCollector(ctx)
@@ -94,6 +91,7 @@ func main() {
 
 	// Routes
 	mux.HandleFunc("POST /api/migration/connect", server.handleConnect)
+	mux.HandleFunc("POST /api/migration/browse", server.handleBrowse)
 	mux.HandleFunc("POST /api/migration/start", server.handleStart)
 	mux.HandleFunc("GET /api/migration/{id}", server.handleGetStatus)
 	mux.HandleFunc("GET /api/migration/{id}/report", server.handleDownloadReport)
@@ -103,8 +101,11 @@ func main() {
 	handler := corsMiddleware(mux)
 
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: handler,
+		Addr:         ":" + port,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second, // must cover the longest legitimate request (30s listing)
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Graceful shutdown handling
@@ -148,7 +149,77 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// REST Route Handlers
+// BrowseRequest is used by the dedicated resource-discovery endpoint.
+// Unlike ConnectRequest it only requires source credentials and a resource_type;
+// the target is not contacted (we are only browsing what to migrate from).
+type BrowseRequest struct {
+	SourceURL      string `json:"source_url"`
+	SourceUsername string `json:"source_username"`
+	SourcePassword string `json:"source_password"`
+	SourceProvider string `json:"source_provider"`
+	ResourceType   string `json:"resource_type"` // "calendars" or "contacts"
+}
+
+// handleBrowse lists the top-level calendar collections or addressbooks on the source server.
+// It contacts only the source, avoiding the two extra round-trips that reusing handleConnect would cause.
+func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	var req BrowseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SourceProvider == "" {
+		req.SourceProvider = "nextcloud"
+	}
+	if req.ResourceType != "calendars" && req.ResourceType != "contacts" {
+		http.Error(w, "resource_type must be 'calendars' or 'contacts'", http.StatusBadRequest)
+		return
+	}
+
+	sourceClient, err := storage.NewProvider(req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+
+	ok, err := sourceClient.Connect(ctx)
+	if !ok {
+		errMsg := "Source connection failed"
+		if err != nil {
+			errMsg = fmt.Sprintf("Source connection failed: %v", err)
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": errMsg})
+		return
+	}
+
+	// List the root of the resource type — each top-level collection is one calendar / addressbook
+	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, "/")
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to list %s: %v", req.ResourceType, err),
+		})
+		return
+	}
+
+	// Only return top-level collections (IsDir == true); individual resource files are not selectable here
+	var collections []storage.CloudResource
+	for _, item := range items {
+		if item.IsDir {
+			collections = append(collections, item)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"items":   collections,
+	})
+}
+
 type ConnectRequest struct {
 	SourceURL      string `json:"source_url"`
 	SourceUsername string `json:"source_username"`
@@ -156,7 +227,10 @@ type ConnectRequest struct {
 	TargetURL      string `json:"target_url"`
 	TargetUsername string `json:"target_username"`
 	TargetPassword string `json:"target_password"`
+	SourceProvider string `json:"source_provider"`
+	TargetProvider string `json:"target_provider"`
 	Path           string `json:"path"`
+	ResourceType   string `json:"resource_type"`
 }
 
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -166,16 +240,25 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
+	if req.SourceProvider == "" {
+		req.SourceProvider = "nextcloud"
+	}
+	if req.TargetProvider == "" {
+		req.TargetProvider = "nextcloud"
+	}
+	if req.ResourceType == "" {
+		req.ResourceType = "files"
+	}
 
 	// Test Source Connection
-	sourceClient, err := webdav.NewClient(req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := storage.NewProvider(req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
 		return
 	}
-	sourceOK, err := sourceClient.Connect(ctx)
+	srcCtx, srcCancel := context.WithTimeout(r.Context(), 15*time.Second)
+	sourceOK, err := sourceClient.Connect(srcCtx)
+	srcCancel()
 	if !sourceOK {
 		errMsg := "Source connection failed"
 		if err != nil {
@@ -186,12 +269,14 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Test Target Connection
-	targetClient, err := webdav.NewClient(req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := storage.NewProvider(req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
 		return
 	}
-	targetOK, err := targetClient.Connect(ctx)
+	tgtCtx, tgtCancel := context.WithTimeout(r.Context(), 15*time.Second)
+	targetOK, err := targetClient.Connect(tgtCtx)
+	tgtCancel()
 	if !targetOK {
 		errMsg := "Target connection failed"
 		if err != nil {
@@ -206,7 +291,9 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if reqPath == "" {
 		reqPath = "/"
 	}
-	files, err := sourceClient.GetDirectoryListing(ctx, reqPath)
+	listCtx, listCancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer listCancel()
+	files, err := sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to list source files for path %s: %v", reqPath, err)})
 		return
@@ -222,6 +309,8 @@ type StartRequest struct {
 	ConnectRequest
 	ConflictStrategy string   `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
 	Paths            []string `json:"paths"`             // List of selected paths (files or directories)
+	Calendars        []string `json:"calendars"`         // List of selected calendars
+	Contacts         []string `json:"contacts"`          // List of selected contacts
 }
 
 func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
@@ -231,9 +320,16 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Paths) == 0 {
+	if len(req.Paths) == 0 && len(req.Calendars) == 0 && len(req.Contacts) == 0 {
 		http.Error(w, "No source paths selected", http.StatusBadRequest)
 		return
+	}
+
+	if req.SourceProvider == "" {
+		req.SourceProvider = "nextcloud"
+	}
+	if req.TargetProvider == "" {
+		req.TargetProvider = "nextcloud"
 	}
 
 	// Encrypt credentials
@@ -257,6 +353,8 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		TargetURL:               req.TargetURL,
 		TargetUsername:          req.TargetUsername,
 		TargetPasswordEncrypted: targetPassEnc,
+		SourceProvider:          req.SourceProvider,
+		TargetProvider:          req.TargetProvider,
 		Status:                  "INDEXING",
 		ConflictStrategy:        req.ConflictStrategy,
 	}
@@ -268,7 +366,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Spawn Background Indexer
-	go s.startIndexing(migrationID, req.SourceURL, req.SourceUsername, req.SourcePassword, req.Paths)
+	go s.startIndexing(s.ctx, migrationID, req.Paths, req.Calendars, req.Contacts)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"success":      true,
@@ -276,13 +374,27 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *APIServer) startIndexing(migID, sURL, sUser, sPass string, paths []string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths []string, calendars []string, contacts []string) {
+	ctx, cancel := context.WithTimeout(serverCtx, 20*time.Minute)
 	defer cancel()
 
-	sourceClient, err := webdav.NewClient(sURL, sUser, sPass)
+	// Load migration from DB
+	mig, err := db.GetMigration(s.db, migID)
 	if err != nil {
-		s.failMigration(migID, fmt.Sprintf("Failed to create WebDAV client: %v", err))
+		s.failMigration(migID, fmt.Sprintf("Failed to fetch migration: %v", err))
+		return
+	}
+
+	// Decrypt source credentials
+	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, s.secretKey)
+	if err != nil {
+		s.failMigration(migID, fmt.Sprintf("Failed to decrypt source password: %v", err))
+		return
+	}
+
+	sourceClient, err := storage.NewProvider(mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	if err != nil {
+		s.failMigration(migID, fmt.Sprintf("Failed to create storage provider: %v", err))
 		return
 	}
 
@@ -290,69 +402,30 @@ func (s *APIServer) startIndexing(migID, sURL, sUser, sPass string, paths []stri
 	var totalBytes int64
 	var taskIDs []string
 
+	// 1. Index files
 	for _, p := range paths {
-		// Index files recursively
-		// First verify if the path is a directory or file using PROPFIND Depth: 0
-		u := sourceClient.BaseURL + "/files/" + sourceClient.Username + "/" + strings.TrimPrefix(p, "/")
-		
-		body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
-			<d:propfind xmlns:d="DAV:">
-				<d:prop>
-					<d:resourcetype/>
-					<d:getcontentlength/>
-				</d:prop>
-			</d:propfind>`)
-		
-		req, err := http.NewRequest("PROPFIND", u, bytes.NewReader(body))
-		if err != nil {
-			s.failMigration(migID, err.Error())
-			return
-		}
-		req.SetBasicAuth(sUser, sPass)
-		req.Header.Set("Depth", "0")
-		req.Header.Set("Content-Type", "application/xml")
-
-		resp, err := sourceClient.HTTPClient.Do(req)
+		res, err := sourceClient.InspectResource(ctx, "files", p)
 		if err != nil {
 			s.failMigration(migID, fmt.Sprintf("Failed to inspect path %s: %v", p, err))
 			return
 		}
 
-		var multistatus webdav.XMLMultistatus
-		err = xml.NewDecoder(resp.Body).Decode(&multistatus)
-		resp.Body.Close()
-
-		if err != nil || len(multistatus.Responses) == 0 {
-			s.failMigration(migID, fmt.Sprintf("Failed to parse metadata for path %s", p))
-			return
-		}
-
-		isDir := false
-		var fileSize int64
-		response := multistatus.Responses[0]
-		for _, pstat := range response.Propstat {
-			if strings.Contains(pstat.Status, "200 OK") {
-				isDir = pstat.Prop.ResourceType.Collection != nil
-				fileSize, _ = strconv.ParseInt(pstat.Prop.GetContentLength, 10, 64)
-			}
-		}
-
-		if isDir {
-			err = s.indexFolder(ctx, sourceClient, p, migID, &totalFiles, &totalBytes, &taskIDs)
+		if res.IsDir {
+			err = s.indexFolder(ctx, sourceClient, "files", p, migID, &totalFiles, &totalBytes, &taskIDs)
 			if err != nil {
 				s.failMigration(migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
 				return
 			}
 		} else {
 			// Single file
-			// Get hash
-			hashVal, _ := sourceClient.GetFileHash(ctx, p)
+			hashVal := res.Hash
 			task := &db.Task{
-				MigrationID: migID,
-				FilePath:    p,
-				FileSize:    fileSize,
-				SourceHash:  sql.NullString{String: hashVal, Valid: hashVal != ""},
-				Status:      "PENDING",
+				MigrationID:  migID,
+				ResourceType: "files",
+				FilePath:     p,
+				FileSize:     res.Size,
+				SourceHash:   sql.NullString{String: hashVal, Valid: hashVal != ""},
+				Status:       "PENDING",
 			}
 			taskID, err := db.CreateTask(s.db, task)
 			if err != nil {
@@ -361,7 +434,25 @@ func (s *APIServer) startIndexing(migID, sURL, sUser, sPass string, paths []stri
 			}
 			taskIDs = append(taskIDs, taskID)
 			totalFiles++
-			totalBytes += fileSize
+			totalBytes += res.Size
+		}
+	}
+
+	// 2. Index calendars
+	for _, p := range calendars {
+		err = s.indexFolder(ctx, sourceClient, "calendars", p, migID, &totalFiles, &totalBytes, &taskIDs)
+		if err != nil {
+			s.failMigration(migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
+			return
+		}
+	}
+
+	// 3. Index contacts
+	for _, p := range contacts {
+		err = s.indexFolder(ctx, sourceClient, "contacts", p, migID, &totalFiles, &totalBytes, &taskIDs)
+		if err != nil {
+			s.failMigration(migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
+			return
 		}
 	}
 
@@ -388,33 +479,49 @@ func (s *APIServer) startIndexing(migID, sURL, sUser, sPass string, paths []stri
 	log.Printf("Finished indexing migration %s. Total files: %d, Total size: %d bytes. Enqueued tasks.\n", migID, totalFiles, totalBytes)
 }
 
-func (s *APIServer) indexFolder(ctx context.Context, client *webdav.Client, currentPath string, migID string, totalFiles *int, totalBytes *int64, taskIDs *[]string) error {
-	files, err := client.GetDirectoryListing(ctx, currentPath)
-	if err != nil {
-		return err
-	}
+func (s *APIServer) indexFolder(ctx context.Context, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, taskIDs *[]string) error {
+	queue := []string{startPath}
+	visited := make(map[string]bool)
+	visited[startPath] = true
 
-	for _, file := range files {
-		if file.IsDir {
-			err = s.indexFolder(ctx, client, file.Path, migID, totalFiles, totalBytes, taskIDs)
-			if err != nil {
-				return err
+	for len(queue) > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		currentPath := queue[0]
+		queue = queue[1:]
+
+		files, err := client.GetDirectoryListing(ctx, resourceType, currentPath)
+		if err != nil {
+			return err
+		}
+
+		for _, file := range files {
+			if file.IsDir {
+				if !visited[file.Path] {
+					visited[file.Path] = true
+					queue = append(queue, file.Path)
+				}
+			} else {
+				task := &db.Task{
+					MigrationID:  migID,
+					ResourceType: resourceType,
+					FilePath:     file.Path,
+					FileSize:     file.Size,
+					SourceHash:   sql.NullString{String: file.Hash, Valid: file.Hash != ""},
+					Status:       "PENDING",
+				}
+				taskID, err := db.CreateTask(s.db, task)
+				if err != nil {
+					return err
+				}
+				*taskIDs = append(*taskIDs, taskID)
+				*totalFiles++
+				*totalBytes += file.Size
 			}
-		} else {
-			task := &db.Task{
-				MigrationID: migID,
-				FilePath:    file.Path,
-				FileSize:    file.Size,
-				SourceHash:  sql.NullString{String: file.Hash, Valid: file.Hash != ""},
-				Status:      "PENDING",
-			}
-			taskID, err := db.CreateTask(s.db, task)
-			if err != nil {
-				return err
-			}
-			*taskIDs = append(*taskIDs, taskID)
-			*totalFiles++
-			*totalBytes += file.Size
 		}
 	}
 	return nil
@@ -434,7 +541,12 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
-		http.Error(w, "Migration not found", http.StatusNotFound)
+		if err == sql.ErrNoRows {
+			http.Error(w, "Migration not found", http.StatusNotFound)
+		} else {
+			log.Printf("Error fetching migration %s: %v\n", id, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -506,12 +618,7 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Query active file path
-		var activeFile string
-		activeQuery := `SELECT file_path FROM tasks WHERE migration_id = $1 AND status = 'RUNNING' LIMIT 1`
-		err = s.db.QueryRow(activeQuery, id).Scan(&activeFile)
-		if err != nil && err != sql.ErrNoRows {
-			log.Printf("Error fetching active task path: %v\n", err)
-		}
+		activeFile, _ := db.GetActiveTaskPath(s.db, r.Context(), id)
 
 		responsePayload := map[string]interface{}{
 			"id":              mig.ID,

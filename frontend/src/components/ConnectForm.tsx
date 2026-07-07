@@ -40,6 +40,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           target_url: targetUrl,
           target_username: targetUser,
           target_password: targetPass,
+          source_provider: 'nextcloud',
+          target_provider: 'nextcloud',
         }),
       });
 
@@ -57,6 +59,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             target_url: targetUrl,
             target_username: targetUser,
             target_password: targetPass,
+            source_provider: 'nextcloud',
+            target_provider: 'nextcloud',
           },
           data.files || []
         );

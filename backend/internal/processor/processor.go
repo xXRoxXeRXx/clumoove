@@ -19,7 +19,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/queue"
-	"backend/internal/webdav"
+	"backend/internal/storage"
 )
 
 type Processor struct {
@@ -136,6 +136,9 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 			fmt.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("[RetryScheduler] rows error: %v\n", err)
+	}
 }
 
 // RunConnectionRecoveryScheduler checks paused migrations to test if servers are back online
@@ -155,7 +158,8 @@ func (p *Processor) RunConnectionRecoveryScheduler(ctx context.Context) {
 func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	query := `
 		SELECT id, source_url, source_username, source_password_encrypted,
-		       target_url, target_username, target_password_encrypted
+		       target_url, target_username, target_password_encrypted,
+		       source_provider, target_provider
 		FROM migrations
 		WHERE status = 'PAUSED_CONNECTION_LOSS'
 	`
@@ -166,8 +170,8 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc string
-		if err := rows.Scan(&id, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc); err != nil {
+		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
+		if err := rows.Scan(&id, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
 			continue
 		}
 
@@ -180,17 +184,19 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 			continue
 		}
 
-		sClient, err := webdav.NewClient(sURL, sUser, sPass)
+		sClient, err := storage.NewProvider(sProv, sURL, sUser, sPass)
 		if err != nil {
 			continue
 		}
-		tClient, err := webdav.NewClient(tURL, tUser, tPass)
+		tClient, err := storage.NewProvider(tProv, tURL, tUser, tPass)
 		if err != nil {
 			continue
 		}
 
-		sOK, _ := sClient.Connect(ctx)
-		tOK, _ := tClient.Connect(ctx)
+		connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second)
+		sOK, _ := sClient.Connect(connCtx)
+		tOK, _ := tClient.Connect(connCtx)
+		connCancel()
 
 		if sOK && tOK {
 			fmt.Printf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
@@ -204,6 +210,9 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 				fmt.Printf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, err)
 			}
 		}
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("[RecoveryScheduler] rows error: %v\n", err)
 	}
 }
 
@@ -237,12 +246,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		return fmt.Errorf("failed to decrypt target password: %w", err)
 	}
 
-	// Create WebDAV clients
-	sourceClient, err := webdav.NewClient(mig.SourceURL, mig.SourceUsername, sourcePass)
+	// Create storage providers
+	sourceClient, err := storage.NewProvider(mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
 		return fmt.Errorf("failed to create source client: %w", err)
 	}
-	targetClient, err := webdav.NewClient(mig.TargetURL, mig.TargetUsername, targetPass)
+	targetClient, err := storage.NewProvider(mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to create target client: %w", err)
 	}
@@ -253,7 +262,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 
 	// 3. Conflict Resolution
 	targetPath := task.FilePath
-	exists, _, err := targetClient.FileExists(ctx, targetPath)
+	exists, _, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to check if target file exists: %w", err)
 	}
@@ -269,7 +278,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			return nil
 
 		case "OVERWRITE":
-			err = targetClient.DeleteFile(ctx, targetPath)
+			err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 			if err != nil {
 				return fmt.Errorf("failed to delete target file for overwrite: %w", err)
 			}
@@ -283,7 +292,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			counter := 1
 			for {
 				candidatePath := path.Join(dir, fmt.Sprintf("%s_copy%d%s", base, counter, ext))
-				candidateExists, _, err := targetClient.FileExists(ctx, candidatePath)
+				candidateExists, _, err := targetClient.FileExists(ctx, task.ResourceType, candidatePath)
 				if err != nil {
 					return fmt.Errorf("failed to check existence of rename candidate: %w", err)
 				}
@@ -301,7 +310,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	}
 
 	// 4. Download and Upload stream
-	downloadStream, _, err := sourceClient.StreamDownload(ctx, task.FilePath)
+	downloadStream, err := sourceClient.StreamDownload(ctx, task.ResourceType, task.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to download from source: %w", err)
 	}
@@ -313,7 +322,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	sourceHashStr := ""
 
 	if task.SourceHash.Valid && task.SourceHash.String != "" {
-		algo, cleanHash := webdav.ParseHashString(task.SourceHash.String)
+		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
 		sourceHashStr = cleanHash
 		if algo == "MD5" {
 			hasher = md5.New()
@@ -324,9 +333,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		}
 	} else {
 		// Fallback to fetch hash directly
-		if fetchedHash, err := sourceClient.GetFileHash(ctx, task.FilePath); err == nil {
+		if fetchedHash, err := sourceClient.GetFileHash(ctx, task.ResourceType, task.FilePath); err == nil {
 			task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
-			algo, cleanHash := webdav.ParseHashString(fetchedHash)
+			algo, cleanHash := storage.ParseHashString(fetchedHash)
 			sourceHashStr = cleanHash
 			if algo == "MD5" {
 				hasher = md5.New()
@@ -376,7 +385,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
 	// If size > 50MB, do chunked upload
 	if task.FileSize > 50*1024*1024 {
-		err = targetClient.StreamUploadChunked(ctx, targetPath, hashingReader, task.FileSize, progressChan)
+		err = targetClient.StreamUploadChunked(ctx, task.ResourceType, targetPath, hashingReader, task.FileSize, progressChan)
 	} else {
 		// Simple upload
 		// Wrap with a progress reporting reader
@@ -384,7 +393,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			Reader:       hashingReader,
 			ProgressChan: progressChan,
 		}
-		err = targetClient.StreamUpload(ctx, targetPath, progressReader, task.FileSize)
+		err = targetClient.StreamUpload(ctx, task.ResourceType, targetPath, progressReader, task.FileSize)
 	}
 	close(progressChan) // Stop progress goroutine
 
@@ -399,10 +408,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	var integrityVerified bool
 	targetHashStr := ""
 
-	targetHashVal, err := targetClient.GetFileHash(ctx, targetPath)
+	targetHashVal, err := targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
 	if err == nil {
 		task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
-		_, targetHashStr = webdav.ParseHashString(targetHashVal)
+		_, targetHashStr = storage.ParseHashString(targetHashVal)
 		
 		// If we had source hash, 3-way check: source == worker == target
 		if sourceHashStr != "" {
@@ -413,7 +422,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		}
 	} else {
 		// Fallback: Size verification
-		existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, targetPath)
+		existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 		if errExists == nil && existsOnTarget {
 			integrityVerified = (task.FileSize == targetSize)
 			task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
