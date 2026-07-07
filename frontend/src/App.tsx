@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ConnectForm } from './components/ConnectForm';
 import { FileBrowser } from './components/FileBrowser';
 import { Dashboard } from './components/Dashboard';
@@ -21,11 +21,48 @@ const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
+const setMigrationInUrl = (id: string) => {
+  const url = new URL(window.location.href);
+  if (id) {
+    url.searchParams.set('migration', id);
+  } else {
+    url.searchParams.delete('migration');
+  }
+  window.history.replaceState({}, '', url.toString());
+};
+
 function App() {
   const [step, setStep] = useState<Step>('connect');
   const [credentials, setCredentials] = useState<any>(null);
   const [initialFiles, setInitialFiles] = useState<any[]>([]);
   const [migrationId, setMigrationId] = useState<string>('');
+  const [isValidating, setIsValidating] = useState<boolean>(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlMigId = params.get('migration');
+    if (urlMigId) {
+      setIsValidating(true);
+      fetch(`${API_URL}/api/migration/${urlMigId}`)
+        .then((res) => {
+          if (res.ok) {
+            setMigrationId(urlMigId);
+            setStep('dashboard');
+          } else {
+            setMigrationInUrl('');
+          }
+        })
+        .catch((err) => {
+          console.error('Fehler bei der Migration-Validierung:', err);
+          // Default to showing the dashboard as a fallback (resilience against temporary network failures)
+          setMigrationId(urlMigId);
+          setStep('dashboard');
+        })
+        .finally(() => {
+          setIsValidating(false);
+        });
+    }
+  }, []);
 
   const handleConnectSuccess = (config: any, files: any[]) => {
     setCredentials(config);
@@ -35,6 +72,7 @@ function App() {
 
   const handleStartSuccess = (id: string) => {
     setMigrationId(id);
+    setMigrationInUrl(id);
     setStep('dashboard');
   };
 
@@ -42,8 +80,20 @@ function App() {
     setCredentials(null);
     setInitialFiles([]);
     setMigrationId('');
+    setMigrationInUrl('');
     setStep('connect');
   };
+
+  if (isValidating) {
+    return (
+      <div className="min-h-screen bg-portal-bg text-slate-800 flex flex-col items-center justify-center font-sans selection:bg-portal-orange selection:text-white">
+        <div className="flex flex-col items-center justify-center gap-4">
+          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-portal-orange"></div>
+          <p className="text-xs italic text-slate-500 font-mono tracking-wider">// PRÜFE AKTIVE MIGRATION...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-portal-bg text-slate-800 flex flex-col font-sans selection:bg-portal-orange selection:text-white relative pb-8">

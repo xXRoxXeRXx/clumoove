@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal, Link, Copy, Check } from 'lucide-react';
 
 interface DashboardProps {
   migrationId: string;
@@ -28,6 +28,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     '🔌 Verbindung zum Migrations-Server aufgebaut...',
     '📡 Empfange Echtzeit-Datenstrom...'
   ]);
+  const [copied, setCopied] = useState<boolean>(false);
+
+  const directLink = `${window.location.origin}${window.location.pathname}?migration=${migrationId}`;
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(directLink)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch((err) => {
+        console.error('Kopieren fehlgeschlagen:', err);
+      });
+  };
   
   const prevBytes = useRef<number>(0);
   const prevTime = useRef<number>(Date.now());
@@ -178,6 +192,33 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   return (
     <div className="w-full max-w-4xl mx-auto py-2">
       
+      {/* Privacy-First Bookmarkable Direct Link Card */}
+      <div className="mb-6 p-4 bg-white border border-portal-border rounded-lg shadow-portal flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex items-start sm:items-center gap-3">
+          <Link className="w-5 h-5 text-portal-orange shrink-0 mt-0.5 sm:mt-0" />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs font-bold text-portal-navy uppercase tracking-wider">Direktlink zu dieser Migration</span>
+            <span className="text-[11px] text-slate-500">Speichere diesen Link als Lesezeichen, um den Fortschritt später wieder aufzurufen.</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 bg-slate-50 border border-portal-border rounded-md px-3 py-1.5 shrink-0 max-w-full overflow-hidden">
+          <span className="font-mono text-xs text-slate-650 truncate select-all" title={directLink}>
+            {directLink}
+          </span>
+          <button
+            onClick={handleCopyLink}
+            className="p-1.5 hover:bg-slate-200 rounded text-slate-500 hover:text-slate-800 transition-colors shrink-0 cursor-pointer"
+            title="Link kopieren"
+          >
+            {copied ? (
+              <Check className="w-4 h-4 text-emerald-600 animate-pulse" />
+            ) : (
+              <Copy className="w-4 h-4" />
+            )}
+          </button>
+        </div>
+      </div>
+
       {/* Background Mode Guarantee Stamp (Grab a coffee) */}
       <div className="mb-6 p-4 bg-[#f0f4f8] border border-[#d2d9e0] rounded-lg flex items-center justify-between text-xs text-[#002f6c] font-semibold">
         <div className="flex items-center gap-3">
