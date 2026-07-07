@@ -98,6 +98,8 @@ func main() {
 	// Routes
 	mux.HandleFunc("POST /api/migration/connect", server.handleConnect)
 	mux.HandleFunc("POST /api/migration/browse", server.handleBrowse)
+	mux.HandleFunc("POST /api/migration/target/browse", server.handleTargetBrowse)
+	mux.HandleFunc("POST /api/migration/target/mkdir", server.handleTargetMkdir)
 	mux.HandleFunc("POST /api/migration/start", server.handleStart)
 	mux.HandleFunc("GET /api/migration/{id}", server.handleGetStatus)
 	mux.HandleFunc("GET /api/migration/{id}/report", server.handleDownloadReport)
@@ -228,6 +230,113 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type TargetBrowseRequest struct {
+	TargetURL      string `json:"target_url"`
+	TargetUsername string `json:"target_username"`
+	TargetPassword string `json:"target_password"`
+	TargetProvider string `json:"target_provider"`
+	Path           string `json:"path"`
+}
+
+func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
+	var req TargetBrowseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetProvider == "" {
+		req.TargetProvider = "nextcloud"
+	}
+
+	targetClient, err := storage.NewProvider(req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	ok, err := targetClient.Connect(ctx)
+	if !ok {
+		// Do NOT forward err.Error() verbatim — the HTTP client may embed the URL
+		// including credentials in the error string.
+		log.Printf("handleTargetBrowse: connection failed for provider %s: %v", req.TargetProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Target connection failed. Check URL and credentials."})
+		return
+	}
+
+	reqPath := req.Path
+	if reqPath == "" {
+		reqPath = "/"
+	}
+
+	files, err := targetClient.GetDirectoryListing(ctx, "files", reqPath)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to list target files for path %s: %v", reqPath, err)})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"files":   files,
+	})
+}
+
+type TargetMkdirRequest struct {
+	TargetURL      string `json:"target_url"`
+	TargetUsername string `json:"target_username"`
+	TargetPassword string `json:"target_password"`
+	TargetProvider string `json:"target_provider"`
+	Path           string `json:"path"`
+}
+
+func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
+	var req TargetMkdirRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetProvider == "" {
+		req.TargetProvider = "nextcloud"
+	}
+	if req.Path == "" || req.Path == "/" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid folder path"})
+		return
+	}
+
+	targetClient, err := storage.NewProvider(req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	ok, err := targetClient.Connect(ctx)
+	if !ok {
+		// Do NOT forward err.Error() verbatim — the HTTP client may embed the URL
+		// including credentials in the error string.
+		log.Printf("handleTargetMkdir: connection failed for provider %s: %v", req.TargetProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Target connection failed. Check URL and credentials."})
+		return
+	}
+
+	err = targetClient.CreateDirectory(ctx, "files", req.Path)
+	if err != nil {
+		log.Printf("handleTargetMkdir: CreateDirectory(%s) failed: %v", req.Path, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to create folder: %s", req.Path)})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+	})
+}
+
 type ConnectRequest struct {
 	SourceURL      string `json:"source_url"`
 	SourceUsername string `json:"source_username"`
@@ -319,6 +428,7 @@ type StartRequest struct {
 	Paths            []string `json:"paths"`             // List of selected paths (files or directories)
 	Calendars        []string `json:"calendars"`         // List of selected calendars
 	Contacts         []string `json:"contacts"`          // List of selected contacts
+	TargetDir        string   `json:"target_dir"`        // Target directory to copy files to
 }
 
 func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
@@ -338,6 +448,11 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetProvider == "" {
 		req.TargetProvider = "nextcloud"
+	}
+
+	targetDir := req.TargetDir
+	if targetDir == "" {
+		targetDir = "/"
 	}
 
 	// Encrypt credentials
@@ -365,6 +480,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		TargetProvider:          req.TargetProvider,
 		Status:                  "INDEXING",
 		ConflictStrategy:        req.ConflictStrategy,
+		TargetDir:               targetDir,
 	}
 
 	migrationID, err := db.CreateMigration(s.db, m)
@@ -468,6 +584,23 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 	err = db.UpdateMigrationTotals(s.db, migID, totalFiles, totalBytes)
 	if err != nil {
 		s.failMigration(migID, fmt.Sprintf("Failed to update migration totals: %v", err))
+		return
+	}
+
+	// Re-evaluate completion: tasks may have all finished before totals were written
+	// (race condition with fast/small migrations). A zero-delta increment re-checks
+	// processed >= total inside the same transaction logic.
+	if err := db.IncrementMigrationProgress(s.db, migID, 0, 0, 0, 0); err != nil {
+		log.Printf("Warning: zero-delta progress check after indexing failed for %s: %v\n", migID, err)
+	}
+
+	if totalFiles == 0 {
+		err = db.UpdateMigrationStatus(s.db, migID, "COMPLETED", nil)
+		if err != nil {
+			s.failMigration(migID, fmt.Sprintf("Failed to set migration completed: %v", err))
+			return
+		}
+		log.Printf("Finished indexing migration %s. 0 files to migrate. Marked COMPLETED.\n", migID)
 		return
 	}
 

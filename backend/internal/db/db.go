@@ -20,6 +20,7 @@ type Migration struct {
 	TargetPasswordEncrypted string         `json:"-"`
 	SourceProvider          string         `json:"source_provider"`
 	TargetProvider          string         `json:"target_provider"`
+	TargetDir               string         `json:"target_dir"`
 	Status                  string         `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
 	ConflictStrategy        string         `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
 	TotalFiles              int            `json:"total_files"`
@@ -75,6 +76,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (resource_type): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS target_dir TEXT NOT NULL DEFAULT '/'`)
+			if err != nil {
+				log.Printf("Failed schema migration (target_dir): %v\n", err)
+			}
 
 			// Set connection pool settings
 			db.SetMaxOpenConns(25)
@@ -95,15 +100,15 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 		INSERT INTO migrations (
 			source_url, source_username, source_password_encrypted,
 			target_url, target_username, target_password_encrypted,
-			source_provider, target_provider, status, conflict_strategy
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			source_provider, target_provider, status, conflict_strategy, target_dir
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
 		m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted,
-		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy,
+		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err != nil {
@@ -119,7 +124,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		       target_url, target_username, target_password_encrypted,
 		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
 		       processed_files, processed_bytes, skipped_files, failed_files,
-		       error_message, created_at, updated_at
+		       error_message, created_at, updated_at, target_dir
 		FROM migrations WHERE id = $1
 	`
 	var m Migration
@@ -128,7 +133,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted,
 		&m.SourceProvider, &m.TargetProvider, &m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
 		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
-		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt,
+		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt, &m.TargetDir,
 	)
 	if err != nil {
 		return nil, err
@@ -171,17 +176,51 @@ func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (str
 }
 
 // IncrementMigrationProgress increments the counters of a migration in the database
+// and transitions the migration to COMPLETED or FAILED once all files are processed.
 func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelta int64, skippedDelta int, failedDelta int) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
 	query := `
 		UPDATE migrations
 		SET processed_files = processed_files + $1,
 		    processed_bytes = processed_bytes + $2,
 		    skipped_files = skipped_files + $3,
-		    failed_files = failed_files + $4
+		    failed_files = failed_files + $4,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $5
+		RETURNING processed_files, total_files, failed_files
 	`
-	_, err := db.Exec(query, filesDelta, bytesDelta, skippedDelta, failedDelta, id)
-	return err
+	var processed, total, failed int
+	err = tx.QueryRow(query, filesDelta, bytesDelta, skippedDelta, failedDelta, id).Scan(&processed, &total, &failed)
+	if err != nil {
+		return err
+	}
+
+	if total > 0 && processed >= total {
+		finalStatus := "COMPLETED"
+		var errMessage sql.NullString
+		if failed == total {
+			finalStatus = "FAILED"
+			errMessage = sql.NullString{String: "All file transfers failed", Valid: true}
+		}
+
+		statusQuery := `
+			UPDATE migrations
+			SET status = $1,
+			    error_message = COALESCE($2, error_message)
+			WHERE id = $3
+		`
+		_, err = tx.Exec(statusQuery, finalStatus, errMessage, id)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // UpdateMigrationTotals sets the total files and total bytes calculated during indexing

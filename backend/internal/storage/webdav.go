@@ -413,6 +413,13 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	return nil
 }
 
+// CreateDirectory creates the given directory path (and all intermediate parents) on
+// the WebDAV server using MKCOL requests. It is idempotent — 405 Method Not Allowed
+// (already exists) is treated as success.
+func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	return p.CreateParentDirectories(ctx, resourceType, path.Join(dirPath, "_placeholder"))
+}
+
 func cleanETag(etag string) string {
 	etag = strings.TrimPrefix(etag, "W/")
 	return strings.Trim(etag, "\"")

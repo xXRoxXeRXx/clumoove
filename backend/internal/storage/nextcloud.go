@@ -566,6 +566,15 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 	return nil
 }
 
+// CreateDirectory creates the given directory path and all intermediate parent directories.
+// Uses MKCOL for normal file directories; CalDAV/CardDAV resource types fall back to
+// CreateParentDirectories which already handles collection-level creation.
+func (p *NextcloudProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	// Reuse CreateParentDirectories by passing a synthetic leaf path so that
+	// CreateParentDirectories walks every component of dirPath.
+	return p.CreateParentDirectories(ctx, resourceType, path.Join(dirPath, "_placeholder"))
+}
+
 func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	u := p.buildResourceURL(resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>

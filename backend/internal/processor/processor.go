@@ -262,6 +262,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 
 	// 3. Conflict Resolution
 	targetPath := task.FilePath
+	if task.ResourceType == "files" {
+		// Use path (POSIX) rather than filepath: WebDAV/Nextcloud paths are always
+		// slash-separated, independent of the OS this server process runs on.
+		targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
+	}
 	exists, _, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to check if target file exists: %w", err)
@@ -273,7 +278,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			task.Status = "SKIPPED"
 			task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
-			_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, 0, 1, 0)
+			_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
 			_ = p.queue.Complete(ctx, p.workerID, payload)
 			return nil
 
@@ -545,7 +550,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		_ = p.queue.Complete(ctx, p.workerID, payload)
 
 		// Increment migration failed files
-		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, 0, 0, 1)
+		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, task.FileSize, 0, 1)
 		fmt.Printf("[Worker %s] Task %s failed permanently after 3 attempts\n", p.workerID, task.ID)
 	}
 }

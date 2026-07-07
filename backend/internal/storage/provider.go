@@ -26,4 +26,5 @@ type StorageProvider interface {
 	DeleteFile(ctx context.Context, resourceType, filePath string) error
 	GetFileHash(ctx context.Context, resourceType, filePath string) (string, error)
 	CreateParentDirectories(ctx context.Context, resourceType, filePath string) error
+	CreateDirectory(ctx context.Context, resourceType, dirPath string) error
 }

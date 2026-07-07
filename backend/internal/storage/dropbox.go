@@ -762,3 +762,11 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 
 	return fmt.Errorf("failed to create directory, status: %d", resp.StatusCode)
 }
+
+// CreateDirectory creates the given directory path in Dropbox (including all intermediate
+// parents). Dropbox's create_folder_v2 endpoint handles nested paths natively.
+func (p *DropboxProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	// CreateParentDirectories already calls create_folder_v2 with the full dir path.
+	// Pass a synthetic child so the parent-extraction yields dirPath itself.
+	return p.CreateParentDirectories(ctx, resourceType, path.Join(dirPath, "_placeholder"))
+}

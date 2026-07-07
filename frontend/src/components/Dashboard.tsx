@@ -29,6 +29,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     '📡 Empfange Echtzeit-Datenstrom...'
   ]);
   const [copied, setCopied] = useState<boolean>(false);
+  const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
 
   const directLink = `${window.location.origin}${window.location.pathname}?migration=${migrationId}`;
 
@@ -152,6 +153,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       setLogs((prev) => [...prev, '⚠️ Websocket-Verbindungsfehler. Versuche automatischen Reconnect...']);
     };
 
+    // Reconnect with exponential backoff (cap 30 s). If the migration ID came from
+    // a bookmarked URL and the server is temporarily down, we surface a clear banner
+    // instead of leaving the user on a frozen loading spinner.
+    let reconnectDelay = 1000;
+    ws.onclose = () => {
+      if (reconnectDelay > 15000) {
+        setServerUnreachable(true);
+        return;
+      }
+      setTimeout(() => {
+        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+        const wsProtoR = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const cleanApiUrlR = apiUrl.replace(/^https?:\/\//, '');
+        const wsUrlR = `${wsProtoR}://${cleanApiUrlR}/api/migration/${migrationId}/ws`;
+        const wsR = new WebSocket(wsUrlR);
+        wsR.onopen = ws.onopen;
+        wsR.onmessage = ws.onmessage;
+        wsR.onerror = ws.onerror;
+        wsR.onclose = ws.onclose;
+        ws = wsR;
+      }, reconnectDelay);
+    };
+
     return () => {
       ws.close();
     };
@@ -172,6 +196,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     const remMins = mins % 60;
     return `${hrs}h ${remMins}m`;
   };
+
+  if (serverUnreachable) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+        <AlertTriangle className="w-10 h-10 text-amber-500" />
+        <p className="font-sans text-sm font-semibold text-slate-700">Server nicht erreichbar</p>
+        <p className="font-sans text-xs text-slate-500 text-center max-w-sm">
+          Die Verbindung zum Migrations-Server konnte nicht hergestellt werden.
+          Bitte stelle sicher, dass der Server läuft, und lade die Seite neu.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-2 px-4 py-2 bg-portal-orange text-white text-xs font-bold rounded-lg hover:bg-portal-orange-hover transition-colors cursor-pointer"
+        >
+          Seite neu laden
+        </button>
+      </div>
+    );
+  }
 
   if (!data) {
     return (

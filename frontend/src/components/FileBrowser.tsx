@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen } from 'lucide-react';
+import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X } from 'lucide-react';
 
 interface CloudFile {
   path: string;
@@ -51,9 +51,104 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>({});
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
   const [conflictStrategy, setConflictStrategy] = useState('SKIP');
-  const [targetDir] = useState('/');
+  const [targetDir, setTargetDir] = useState('/');
+  const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
+  const [targetExpandedPaths, setTargetExpandedPaths] = useState<Record<string, boolean>>({});
+  const [targetDirectoryContents, setTargetDirectoryContents] = useState<Record<string, CloudFile[]>>({});
+  const [targetLoadingPaths, setTargetLoadingPaths] = useState<Record<string, boolean>>({});
+  const [targetError, setTargetError] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const fetchTargetChildren = async (folderPath: string) => {
+    if (targetDirectoryContents[folderPath] || targetLoadingPaths[folderPath]) return;
+
+    setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
+    setTargetError(null);
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/target/browse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_url: credentials.target_url,
+          target_username: credentials.target_username,
+          target_password: credentials.target_password,
+          target_provider: credentials.target_provider,
+          path: folderPath,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Fehler beim Laden des Ziel-Verzeichnisses');
+
+      const data = await response.json();
+      if (data.success) {
+        const foldersOnly = (data.files || []).filter((f: CloudFile) => f.is_dir);
+        setTargetDirectoryContents((prev) => ({ ...prev, [folderPath]: foldersOnly }));
+      } else {
+        setTargetError(data.error || 'Fehler beim Laden des Ziel-Verzeichnisses');
+      }
+    } catch (err) {
+      console.error(err);
+      setTargetError(err instanceof Error ? err.message : 'Fehler beim Laden des Ziel-Verzeichnisses');
+    } finally {
+      setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
+    }
+  };
+
+  const handleCreateTargetFolder = async (parentPath: string) => {
+    if (!newFolderName.trim()) return;
+
+    const fullNewPath = parentPath === '/' 
+      ? `/${newFolderName.trim()}` 
+      : `${parentPath}/${newFolderName.trim()}`;
+
+    setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: true }));
+    setTargetError(null);
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/target/mkdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_url: credentials.target_url,
+          target_username: credentials.target_username,
+          target_password: credentials.target_password,
+          target_provider: credentials.target_provider,
+          path: fullNewPath,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Fehler beim Erstellen des Ordners');
+
+      const data = await response.json();
+      if (data.success) {
+        setNewFolderName('');
+        setIsCreatingFolder(false);
+        
+        setTargetDirectoryContents((prev) => {
+          const next = { ...prev };
+          delete next[parentPath];
+          return next;
+        });
+        await fetchTargetChildren(parentPath);
+      } else {
+        setTargetError(data.error || 'Fehler beim Erstellen des Ordners');
+      }
+    } catch (err) {
+      console.error(err);
+      setTargetError(err instanceof Error ? err.message : 'Fehler beim Erstellen des Ordners');
+    } finally {
+      setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: false }));
+    }
+  };
+
+  const openTargetBrowser = () => {
+    setIsTargetBrowserOpen(true);
+    if (!targetDirectoryContents['/']) {
+      fetchTargetChildren('/');
+    }
+  };
 
   const fetchCalendars = async (force?: boolean) => {
     if (!force && (calendars.length > 0 || loadingCalendars)) return;
@@ -177,6 +272,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           paths: pathsToMigrate,
           calendars: calendarsToMigrate,
           contacts: contactsToMigrate,
+          target_dir: targetDir,
         }),
       });
 
@@ -296,6 +392,87 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             className="text-[10px] text-slate-400 italic py-2.5 pl-14"
           >
             // LEERES VERZEICHNIS
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render target directory tree node recursively
+  const renderTargetNode = (file: CloudFile, depth: number = 0) => {
+    const isExpanded = !!targetExpandedPaths[file.path];
+    const isSelected = targetDir === file.path;
+    const isLoading = !!targetLoadingPaths[file.path];
+    const children = targetDirectoryContents[file.path] || [];
+
+    const toggleTargetExpand = (folderPath: string) => {
+      const nextExpanded = !targetExpandedPaths[folderPath];
+      setTargetExpandedPaths((prev) => ({ ...prev, [folderPath]: nextExpanded }));
+      if (nextExpanded) {
+        fetchTargetChildren(folderPath);
+      }
+    };
+
+    return (
+      <div key={file.path} className="select-none font-sans text-xs">
+        {/* Row */}
+        <div
+          className={`flex items-center gap-2.5 py-2 px-3 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 rounded-md ${
+            isSelected ? 'bg-white font-bold border border-portal-border text-portal-navy shadow-sm' : ''
+          }`}
+          style={{ paddingLeft: `${depth * 16 + 12}px` }}
+          onClick={() => setTargetDir(file.path)}
+        >
+          {/* Collapse/Expand Arrow */}
+          <span 
+            className="w-4 h-4 flex items-center justify-center text-slate-500 hover:text-portal-navy transition-colors cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleTargetExpand(file.path);
+            }}
+          >
+            {isLoading ? (
+              <RefreshCw className="w-3 h-3 animate-spin text-portal-navy" />
+            ) : isExpanded ? (
+              <ChevronDown className="w-3.5 h-3.5" />
+            ) : (
+              <ChevronRight className="w-3.5 h-3.5" />
+            )}
+          </span>
+
+          {/* Icon */}
+          <span className="text-portal-navy">
+            {isExpanded ? (
+              <FolderOpen className="w-4 h-4 text-portal-navy/80" />
+            ) : (
+              <Folder className="w-4 h-4 text-portal-navy/80" />
+            )}
+          </span>
+
+          {/* Name */}
+          <span className={`text-[11.5px] truncate flex-grow ${
+            isSelected ? 'text-portal-navy' : 'text-slate-700'
+          }`}>
+            {file.name}
+          </span>
+
+          {/* Select Indicator */}
+          {isSelected && (
+            <Check className="w-3.5 h-3.5 text-portal-orange stroke-[3]" />
+          )}
+        </div>
+
+        {/* Children (Recursion) */}
+        {isExpanded && (
+          <div className="relative">
+            <div className="absolute left-[20px] top-0 bottom-3 border-l border-slate-200"></div>
+            {children.length > 0 ? (
+              children.map((child) => renderTargetNode(child, depth + 1))
+            ) : isLoading ? null : (
+              <div className="text-[10px] text-slate-400 italic py-2 pl-[42px]">
+                Keine Unterverzeichnisse
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -473,19 +650,29 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               <h3 className="font-display font-bold text-lg text-portal-navy tracking-tight">Konfiguration</h3>
             </div>
 
-            {/* Target Path (Disabled/Standard in MVP) */}
+            {/* Target Path */}
             <div className="space-y-2 text-xs">
               <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">Ziel-Stammverzeichnis</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={targetDir}
-                  className="w-full bg-slate-50 border border-portal-border rounded-lg py-2.5 px-3.5 text-slate-500 cursor-not-allowed font-mono text-xs"
-                  disabled
-                />
+              <div className="flex gap-2">
+                <div className="relative flex-grow">
+                  <input
+                    type="text"
+                    value={targetDir}
+                    className="w-full bg-slate-50 border border-portal-border rounded-lg py-2.5 px-3.5 text-slate-750 font-mono text-xs cursor-default"
+                    readOnly
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={openTargetBrowser}
+                  className="px-3 py-2 bg-portal-navy text-white text-xs font-semibold rounded-lg shadow-sm hover:bg-portal-navy/90 transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span>Durchsuchen</span>
+                </button>
               </div>
               <p className="text-[10px] text-slate-550 leading-relaxed">
-                Kopiert Bestände direkt in das Hauptverzeichnis (/) der Zielinstanz.
+                Kopiert Bestände in den ausgewählten Ordner auf der Zielinstanz.
               </p>
             </div>
 
@@ -580,6 +767,181 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Target Directory Browser Modal */}
+      {isTargetBrowserOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white border border-portal-border rounded-xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-portal-border flex items-center justify-between bg-slate-50">
+              <div>
+                <h3 className="font-display font-bold text-lg text-portal-navy tracking-tight">
+                  Ziel-Verzeichnis auswählen
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Wähle ein Verzeichnis auf der Zielinstanz aus.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsTargetBrowserOpen(false);
+                  setIsCreatingFolder(false);
+                  setNewFolderName('');
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Content - Directory Tree */}
+            <div className="p-4 flex-grow overflow-y-auto min-h-[300px]">
+              {targetError && (
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{targetError}</span>
+                </div>
+              )}
+
+              <div className="border border-portal-border rounded-lg bg-slate-50/50 p-2 overflow-x-auto max-h-[400px]">
+                {/* Root Directory Node */}
+                <div className="select-none font-sans text-xs">
+                  <div
+                    className={`flex items-center gap-2.5 py-2 px-3 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 rounded-md ${
+                      targetDir === '/' ? 'bg-white font-bold border border-portal-border text-portal-navy shadow-sm' : ''
+                    }`}
+                    onClick={() => setTargetDir('/')}
+                  >
+                    <span
+                      className="w-4 h-4 flex items-center justify-center text-slate-500 hover:text-portal-navy transition-colors cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const isExpanded = !!targetExpandedPaths['/'];
+                        setTargetExpandedPaths((prev) => ({ ...prev, '/': !isExpanded }));
+                        if (!isExpanded) fetchTargetChildren('/');
+                      }}
+                    >
+                      {targetLoadingPaths['/'] ? (
+                        <RefreshCw className="w-3 h-3 animate-spin text-portal-navy" />
+                      ) : targetExpandedPaths['/'] ? (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      )}
+                    </span>
+                    <span className="text-portal-navy">
+                      {targetExpandedPaths['/'] ? (
+                        <FolderOpen className="w-4 h-4 text-portal-navy/80" />
+                      ) : (
+                        <Folder className="w-4 h-4 text-portal-navy/80" />
+                      )}
+                    </span>
+                    <span className={`text-[11.5px] truncate flex-grow ${
+                      targetDir === '/' ? 'text-portal-navy' : 'text-slate-700'
+                    }`}>
+                      Hauptverzeichnis (/)
+                    </span>
+                    {targetDir === '/' && (
+                      <Check className="w-3.5 h-3.5 text-portal-orange stroke-[3]" />
+                    )}
+                  </div>
+
+                  {/* Root Children */}
+                  {targetExpandedPaths['/'] && (
+                    <div className="relative">
+                      {/* Tree visual line */}
+                      <div className="absolute left-[20px] top-0 bottom-3 border-l border-slate-200"></div>
+                      
+                      {targetDirectoryContents['/'] && targetDirectoryContents['/'].length > 0 ? (
+                        targetDirectoryContents['/'].map((child) => renderTargetNode(child, 1))
+                      ) : targetLoadingPaths['/'] ? null : (
+                        <div className="text-[10px] text-slate-400 italic py-2 pl-[42px]">
+                          Keine Unterverzeichnisse
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Folder creation form */}
+            {isCreatingFolder && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleCreateTargetFolder(targetDir);
+                }}
+                className="p-4 border-t border-portal-border bg-slate-50 flex items-center gap-3"
+              >
+                <div className="flex-grow">
+                  <label className="block text-[9.5px] text-slate-500 uppercase font-bold tracking-wider mb-1">
+                    Neuer Ordnername in {targetDir}
+                  </label>
+                  <input
+                    type="text"
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    placeholder="z.B. Archiv"
+                    className="w-full bg-white border border-portal-border rounded-lg py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-portal-navy"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex items-end gap-1.5 pt-5">
+                  <button
+                    type="submit"
+                    disabled={!newFolderName.trim()}
+                    className="px-3.5 py-2 bg-portal-orange text-white text-xs font-semibold rounded-lg shadow-sm hover:bg-portal-orange-hover hover:scale-101 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    Erstellen
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatingFolder(false);
+                      setNewFolderName('');
+                    }}
+                    className="px-3.5 py-2 border border-portal-border bg-white text-slate-700 text-xs font-semibold rounded-lg shadow-sm hover:bg-slate-50 transition-all cursor-pointer"
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-portal-border flex items-center justify-between bg-slate-50">
+              <div className="text-left max-w-[200px] md:max-w-[240px]">
+                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Auswahl:</p>
+                <p className="font-mono text-[11px] text-slate-800 truncate font-semibold">{targetDir}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCreatingFolder(true)}
+                  className="px-3 py-2 border border-portal-border bg-white text-slate-700 text-xs font-semibold rounded-lg shadow-sm hover:bg-slate-50 hover:text-portal-navy transition-all flex items-center gap-1.5 cursor-pointer"
+                  title="Neuen Ordner in diesem Verzeichnis erstellen"
+                >
+                  <FolderPlus className="w-4 h-4 text-portal-navy" />
+                  <span>Neuer Ordner</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsTargetBrowserOpen(false);
+                    setIsCreatingFolder(false);
+                    setNewFolderName('');
+                  }}
+                  className="px-4 py-2 bg-portal-orange text-white text-xs font-bold rounded-lg shadow-sm hover:bg-portal-orange-hover hover:scale-101 transition-all cursor-pointer"
+                >
+                  Auswählen
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
