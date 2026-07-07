@@ -227,13 +227,24 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		return fmt.Errorf("failed to fetch migration: %w", err)
 	}
 
+	// If migration is paused or in connection loss, put the task back and sleep,
+	// then return nil to avoid incrementing attempts or marking it failed.
+	if mig.Status == "PAUSED_CONNECTION_LOSS" || mig.Status == "PAUSED" {
+		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
+		select {
+		case <-ctx.Done():
+		case <-time.After(2 * time.Second):
+		}
+		return nil
+	}
+
 	// If migration is in a terminal state (COMPLETED or FAILED), discard the task from the queue.
 	if mig.Status == "COMPLETED" || mig.Status == "FAILED" {
 		_ = p.queue.Complete(ctx, p.workerID, payload)
 		return nil
 	}
 
-	// If migration is paused, put the task back and stop
+	// If migration is in any other non-running state, requeue and return error
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
 		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
 		return fmt.Errorf("migration is in state %s, task skipped for now", mig.Status)
