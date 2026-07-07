@@ -482,7 +482,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			// Algorithm mismatch fallback: verify size
 			existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 			if errExists == nil && existsOnTarget {
-				uploadOK = (task.FileSize == targetSize)
+				if task.FileSize == 0 {
+					uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
+				} else {
+					uploadOK = (task.FileSize == targetSize)
+				}
 				task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
 			} else {
 				uploadOK = false
@@ -492,7 +496,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		// Fallback: Size verification
 		existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 		if errExists == nil && existsOnTarget {
-			uploadOK = (task.FileSize == targetSize)
+			if task.FileSize == 0 {
+				uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
+			} else {
+				uploadOK = (task.FileSize == targetSize)
+			}
 			task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
 		} else {
 			uploadOK = false
