@@ -849,12 +849,15 @@ func (s *APIServer) getRedirectURI(r *http.Request) string {
 
 func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
+	log.Printf("handleOAuthAuth: Hit with provider=%q", provider)
+
 	if provider == "" {
 		http.Error(w, "Missing provider parameter", http.StatusBadRequest)
 		return
 	}
 
 	origin := r.URL.Query().Get("origin")
+	log.Printf("handleOAuthAuth: origin query param=%q", origin)
 	if origin == "" {
 		if referer := r.Header.Get("Referer"); referer != "" {
 			if parsed, err := url.Parse(referer); err == nil {
@@ -865,9 +868,11 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	if origin == "" {
 		origin = "*"
 	}
+	log.Printf("handleOAuthAuth: final origin set to %q", origin)
 
 	stateToken := generateRandomString(16)
 	if stateToken == "" {
+		log.Printf("handleOAuthAuth: Failed to generate state token")
 		http.Error(w, "Failed to generate state token", http.StatusInternalServerError)
 		return
 	}
@@ -886,12 +891,15 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	stateParam := fmt.Sprintf("%s:%s:%s", stateToken, provider, origin)
 
 	redirectURI := s.getRedirectURI(r)
+	log.Printf("handleOAuthAuth: constructing authURL with redirectURI=%s", redirectURI)
 	authURL, err := oauth.GetAuthURL(provider, redirectURI, stateParam)
 	if err != nil {
+		log.Printf("handleOAuthAuth: GetAuthURL failed: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("handleOAuthAuth: Redirecting user to %s", authURL)
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
@@ -899,13 +907,17 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 
+	log.Printf("handleOAuthCallback: Received request with code length %d, state: %q", len(code), state)
+
 	if code == "" || state == "" {
+		log.Printf("handleOAuthCallback: Missing code or state")
 		s.renderOAuthResultHTML(w, "", "", "", "*", "Authorization code or state missing")
 		return
 	}
 
-	parts := strings.Split(state, ":")
+	parts := strings.SplitN(state, ":", 3)
 	if len(parts) < 3 {
+		log.Printf("handleOAuthCallback: Invalid state format (length %d)", len(parts))
 		s.renderOAuthResultHTML(w, "", "", "", "*", "Invalid state parameter format")
 		return
 	}
@@ -913,8 +925,11 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	provider := parts[1]
 	origin := parts[2]
 
+	log.Printf("handleOAuthCallback: parsed provider=%s, origin=%s", provider, origin)
+
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
+		log.Printf("handleOAuthCallback: CSRF check failed. Cookie err: %v, stateToken: %q", err, stateToken)
 		s.renderOAuthResultHTML(w, "", "", "", "*", "CSRF verification failed: state mismatch")
 		return
 	}
@@ -929,20 +944,26 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	http.SetCookie(w, clearCookie)
 
 	redirectURI := s.getRedirectURI(r)
+	log.Printf("handleOAuthCallback: using redirectURI=%s", redirectURI)
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
+	log.Printf("handleOAuthCallback: exchanging code for provider %s...", provider)
 	tokenResp, err := oauth.ExchangeCode(ctx, provider, code, redirectURI)
 	if err != nil {
+		log.Printf("handleOAuthCallback: ExchangeCode failed: %v", err)
 		s.renderOAuthResultHTML(w, "", "", "", origin, fmt.Sprintf("Failed to exchange code: %v", err))
 		return
 	}
 
+	log.Printf("handleOAuthCallback: token exchange successful. Fetching user info...")
 	username, err := oauth.GetUserInfo(ctx, provider, tokenResp.AccessToken)
 	if err != nil {
+		log.Printf("handleOAuthCallback: GetUserInfo failed (defaulting to OAuth User): %v", err)
 		username = "OAuth User"
 	}
 
+	log.Printf("handleOAuthCallback: rendering successful login for user %q", username)
 	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, username, origin)
 }
 
@@ -957,22 +978,52 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 	var script string
 	if errStr != "" {
 		script = fmt.Sprintf(`
-			window.opener.postMessage({
-				type: "oauth-error",
-				error: %q
-			}, %q);
-			window.close();
-		`, errStr, targetOrigin)
+			console.log("OAuth error occurred:", %q);
+			try {
+				if (!window.opener) {
+					console.error("window.opener is null on error page!");
+				} else {
+					window.opener.postMessage({
+						type: "oauth-error",
+						error: %q
+					}, %q);
+				}
+			} catch (e) {
+				console.error("Failed to post oauth-error:", e);
+			}
+			// Don't close immediately so the user can read the error if it fails to post
+			setTimeout(() => { window.close(); }, 1000);
+		`, errStr, errStr, targetOrigin)
 	} else {
 		script = fmt.Sprintf(`
-			window.opener.postMessage({
-				type: "oauth-success",
-				provider: %q,
-				token: %q,
-				username: %q
-			}, %q);
-			window.close();
-		`, provider, token, username, targetOrigin)
+			console.log("OAuth successful. Sending credentials to opener at", %q);
+			try {
+				if (!window.opener) {
+					console.error("window.opener is null!");
+					var errMsg = document.createElement("p");
+					errMsg.style.color = "red";
+					errMsg.style.fontWeight = "bold";
+					errMsg.style.marginTop = "15px";
+					errMsg.innerText = "Fehler: window.opener ist null. Bitte überprüfe deine Browser-Sicherheitseinstellungen (z.B. Pop-up-Blocker oder Brave Shields).";
+					document.querySelector(".card").appendChild(errMsg);
+				} else {
+					window.opener.postMessage({
+						type: "oauth-success",
+						provider: %q,
+						token: %q,
+						username: %q
+					}, %q);
+					console.log("postMessage sent successfully.");
+					window.close();
+				}
+			} catch (e) {
+				console.error("Failed to post oauth-success:", e);
+				var errMsg = document.createElement("p");
+				errMsg.style.color = "red";
+				errMsg.innerText = "Fehler beim Senden der Anmeldedaten: " + e.message;
+				document.querySelector(".card").appendChild(errMsg);
+			}
+		`, targetOrigin, provider, token, username, targetOrigin)
 	}
 
 	fmt.Fprintf(w, `
