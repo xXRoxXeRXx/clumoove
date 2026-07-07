@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS migrations (
     target_url TEXT NOT NULL,
     target_username TEXT NOT NULL,
     target_password_encrypted TEXT NOT NULL,
+    source_provider TEXT NOT NULL DEFAULT 'nextcloud',
+    target_provider TEXT NOT NULL DEFAULT 'nextcloud',
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
     conflict_strategy TEXT NOT NULL DEFAULT 'SKIP', -- SKIP, OVERWRITE, RENAME
     total_files INT NOT NULL DEFAULT 0,
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     worker_hash TEXT,
     target_hash TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
+    resource_type TEXT NOT NULL DEFAULT 'files', -- files, calendars, contacts
     error_message TEXT,
     attempts INT NOT NULL DEFAULT 0,
     next_retry_at TIMESTAMP WITH TIME ZONE,

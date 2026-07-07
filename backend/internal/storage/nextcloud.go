@@ -1,4 +1,4 @@
-package webdav
+package storage
 
 import (
 	"bytes"
@@ -15,16 +15,7 @@ import (
 	"time"
 )
 
-type CloudFile struct {
-	Path         string    `json:"path"`
-	Name         string    `json:"name"`
-	Size         int64     `json:"size"`
-	IsDir        bool      `json:"is_dir"`
-	Hash         string    `json:"hash"`
-	LastModified time.Time `json:"last_modified"`
-}
-
-type Client struct {
+type NextcloudProvider struct {
 	BaseURL    string
 	Username   string
 	Password   string
@@ -63,61 +54,65 @@ type XMLChecksums struct {
 	Checksum []string `xml:"checksum"`
 }
 
-func NewClient(rawURL, username, password string) (*Client, error) {
-	// Normalize URL: ensure it ends with /remote.php/dav
+func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider, error) {
 	baseURL := strings.TrimSuffix(rawURL, "/")
 	if !strings.Contains(baseURL, "/remote.php/dav") {
 		baseURL = baseURL + "/remote.php/dav"
 	}
 
-	return &Client{
+	return &NextcloudProvider{
 		BaseURL:  baseURL,
 		Username: username,
 		Password: password,
 		HTTPClient: &http.Client{
-			Timeout: 0, // No timeout for large transfers, stream timeouts will be handled at read/write level
+			Timeout: 0,
 		},
 	}, nil
 }
 
-func (c *Client) buildURL(endpointPath string, isUploads bool) string {
-	var ns string
-	if isUploads {
-		ns = "uploads"
-	} else {
-		ns = "files"
-	}
-
-	// Nextcloud WebDAV path format: /remote.php/dav/files/username/path
+func (p *NextcloudProvider) buildResourceURL(resourceType string, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
 	escapedPath := &url.URL{Path: cleanPath}
-	
-	return fmt.Sprintf("%s/%s/%s/%s", c.BaseURL, ns, c.Username, escapedPath.String())
+	escapedUser := url.PathEscape(p.Username)
+
+	switch resourceType {
+	case "calendars":
+		return fmt.Sprintf("%s/calendars/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
+	case "contacts":
+		return fmt.Sprintf("%s/addressbooks/users/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
+	default: // "files"
+		return fmt.Sprintf("%s/files/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
+	}
 }
 
-func (c *Client) newRequest(method, urlStr string, body io.Reader) (*http.Request, error) {
+func (p *NextcloudProvider) buildUploadsURL(endpointPath string) string {
+	cleanPath := strings.TrimPrefix(endpointPath, "/")
+	escapedPath := &url.URL{Path: cleanPath}
+	escapedUser := url.PathEscape(p.Username)
+	return fmt.Sprintf("%s/uploads/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
+}
+
+func (p *NextcloudProvider) newRequest(method, urlStr string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequest(method, urlStr, body)
 	if err != nil {
 		return nil, err
 	}
-	req.SetBasicAuth(c.Username, c.Password)
+	req.SetBasicAuth(p.Username, p.Password)
 	req.Header.Set("User-Agent", "Nextcloud-Migration-Worker/1.0")
 	return req, nil
 }
 
-// Connect checks connection credentials by querying the root folder
-func (c *Client) Connect(ctx context.Context) (bool, error) {
-	u := c.buildURL("/", false)
-	
-	// Send PROPFIND request with Depth: 0
+func (p *NextcloudProvider) Connect(ctx context.Context) (bool, error) {
+	// Query root folders via PROPFIND to test credentials
+	u := p.buildResourceURL("files", "/")
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:">
 			<d:prop>
 				<d:resourcetype/>
 			</d:prop>
 		</d:propfind>`)
-	
-	req, err := c.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+
+	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
 	if err != nil {
 		return false, err
 	}
@@ -125,7 +120,7 @@ func (c *Client) Connect(ctx context.Context) (bool, error) {
 	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
 	req = req.WithContext(ctx)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return false, err
 	}
@@ -141,9 +136,8 @@ func (c *Client) Connect(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// GetDirectoryListing lists files/folders in the specified path (asynchronously rendered in frontend)
-func (c *Client) GetDirectoryListing(ctx context.Context, dirPath string) ([]CloudFile, error) {
-	u := c.buildURL(dirPath, false)
+func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
+	u := p.buildResourceURL(resourceType, resourcePath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
@@ -155,7 +149,86 @@ func (c *Client) GetDirectoryListing(ctx context.Context, dirPath string) ([]Clo
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := c.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	if err != nil {
+		return CloudResource{}, err
+	}
+	req.Header.Set("Depth", "0")
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	req = req.WithContext(ctx)
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return CloudResource{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return CloudResource{}, fmt.Errorf("inspect failed with status: %d", resp.StatusCode)
+	}
+
+	var multistatus XMLMultistatus
+	decoder := xml.NewDecoder(resp.Body)
+	if err := decoder.Decode(&multistatus); err != nil {
+		return CloudResource{}, err
+	}
+
+	if len(multistatus.Responses) == 0 {
+		return CloudResource{}, fmt.Errorf("no resource found at path: %s", resourcePath)
+	}
+
+	r := multistatus.Responses[0]
+	var res CloudResource
+	res.Path = resourcePath
+	res.Name = path.Base(resourcePath)
+
+	for _, pstat := range r.Propstat {
+		if strings.Contains(pstat.Status, "200 OK") {
+			prop := pstat.Prop
+			res.IsDir = prop.ResourceType.Collection != nil
+			
+			if !res.IsDir {
+				if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {
+					res.Size = size
+				}
+			}
+
+			if prop.GetLastModified != "" {
+				if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
+					res.LastModified = t
+				}
+			}
+
+			// Parse checksums
+			if prop.Checksums != nil {
+				for _, checksum := range prop.Checksums.Checksum {
+					res.Hash = checksum
+					break
+				}
+			}
+			if res.Hash == "" && prop.GetContentHash != "" {
+				res.Hash = prop.GetContentHash
+			}
+		}
+	}
+
+	return res, nil
+}
+
+func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	u := p.buildResourceURL(resourceType, dirPath)
+
+	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
+		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
+			<d:prop>
+				<d:getlastmodified/>
+				<d:getcontentlength/>
+				<d:resourcetype/>
+				<oc:checksums/>
+			</d:prop>
+		</d:propfind>`)
+
+	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +236,7 @@ func (c *Client) GetDirectoryListing(ctx context.Context, dirPath string) ([]Clo
 	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
 	req = req.WithContext(ctx)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -179,10 +252,25 @@ func (c *Client) GetDirectoryListing(ctx context.Context, dirPath string) ([]Clo
 		return nil, err
 	}
 
-	var files []CloudFile
+	var resources []CloudResource
 	
-	// Helper to extract clean path from url-decoded href
-	prefixPath := fmt.Sprintf("/remote.php/dav/files/%s", c.Username)
+	uParsed, parseErr := url.Parse(p.BaseURL)
+	var basePath string
+	if parseErr == nil {
+		basePath = strings.TrimSuffix(uParsed.Path, "/")
+	} else {
+		basePath = "/remote.php/dav"
+	}
+
+	var prefixPath string
+	switch resourceType {
+	case "calendars":
+		prefixPath = fmt.Sprintf("%s/calendars/%s", basePath, p.Username)
+	case "contacts":
+		prefixPath = fmt.Sprintf("%s/addressbooks/users/%s", basePath, p.Username)
+	default:
+		prefixPath = fmt.Sprintf("%s/files/%s", basePath, p.Username)
+	}
 
 	for _, r := range multistatus.Responses {
 		decodedHref, err := url.PathUnescape(r.Href)
@@ -190,7 +278,6 @@ func (c *Client) GetDirectoryListing(ctx context.Context, dirPath string) ([]Clo
 			decodedHref = r.Href
 		}
 
-		// Ensure we only look at paths inside the user's directory
 		if !strings.HasPrefix(decodedHref, prefixPath) {
 			continue
 		}
@@ -207,81 +294,76 @@ func (c *Client) GetDirectoryListing(ctx context.Context, dirPath string) ([]Clo
 			continue
 		}
 
-		var file CloudFile
-		file.Path = relativeHref
-		file.Name = path.Base(relativeHref)
+		var res CloudResource
+		res.Path = relativeHref
+		res.Name = path.Base(relativeHref)
 
 		// Parse properties
 		for _, pstat := range r.Propstat {
-			// Find the successful propstat
 			if strings.Contains(pstat.Status, "200 OK") {
 				prop := pstat.Prop
-				file.IsDir = prop.ResourceType.Collection != nil
+				res.IsDir = prop.ResourceType.Collection != nil
 				
-				if !file.IsDir {
+				if !res.IsDir {
 					if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {
-						file.Size = size
+						res.Size = size
 					}
 				}
 
 				if prop.GetLastModified != "" {
 					if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
-						file.LastModified = t
+						res.LastModified = t
 					}
 				}
 
 				// Parse checksums
 				if prop.Checksums != nil {
 					for _, checksum := range prop.Checksums.Checksum {
-						// Format: SHA1:xxx or MD5:xxx
-						file.Hash = checksum
+						res.Hash = checksum
 						break
 					}
 				}
-				if file.Hash == "" && prop.GetContentHash != "" {
-					file.Hash = prop.GetContentHash
+				if res.Hash == "" && prop.GetContentHash != "" {
+					res.Hash = prop.GetContentHash
 				}
 			}
 		}
-		files = append(files, file)
+		resources = append(resources, res)
 	}
 
-	return files, nil
+	return resources, nil
 }
 
-// StreamDownload returns a Reader containing the file stream
-func (c *Client) StreamDownload(ctx context.Context, filePath string) (io.ReadCloser, http.Header, error) {
-	u := c.buildURL(filePath, false)
-	req, err := c.newRequest("GET", u, nil)
+func (p *NextcloudProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
+	u := p.buildResourceURL(resourceType, filePath)
+	req, err := p.newRequest("GET", u, nil)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	req = req.WithContext(ctx)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
-		return nil, nil, fmt.Errorf("download failed with status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("download failed with status: %d", resp.StatusCode)
 	}
 
-	return resp.Body, resp.Header, nil
+	return resp.Body, nil
 }
 
-// StreamUpload uploads a simple (non-chunked) file stream directly
-func (c *Client) StreamUpload(ctx context.Context, filePath string, stream io.Reader, size int64) error {
-	u := c.buildURL(filePath, false)
+func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	u := p.buildResourceURL(resourceType, filePath)
 	
-	// Make sure parent directories exist
-	err := c.CreateParentDirectories(ctx, filePath)
+	err := p.CreateParentDirectories(ctx, resourceType, filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
-	req, err := c.newRequest("PUT", u, stream)
+	req, err := p.newRequest("PUT", u, stream)
 	if err != nil {
 		return err
 	}
@@ -289,9 +371,16 @@ func (c *Client) StreamUpload(ctx context.Context, filePath string, stream io.Re
 	if size > 0 {
 		req.ContentLength = size
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
+	contentType := "application/octet-stream"
+	switch resourceType {
+	case "calendars":
+		contentType = "text/calendar; charset=utf-8"
+	case "contacts":
+		contentType = "text/vcard; charset=utf-8"
+	}
+	req.Header.Set("Content-Type", contentType)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -304,24 +393,20 @@ func (c *Client) StreamUpload(ctx context.Context, filePath string, stream io.Re
 	return nil
 }
 
-// StreamUploadChunked performs a Chunked Upload v2 for large files (> 50 MB)
-func (c *Client) StreamUploadChunked(ctx context.Context, filePath string, stream io.Reader, fileSize int64, progressChan chan<- int64) error {
-	// Create parent directories for final file
-	if err := c.CreateParentDirectories(ctx, filePath); err != nil {
+func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, fileSize int64, progressChan chan<- int64) error {
+	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
 		return fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
-	// Generate a unique transfer ID based on file path
 	transferID := fmt.Sprintf("upload-%x", time.Now().UnixNano())
+	uploadsFolderURL := p.buildUploadsURL("/" + transferID)
 	
-	// Create upload folder: MKCOL /remote.php/dav/uploads/username/transferID
-	uploadsFolderURL := c.buildURL("/"+transferID, true)
-	req, err := c.newRequest("MKCOL", uploadsFolderURL, nil)
+	req, err := p.newRequest("MKCOL", uploadsFolderURL, nil)
 	if err != nil {
 		return err
 	}
 	req = req.WithContext(ctx)
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -330,28 +415,25 @@ func (c *Client) StreamUploadChunked(ctx context.Context, filePath string, strea
 		return fmt.Errorf("failed to create upload directory, status: %d", resp.StatusCode)
 	}
 
-	// Buffer size for chunks: 10MB
 	chunkSize := int64(10 * 1024 * 1024)
 	buffer := make([]byte, chunkSize)
 	var chunkIndex int
 	var totalUploaded int64
 
 	for {
-		// Read exact chunk size from stream
 		bytesRead, err := io.ReadFull(stream, buffer)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return err
 		}
 
 		if bytesRead == 0 {
-			break // EOF reached
+			break
 		}
 
 		chunkData := buffer[:bytesRead]
 		chunkURL := fmt.Sprintf("%s/%08d", uploadsFolderURL, chunkIndex)
 		
-		// Upload the chunk
-		err = c.uploadChunkWithRetry(ctx, chunkURL, chunkData)
+		err = p.uploadChunkWithRetry(ctx, chunkURL, chunkData)
 		if err != nil {
 			return fmt.Errorf("failed to upload chunk %d: %w", chunkIndex, err)
 		}
@@ -363,23 +445,21 @@ func (c *Client) StreamUploadChunked(ctx context.Context, filePath string, strea
 
 		chunkIndex++
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			break // Stream finished
+			break
 		}
 	}
 
-	// Commit upload: MOVE /remote.php/dav/uploads/username/transferID/.file
-	// Header: Destination: /remote.php/dav/files/username/filePath
 	commitURL := fmt.Sprintf("%s/.file", uploadsFolderURL)
-	req, err = c.newRequest("MOVE", commitURL, nil)
+	req, err = p.newRequest("MOVE", commitURL, nil)
 	if err != nil {
 		return err
 	}
 	req = req.WithContext(ctx)
 	
-	destURL := c.buildURL(filePath, false)
+	destURL := p.buildResourceURL(resourceType, filePath)
 	req.Header.Set("Destination", destURL)
 
-	resp, err = c.HTTPClient.Do(req)
+	resp, err = p.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -392,10 +472,10 @@ func (c *Client) StreamUploadChunked(ctx context.Context, filePath string, strea
 	return nil
 }
 
-func (c *Client) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte) error {
+func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		req, err := c.newRequest("PUT", chunkURL, bytes.NewReader(data))
+		req, err := p.newRequest("PUT", chunkURL, bytes.NewReader(data))
 		if err != nil {
 			return err
 		}
@@ -403,7 +483,7 @@ func (c *Client) uploadChunkWithRetry(ctx context.Context, chunkURL string, data
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = int64(len(data))
 
-		resp, err := c.HTTPClient.Do(req)
+		resp, err := p.HTTPClient.Do(req)
 		if err != nil {
 			lastErr = err
 			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
@@ -420,34 +500,64 @@ func (c *Client) uploadChunkWithRetry(ctx context.Context, chunkURL string, data
 	return lastErr
 }
 
-// CreateParentDirectories recursively creates folder structures if they do not exist
-func (c *Client) CreateParentDirectories(ctx context.Context, filePath string) error {
+func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	dir := path.Dir(filePath)
 	if dir == "." || dir == "/" || dir == "" {
 		return nil
 	}
 
-	// Split parts and create folders sequentially
 	parts := strings.Split(strings.Trim(dir, "/"), "/")
+
+	// CalDAV and CardDAV collections are always flat — sub-collections do not exist per spec.
+	// Only create the top-level collection (the calendar or addressbook itself).
+	if (resourceType == "calendars" || resourceType == "contacts") && len(parts) > 1 {
+		parts = parts[:1]
+	}
+
 	currentPath := ""
-	for _, part := range parts {
+	for i, part := range parts {
 		currentPath = currentPath + "/" + part
-		u := c.buildURL(currentPath, false)
+		u := p.buildResourceURL(resourceType, currentPath)
 		
-		// MKCOL request
-		req, err := c.newRequest("MKCOL", u, nil)
+		var req *http.Request
+		var err error
+
+		if resourceType == "calendars" && i == 0 {
+			// Create calendar folder using MKCALENDAR
+			req, err = p.newRequest("MKCALENDAR", u, nil)
+		} else if resourceType == "contacts" && i == 0 {
+			// Create addressbook folder using CardDAV MKCOL XML body
+			body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
+				<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+					<D:set>
+						<D:prop>
+							<D:resourcetype>
+								<D:collection/>
+								<C:addressbook/>
+							</D:resourcetype>
+						</D:prop>
+					</D:set>
+				</D:mkcol>`)
+			req, err = p.newRequest("MKCOL", u, bytes.NewBuffer(body))
+			if err == nil {
+				req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+			}
+		} else {
+			// Normal folder creation
+			req, err = p.newRequest("MKCOL", u, nil)
+		}
+
 		if err != nil {
 			return err
 		}
 		req = req.WithContext(ctx)
 		
-		resp, err := c.HTTPClient.Do(req)
+		resp, err := p.HTTPClient.Do(req)
 		if err != nil {
 			return err
 		}
 		resp.Body.Close()
 
-		// 201 Created or 405 Method Not Allowed (means folder already exists) are fine
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
@@ -455,9 +565,8 @@ func (c *Client) CreateParentDirectories(ctx context.Context, filePath string) e
 	return nil
 }
 
-// GetFileHash retrieves the checksum of a file directly from Nextcloud
-func (c *Client) GetFileHash(ctx context.Context, filePath string) (string, error) {
-	u := c.buildURL(filePath, false)
+func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	u := p.buildResourceURL(resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
 			<d:prop>
@@ -466,7 +575,7 @@ func (c *Client) GetFileHash(ctx context.Context, filePath string) (string, erro
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := c.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
 	if err != nil {
 		return "", err
 	}
@@ -474,7 +583,7 @@ func (c *Client) GetFileHash(ctx context.Context, filePath string) (string, erro
 	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
 	req = req.WithContext(ctx)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -507,18 +616,16 @@ func (c *Client) GetFileHash(ctx context.Context, filePath string) (string, erro
 	}
 
 	// Try extracting checksum from HEAD response headers if PROPFIND didn't yield it
-	headReq, err := c.newRequest("HEAD", u, nil)
+	headReq, err := p.newRequest("HEAD", u, nil)
 	if err == nil {
 		headReq = headReq.WithContext(ctx)
-		if headResp, err := c.HTTPClient.Do(headReq); err == nil {
+		if headResp, err := p.HTTPClient.Do(headReq); err == nil {
 			headResp.Body.Close()
 			if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
 				return chk, nil
 			}
 			if chk := headResp.Header.Get("ETag"); chk != "" {
-				// Etag contains hash in double quotes sometimes, e.g., "da39a3ee5e6b4b0d3255bfef95601890afd80709"
 				etag := strings.Trim(chk, "\"")
-				// Nextcloud Etags are sometimes suffix-hash or simple MD5
 				if len(etag) >= 32 {
 					return etag, nil
 				}
@@ -529,16 +636,15 @@ func (c *Client) GetFileHash(ctx context.Context, filePath string) (string, erro
 	return "", fmt.Errorf("checksum not available")
 }
 
-// FileExists checks if a file exists on WebDAV and returns its size
-func (c *Client) FileExists(ctx context.Context, filePath string) (bool, int64, error) {
-	u := c.buildURL(filePath, false)
-	req, err := c.newRequest("HEAD", u, nil)
+func (p *NextcloudProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	u := p.buildResourceURL(resourceType, filePath)
+	req, err := p.newRequest("HEAD", u, nil)
 	if err != nil {
 		return false, 0, err
 	}
 	req = req.WithContext(ctx)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return false, 0, err
 	}
@@ -555,16 +661,15 @@ func (c *Client) FileExists(ctx context.Context, filePath string) (bool, int64, 
 	return false, 0, fmt.Errorf("HEAD check failed with status: %d", resp.StatusCode)
 }
 
-// DeleteFile deletes a file on WebDAV (e.g. for overwrite conflict strategy)
-func (c *Client) DeleteFile(ctx context.Context, filePath string) error {
-	u := c.buildURL(filePath, false)
-	req, err := c.newRequest("DELETE", u, nil)
+func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	u := p.buildResourceURL(resourceType, filePath)
+	req, err := p.newRequest("DELETE", u, nil)
 	if err != nil {
 		return err
 	}
 	req = req.WithContext(ctx)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -576,8 +681,8 @@ func (c *Client) DeleteFile(ctx context.Context, filePath string) error {
 	return nil
 }
 
-// Helper function to extract hash clean format
-// Returns e.g. "SHA1", "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+var hexRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
+
 func ParseHashString(hashStr string) (string, string) {
 	hashStr = strings.Trim(hashStr, "\"")
 	parts := strings.SplitN(hashStr, ":", 2)
@@ -585,9 +690,7 @@ func ParseHashString(hashStr string) (string, string) {
 		return strings.ToUpper(parts[0]), strings.ToLower(parts[1])
 	}
 	
-	// If it matches MD5 (32 hex chars) or SHA1 (40 hex chars) without prefix
-	matchHex, _ := regexp.MatchString("^[0-9a-fA-F]+$", hashStr)
-	if matchHex {
+	if hexRegexp.MatchString(hashStr) {
 		if len(hashStr) == 32 {
 			return "MD5", strings.ToLower(hashStr)
 		}

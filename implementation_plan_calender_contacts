@@ -1,0 +1,143 @@
+# Multi-Provider Migration von Dateien, Kalendern & Kontakten
+
+Ja, die Endausbaustufe soll absolut **multi-provider-fähig** sein (z. B. Migration von/zu Google Drive, Google Calendar, Google Contacts, iCloud, lokalem Speicher, etc.). 
+
+Um dies von Anfang an sauber zu unterstützen, führen wir ein provider-unabhängiges **`StorageProvider`-Interface** im Backend ein. Alle spezifischen Schnittstellen (wie Nextcloud WebDAV/CalDAV/CardDAV oder später die Google APIs) implementieren dieses Interface. Der Migrations-Worker und das API-Gateway arbeiten ausschließlich mit diesem Interface, wodurch neue Dienste ohne Änderungen an der Kernlogik (Queue, Resilienz, DB-Handling) hinzugefügt werden können.
+
+---
+
+## Architektur-Design (Multi-Provider)
+
+Wir entkoppeln die Anwendung mithilfe eines Interfaces:
+
+```mermaid
+graph TD
+    Worker[Go Worker / Processor] -->|Nutzt| API_Interface[StorageProvider Interface]
+    API_Interface -->|Implementiert durch| NC[Nextcloud Adapter WebDAV/CalDAV/CardDAV]
+    API_Interface -.->|Zukünftige Implementierung| Google[Google Adapter Drive/Calendar/People API]
+    API_Interface -.->|Zukünftige Implementierung| Local[Local File System Adapter]
+```
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Zukunftssicheres Interface:**
+> Das `StorageProvider`-Interface wird generisch gestaltet. Es unterscheidet Operationen anhand von `resourceType` (`"files"`, `"calendars"`, `"contacts"`). So können Provider, die z. B. nur Kontakte unterstützen, gezielt angebunden werden.
+
+---
+
+## Proposed Changes
+
+### 1. Database (PostgreSQL) Schema-Erweiterung
+
+Wir fügen Spalten für den Provider-Typ (`nextcloud`, `google`, etc.) und den Ressourcentyp (`files`, `calendars`, `contacts`) hinzu.
+
+#### [MODIFY] [schema.sql](file:///c:/Users/meyer/Development/migration/db/schema.sql)
+Erweiterung der Tabellen im Initial-Schema:
+```sql
+ALTER TABLE migrations ADD COLUMN IF NOT EXISTS source_provider TEXT NOT NULL DEFAULT 'nextcloud';
+ALTER TABLE migrations ADD COLUMN IF NOT EXISTS target_provider TEXT NOT NULL DEFAULT 'nextcloud';
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS resource_type TEXT NOT NULL DEFAULT 'files'; -- files, calendars, contacts
+```
+
+#### [MODIFY] [db.go](file:///c:/Users/meyer/Development/migration/backend/internal/db/db.go)
+- Ergänzung der Felder `SourceProvider` und `TargetProvider` im `Migration`-Struct sowie `ResourceType` im `Task`-Struct.
+- Automatische Spalten-Migration (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) in `InitDB`.
+- Anpassung der CRUD-Funktionen (`CreateMigration`, `GetMigration`, `CreateTask`, `GetTask`).
+
+---
+
+### 2. Go Backend (Interface & Nextcloud Adapter)
+
+#### [NEW] [provider.go](file:///c:/Users/meyer/Development/migration/backend/internal/storage/provider.go)
+Definiert das provider-agnostische Interface:
+```go
+package storage
+
+import (
+	"context"
+	"io"
+	"time"
+)
+
+type CloudResource struct {
+	Path         string    `json:"path"`
+	Name         string    `json:"name"`
+	Size         int64     `json:"size"`
+	IsDir        bool      `json:"is_dir"`
+	Hash         string    `json:"hash"`
+	LastModified time.Time `json:"last_modified"`
+}
+
+type StorageProvider interface {
+	Connect(ctx context.Context) (bool, error)
+	GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error)
+	StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error)
+	StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error
+	StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error
+	FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error)
+	DeleteFile(ctx context.Context, resourceType, filePath string) error
+	GetFileHash(ctx context.Context, resourceType, filePath string) (string, error)
+	CreateParentDirectories(ctx context.Context, resourceType, filePath string) error
+}
+```
+
+#### [NEW] [nextcloud.go](file:///c:/Users/meyer/Development/migration/backend/internal/storage/nextcloud.go)
+- Implementiert das `StorageProvider`-Interface unter Verwendung der Nextcloud WebDAV/CalDAV/CardDAV-Endpunkte.
+- Nutzt die Namespaces:
+  - `files` -> `/remote.php/dav/files/{username}/{path}`
+  - `calendars` -> `/remote.php/dav/calendars/{username}/{path}` (Erstellung mit `MKCALENDAR`)
+  - `contacts` -> `/remote.php/dav/addressbooks/users/{username}/{path}` (Erstellung mit `MKCOL` und CardDAV XML-Body)
+
+#### [NEW] [factory.go](file:///c:/Users/meyer/Development/migration/backend/internal/storage/factory.go)
+Erstellt die Adapter-Instanzen basierend auf dem Provider-Typ:
+```go
+func NewProvider(providerType, urlStr, username, password string) (StorageProvider, error)
+```
+
+#### [MODIFY] [processor.go](file:///c:/Users/meyer/Development/migration/backend/internal/processor/processor.go)
+- Refactoring, um `storage.StorageProvider` statt des direkten WebDAV-Clients zu nutzen. Alle Transfer-Abläufe verwenden die abstrakten Methoden des Interfaces.
+
+#### [MODIFY] [main.go](file:///c:/Users/meyer/Development/migration/backend/cmd/api/main.go)
+- Verwendung der `storage`-Factory zur Instanziierung der Provider.
+- Übergabe des angeforderten `resource_type` an die Connect- und Indexierungs-Logik.
+
+---
+
+### 3. Frontend Component (React SPA)
+
+#### [MODIFY] [ConnectForm.tsx](file:///c:/Users/meyer/Development/migration/frontend/src/components/ConnectForm.tsx)
+- Vorbereitung für die Provider-Auswahl (Nextcloud voreingestellt, Google ausgegraut/"Demnächst verfügbar").
+- Senden von `source_provider` und `target_provider` an die API.
+
+#### [MODIFY] [FileBrowser.tsx](file:///c:/Users/meyer/Development/migration/frontend/src/components/FileBrowser.tsx)
+- Integration eines Tab-Switchers am oberen Rand mit den Optionen:
+  - **Dateien** (bisheriges Dateibaum-Interface)
+  - **Kalender** (Liste der gefundenen Kalender mit Checkboxen)
+  - **Kontakte** (Liste der gefundenen Adressbücher mit Checkboxen)
+- Laden der Kalender/Kontakte per API-Anfrage mit dem jeweiligen `resource_type`.
+- Senden der ausgewählten Quellpfade (`paths`, `calendars`, `contacts`) an `/api/migration/start`.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Syntaxprüfung: `go vet ./...` im Backend-Verzeichnis.
+- Kompilierung der Go-Services.
+
+### Manual Verification
+1. **Docker-Neustart:**
+   ```bash
+   docker compose down
+   docker compose up --build -d
+   ```
+2. **Kalender-Migrationstest (Nextcloud -> Nextcloud):**
+   - Auswahl eines Testkalenders im neuen "Kalender"-Tab.
+   - Starten der Migration und Überprüfung in der Ziel-Nextcloud, ob der Kalender angelegt und alle Termine (.ics) korrekt übertragen wurden.
+3. **Kontakte-Migrationstest (Nextcloud -> Nextcloud):**
+   - Auswahl eines Adressbuchs im neuen "Kontakte"-Tab.
+   - Starten der Migration und Überprüfung in der Ziel-Nextcloud, ob das Adressbuch existiert und alle Kontakte (.vcf) importiert wurden.
