@@ -187,7 +187,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := storage.NewProvider(req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := storage.NewProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
 		return
@@ -249,7 +249,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		req.TargetProvider = "nextcloud"
 	}
 
-	targetClient, err := storage.NewProvider(req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
 		return
@@ -307,7 +307,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetClient, err := storage.NewProvider(req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
 		return
@@ -368,7 +368,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Test Source Connection
-	sourceClient, err := storage.NewProvider(req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := storage.NewProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
 		return
@@ -386,7 +386,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Test Target Connection
-	targetClient, err := storage.NewProvider(req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
 		return
@@ -516,7 +516,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 		return
 	}
 
-	sourceClient, err := storage.NewProvider(mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
 		s.failMigration(migID, fmt.Sprintf("Failed to create storage provider: %v", err))
 		return

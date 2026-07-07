@@ -16,6 +16,7 @@ type ProviderConfig struct {
 	ClientSecret string
 	AuthURL      string
 	TokenURL     string
+	Scopes       []string
 }
 
 var configs = map[string]ProviderConfig{}
@@ -30,6 +31,19 @@ func InitConfigs() {
 		ClientSecret: os.Getenv("DROPBOX_CLIENT_SECRET"),
 		AuthURL:      "https://www.dropbox.com/oauth2/authorize",
 		TokenURL:     "https://api.dropboxapi.com/oauth2/token",
+	}
+	configs["google"] = ProviderConfig{
+		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL:     "https://oauth2.googleapis.com/token",
+		Scopes: []string{
+			"https://www.googleapis.com/auth/drive",
+			"https://www.googleapis.com/auth/calendar",
+			"https://www.googleapis.com/auth/contacts",
+			"https://www.googleapis.com/auth/userinfo.email",
+			"https://www.googleapis.com/auth/userinfo.profile",
+		},
 	}
 }
 
@@ -52,6 +66,9 @@ func GetAuthURL(provider, redirectURI, state string) (string, error) {
 	q.Set("redirect_uri", redirectURI)
 	q.Set("response_type", "code")
 	q.Set("state", state)
+	if len(config.Scopes) > 0 {
+		q.Set("scope", strings.Join(config.Scopes, " "))
+	}
 	u.RawQuery = q.Encode()
 
 	return u.String(), nil
@@ -142,6 +159,35 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 
 		if info.Name.DisplayName != "" {
 			return info.Name.DisplayName, nil
+		}
+		return info.Email, nil
+	case "google":
+		req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("failed to fetch google user info: status %d", resp.StatusCode)
+		}
+
+		var info struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			return "", err
+		}
+
+		if info.Name != "" {
+			return info.Name, nil
 		}
 		return info.Email, nil
 	default:

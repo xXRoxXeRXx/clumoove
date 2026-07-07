@@ -17,8 +17,8 @@ interface MigrationConfig {
   target_url: string;
   target_username: string;
   target_password: string;
-  source_provider: 'nextcloud' | 'dropbox' | 'webdav';
-  target_provider: 'nextcloud' | 'dropbox' | 'webdav';
+  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
+  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
 }
 
 interface ConnectFormProps {
@@ -34,9 +34,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetUrl, setTargetUrl] = useState('');
   const [targetUser, setTargetUser] = useState('');
   const [targetPass, setTargetPass] = useState('');
-
-  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav'>('nextcloud');
-  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav'>('nextcloud');
+  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google'>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google'>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
 
@@ -62,14 +61,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       if (event.origin !== targetOrigin) return;
       if (event.data && event.data.type === 'oauth-success' && event.data.provider === provider) {
         if (type === 'source') {
-          setSourceOAuthUser(event.data.username || 'dropbox');
-          setSourceUrl('https://api.dropboxapi.com');
-          setSourceUser(event.data.username || 'dropbox');
+          setSourceOAuthUser(event.data.username || provider);
+          setSourceUrl(`https://api.${provider}.com`);
+          setSourceUser(event.data.username || provider);
           setSourcePass(event.data.token);
         } else {
-          setTargetOAuthUser(event.data.username || 'dropbox');
-          setTargetUrl('https://api.dropboxapi.com');
-          setTargetUser(event.data.username || 'dropbox');
+          setTargetOAuthUser(event.data.username || provider);
+          setTargetUrl(`https://api.${provider}.com`);
+          setTargetUser(event.data.username || provider);
           setTargetPass(event.data.token);
         }
         window.removeEventListener('message', handleMessage);
@@ -84,13 +83,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalSourceUrl = sourceProvider === 'dropbox' ? 'https://api.dropboxapi.com' : sourceUrl;
-    const finalSourceUser = sourceProvider === 'dropbox' ? (sourceOAuthUser || 'dropbox') : sourceUser;
-    const finalTargetUrl = targetProvider === 'dropbox' ? 'https://api.dropboxapi.com' : targetUrl;
-    const finalTargetUser = targetProvider === 'dropbox' ? (targetOAuthUser || 'dropbox') : targetUser;
+    const finalSourceUrl = (sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl;
+    const finalSourceUser = (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser;
+    const finalTargetUrl = (targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl;
+    const finalTargetUser = (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser;
 
     if (!finalSourceUrl || !finalSourceUser || !sourcePass || !finalTargetUrl || !finalTargetUser || !targetPass) {
-      setError('Bitte fülle alle Eingabefelder aus bzw. autorisiere Dropbox.');
+      setError('Bitte fülle alle Eingabefelder aus bzw. autorisiere die Anbieter.');
       return;
     }
 
@@ -167,11 +166,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={sourceProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google';
                     setSourceProvider(val);
-                    if (val === 'dropbox') {
-                      setSourceUrl('https://api.dropboxapi.com');
-                      setSourceUser('dropbox');
+                    if (val === 'dropbox' || val === 'google') {
+                      setSourceUrl(`https://api.${val}.com`);
+                      setSourceUser(val);
                       setSourcePass('');
                       setSourceOAuthUser('');
                     } else {
@@ -185,6 +184,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
                   <option value="webdav">Generischer WebDAV-Server</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
+                  <option value="google">Google (OAuth2)</option>
                 </select>
               </div>
 
@@ -239,12 +239,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : (
                 <div className="py-2">
-                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">Dropbox Verbindung</label>
+                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    {sourceProvider === 'google' ? 'Google Verbindung' : 'Dropbox Verbindung'}
+                  </label>
                   {sourcePass ? (
                     <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-4 flex items-center justify-between shadow-sm">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[10.5px] uppercase tracking-wider text-emerald-650">Verbunden als</p>
-                        <p className="text-xs font-bold text-slate-700 truncate">{sourceOAuthUser || 'Dropbox Account'}</p>
+                        <p className="text-xs font-bold text-slate-700 truncate">{sourceOAuthUser || (sourceProvider === 'google' ? 'Google Account' : 'Dropbox Account')}</p>
                       </div>
                       <button
                         type="button"
@@ -260,10 +262,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   ) : (
                     <button
                       type="button"
-                      onClick={() => openOAuthPopup('dropbox', 'source')}
+                      onClick={() => openOAuthPopup(sourceProvider, 'source')}
                       className="w-full py-3.5 px-4 bg-portal-navy text-white font-display font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm hover:bg-portal-navy/90 hover:scale-101 active:scale-99 transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> Mit Dropbox verbinden
+                      <RefreshCw className="w-4 h-4" /> Mit {sourceProvider === 'google' ? 'Google' : 'Dropbox'} verbinden
                     </button>
                   )}
                 </div>
@@ -289,11 +291,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={targetProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google';
                     setTargetProvider(val);
-                    if (val === 'dropbox') {
-                      setTargetUrl('https://api.dropboxapi.com');
-                      setTargetUser('dropbox');
+                    if (val === 'dropbox' || val === 'google') {
+                      setTargetUrl(`https://api.${val}.com`);
+                      setTargetUser(val);
                       setTargetPass('');
                       setTargetOAuthUser('');
                     } else {
@@ -307,6 +309,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
                   <option value="webdav">Generischer WebDAV-Server</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
+                  <option value="google">Google (OAuth2)</option>
                 </select>
               </div>
 
@@ -361,12 +364,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : (
                 <div className="py-2">
-                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">Dropbox Verbindung</label>
+                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">
+                    {targetProvider === 'google' ? 'Google Verbindung' : 'Dropbox Verbindung'}
+                  </label>
                   {targetPass ? (
                     <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-4 flex items-center justify-between shadow-sm">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[10.5px] uppercase tracking-wider text-emerald-650">Verbunden als</p>
-                        <p className="text-xs font-bold text-slate-700 truncate">{targetOAuthUser || 'Dropbox Account'}</p>
+                        <p className="text-xs font-bold text-slate-700 truncate">{targetOAuthUser || (targetProvider === 'google' ? 'Google Account' : 'Dropbox Account')}</p>
                       </div>
                       <button
                         type="button"
@@ -382,10 +387,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   ) : (
                     <button
                       type="button"
-                      onClick={() => openOAuthPopup('dropbox', 'target')}
+                      onClick={() => openOAuthPopup(targetProvider, 'target')}
                       className="w-full py-3.5 px-4 bg-portal-navy text-white font-display font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm hover:bg-portal-navy/90 hover:scale-101 active:scale-99 transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> Mit Dropbox verbinden
+                      <RefreshCw className="w-4 h-4" /> Mit {targetProvider === 'google' ? 'Google' : 'Dropbox'} verbinden
                     </button>
                   )}
                 </div>

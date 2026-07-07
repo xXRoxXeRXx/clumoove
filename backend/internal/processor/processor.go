@@ -184,11 +184,11 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 			continue
 		}
 
-		sClient, err := storage.NewProvider(sProv, sURL, sUser, sPass)
+		sClient, err := storage.NewProvider(ctx, sProv, sURL, sUser, sPass)
 		if err != nil {
 			continue
 		}
-		tClient, err := storage.NewProvider(tProv, tURL, tUser, tPass)
+		tClient, err := storage.NewProvider(ctx, tProv, tURL, tUser, tPass)
 		if err != nil {
 			continue
 		}
@@ -247,11 +247,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	}
 
 	// Create storage providers
-	sourceClient, err := storage.NewProvider(mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
 		return fmt.Errorf("failed to create source client: %w", err)
 	}
-	targetClient, err := storage.NewProvider(mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
+	targetClient, err := storage.NewProvider(ctx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to create target client: %w", err)
 	}
