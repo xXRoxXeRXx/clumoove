@@ -145,36 +145,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   return (
     <div className="w-full max-w-4xl mx-auto py-2">
       
-      {/* Title & Info */}
-      <div className="text-center mb-10">
-        <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold mb-4 shadow-sm">
-          <ShieldCheck className="w-4 h-4 text-emerald-650" /> 
-          <span>Verschlüsselte Verbindung (SSL)</span>
-        </div>
-        
-        <h1 className="font-display font-extrabold text-3xl md:text-4xl text-portal-navy tracking-tight mb-2">
-          Verbinde deine Instanzen
-        </h1>
-        
-        <p className="text-sm text-slate-550 max-w-lg mx-auto leading-relaxed">
-          Gibe hier die Serveradressen und Zugangsdaten deiner Nextcloud-Instanzen an. Für die Sicherheit deines Haupt-Accounts empfehlen wir App-Passwörter.
-        </p>
-      </div>
-
-      {/* Gateway schematic pipeline */}
-      <div className="hidden md:flex justify-between items-center max-w-2xl mx-auto mb-10 px-8">
-        <div className="px-5 py-2.5 bg-portal-navy text-white text-xs font-bold rounded-lg shadow-sm">
-          Quelle (Egress)
-        </div>
-        
-        <div className="flex-grow mx-4 h-0.5 border-t-2 border-dashed border-slate-300 relative">
-          <div className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-portal-orange rounded-full shadow-sm animate-pulse" style={{ left: '48%' }}></div>
-        </div>
-        
-        <div className="px-5 py-2.5 bg-portal-navy text-white text-xs font-bold rounded-lg shadow-sm">
-          Ziel (Ingress)
-        </div>
-      </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid md:grid-cols-2 gap-8">
