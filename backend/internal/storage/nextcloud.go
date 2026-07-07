@@ -44,6 +44,7 @@ type XMLProp struct {
 	ResourceType     XMLResourceType `xml:"resourcetype"`
 	Checksums        *XMLChecksums   `xml:"checksums"`
 	GetContentHash   string          `xml:"getcontenthash"`
+	GetETag          string          `xml:"getetag"`
 }
 
 type XMLResourceType struct {

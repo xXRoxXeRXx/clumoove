@@ -17,8 +17,8 @@ interface MigrationConfig {
   target_url: string;
   target_username: string;
   target_password: string;
-  source_provider: 'nextcloud' | 'dropbox';
-  target_provider: 'nextcloud' | 'dropbox';
+  source_provider: 'nextcloud' | 'dropbox' | 'webdav';
+  target_provider: 'nextcloud' | 'dropbox' | 'webdav';
 }
 
 interface ConnectFormProps {
@@ -35,8 +35,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetUser, setTargetUser] = useState('');
   const [targetPass, setTargetPass] = useState('');
 
-  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox'>('nextcloud');
-  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox'>('nextcloud');
+  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav'>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav'>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
 
@@ -197,7 +197,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={sourceProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav';
                     setSourceProvider(val);
                     if (val === 'dropbox') {
                       setSourceUrl('https://api.dropboxapi.com');
@@ -213,17 +213,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
                 >
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
+                  <option value="webdav">Generischer WebDAV-Server</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
                 </select>
               </div>
 
-              {sourceProvider === 'nextcloud' ? (
+              {sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
                 <>
                   <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nextcloud WebDAV-URL</label>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                      {sourceProvider === 'nextcloud' ? 'Nextcloud WebDAV-URL' : 'WebDAV-URL'}
+                    </label>
                     <input
                       type="url"
-                      placeholder="https://nextcloud.source-domain.de"
+                      placeholder={sourceProvider === 'nextcloud' ? 'https://nextcloud.source-domain.de' : 'https://webdav.domain.de/dav'}
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
                       className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
@@ -316,7 +319,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={targetProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav';
                     setTargetProvider(val);
                     if (val === 'dropbox') {
                       setTargetUrl('https://api.dropboxapi.com');
@@ -332,17 +335,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
                 >
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
+                  <option value="webdav">Generischer WebDAV-Server</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
                 </select>
               </div>
 
-              {targetProvider === 'nextcloud' ? (
+              {targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
                 <>
                   <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nextcloud WebDAV-URL</label>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                      {targetProvider === 'nextcloud' ? 'Nextcloud WebDAV-URL' : 'WebDAV-URL'}
+                    </label>
                     <input
                       type="url"
-                      placeholder="https://nextcloud.target-domain.de"
+                      placeholder={targetProvider === 'nextcloud' ? 'https://nextcloud.target-domain.de' : 'https://webdav.domain.de/dav'}
                       value={targetUrl}
                       onChange={(e) => setTargetUrl(e.target.value)}
                       className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"

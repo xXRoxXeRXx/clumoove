@@ -17,8 +17,8 @@ interface MigrationConfig {
   target_url: string;
   target_username: string;
   target_password: string;
-  source_provider: 'nextcloud' | 'dropbox';
-  target_provider: 'nextcloud' | 'dropbox';
+  source_provider: 'nextcloud' | 'dropbox' | 'webdav';
+  target_provider: 'nextcloud' | 'dropbox' | 'webdav';
 }
 
 interface FileBrowserProps {
@@ -341,7 +341,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               >
                 Dateien
               </button>
-              {credentials.source_provider !== 'dropbox' && (
+              {credentials.source_provider === 'nextcloud' && (
                 <>
                   <button
                     onClick={() => handleTabChange('calendars')}

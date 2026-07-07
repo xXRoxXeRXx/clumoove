@@ -8,6 +8,8 @@ func NewProvider(providerType, urlStr, username, password string) (StorageProvid
 	switch providerType {
 	case "nextcloud":
 		return NewNextcloudProvider(urlStr, username, password)
+	case "webdav":
+		return NewWebDAVProvider(urlStr, username, password)
 	case "dropbox":
 		return NewDropboxProvider(password)
 	default:
