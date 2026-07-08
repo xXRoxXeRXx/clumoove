@@ -10,29 +10,44 @@ import (
 	_ "github.com/lib/pq"
 )
 
-type Migration struct {
-	ID                      string         `json:"id"`
-	SourceURL               string         `json:"source_url"`
-	SourceUsername          string         `json:"source_username"`
-	SourcePasswordEncrypted string         `json:"-"`
-	TargetURL               string         `json:"target_url"`
-	TargetUsername          string         `json:"target_username"`
-	TargetPasswordEncrypted string         `json:"-"`
-	SourceProvider          string         `json:"source_provider"`
-	TargetProvider          string         `json:"target_provider"`
-	TargetDir               string         `json:"target_dir"`
-	Status                  string         `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
-	ConflictStrategy        string         `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
-	TotalFiles              int            `json:"total_files"`
-	TotalBytes              int64          `json:"total_bytes"`
-	ProcessedFiles          int            `json:"processed_files"`
-	ProcessedBytes          int64          `json:"processed_bytes"`
-	SkippedFiles            int            `json:"skipped_files"`
-	FailedFiles             int            `json:"failed_files"`
-	ErrorMessage            sql.NullString `json:"error_message"`
-	CreatedAt               time.Time      `json:"created_at"`
-	UpdatedAt               time.Time      `json:"updated_at"`
+type ResourceStats struct {
+	Total     int `json:"total"`
+	Processed int `json:"processed"`
+	Failed    int `json:"failed"`
+	Skipped   int `json:"skipped"`
 }
+
+type MigrationResourceStats struct {
+	Files     ResourceStats `json:"files"`
+	Calendars ResourceStats `json:"calendars"`
+	Contacts  ResourceStats `json:"contacts"`
+}
+
+type Migration struct {
+	ID                      string                  `json:"id"`
+	SourceURL               string                  `json:"source_url"`
+	SourceUsername          string                  `json:"source_username"`
+	SourcePasswordEncrypted string                  `json:"-"`
+	TargetURL               string                  `json:"target_url"`
+	TargetUsername          string                  `json:"target_username"`
+	TargetPasswordEncrypted string                  `json:"-"`
+	SourceProvider          string                  `json:"source_provider"`
+	TargetProvider          string                  `json:"target_provider"`
+	TargetDir               string                  `json:"target_dir"`
+	Status                  string                  `json:"status"`            // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+	ConflictStrategy        string                  `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
+	TotalFiles              int                     `json:"total_files"`
+	TotalBytes              int64                   `json:"total_bytes"`
+	ProcessedFiles          int                     `json:"processed_files"`
+	ProcessedBytes          int64                   `json:"processed_bytes"`
+	SkippedFiles            int                     `json:"skipped_files"`
+	FailedFiles             int                     `json:"failed_files"`
+	ErrorMessage            sql.NullString          `json:"error_message"`
+	CreatedAt               time.Time               `json:"created_at"`
+	UpdatedAt               time.Time               `json:"updated_at"`
+	ResourceStats           *MigrationResourceStats `json:"resource_stats,omitempty"`
+}
+
 
 type Task struct {
 	ID           string         `json:"id"`
@@ -326,3 +341,63 @@ func DeleteOldMigrations(db *sql.DB) (int64, error) {
 	}
 	return res.RowsAffected()
 }
+
+// GetMigrationResourceStats returns the count statistics grouped by resource_type (files, calendars, contacts)
+func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResourceStats, error) {
+	query := `
+		SELECT resource_type, status, attempts, COUNT(*)
+		FROM tasks
+		WHERE migration_id = $1
+		GROUP BY resource_type, status, attempts
+	`
+	rows, err := db.Query(query, migrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stats := &MigrationResourceStats{
+		Files:     ResourceStats{},
+		Calendars: ResourceStats{},
+		Contacts:  ResourceStats{},
+	}
+
+	for rows.Next() {
+		var resourceType string
+		var status string
+		var attempts int
+		var count int
+		if err := rows.Scan(&resourceType, &status, &attempts, &count); err != nil {
+			return nil, err
+		}
+
+		var r *ResourceStats
+		switch resourceType {
+		case "files":
+			r = &stats.Files
+		case "calendars":
+			r = &stats.Calendars
+		case "contacts":
+			r = &stats.Contacts
+		default:
+			continue
+		}
+
+		r.Total += count
+		switch status {
+		case "COMPLETED":
+			r.Processed += count
+		case "SKIPPED":
+			r.Skipped += count
+			r.Processed += count
+		case "FAILED":
+			if attempts >= 3 {
+				r.Failed += count
+				r.Processed += count
+			}
+		}
+	}
+
+	return stats, nil
+}
+

@@ -391,7 +391,12 @@ func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, file
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("upload failed with status: %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		respBody := string(bodyBytes)
+		if strings.Contains(respBody, "calobjects_by_uid_index") || strings.Contains(respBody, "unique constraint") {
+			return ErrDuplicateUID
+		}
+		return fmt.Errorf("upload failed with status: %d, response: %s", resp.StatusCode, respBody)
 	}
 
 	return nil

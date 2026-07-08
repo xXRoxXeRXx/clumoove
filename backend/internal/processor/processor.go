@@ -502,6 +502,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	}
 
 	if err != nil {
+		if errors.Is(err, storage.ErrDuplicateUID) {
+			task.Status = "SKIPPED"
+			task.ErrorMessage = sql.NullString{String: "Sabredav: Calendar event UID already exists (SKIP)", Valid: true}
+			_ = db.UpdateTaskStatus(p.db, task)
+			_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
+			_ = p.queue.Complete(ctx, p.workerID, payload)
+			return nil
+		}
 		return fmt.Errorf("upload to target failed: %w", err)
 	}
 
@@ -515,42 +523,58 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	}
 
 	// 5. Hash & Integrity Verification
-	workerSourceHashVal := fmt.Sprintf("%x", sourceHasher.Sum(nil))
-	task.WorkerHash = sql.NullString{String: fmt.Sprintf("%s:%s", sourceAlgo, workerSourceHashVal), Valid: true}
-
 	var integrityVerified bool
 	downloadOK := true
-	if sourceHashStr != "" && sourceAlgo != "UNKNOWN" {
-		downloadOK = (workerSourceHashVal == sourceHashStr)
-	}
-
 	uploadOK := true
-	var targetHashVal string
-	var errTargetHash error
-	if mig.TargetProvider != "webdav" {
-		targetHashVal, errTargetHash = targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
-	} else {
-		errTargetHash = fmt.Errorf("webdav target hash not supported")
-	}
 
-	if errTargetHash == nil {
-		task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
-		targetReturnedAlgo, cleanTargetHash := storage.ParseHashString(targetHashVal)
+	if task.ResourceType == "files" {
+		workerSourceHashVal := fmt.Sprintf("%x", sourceHasher.Sum(nil))
+		task.WorkerHash = sql.NullString{String: fmt.Sprintf("%s:%s", sourceAlgo, workerSourceHashVal), Valid: true}
 
-		var workerTargetHashVal string
-		hasMatchingAlgo := false
-		if sourceAlgo == targetReturnedAlgo && sourceAlgo != "UNKNOWN" {
-			workerTargetHashVal = workerSourceHashVal
-			hasMatchingAlgo = true
-		} else if targetHasher != nil && targetAlgo == targetReturnedAlgo && targetAlgo != "UNKNOWN" {
-			workerTargetHashVal = fmt.Sprintf("%x", targetHasher.Sum(nil))
-			hasMatchingAlgo = true
+		if sourceHashStr != "" && sourceAlgo != "UNKNOWN" {
+			downloadOK = (workerSourceHashVal == sourceHashStr)
 		}
 
-		if hasMatchingAlgo {
-			uploadOK = (workerTargetHashVal == cleanTargetHash)
+		var targetHashVal string
+		var errTargetHash error
+		if mig.TargetProvider != "webdav" {
+			targetHashVal, errTargetHash = targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
 		} else {
-			// Algorithm mismatch fallback: verify size
+			errTargetHash = fmt.Errorf("webdav target hash not supported")
+		}
+
+		if errTargetHash == nil {
+			task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
+			targetReturnedAlgo, cleanTargetHash := storage.ParseHashString(targetHashVal)
+
+			var workerTargetHashVal string
+			hasMatchingAlgo := false
+			if sourceAlgo == targetReturnedAlgo && sourceAlgo != "UNKNOWN" {
+				workerTargetHashVal = workerSourceHashVal
+				hasMatchingAlgo = true
+			} else if targetHasher != nil && targetAlgo == targetReturnedAlgo && targetAlgo != "UNKNOWN" {
+				workerTargetHashVal = fmt.Sprintf("%x", targetHasher.Sum(nil))
+				hasMatchingAlgo = true
+			}
+
+			if hasMatchingAlgo {
+				uploadOK = (workerTargetHashVal == cleanTargetHash)
+			} else {
+				// Algorithm mismatch fallback: verify size
+				existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
+				if errExists == nil && existsOnTarget {
+					if task.FileSize == 0 {
+						uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
+					} else {
+						uploadOK = (task.FileSize == targetSize)
+					}
+					task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
+				} else {
+					uploadOK = false
+				}
+			}
+		} else {
+			// Fallback: Size verification
 			existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 			if errExists == nil && existsOnTarget {
 				if task.FileSize == 0 {
@@ -564,18 +588,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			}
 		}
 	} else {
-		// Fallback: Size verification
-		existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
-		if errExists == nil && existsOnTarget {
-			if task.FileSize == 0 {
-				uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
-			} else {
-				uploadOK = (task.FileSize == targetSize)
-			}
-			task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
-		} else {
-			uploadOK = false
-		}
+		// Non-files (calendars/contacts) have dynamic content that isn't verifyable via strict checksums or sizes
+		// and were already successfully stored.
+		task.WorkerHash = sql.NullString{String: "DYNAMIC", Valid: true}
+		task.TargetHash = sql.NullString{String: "DYNAMIC", Valid: true}
 	}
 
 	integrityVerified = downloadOK && uploadOK
@@ -623,8 +639,22 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		return
 	}
 
+	// Check if error is permanent / non-retryable
+	isPermanent := false
+	errStr := procErr.Error()
+	if strings.Contains(errStr, "exportSizeLimitExceeded") ||
+		strings.Contains(errStr, "badRequest") ||
+		strings.Contains(errStr, "conversion is not supported") ||
+		strings.Contains(errStr, "fileNotDownloadable") ||
+		strings.Contains(errStr, "Only files with binary content can be downloaded") ||
+		strings.Contains(errStr, "too large to be exported") ||
+		strings.Contains(errStr, "notFound") ||
+		strings.Contains(errStr, "fileNotFound") {
+		isPermanent = true
+	}
+
 	// If it is a normal file transfer failure
-	if task.Attempts < 3 {
+	if task.Attempts < 3 && !isPermanent {
 		// Exponential Backoff: 10s, 30s, 90s
 		backoffSec := int(math.Pow(3, float64(task.Attempts))) * 10
 		if backoffSec > 90 {

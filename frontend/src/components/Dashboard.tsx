@@ -16,6 +16,19 @@ interface DashboardProps {
   onReset: () => void;
 }
 
+interface ResourceStats {
+  total: number;
+  processed: number;
+  failed: number;
+  skipped: number;
+}
+
+interface MigrationResourceStats {
+  files?: ResourceStats;
+  calendars?: ResourceStats;
+  contacts?: ResourceStats;
+}
+
 interface ProgressData {
   id: string;
   status: string; // INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
@@ -27,7 +40,36 @@ interface ProgressData {
   failed_files: number;
   error_message: string;
   active_file: string;
+  resource_stats?: MigrationResourceStats;
 }
+
+const renderResourceSection = (title: string, stats: ResourceStats | undefined) => {
+  if (!stats || stats.total === 0) return null;
+  const success = Math.max(0, stats.processed - stats.failed - stats.skipped);
+  return (
+    <div className="w-full mt-4 first:mt-0 first:border-t-0 first:pt-0 border-t border-slate-100 pt-4 text-slate-500 text-left">
+      <h5 className="font-bold text-slate-700 mb-2 uppercase tracking-wider text-[10px]">{title}</h5>
+      <div className="flex justify-between items-center py-1 border-b border-slate-100">
+        <span>Gesamt:</span>
+        <span className="font-bold text-slate-800 font-mono">{stats.total}</span>
+      </div>
+      <div className="flex justify-between items-center py-1 border-b border-slate-100">
+        <span>Übertragen:</span>
+        <span className="font-bold text-emerald-600 font-mono">{success}</span>
+      </div>
+      <div className="flex justify-between items-center py-1 border-b border-slate-100">
+        <span>Übersprungen:</span>
+        <span className="font-bold text-slate-800 font-mono">{stats.skipped}</span>
+      </div>
+      <div className="flex justify-between items-center py-1">
+        <span>Fehlgeschlagen:</span>
+        <span className={`font-bold font-mono ${stats.failed > 0 ? 'text-rose-600' : 'text-slate-650'}`}>
+          {stats.failed}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onReset }) => {
   const [data, setData] = useState<ProgressData | null>(null);
@@ -61,7 +103,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const prevActiveFileRef = useRef<string>('');
   const prevStatusRef = useRef<string>('');
   const prevProcessedFilesRef = useRef<number>(0);
-  const logsEndRef = useRef<HTMLDivElement | null>(null);
+  const logsContainerRef = useRef<HTMLDivElement | null>(null);
 
 
   useEffect(() => {
@@ -100,13 +142,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
       if (payload.processed_files > prevProcessedFilesRef.current) {
         if (payload.status === 'RUNNING') {
-          newLogs.push(`✔ ${payload.processed_files} von ${payload.total_files} Dateien übertragen.`);
+          let resourceNoun = 'Elemente';
+          if (payload.resource_stats) {
+            const hasFiles = (payload.resource_stats.files?.total ?? 0) > 0;
+            const hasCalendars = (payload.resource_stats.calendars?.total ?? 0) > 0;
+            const hasContacts = (payload.resource_stats.contacts?.total ?? 0) > 0;
+            if (hasFiles && !hasCalendars && !hasContacts) {
+              resourceNoun = 'Dateien';
+            } else if (!hasFiles && hasCalendars && !hasContacts) {
+              resourceNoun = 'Kalendereinträge';
+            } else if (!hasFiles && !hasCalendars && hasContacts) {
+              resourceNoun = 'Kontakte';
+            }
+          }
+          newLogs.push(`✔ ${payload.processed_files} von ${payload.total_files} ${resourceNoun} übertragen.`);
         }
         prevProcessedFilesRef.current = payload.processed_files;
       }
 
       if (payload.status === 'COMPLETED' && prevStatusRef.current !== 'COMPLETED') {
-        newLogs.push('🎉 Fertig! Alle Dateien wurden erfolgreich übertragen.');
+        let resourceNoun = 'Elemente';
+        if (payload.resource_stats) {
+          const hasFiles = (payload.resource_stats.files?.total ?? 0) > 0;
+          const hasCalendars = (payload.resource_stats.calendars?.total ?? 0) > 0;
+          const hasContacts = (payload.resource_stats.contacts?.total ?? 0) > 0;
+          if (hasFiles && !hasCalendars && !hasContacts) {
+            resourceNoun = 'Dateien';
+          } else if (!hasFiles && hasCalendars && !hasContacts) {
+            resourceNoun = 'Kalendereinträge';
+          } else if (!hasFiles && !hasCalendars && hasContacts) {
+            resourceNoun = 'Kontakte';
+          }
+        }
+        newLogs.push(`🎉 Fertig! Alle ${resourceNoun} wurden erfolgreich übertragen.`);
         newLogs.push('🔒 Verschlüsselte Session-RAM-Puffer wurden bereinigt.');
       }
 
@@ -160,6 +228,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     // instead of leaving the user on a frozen loading spinner.
     let reconnectDelay = 1000;
     ws.onclose = () => {
+      if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'FAILED') {
+        return;
+      }
       if (reconnectDelay > 15000) {
         setServerUnreachable(true);
         return;
@@ -183,9 +254,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     };
   }, [migrationId, apiUrl]);
 
-  // Auto-scroll logs
+  // Auto-scroll logs container without moving the whole page window
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = logsContainerRef.current;
+    if (container) {
+      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 100;
+      if (isAtBottom || logs.length <= 3) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
   }, [logs]);
 
   const formatDuration = (seconds: number) => {
@@ -270,9 +347,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           <Coffee className="w-4 h-4 text-portal-orange shrink-0" />
           <span>Der Migrationstransfer läuft serverseitig. Du kannst diesen Tab bedenkenlos schließen.</span>
         </div>
-        <span className="hidden sm:inline border border-[#002f6c]/20 px-2.5 py-0.5 bg-white text-[9px] tracking-widest font-black text-slate-500 rounded-full">
-          STAMP.RUN
-        </span>
       </div>
 
       {/* PAUSED CONNECTION LOSS WARNING */}
@@ -338,7 +412,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <h4 className="font-display font-bold text-slate-450 text-[10px] uppercase tracking-wider">Live-Protokoll</h4>
             </div>
             
-            <div className="flex-grow overflow-y-auto scrollbar-portal space-y-2 pr-1 font-mono text-[11px]">
+            <div 
+              ref={logsContainerRef}
+              className="flex-grow overflow-y-auto scrollbar-portal space-y-2 pr-1 font-mono text-[11px]"
+            >
               {logs.map((log, index) => (
                 <div 
                   key={index} 
@@ -357,7 +434,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                   {log}
                 </div>
               ))}
-              <div ref={logsEndRef} />
             </div>
           </div>
         </div>
@@ -396,26 +472,35 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </p>
             )}
 
-            {/* Invoiced Counters table */}
             <div className="w-full mt-6 space-y-2 font-sans text-xs border-t border-slate-100 pt-5 text-slate-500">
-              <div className="flex justify-between items-center py-1 border-b border-slate-100">
-                <span>Dateien gesamt:</span>
-                <span className="font-bold text-slate-800 font-mono">{data.total_files}</span>
-              </div>
-              <div className="flex justify-between items-center py-1 border-b border-slate-100">
-                <span>Übertragen:</span>
-                <span className="font-bold text-emerald-600 font-mono">{successFiles}</span>
-              </div>
-              <div className="flex justify-between items-center py-1 border-b border-slate-100">
-                <span>Übersprungen:</span>
-                <span className="font-bold text-slate-800 font-mono">{data.skipped_files}</span>
-              </div>
-              <div className="flex justify-between items-center py-1">
-                <span>Fehlgeschlagen:</span>
-                <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-slate-600'}`}>
-                  {data.failed_files}
-                </span>
-              </div>
+              {data.resource_stats ? (
+                <>
+                  {renderResourceSection("Dateien", data.resource_stats.files)}
+                  {renderResourceSection("Kalender", data.resource_stats.calendars)}
+                  {renderResourceSection("Kontakte", data.resource_stats.contacts)}
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                    <span>Dateien gesamt:</span>
+                    <span className="font-bold text-slate-800 font-mono">{data.total_files}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                    <span>Übertragen:</span>
+                    <span className="font-bold text-emerald-600 font-mono">{successFiles}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                    <span>Übersprungen:</span>
+                    <span className="font-bold text-slate-800 font-mono">{data.skipped_files}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-1">
+                    <span>Fehlgeschlagen:</span>
+                    <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-slate-600'}`}>
+                      {data.failed_files}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

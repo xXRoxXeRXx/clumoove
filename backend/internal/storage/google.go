@@ -323,9 +323,6 @@ func googleDocsExtension(mimeType string) (exportMIME, extension string) {
 	case "application/vnd.google-apps.drawing":
 		return "image/png", ".png"
 	default:
-		if strings.HasPrefix(mimeType, "application/vnd.google-apps.") {
-			return "application/pdf", ".pdf"
-		}
 		return "", ""
 	}
 }

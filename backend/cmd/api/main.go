@@ -703,6 +703,13 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stats, err := db.GetMigrationResourceStats(s.db, id)
+	if err != nil {
+		log.Printf("Error fetching resource stats for migration %s: %v\n", id, err)
+	} else {
+		mig.ResourceStats = stats
+	}
+
 	writeJSON(w, http.StatusOK, mig)
 }
 
@@ -788,6 +795,13 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 		if mig.ErrorMessage.Valid {
 			responsePayload["error_message"] = mig.ErrorMessage.String
+		}
+
+		stats, err := db.GetMigrationResourceStats(s.db, id)
+		if err == nil {
+			responsePayload["resource_stats"] = stats
+		} else {
+			log.Printf("WebSocket error fetching resource stats: %v\n", err)
 		}
 
 		// Write to WS

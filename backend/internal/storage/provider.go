@@ -2,9 +2,13 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 )
+
+var ErrDuplicateUID = errors.New("sabredav: duplicate UID index violation")
+
 
 type CloudResource struct {
 	Path         string    `json:"path"`
