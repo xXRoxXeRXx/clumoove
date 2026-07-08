@@ -133,9 +133,17 @@ func (q *Queue) RecoverAbandonedTasks(ctx context.Context, workerID string) erro
 			}
 			return err
 		}
-		fmt.Printf("Recovered abandoned task payload: %s\n", res)
+		log.Printf("[Queue] Recovered abandoned task payload: %s\n", res)
 	}
 	return nil
+}
+
+// TryClaimWorkerRecoveryLock atomically claims a recovery lock for a dead worker using SET NX.
+// Returns true if this caller has acquired the lock and is responsible for recovery.
+// The lock expires after ttl, preventing a stale lock from blocking recovery forever.
+func (q *Queue) TryClaimWorkerRecoveryLock(ctx context.Context, workerID string, ttl time.Duration) (bool, error) {
+	key := fmt.Sprintf("worker:recovery-lock:%s", workerID)
+	return q.client.SetNX(ctx, key, "1", ttl).Result()
 }
 
 // RegisterActiveWorker registers/refreshes the worker's active status in Redis
@@ -173,6 +181,7 @@ func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context) ([]string, error) 
 		activeKey := fmt.Sprintf("worker:active:%s", workerID)
 		exists, err := q.client.Exists(ctx, activeKey).Result()
 		if err != nil {
+			log.Printf("[Queue] Warning: could not check liveness key %q: %v — treating worker as alive\n", activeKey, err)
 			continue
 		}
 

@@ -88,8 +88,9 @@ func (p *Processor) Start(ctx context.Context) {
 
 // RunWorkerLiveness periodically registers this worker as active and recovers abandoned tasks
 func (p *Processor) RunWorkerLiveness(ctx context.Context) {
-	// Register immediately
-	_ = p.queue.RegisterActiveWorker(ctx, p.workerID, 30*time.Second)
+	// Register immediately with a 60s TTL — generous enough to survive a brief Redis hiccup
+	// without the liveness key expiring between heartbeat ticks (tick=10s, TTL=60s → 6 chances).
+	_ = p.queue.RegisterActiveWorker(ctx, p.workerID, 60*time.Second)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -102,7 +103,7 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 30*time.Second)
+			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 60*time.Second)
 			if err != nil {
 				fmt.Printf("[Liveness] Error registering active worker: %v\n", err)
 			}
@@ -115,6 +116,13 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 			for _, deadWorkerID := range deadWorkers {
 				if deadWorkerID == p.workerID {
 					continue
+				}
+				// Claim a distributed recovery lock (Redis SETNX) before touching the dead
+				// worker's queue. This prevents two processor instances from simultaneously
+				// recovering the same worker and enqueuing tasks twice.
+				claimed, lockErr := p.queue.TryClaimWorkerRecoveryLock(ctx, deadWorkerID, 60*time.Second)
+				if lockErr != nil || !claimed {
+					continue // Another instance is already handling recovery for this worker
 				}
 				fmt.Printf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
 				if err := p.queue.RecoverAbandonedTasks(ctx, deadWorkerID); err != nil {

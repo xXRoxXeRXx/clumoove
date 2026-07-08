@@ -338,12 +338,12 @@ func (p *WebDAVProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
 	u := p.buildResourceURL(resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
-		<d:propfind xmlns:d="DAV:">
-			<d:prop>
-				<d:getcontentlength/>
-				<d:resourcetype/>
-			</d:prop>
-		</d:propfind>`)
+<d:propfind xmlns:d="DAV:">
+	<d:prop>
+		<d:getcontentlength/>
+		<d:resourcetype/>
+	</d:prop>
+</d:propfind>`)
 
 	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
 	if err != nil {
