@@ -2,9 +2,29 @@
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Table for Users (Accounts)
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'USER', -- USER, AUDITOR, ADMIN
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table for Refresh Tokens (Session Extension)
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Table for Migrations (Main Jobs)
 CREATE TABLE IF NOT EXISTS migrations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     source_url TEXT NOT NULL,
     source_username TEXT NOT NULL,
     source_password_encrypted TEXT NOT NULL,
@@ -49,6 +69,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_migration_id ON tasks(migration_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_migrations_status ON migrations(status);
+CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id);
 
 -- Auto-update updated_at triggers
 CREATE OR REPLACE FUNCTION update_updated_at_column()

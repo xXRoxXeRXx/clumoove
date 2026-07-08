@@ -14,6 +14,7 @@ interface DashboardProps {
   migrationId: string;
   apiUrl: string;
   onReset: () => void;
+  token: string;
 }
 
 interface ResourceStats {
@@ -71,7 +72,7 @@ const renderResourceSection = (title: string, stats: ResourceStats | undefined) 
   );
 };
 
-export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onReset }) => {
+export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onReset, token }) => {
   const [data, setData] = useState<ProgressData | null>(null);
   const [speed, setSpeed] = useState<number>(0); // Bytes per second
   const [eta, setEta] = useState<string>('Berechnung...');
@@ -94,7 +95,32 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         console.error('Kopieren fehlgeschlagen:', err);
       });
   };
-  
+
+  const handleDownloadReport = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/report`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error('Fehlerbericht konnte nicht geladen werden.');
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `migration_report_${migrationId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(err.message || 'Fehler beim Herunterladen des Berichts.');
+    }
+  };
+
   const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
   const lastActiveSpeed = useRef<number>(0);
   const lastActiveTime = useRef<number>(0);
@@ -114,7 +140,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     // Construct WebSocket URL
     const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const cleanApiUrl = apiUrl.replace(/^https?:\/\//, '');
-    const wsUrl = `${wsProto}://${cleanApiUrl}/api/migration/${migrationId}/ws`;
+    const wsUrl = `${wsProto}://${cleanApiUrl}/api/migration/${migrationId}/ws?token=${token}`;
 
     let ws = new WebSocket(wsUrl);
 
@@ -561,14 +587,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           <div className="space-y-4">
             {/* Report Download */}
             {data.failed_files > 0 && (
-              <a
-                href={`${apiUrl}/api/migration/${migrationId}/report`}
-                download
-                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-portal-border rounded-lg shadow-sm text-slate-700 hover:bg-slate-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center"
+              <button
+                onClick={handleDownloadReport}
+                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-portal-border rounded-lg shadow-sm text-slate-700 hover:bg-slate-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer"
               >
                 <Download className="w-4 h-4 text-portal-orange" />
                 Fehlerbericht (.CSV)
-              </a>
+              </button>
             )}
 
             {/* Reset Button */}

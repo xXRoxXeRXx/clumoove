@@ -27,6 +27,7 @@ interface FileBrowserProps {
   apiUrl: string;
   onBack: () => void;
   onStartSuccess: (migrationId: string) => void;
+  token: string;
 }
 
 // formatSize is defined at module level so it is not recreated on every render.
@@ -44,6 +45,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   apiUrl,
   onBack,
   onStartSuccess,
+  token,
 }) => {
   const [activeTab, setActiveTab] = useState<'files' | 'calendars' | 'contacts'>('files');
   const [calendars, setCalendars] = useState<CloudFile[]>([]);
@@ -79,7 +81,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     try {
       const response = await fetch(`${apiUrl}/api/migration/target/browse`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           target_url: credentials.target_url,
           target_username: credentials.target_username,
@@ -118,7 +123,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     try {
       const response = await fetch(`${apiUrl}/api/migration/target/mkdir`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           target_url: credentials.target_url,
           target_username: credentials.target_username,
@@ -165,7 +173,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     try {
       const response = await fetch(`${apiUrl}/api/migration/browse`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           source_url: credentials.source_url,
           source_username: credentials.source_username,
@@ -192,7 +203,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     try {
       const response = await fetch(`${apiUrl}/api/migration/browse`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           source_url: credentials.source_url,
           source_username: credentials.source_username,
@@ -226,7 +240,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     try {
       const response = await fetch(`${apiUrl}/api/migration/connect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           ...credentials,
           path: folderPath,
@@ -274,7 +291,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     try {
       const response = await fetch(`${apiUrl}/api/migration/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           ...credentials,
           conflict_strategy: conflictStrategy,

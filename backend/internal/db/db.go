@@ -23,8 +23,26 @@ type MigrationResourceStats struct {
 	Contacts  ResourceStats `json:"contacts"`
 }
 
+type User struct {
+	ID           string    `json:"id"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"`
+	DisplayName  string    `json:"display_name"`
+	Role         string    `json:"role"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type RefreshToken struct {
+	TokenHash string    `json:"token_hash"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Migration struct {
 	ID                      string                  `json:"id"`
+	UserID                  sql.NullString          `json:"user_id"`
 	SourceURL               string                  `json:"source_url"`
 	SourceUsername          string                  `json:"source_username"`
 	SourcePasswordEncrypted string                  `json:"-"`
@@ -78,7 +96,39 @@ func InitDB(connStr string) (*sql.DB, error) {
 	for attempt := 1; attempt <= 10; attempt++ {
 		pingErr = db.Ping()
 		if pingErr == nil {
-			// Run schema migrations for new columns
+			// Run schema migrations for new columns and tables
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS users (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					email TEXT UNIQUE NOT NULL,
+					password_hash TEXT NOT NULL,
+					display_name TEXT NOT NULL,
+					role TEXT NOT NULL DEFAULT 'USER',
+					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+					updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (create users table): %v\n", err)
+			}
+
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS refresh_tokens (
+					token_hash TEXT PRIMARY KEY,
+					user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (create refresh_tokens table): %v\n", err)
+			}
+
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE`)
+			if err != nil {
+				log.Printf("Failed schema migration (user_id): %v\n", err)
+			}
+
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS source_provider TEXT NOT NULL DEFAULT 'nextcloud'`)
 			if err != nil {
 				log.Printf("Failed schema migration (source_provider): %v\n", err)
@@ -94,6 +144,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS target_dir TEXT NOT NULL DEFAULT '/'`)
 			if err != nil {
 				log.Printf("Failed schema migration (target_dir): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_migrations_user_id): %v\n", err)
 			}
 
 			// Set connection pool settings
@@ -113,15 +168,15 @@ func InitDB(connStr string) (*sql.DB, error) {
 func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 	query := `
 		INSERT INTO migrations (
-			source_url, source_username, source_password_encrypted,
+			user_id, source_url, source_username, source_password_encrypted,
 			target_url, target_username, target_password_encrypted,
 			source_provider, target_provider, status, conflict_strategy, target_dir
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
-		m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted,
+		m.UserID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted,
 		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
@@ -135,7 +190,7 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 // GetMigration retrieves a migration by ID
 func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	query := `
-		SELECT id, source_url, source_username, source_password_encrypted,
+		SELECT id, user_id, source_url, source_username, source_password_encrypted,
 		       target_url, target_username, target_password_encrypted,
 		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
 		       processed_files, processed_bytes, skipped_files, failed_files,
@@ -144,7 +199,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	`
 	var m Migration
 	err := db.QueryRow(query, id).Scan(
-		&m.ID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted,
+		&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted,
 		&m.SourceProvider, &m.TargetProvider, &m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
 		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
@@ -399,5 +454,135 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 	}
 
 	return stats, nil
+}
+
+// CreateUser inserts a new user into the database
+func CreateUser(db *sql.DB, email, passwordHash, displayName string) (*User, error) {
+	query := `
+		INSERT INTO users (email, password_hash, display_name)
+		VALUES ($1, $2, $3)
+		RETURNING id, role, created_at, updated_at
+	`
+	var u User
+	u.Email = email
+	u.DisplayName = displayName
+	err := db.QueryRow(query, email, passwordHash, displayName).Scan(&u.ID, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// GetUserByEmail retrieves a user by email
+func GetUserByEmail(db *sql.DB, email string) (*User, error) {
+	query := `
+		SELECT id, email, password_hash, display_name, role, created_at, updated_at
+		FROM users WHERE email = $1
+	`
+	var u User
+	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// GetUserByID retrieves a user by UUID
+func GetUserByID(db *sql.DB, id string) (*User, error) {
+	query := `
+		SELECT id, email, password_hash, display_name, role, created_at, updated_at
+		FROM users WHERE id = $1
+	`
+	var u User
+	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// StoreRefreshToken saves a hashed refresh token mapped to a user
+func StoreRefreshToken(db *sql.DB, tokenHash string, userID string, expiresAt time.Time) error {
+	query := `
+		INSERT INTO refresh_tokens (token_hash, user_id, expires_at)
+		VALUES ($1, $2, $3)
+	`
+	_, err := db.Exec(query, tokenHash, userID, expiresAt)
+	return err
+}
+
+// DeleteRefreshToken removes a refresh token on logout
+func DeleteRefreshToken(db *sql.DB, tokenHash string) error {
+	query := `DELETE FROM refresh_tokens WHERE token_hash = $1`
+	_, err := db.Exec(query, tokenHash)
+	return err
+}
+
+// GetUserIDByRefreshToken validates a refresh token and returns the owner's userID
+func GetUserIDByRefreshToken(db *sql.DB, tokenHash string) (string, error) {
+	query := `
+		SELECT user_id FROM refresh_tokens 
+		WHERE token_hash = $1 AND expires_at > $2
+	`
+	var userID string
+	err := db.QueryRow(query, tokenHash, time.Now()).Scan(&userID)
+	if err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+// VerifyMigrationOwnership checks if a migration belongs to a specific user
+func VerifyMigrationOwnership(db *sql.DB, migrationID, userID string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM migrations WHERE id = $1 AND user_id = $2)`
+	var exists bool
+	err := db.QueryRow(query, migrationID, userID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// DeleteMigrationCascade deletes a migration record (and task history via CASCADE)
+func DeleteMigrationCascade(db *sql.DB, migrationID string) error {
+	query := `DELETE FROM migrations WHERE id = $1`
+	_, err := db.Exec(query, migrationID)
+	return err
+}
+
+// GetMigrationsForUser lists all migrations belonging to a specific user
+func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
+	query := `
+		SELECT id, user_id, source_url, source_username, source_provider,
+		       target_url, target_username, target_provider, status,
+		       conflict_strategy, total_files, total_bytes, processed_files,
+		       processed_bytes, skipped_files, failed_files, error_message,
+		       created_at, updated_at, target_dir
+		FROM migrations
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []Migration
+	for rows.Next() {
+		var m Migration
+		err := rows.Scan(
+			&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourceProvider,
+			&m.TargetURL, &m.TargetUsername, &m.TargetProvider, &m.Status,
+			&m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
+			&m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
+			&m.CreatedAt, &m.UpdatedAt, &m.TargetDir,
+		)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, m)
+	}
+	return list, nil
 }
 

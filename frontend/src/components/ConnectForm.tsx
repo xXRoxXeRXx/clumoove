@@ -24,9 +24,10 @@ interface MigrationConfig {
 interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
   apiUrl: string;
+  token: string;
 }
 
-export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl }) => {
+export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token }) => {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
   const [sourcePass, setSourcePass] = useState('');
@@ -101,7 +102,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     try {
       const response = await fetch(`${apiUrl}/api/migration/connect`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           source_url: finalSourceUrl,
           source_username: finalSourceUser,

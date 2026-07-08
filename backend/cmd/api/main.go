@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/csv"
 	"encoding/hex"
@@ -18,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/queue"
@@ -90,20 +92,33 @@ func main() {
 		ctx:       ctx,
 	}
 
-	// Start Garbage Collector (GC)
-	go server.runGarbageCollector(ctx)
+	// Start Garbage Collector (GC) is removed as per requirements (permanent history until manual deletion)
+	// go server.runGarbageCollector(ctx)
 
 	// Go 1.22 Router
 	mux := http.NewServeMux()
 
-	// Routes
-	mux.HandleFunc("POST /api/migration/connect", server.handleConnect)
-	mux.HandleFunc("POST /api/migration/browse", server.handleBrowse)
-	mux.HandleFunc("POST /api/migration/target/browse", server.handleTargetBrowse)
-	mux.HandleFunc("POST /api/migration/target/mkdir", server.handleTargetMkdir)
-	mux.HandleFunc("POST /api/migration/start", server.handleStart)
-	mux.HandleFunc("GET /api/migration/{id}", server.handleGetStatus)
-	mux.HandleFunc("GET /api/migration/{id}/report", server.handleDownloadReport)
+	// Auth Routes (Public)
+	mux.HandleFunc("POST /api/auth/register", server.handleRegister)
+	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
+	mux.HandleFunc("POST /api/auth/refresh", server.handleRefresh)
+	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
+	mux.HandleFunc("GET /api/auth/me", server.handleMe)
+
+	// Protected Migration Routes
+	jwtMiddleware := auth.AuthMiddleware(server.secretKey)
+
+	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
+	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
+	mux.Handle("POST /api/migration/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowse)))
+	mux.Handle("POST /api/migration/target/browse", jwtMiddleware(http.HandlerFunc(server.handleTargetBrowse)))
+	mux.Handle("POST /api/migration/target/mkdir", jwtMiddleware(http.HandlerFunc(server.handleTargetMkdir)))
+	mux.Handle("POST /api/migration/start", jwtMiddleware(http.HandlerFunc(server.handleStart)))
+	mux.Handle("GET /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetStatus)))
+	mux.Handle("DELETE /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteMigration)))
+	mux.Handle("GET /api/migration/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadReport)))
+
+	// WebSockets & OAuth Callbacks (Require custom/token-based verification inside handler)
 	mux.HandleFunc("GET /api/migration/{id}/ws", server.handleWebSocket)
 	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
 	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
@@ -147,9 +162,15 @@ func main() {
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Cookie")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -480,8 +501,12 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get userID from context
+	userID := auth.GetUserIDFromContext(r.Context())
+
 	// Create Migration Record
 	m := &db.Migration{
+		UserID:                  sql.NullString{String: userID, Valid: userID != ""},
 		SourceURL:               req.SourceURL,
 		SourceUsername:          req.SourceUsername,
 		SourcePasswordEncrypted: sourcePassEnc,
@@ -703,6 +728,8 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID := auth.GetUserIDFromContext(r.Context())
+
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -711,6 +738,11 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Error fetching migration %s: %v\n", id, err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
+		return
+	}
+
+	if !mig.UserID.Valid || mig.UserID.String != userID {
+		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
 		return
 	}
 
@@ -728,6 +760,24 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+
+	mig, err := db.GetMigration(s.db, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Migration not found", http.StatusNotFound)
+		} else {
+			log.Printf("Error fetching migration %s for report: %v\n", id, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if !mig.UserID.Valid || mig.UserID.String != userID {
+		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
 		return
 	}
 
@@ -769,6 +819,34 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr == "" {
+		http.Error(w, "Unauthorized: token query parameter missing", http.StatusUnauthorized)
+		return
+	}
+
+	claims, err := auth.ValidateToken(tokenStr, s.secretKey)
+	if err != nil {
+		http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
+		return
+	}
+	userID := claims.UserID
+
+	mig, err := db.GetMigration(s.db, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Migration not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if !mig.UserID.Valid || mig.UserID.String != userID {
+		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
+		return
+	}
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade WebSocket: %v\n", err)
@@ -783,7 +861,7 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	for range ticker.C {
 		// Fetch migration state
-		mig, err := db.GetMigration(s.db, id)
+		mig, err = db.GetMigration(s.db, id)
 		if err != nil {
 			break
 		}
@@ -1109,4 +1187,213 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 		}
 		return "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
 	}(), script)
+}
+
+func hashToken(token string) string {
+	h := sha256.New()
+	h.Write([]byte(token))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+type RegisterRequest struct {
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name"`
+}
+
+func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
+	var req RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	if req.Email == "" || req.Password == "" || req.DisplayName == "" {
+		http.Error(w, "Email, password, and display name are required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify if user already exists
+	_, err := db.GetUserByEmail(s.db, req.Email)
+	if err == nil {
+		http.Error(w, "User with this email already exists", http.StatusConflict)
+		return
+	}
+
+	// Hash password
+	passHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, "Internal server error during password hashing", http.StatusInternalServerError)
+		return
+	}
+
+	// Create user
+	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create user: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, u)
+}
+
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	u, err := db.GetUserByEmail(s.db, req.Email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if !auth.CheckPasswordHash(req.Password, u.PasswordHash) {
+		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+		return
+	}
+
+	// Access Token (15 mins)
+	accessToken, err := auth.GenerateAccessToken(u, s.secretKey)
+	if err != nil {
+		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+		return
+	}
+
+	// Refresh Token (7 days)
+	refreshToken, err := auth.GenerateRefreshToken()
+	if err != nil {
+		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+	tokenHash := hashToken(refreshToken)
+
+	err = db.StoreRefreshToken(s.db, tokenHash, u.ID, expiresAt)
+	if err != nil {
+		http.Error(w, "Failed to store refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	auth.SetRefreshTokenCookie(w, r, refreshToken, expiresAt)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"user":         u,
+		"access_token": accessToken,
+	})
+}
+
+func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("refresh_token")
+	if err != nil {
+		http.Error(w, "Unauthorized: Refresh token missing", http.StatusUnauthorized)
+		return
+	}
+
+	tokenHash := hashToken(cookie.Value)
+	userID, err := db.GetUserIDByRefreshToken(s.db, tokenHash)
+	if err != nil {
+		http.Error(w, "Unauthorized: Invalid or expired refresh token", http.StatusUnauthorized)
+		return
+	}
+
+	u, err := db.GetUserByID(s.db, userID)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// New Access Token
+	accessToken, err := auth.GenerateAccessToken(u, s.secretKey)
+	if err != nil {
+		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"access_token": accessToken,
+	})
+}
+
+func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("refresh_token")
+	if err == nil {
+		tokenHash := hashToken(cookie.Value)
+		_ = db.DeleteRefreshToken(s.db, tokenHash)
+	}
+
+	auth.ClearRefreshTokenCookie(w, r)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	u, err := db.GetUserByID(s.db, userID)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
+}
+
+func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	list, err := db.GetMigrationsForUser(s.db, userID)
+	if err != nil {
+		log.Printf("Error listing migrations for user %s: %v\n", userID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+
+	// Verify ownership
+	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !owned {
+		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
+		return
+	}
+
+	// Cascade delete
+	err = db.DeleteMigrationCascade(s.db, id)
+	if err != nil {
+		log.Printf("Error deleting migration %s: %v\n", id, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }

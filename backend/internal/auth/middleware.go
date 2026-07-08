@@ -1,0 +1,51 @@
+package auth
+
+import (
+	"context"
+	"net/http"
+	"strings"
+)
+
+type ContextKey string
+
+const UserIDKey ContextKey = "userID"
+
+// AuthMiddleware intercepts requests to validate the JWT bearer token and inject userID into context
+func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				http.Error(w, "Unauthorized: Authorization header missing", http.StatusUnauthorized)
+				return
+			}
+
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+				http.Error(w, "Unauthorized: Invalid Authorization format", http.StatusUnauthorized)
+				return
+			}
+
+			tokenStr := parts[1]
+			claims, err := ValidateToken(tokenStr, secretKey)
+			if err != nil {
+				http.Error(w, "Unauthorized: Invalid or expired token: "+err.Error(), http.StatusUnauthorized)
+				return
+			}
+
+			// Inject UserID into request context
+			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// GetUserIDFromContext retrieves the authenticated user's ID from the context
+func GetUserIDFromContext(ctx context.Context) string {
+	if val := ctx.Value(UserIDKey); val != nil {
+		if id, ok := val.(string); ok {
+			return id
+		}
+	}
+	return ""
+}

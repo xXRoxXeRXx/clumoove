@@ -1,132 +1,124 @@
-# Goal: Erweiterung um einen weiteren Dienst (Lokales Dateisystem)
+# Implementation Plan: Multi-Tenancy (Benutzerverwaltung & Login)
 
-Wir erweitern die Multi-Cloud Migrations-Plattform um die Anbindung von **Lokalen Verzeichnissen** (Local Directory / Filesystem) auf dem Server. Dies ermöglicht:
-1. Migrationen von einem lokalen Serverpfad in eine Nextcloud-Instanz (Upload/Backup-Import).
-2. Migrationen von Nextcloud in ein lokales Serverpfzeichnis (Backup/Archivierung).
-3. Migrationen zwischen lokalen Serverpfaden (Local-to-Local für Tests und Synchronisation).
-
-Um dies sauber zu implementieren, modularisieren wir das Backend durch die Einführung eines `StorageAdapter`-Interfaces. Das Frontend wird um Auswahlfelder für den Typ der Quelle und des Ziels (Nextcloud WebDAV vs. Lokales Verzeichnis) ergänzt.
-
----
-
-## User Review Required
-
-> [!IMPORTANT]
-> **Pfad-Zugriff in Docker:**
-> Die lokalen Verzeichnisse müssen sich in Pfaden befinden, die für die Docker-Container (`api-backend` und `migration-worker`) zugänglich sind. Standardmäßig ist das Verzeichnis `/app` (gemountet auf das `./backend`-Hostverzeichnis) zugänglich. 
-> Wir werden ein gemeinsames Volume `./shared_data:/data` in die Docker-Dienste einbinden, damit Benutzer bequem `/data/source` und `/data/target` auf ihrem Server nutzen können.
-
----
-
-## Open Questions
-
-Keine offenen Fragen. Die Implementierung nutzt das bewährte, RAM-schonende Streaming-Konzept des Workers ohne lokale Plattencaches für Transferdaten.
+Dieser Plan beschreibt die technischen Änderungen zur Implementierung der Mandantenfähigkeit und Benutzerauthentifizierung auf der CloudMove-Plattform.
 
 ---
 
 ## Proposed Changes
 
-### 1. Database (PostgreSQL) Schema-Erweiterung
+### 1. Database (PostgreSQL) Schema & Migrations
 
-Wir erweitern die Tabelle `migrations` um Typ-Spalten, um zu speichern, ob die Quelle/das Ziel ein Nextcloud- oder ein lokales Verzeichnis ist.
+Wir fügen die Tabellen `users` und `refresh_tokens` hinzu und verknüpfen `migrations` über einen Fremdschlüssel mit `users`.
 
 #### [MODIFY] [schema.sql](file:///c:/Users/meyer/Development/migration/db/schema.sql)
-Ergänzung der Standardwerte und Typen. Da die DB bei bestehendem Setup nicht neu initialisiert wird, führen wir die Migration automatisch in Go beim Anwendungsstart (`InitDB`) aus:
+Ergänzung des Datenbankschemas um die neuen Tabellen und den Fremdschlüssel:
 ```sql
-ALTER TABLE migrations ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'nextcloud';
-ALTER TABLE migrations ADD COLUMN IF NOT EXISTS target_type TEXT NOT NULL DEFAULT 'nextcloud';
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'USER',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE migrations ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id);
 ```
-
----
-
-### 2. Go Backend (Refactoring & Neuer Adapter)
-
-Wir führen das Interface `StorageAdapter` ein und implementieren den lokalen Dateisystem-Adapter.
-
-#### [NEW] [storage.go](file:///c:/Users/meyer/Development/migration/backend/internal/storage/storage.go)
-Definiert das gemeinsame Interface für alle Speicher-Provider:
-- `Connect(ctx context.Context) (bool, error)`
-- `GetDirectoryListing(ctx context.Context, dirPath string) ([]CloudFile, error)`
-- `StreamDownload(ctx context.Context, filePath string) (io.ReadCloser, error)`
-- `StreamUpload(ctx context.Context, filePath string, stream io.Reader, size int64) error`
-- `StreamUploadChunked(ctx context.Context, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error`
-- `FileExists(ctx context.Context, filePath string) (bool, int64, error)`
-- `DeleteFile(ctx context.Context, filePath string) error`
-- `GetFileHash(ctx context.Context, filePath string) (string, error)`
-
-#### [NEW] [local.go](file:///c:/Users/meyer/Development/migration/backend/internal/storage/local.go)
-Implementiert `StorageAdapter` für das lokale Dateisystem:
-- `Connect`: Prüft, ob das angegebene Stammverzeichnis existiert und beschreibbar ist (erstellt es falls nötig).
-- `GetDirectoryListing`: Liest das Verzeichnis rekursiv bzw. flach mittels `os.ReadDir`.
-- `StreamDownload`: Öffnet die Datei mit `os.Open` zum Streamen.
-- `StreamUpload`: Schreibt den eingehenden Stream direkt via `os.OpenFile` und `io.Copy` auf die Platte (Zero Memory Overhead).
-- `StreamUploadChunked`: Fällt für lokale Dateien auf das direkte Schreiben zurück (triggert Fortschritt über den Channel).
-- `GetFileHash`: Berechnet den SHA-1 Hash der lokalen Datei direkt auf der Platte.
-
-#### [NEW] [factory.go](file:///c:/Users/meyer/Development/migration/backend/internal/storage/factory.go)
-Stellt die Factory-Methode bereit, um den passenden Adapter zu instanziieren:
-```go
-func NewAdapter(providerType, urlStr, username, password string) (StorageAdapter, error)
-```
-
-#### [MODIFY] [client.go](file:///c:/Users/meyer/Development/migration/backend/internal/webdav/client.go)
-- Verschieben des Structs `CloudFile` in das `storage`-Paket (bzw. Aliasing), damit es providerunabhängig genutzt werden kann.
-- Anpassen der Methodensignaturen von `Client` an das `StorageAdapter`-Interface (z. B. `StreamDownload` gibt kein `http.Header` mehr zurück, da dies WebDAV-spezifisch ist).
 
 #### [MODIFY] [db.go](file:///c:/Users/meyer/Development/migration/backend/internal/db/db.go)
-- Ergänzung der Felder `SourceType` und `TargetType` im `Migration`-Struct.
-- Ausführung von `ALTER TABLE migrations ADD COLUMN IF NOT EXISTS ...` in `InitDB` zur automatischen Migration der Datenbankstruktur.
-- Anpassung von `CreateMigration` und `GetMigration` an die neuen Spalten.
+* Ergänzung der automatischen Tabellen- und Spaltenmigration in `InitDB`.
+* Erweiterung des Structs `Migration` um das Feld `UserID string json:"user_id"`.
+* Definition der neuen Structs `User` und `RefreshToken`.
+* Implementierung von DB-Methoden zur Benutzerverwaltung:
+  - `CreateUser(db *sql.DB, email, passwordHash, displayName string) (*User, error)`
+  - `GetUserByEmail(db *sql.DB, email string) (*User, error)`
+  - `GetUserByID(db *sql.DB, id string) (*User, error)`
+  - `StoreRefreshToken(db *sql.DB, tokenHash string, userID string, expiresAt time.Time) error`
+  - `DeleteRefreshToken(db *sql.DB, tokenHash string) error`
+  - `GetUserIDByRefreshToken(db *sql.DB, tokenHash string) (string, error)`
+* Ergänzung der Ownership-Verifizierung:
+  - `VerifyMigrationOwnership(db *sql.DB, migrationID, userID string) (bool, error)`
+* Änderung von `CreateMigration` und `GetMigration` zur Einbindung von `user_id`.
+* Implementierung von `DeleteMigrationCascade(db *sql.DB, migrationID string) error` zur physischen Löschung einer Migration und ihrer Tasks.
 
-#### [MODIFY] [processor.go](file:///c:/Users/meyer/Development/migration/backend/internal/processor/processor.go)
-- Verwendung von `storage.NewAdapter(...)` anstelle von direktem `webdav.NewClient`.
-- Deklaration der Clients als `storage.StorageAdapter` anstelle von `*webdav.Client`.
+---
+
+### 2. Go Backend Authentication & JWT
+
+Wir erstellen ein neues Authentifizierungs- und JWT-Verarbeitungsmodul.
+
+#### [NEW] [auth.go](file:///c:/Users/meyer/Development/migration/backend/internal/auth/auth.go)
+Kapselung der Authentifizierungslogik:
+* Passwort-Hashing und -Prüfung mittels `golang.org/x/crypto/bcrypt`.
+* Generierung und Validierung von JWT-Tokens (HMAC-SHA256 mit `JWT_SECRET_KEY`).
+* Claims-Struktur: `UserID`, `Email`, `DisplayName`, `Role`.
+* Cookie-Helper zum Setzen/Löschen des Refresh-Tokens (`HTTP-only`, `Secure`, `SameSite=Strict`).
+
+#### [NEW] [middleware.go](file:///c:/Users/meyer/Development/migration/backend/internal/auth/middleware.go)
+Authentifizierungs-Middleware für den API-Router:
+* Extrahiert das JWT aus dem `Authorization: Bearer <Token>` Header.
+* Validiert die Signatur und Ablaufzeit.
+* Schreibt die `UserID` in den Go-Request-Context.
+* Gibt `401 Unauthorized` bei ungültigem Token zurück.
+
+---
+
+### 3. API Gateway & Routing
 
 #### [MODIFY] [main.go](file:///c:/Users/meyer/Development/migration/backend/cmd/api/main.go)
-- Anpassung der Endpunkte `/api/migration/connect` und `/api/migration/start` an die neuen Felder `source_type` und `target_type`.
-- Verwendung des `storage.StorageAdapter` Interfaces zum Ordner-Scanning in `startIndexing` und `indexFolder`.
+* **CORS-Aktualisierung:** Dynamisches Lesen des `Origin`-Headers und Setzen von `Access-Control-Allow-Credentials: true` statt `*`.
+* **Entfernung des automatischen GC:** Auskommentieren oder Entfernen der Goroutine `runGarbageCollector`.
+* **Neue Auth-Endpunkte einrichten:**
+  - `POST /api/auth/register` (Registrierung)
+  - `POST /api/auth/login` (Login, setzt Cookie)
+  - `POST /api/auth/refresh` (Ausstellen eines neuen JWT via Refresh-Cookie)
+  - `POST /api/auth/logout` (Löscht Session)
+  - `GET /api/auth/me` (Benutzerinfo)
+* **Schutz bestehender Endpunkte:**
+  - Kapselung aller `/api/migration/...` Routen in der `authMiddleware`.
+  - Abrufen der `userID` aus dem Request-Kontext und Filtern/Absichern aller DB-Aufrufe.
+  - **DELETE-Endpunkt hinzufügen:** `DELETE /api/migration/{id}` zur manuellen Löschung.
+  - **WebSocket-Absicherung:** Auslesen des JWT aus der URL (`?token=...`) in `handleWebSocket` und Inhaberschafts-Prüfung vor dem WS-Upgrade.
 
 ---
 
-### 3. Frontend Component (React SPA)
+### 4. React Frontend Integration
 
-#### [MODIFY] [ConnectForm.tsx](file:///c:/Users/meyer/Development/migration/frontend/src/components/ConnectForm.tsx)
-- Hinzufügen eines Dropdowns (`sourceType` / `targetType`) für Quelle und Ziel mit den Optionen:
-  - **Nextcloud** (WebDAV)
-  - **Lokales Verzeichnis** (Local Path)
-- Wenn "Nextcloud" ausgewählt ist: Zeige URL, Benutzername und Passwort.
-- Wenn "Lokales Verzeichnis" ausgewählt ist: Zeige nur ein Eingabefeld für den lokalen Pfad (z. B. `/data/source`) und blende Benutzername/Passwort aus.
-- Senden der neuen Parameter `source_type` und `target_type` an die API.
+#### [NEW] [AuthForm.tsx](file:///c:/Users/meyer/Development/migration/frontend/src/components/AuthForm.tsx)
+* Responsive Login- und Registrierungs-Komponente mit Glassmorphismus-Design.
+* Validiert Eingaben und speichert das Access Token nach erfolgreicher Anmeldung im React-State.
 
-#### [MODIFY] [FileBrowser.tsx](file:///c:/Users/meyer/Development/migration/frontend/src/components/FileBrowser.tsx)
-- Keine funktionalen Änderungen nötig, da es die in `ConnectForm` gesetzten Zugangsdaten (`credentials`) transparent weiterreicht.
+#### [NEW] [MigrationsDashboard.tsx](file:///c:/Users/meyer/Development/migration/frontend/src/components/MigrationsDashboard.tsx)
+* Zeigt die Übersicht aller aktiven/abgeschlossenen Migrationen des Nutzers an.
+* Bietet Optionen zum:
+  - Starten einer neuen Migration (Klick leitet zum `ConnectForm` weiter).
+  - Löschen einer Migration (Klick sendet `DELETE`-Request an API).
+  - Anzeigen von Live-Details (öffnet bestehende Dashboard-Statistiken in einem Overlay/Modal).
 
----
-
-### 4. Infrastructure (Docker Compose)
-
-#### [MODIFY] [docker-compose.yml](file:///c:/Users/meyer/Development/migration/docker-compose.yml)
-- Einrichten eines gemeinsamen lokalen Speicherordners `./shared_data:/data` in den Containern `api-backend` and `migration-worker`. Dies erleichtert das Testen und Verwenden des lokalen Adapters erheblich.
+#### [MODIFY] [App.tsx](file:///c:/Users/meyer/Development/migration/frontend/src/App.tsx)
+* Einführung des Auth-Status (`user`, `token`).
+* Interceptor/Timer-Logik zum automatischen Erneuern des JWT über `/api/auth/refresh` alle 14 Minuten.
+* Routing-Guard: Wenn kein Token vorhanden ist, zeige ausschließlich `AuthForm`. Wenn eingeloggt, zeige das neue `MigrationsDashboard` bzw. die Folgeschritte (`ConnectForm`, `FileBrowser`).
 
 ---
 
 ## Verification Plan
 
 ### Automated Tests
-- Wir führen nach der Implementierung die Go-Kompilierungsprüfungen (`go vet ./...`) durch.
-- Erstellung eines Integrationstests `storage_test.go` im Backend zur Verifizierung der Lese- und Schreibvorgänge des `LocalAdapter`.
+* Ausführen von Go Unit-Tests im Auth-Modul: `go test ./backend/internal/auth/...`
+* Typprüfung im Frontend: `npx tsc --noEmit --project frontend/tsconfig.json`
 
 ### Manual Verification
-1. **Docker rebuild & up:**
-   ```bash
-   docker compose down
-   docker compose up --build -d
-   ```
-2. **Local-to-Local Test:**
-   - Quelle: Lokales Verzeichnis `/data/source` (befüllt mit ein paar Testdateien).
-   - Ziel: Lokales Verzeichnis `/data/target`.
-   - Starten der Migration im Frontend und Prüfung, ob die Dateien korrekt gestreamt und die Hashes validiert wurden.
-3. **Local-to-Nextcloud Test:**
-   - Migration von `/data/source` in die Nextcloud.
-4. **Nextcloud-to-Local Test:**
-   - Herunterladen von Nextcloud in `/data/target`.
+1. **Registrierung & Login:** Anmeldung eines Nutzers `test@example.com` über das UI. Verifizieren, dass der JWT im Speicher liegt und das Refresh-Cookie gesetzt ist.
+2. **Daten-Isolation:** Einloggen mit zwei verschiedenen Browser-Fenstern (User A und User B). Starten einer Migration bei User A und Sicherstellen, dass User B diese Migration weder sieht noch über die API-Endpunkte abfragen kann.
+3. **Löschfunktion:** Löschen einer Migration bei User A im Dashboard. Prüfung der PostgreSQL-Datenbank, ob Datensätze aus `migrations` und `tasks` gelöscht wurden.
+4. **WebSocket-Sicherheit:** Manueller Verbindungsaufbau via WebSocket ohne Token oder mit ungültigem Token. Der Server muss die Verbindung ablehnen.
