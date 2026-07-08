@@ -645,27 +645,59 @@ func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, fileP
 
 func (p *NextcloudProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
 	u := p.buildResourceURL(resourceType, filePath)
-	req, err := p.newRequest("HEAD", u, nil)
+	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
+		<d:propfind xmlns:d="DAV:">
+			<d:prop>
+				<d:getcontentlength/>
+				<d:resourcetype/>
+			</d:prop>
+		</d:propfind>`)
+
+	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
 	if err != nil {
 		return false, 0, err
 	}
+	req.Header.Set("Depth", "0")
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
 	req = req.WithContext(ctx)
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return false, 0, err
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
 		return false, 0, nil
 	}
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		contentLength, _ := strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
-		return true, contentLength, nil
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, 0, fmt.Errorf("PROPFIND check failed with status: %d", resp.StatusCode)
 	}
 
-	return false, 0, fmt.Errorf("HEAD check failed with status: %d", resp.StatusCode)
+	var multistatus XMLMultistatus
+	decoder := xml.NewDecoder(resp.Body)
+	if err := decoder.Decode(&multistatus); err != nil {
+		return false, 0, err
+	}
+
+	if len(multistatus.Responses) == 0 {
+		return false, 0, nil
+	}
+
+	r := multistatus.Responses[0]
+	for _, pstat := range r.Propstat {
+		if strings.Contains(pstat.Status, "200 OK") {
+			prop := pstat.Prop
+			isDir := prop.ResourceType.Collection != nil
+			if isDir {
+				return true, 0, nil
+			}
+			size, _ := strconv.ParseInt(prop.GetContentLength, 10, 64)
+			return true, size, nil
+		}
+	}
+
+	return false, 0, nil
 }
 
 func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {

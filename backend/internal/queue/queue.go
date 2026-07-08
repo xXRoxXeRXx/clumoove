@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -135,4 +136,50 @@ func (q *Queue) RecoverAbandonedTasks(ctx context.Context, workerID string) erro
 		fmt.Printf("Recovered abandoned task payload: %s\n", res)
 	}
 	return nil
+}
+
+// RegisterActiveWorker registers/refreshes the worker's active status in Redis
+func (q *Queue) RegisterActiveWorker(ctx context.Context, workerID string, ttl time.Duration) error {
+	key := fmt.Sprintf("worker:active:%s", workerID)
+	return q.client.Set(ctx, key, "1", ttl).Err()
+}
+
+// GetAbandonedWorkerQueues scans Redis for all processing queues and returns the worker IDs of dead workers
+func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context) ([]string, error) {
+	var cursor uint64
+	var keys []string
+	matchPattern := fmt.Sprintf("%s:*", ProcessingQueuePrefix)
+
+	for {
+		var err error
+		var scanKeys []string
+		scanKeys, cursor, err = q.client.Scan(ctx, cursor, matchPattern, 100).Result()
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, scanKeys...)
+		if cursor == 0 {
+			break
+		}
+	}
+
+	var abandonedWorkers []string
+	for _, key := range keys {
+		workerID := strings.TrimPrefix(key, ProcessingQueuePrefix+":")
+		if workerID == "" {
+			continue
+		}
+
+		activeKey := fmt.Sprintf("worker:active:%s", workerID)
+		exists, err := q.client.Exists(ctx, activeKey).Result()
+		if err != nil {
+			continue
+		}
+
+		if exists == 0 {
+			abandonedWorkers = append(abandonedWorkers, workerID)
+		}
+	}
+
+	return abandonedWorkers, nil
 }

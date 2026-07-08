@@ -48,6 +48,7 @@ func (p *Processor) Start(ctx context.Context) {
 	}
 
 	// Spawn background schedulers
+	go p.RunWorkerLiveness(ctx)
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
 
@@ -80,6 +81,45 @@ func (p *Processor) Start(ctx context.Context) {
 				p.handleTaskFailure(ctx, payload, err)
 			} else {
 				fmt.Printf("[Worker %s] Successfully processed task %s\n", p.workerID, payload.TaskID)
+			}
+		}
+	}
+}
+
+// RunWorkerLiveness periodically registers this worker as active and recovers abandoned tasks
+func (p *Processor) RunWorkerLiveness(ctx context.Context) {
+	// Register immediately
+	_ = p.queue.RegisterActiveWorker(ctx, p.workerID, 30*time.Second)
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	cleanupTicker := time.NewTicker(30 * time.Second)
+	defer cleanupTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 30*time.Second)
+			if err != nil {
+				fmt.Printf("[Liveness] Error registering active worker: %v\n", err)
+			}
+		case <-cleanupTicker.C:
+			deadWorkers, err := p.queue.GetAbandonedWorkerQueues(ctx)
+			if err != nil {
+				fmt.Printf("[Liveness] Error scanning for dead workers: %v\n", err)
+				continue
+			}
+			for _, deadWorkerID := range deadWorkers {
+				if deadWorkerID == p.workerID {
+					continue
+				}
+				fmt.Printf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
+				if err := p.queue.RecoverAbandonedTasks(ctx, deadWorkerID); err != nil {
+					fmt.Printf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
+				}
 			}
 		}
 	}
