@@ -16,3 +16,8 @@
 - Storage providers must implement the `StorageProvider` interface in [provider.go](file:///c:/Users/meyer/Development/migration/backend/internal/storage/provider.go).
 - Do not pass plaintext credentials to background goroutines. Query from database by `MigrationID` and decrypt at the last moment using `crypto.Decrypt`.
 - Use queue-based Breadth-First Search (BFS) with visited loop protection for recursive directory listing/indexing to prevent stack overflow.
+- **Multi-Tenancy & Isolation**: All endpoints performing operations (get, list, delete, start) on migrations must enforce ownership validation using the authenticated `UserID` from the request context.
+- **Key Segregation**: Never reuse keys. Use `ENCRYPTION_SECRET_KEY` strictly for AES-GCM credential encryption/decryption, and `JWT_SECRET_KEY` strictly for JWT token signing.
+- **Token Rotation**: Any token refresh request must immediately invalidate the old refresh token before generating and storing a new one.
+- **CORS Whitelisting**: Never reflect incoming CORS origins or allow credentials for wildcards. Use a strict origin whitelist for credentialed requests.
+
