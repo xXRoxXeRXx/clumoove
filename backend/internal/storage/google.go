@@ -604,7 +604,7 @@ func formatEventToICS(e *calendar.Event) string {
 	var sb strings.Builder
 	sb.WriteString("BEGIN:VCALENDAR\r\n")
 	sb.WriteString("VERSION:2.0\r\n")
-	sb.WriteString("PRODID:-//CloudMove//NONSGML v1.0//EN\r\n")
+	sb.WriteString("PRODID:-//Clumove//NONSGML v1.0//EN\r\n")
 	sb.WriteString("BEGIN:VEVENT\r\n")
 	sb.WriteString(fmt.Sprintf("UID:%s\r\n", e.Id))
 

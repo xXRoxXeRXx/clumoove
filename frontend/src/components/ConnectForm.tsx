@@ -416,7 +416,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               <li>Klicke oben rechts auf dein Profilbild und wähle <strong className="text-slate-800">Einstellungen</strong>.</li>
               <li>Klicke im linken Menü auf <strong className="text-slate-800">Sicherheit</strong>.</li>
               <li>Scrolle ganz nach unten zu <strong className="text-slate-800">Geräte & Clients</strong>.</li>
-              <li>Gib links einen App-Namen ein (z. B. <code className="bg-slate-200/50 border border-slate-300 px-1.5 py-0.5 rounded font-mono text-[10px] font-bold">CloudMove</code>) und klicke auf <strong className="text-slate-800">Neues App-Passwort erstellen</strong>.</li>
+              <li>Gib links einen App-Namen ein (z. B. <code className="bg-slate-200/50 border border-slate-300 px-1.5 py-0.5 rounded font-mono text-[10px] font-bold">Clumove</code>) und klicke auf <strong className="text-slate-800">Neues App-Passwort erstellen</strong>.</li>
               <li>Kopiere das generierte Passwort und füge es oben ein (dein Hauptpasswort funktioniert oft nicht!).</li>
             </ol>
           </div>

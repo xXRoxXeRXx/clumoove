@@ -76,7 +76,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             {isLogin ? 'Willkommen zurück' : 'Account erstellen'}
           </h2>
           <p className="text-xs text-slate-500 font-mono tracking-wider uppercase mt-1">
-            {isLogin ? '// CLOUDMOVE SAAS PORTAL' : '// REGISTRIERUNG'}
+            {isLogin ? '// CLUMOVE SAAS PORTAL' : '// REGISTRIERUNG'}
           </p>
         </div>
 

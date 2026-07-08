@@ -51,7 +51,7 @@ func GenerateAccessToken(user *db.User, secretKey string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "cloudmove-api",
+			Issuer:    "clumove-api",
 		},
 	}
 

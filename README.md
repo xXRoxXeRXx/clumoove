@@ -1,4 +1,8 @@
-# Multi-Cloud Migrations-Plattform (Phase 2 - Multi-Tenancy)
+# Clumove - Multi-Cloud Migrations-Plattform (Phase 2 - Multi-Tenancy)
+
+<p align="center">
+  <img src="frontend/public/logo.png" alt="Clumove Logo" width="200" />
+</p>
 
 Eine hochperformante, resiliente und datenschutzfreundliche Plattform für den verlustfreien Datenumzug zwischen Cloud-Speichern. Das System ist strikt modular aufgebaut. Im Fokus steht die Migration von **Nextcloud-zu-Nextcloud** (verschiedene Instanzen/Hoster) über das WebDAV-Protokoll, ergänzt durch Multi-Tenancy-Unterstützung und hohe Sicherheitsstandards.
 

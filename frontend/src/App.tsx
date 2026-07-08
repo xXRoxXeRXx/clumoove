@@ -189,7 +189,7 @@ function App() {
             
             <div className="flex flex-col">
               <span className="font-display font-extrabold text-xl tracking-tight leading-none">
-                CloudMove
+                Clumove
               </span>
               <span className="text-[9px] font-mono tracking-wider text-slate-350 uppercase mt-1">
                 Migrations-Portal
@@ -277,7 +277,7 @@ function App() {
       <footer className="border-t border-portal-border py-8 mt-12 bg-white">
         <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 text-[11px] leading-relaxed text-slate-500">
           <div>
-            <p className="font-bold text-portal-navy uppercase mb-1.5">// CloudMove Migrations-Plattform</p>
+            <p className="font-bold text-portal-navy uppercase mb-1.5">// Clumove Migrations-Plattform</p>
             <p>© 2026 Alle Rechte vorbehalten. Schnelle und sichere Transfers für Cloud-Infrastrukturen.</p>
           </div>
           <div>
