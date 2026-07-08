@@ -537,6 +537,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 	var totalFiles int
 	var totalBytes int64
 	var taskIDs []string
+	indexedPaths := make(map[string]bool)
 
 	// 1. Index files
 	for _, p := range paths {
@@ -547,13 +548,18 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 		}
 
 		if res.IsDir {
-			err = s.indexFolder(ctx, sourceClient, "files", p, migID, &totalFiles, &totalBytes, &taskIDs)
+			err = s.indexFolder(ctx, sourceClient, "files", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths)
 			if err != nil {
 				s.failMigration(migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
 				return
 			}
 		} else {
 			// Single file
+			key := fmt.Sprintf("files:%s", p)
+			if indexedPaths[key] {
+				continue
+			}
+			indexedPaths[key] = true
 			hashVal := res.Hash
 			task := &db.Task{
 				MigrationID:  migID,
@@ -576,7 +582,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 
 	// 2. Index calendars
 	for _, p := range calendars {
-		err = s.indexFolder(ctx, sourceClient, "calendars", p, migID, &totalFiles, &totalBytes, &taskIDs)
+		err = s.indexFolder(ctx, sourceClient, "calendars", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths)
 		if err != nil {
 			s.failMigration(migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
 			return
@@ -585,7 +591,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 
 	// 3. Index contacts
 	for _, p := range contacts {
-		err = s.indexFolder(ctx, sourceClient, "contacts", p, migID, &totalFiles, &totalBytes, &taskIDs)
+		err = s.indexFolder(ctx, sourceClient, "contacts", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths)
 		if err != nil {
 			s.failMigration(migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
 			return
@@ -632,7 +638,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 	log.Printf("Finished indexing migration %s. Total files: %d, Total size: %d bytes. Enqueued tasks.\n", migID, totalFiles, totalBytes)
 }
 
-func (s *APIServer) indexFolder(ctx context.Context, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, taskIDs *[]string) error {
+func (s *APIServer) indexFolder(ctx context.Context, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, taskIDs *[]string, indexedPaths map[string]bool) error {
 	queue := []string{startPath}
 	visited := make(map[string]bool)
 	visited[startPath] = true
@@ -659,6 +665,11 @@ func (s *APIServer) indexFolder(ctx context.Context, client storage.StorageProvi
 					queue = append(queue, file.Path)
 				}
 			} else {
+				key := fmt.Sprintf("%s:%s", resourceType, file.Path)
+				if indexedPaths[key] {
+					continue
+				}
+				indexedPaths[key] = true
 				task := &db.Task{
 					MigrationID:  migID,
 					ResourceType: resourceType,

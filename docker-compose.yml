@@ -54,6 +54,7 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
+      - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI}
     depends_on:
       - postgres-db
       - redis-queue
@@ -100,6 +101,7 @@ services:
     command: node node_modules/vite/bin/vite.js --host --port 3000
     environment:
       - VITE_API_URL=http://localhost:8001
+      - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS}
     volumes:
       - ./frontend:/app
       - /app/node_modules

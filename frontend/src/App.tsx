@@ -13,9 +13,15 @@ const getApiUrl = () => {
   if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
     return envUrl;
   }
-  // Fallback: Dynamically determine the backend API URL on port 8001 using browser hostname
+  // Fallback: Dynamically determine the backend API URL.
+  // If we are running on standard ports (no port, 80, or 443) on a custom domain,
+  // use the same host without a port to route through the reverse proxy.
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
+  const port = window.location.port;
+  if (hostname !== 'localhost' && hostname !== '127.0.0.1' && (!port || port === '80' || port === '443')) {
+    return `${protocol}//${hostname}`;
+  }
   return `${protocol}//${hostname}:8001`;
 };
 

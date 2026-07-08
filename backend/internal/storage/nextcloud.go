@@ -424,7 +424,7 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		return fmt.Errorf("failed to create upload directory, status: %d", resp.StatusCode)
 	}
 
-	chunkSize := int64(10 * 1024 * 1024)
+	chunkSize := int64(256 * 1024 * 1024)
 	buffer := make([]byte, chunkSize)
 	var chunkIndex int
 	var totalUploaded int64
