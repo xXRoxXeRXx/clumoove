@@ -1,17 +1,17 @@
-# Multi-Cloud Migrations-Plattform (MVP Phase 1)
+# Multi-Cloud Migrations-Plattform (Phase 2 - Multi-Tenancy)
 
-Eine hochperformante, resiliente und datenschutzfreundliche Plattform für den verlustfreien Datenumzug zwischen Cloud-Speichern. Das System ist strikt modular aufgebaut. Im Fokus der Phase 1 (MVP) steht die Migration von **Nextcloud-zu-Nextcloud** (verschiedene Instanzen/Hoster) über das WebDAV-Protokoll.
+Eine hochperformante, resiliente und datenschutzfreundliche Plattform für den verlustfreien Datenumzug zwischen Cloud-Speichern. Das System ist strikt modular aufgebaut. Im Fokus steht die Migration von **Nextcloud-zu-Nextcloud** (verschiedene Instanzen/Hoster) über das WebDAV-Protokoll, ergänzt durch Multi-Tenancy-Unterstützung und hohe Sicherheitsstandards.
 
 ---
 
 ## 1. System-Architektur & Ablauf
 
-Das Gesamtsystem basiert auf einem entkoppelten Monorepo-Design mit getrennten Containern für Frontend, API-Gateway, Datenbank, Cache und Migrations-Worker.
+Das Gesamtsystem basiert auf einem entkoppelten Monorepo-Design mit getrennten Containern für Frontend, API-Gateway, Datenbank, Cache und Migrations-Worker. Jede Migration ist einer Sitzung zugeordnet und isoliert.
 
 ```mermaid
 graph TD
     Frontend[React SPA Frontend] <-->|WebSockets & REST| API[Go API Gateway]
-    API <-->|CRUD| DB[(PostgreSQL)]
+    API <-->|CRUD & Auth| DB[(PostgreSQL)]
     API -->|Indexierte Tasks| Redis[(Redis Queue)]
     Worker[Go Worker Engine] <-->|BRPOPLPUSH| Redis
     Worker <-->|Status / Progress| DB
@@ -20,11 +20,12 @@ graph TD
 ```
 
 ### Der Migrations-Ablauf Schritt-für-Schritt:
-1. **Verbindungsprüfung:** Der Benutzer gibt die Quell- und Zielzugangsdaten (Nextcloud URL, Benutzername, App-Passwort) im Frontend ein. Die API führt über WebDAV (`PROPFIND`) einen Lese- bzw. Schreibtest durch.
-2. **Indexierung (Inventur):** Nach der Verbindungsauswahl scannt das API-Gateway rekursiv die selektierten Quellpfade. Jeder gefundene Dateieintrag wird als einzelner Task mit Metadaten (Pfad, Größe, Quell-Hash) in PostgreSQL angelegt.
-3. **Queueing:** Sobald das Indexieren abgeschlossen ist, werden die IDs aller offenen Tasks in die Redis-Queue geschrieben.
-4. **Verarbeitung:** Die zustandslosen Worker greifen sich die Tasks parallel aus Redis und führen den Stream-Transfer durch.
-5. **Echtzeit-Updates:** Während der Übertragung meldet der Worker den Fortschritt an die DB. Das API-Gateway liest diesen aus und pusht ihn via WebSockets an das Live-Dashboard im Browser.
+1. **Benutzer-Registrierung & Login:** Benutzer erstellen ein Konto (`/api/auth/register`) und authentifizieren sich (`/api/auth/login`). Sie erhalten einen kurzlebigen JWT-Access-Token (15 Minuten) sowie einen langlebigeren Refresh-Token in einem sicheren HTTP-Only-Cookie.
+2. **Verbindungsprüfung:** Der Benutzer gibt die Quell- und Zielzugangsdaten im Frontend ein. Die API führt über WebDAV (`PROPFIND`) einen Lese- bzw. Schreibtest durch.
+3. **Indexierung (Inventur):** Nach der Verbindungsauswahl scannt das API-Gateway rekursiv die selektierten Quellpfade. Jeder gefundene Dateieintrag wird als einzelner Task mit Metadaten (Pfad, Größe, Quell-Hash) und Benutzerzuordnung in PostgreSQL angelegt.
+4. **Queueing:** Sobald das Indexieren abgeschlossen ist, werden die IDs aller offenen Tasks in die Redis-Queue geschrieben.
+5. **Verarbeitung:** Die Worker greifen sich die Tasks parallel aus Redis und führen den Stream-Transfer durch.
+6. **Echtzeit-Updates:** Während der Übertragung meldet der Worker den Fortschritt an die DB. Das API-Gateway liest diesen aus und pusht ihn via WebSockets (abgesichert per Token) an das Live-Dashboard im Browser.
 
 ---
 
@@ -43,11 +44,15 @@ Um Silent Data Corruption zu verhindern, wird jede Datei mathematisch verifizier
 3. **Ziel-Hash:** Nach dem Upload wird der Hash der geschriebenen Datei vom Zielserver abgefragt.
 4. **Validierung:** Nur bei absoluter Identität ($\text{Hash}_{\text{Quelle}} \equiv \text{Hash}_{\text{Worker}} \equiv \text{Hash}_{\text{Ziel}}$) gilt der Task als abgeschlossen. Falls die WebDAV-Instanz keine Hashes bereitstellt, erfolgt ein Fallback auf Dateigröße und Zeitstempel.
 
-### 2.3. Sicherheit, Datenschutz & DSGVO (Zero Data Retention)
-* **Keine Zwischenspeicherung (Zero Caching):** Dateiinhalte fließen flüchtig über RAM-Buffer-Streams. Es erfolgt zu keinem Zeitpunkt ein Cache-Schreiben auf Festplatten des Migrations-Servers.
-* **AES-256-GCM Verschlüsselung:** Alle Zugangsdaten (App-Passwörter) werden verschlüsselt in PostgreSQL abgelegt. Der Schlüssel wird ausschließlich per Umgebungsvariable (`ENCRYPTION_SECRET_KEY`) zur Laufzeit an die Container übergeben.
-* **Garbage Collection (DSGVO Hard Delete):** Ein stündlicher Hintergrundprozess löscht alle Verbindungsdaten und die gesamte Task-Historie unwiderruflich aus der Datenbank, sobald die Migration abgeschlossen ist und das Zeitfenster von 24 Stunden überschritten wurde.
-* **Nextcloud Chunked Upload v2:** Für Dateien > 50 MB nutzt der Adapter die native Nextcloud WebDAV-Uploads-API. Dateien werden in 10-MB-Blöcke aufgeteilt hochgeladen und auf dem Zielserver final zusammengesetzt.
+### 2.3. Multi-Tenancy & Datensicherheit
+* **Sitzungsisolation (Multi-Tenancy):** Migrationsjobs sind fest mit einem Benutzerkonto verknüpft. Endpunkte zur Statusabfrage, zum Starten, Abbrechen oder Löschen von Migrationsjobs erzwingen eine strikte Eigentumsprüfung via JWT-Middleware.
+* **Zero Caching:** Dateiinhalte fließen flüchtig über RAM-Buffer-Streams. Es erfolgt zu keinem Zeitpunkt ein Cache-Schreiben auf Festplatten des Migrations-Servers.
+* **Schlüsseltrennung (Segregation of Keys):**
+  - `ENCRYPTION_SECRET_KEY`: Wird ausschließlich für die AES-256-GCM-Verschlüsselung gespeicherter Zugangsdaten in der DB verwendet.
+  - `JWT_SECRET_KEY`: Wird separat und ausschließlich zur kryptografischen Signierung und Validierung von JWT-Tokens geladen.
+* **CORS Origin Whitelist & Cookie-Sicherheit**: Credentials (wie das `refresh_token`-Cookie) werden nur an vertrauenswürdige Whitelist-Domains (z.B. Vite-Dev-Server oder die per `CORS_ALLOWED_ORIGIN` definierte Host-Domain) übermittelt, um CSRF-Angriffe auszuschließen.
+* **Refresh Token Rotation**: Bei jeder Token-Aktualisierung wird der alte Refresh-Token in der Datenbank gelöscht und ein neuer ausgestellt. Dies verhindert Replay-Angriffe bei Token-Diebstahl.
+* **Permanenter Verlauf & Manuelles Löschen (Cascading Delete)**: Die Migrationshistorie bleibt dauerhaft erhalten und kann vom Benutzer manuell gelöscht werden. Beim Löschen einer Migration werden alle zugehörigen Tasks über Kaskadierung in der DB rückstandslos entfernt.
 
 ---
 
@@ -57,7 +62,7 @@ Um Silent Data Corruption zu verhindern, wird jede Datei mathematisch verifizier
 * **Frontend:** React (TypeScript) SPA, gebündelt mit Vite.
 * **CSS-Framework:** Tailwind CSS v4 (integriert über das moderne Vite-Plugin).
 * **Icons:** Lucide React.
-* **Datenbank:** PostgreSQL (Persistenz von Migrations-Metadaten und Tasks).
+* **Datenbank:** PostgreSQL (Persistenz von Migrations-Metadaten, Benutzern und Tasks).
 * **Broker/Queue:** Redis (für flüchtige I/O-Warteschlangen).
 * **Orchestrierung:** Docker Compose mit Multi-Stage Dockerfiles.
 
