@@ -409,12 +409,15 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 
 	transferID := fmt.Sprintf("upload-%x", time.Now().UnixNano())
 	uploadsFolderURL := p.buildUploadsURL("/" + transferID)
+	destURL := p.buildResourceURL(resourceType, filePath)
 	
 	req, err := p.newRequest("MKCOL", uploadsFolderURL, nil)
 	if err != nil {
 		return err
 	}
 	req = req.WithContext(ctx)
+	req.Header.Set("Destination", destURL)
+
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -430,9 +433,9 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 	var totalUploaded int64
 
 	for {
-		bytesRead, err := io.ReadFull(stream, buffer)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return err
+		bytesRead, readErr := io.ReadFull(stream, buffer)
+		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
+			return readErr
 		}
 
 		if bytesRead == 0 {
@@ -440,11 +443,12 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		}
 
 		chunkData := buffer[:bytesRead]
-		chunkURL := fmt.Sprintf("%s/%08d", uploadsFolderURL, chunkIndex)
+		// Naming of chunks is limited to be between 1 and 10000. Padded to 5 digits.
+		chunkURL := fmt.Sprintf("%s/%05d", uploadsFolderURL, chunkIndex+1)
 		
-		err = p.uploadChunkWithRetry(ctx, chunkURL, chunkData)
+		err := p.uploadChunkWithRetry(ctx, chunkURL, chunkData, destURL, fileSize)
 		if err != nil {
-			return fmt.Errorf("failed to upload chunk %d: %w", chunkIndex, err)
+			return fmt.Errorf("failed to upload chunk %d: %w", chunkIndex+1, err)
 		}
 
 		totalUploaded += int64(bytesRead)
@@ -453,7 +457,7 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		}
 
 		chunkIndex++
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
 			break
 		}
 	}
@@ -465,8 +469,9 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 	}
 	req = req.WithContext(ctx)
 	
-	destURL := p.buildResourceURL(resourceType, filePath)
 	req.Header.Set("Destination", destURL)
+	req.Header.Set("Overwrite", "T")
+	req.Header.Set("OC-Total-Length", strconv.FormatInt(fileSize, 10))
 
 	resp, err = p.HTTPClient.Do(req)
 	if err != nil {
@@ -474,14 +479,34 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("failed to commit chunked upload, status: %d", resp.StatusCode)
+	if (resp.StatusCode >= 200 && resp.StatusCode < 300) ||
+		resp.StatusCode == http.StatusGatewayTimeout ||
+		resp.StatusCode == http.StatusBadGateway {
+		
+		// Poll to verify if the file eventually appears with the correct size.
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		timeout := time.After(2 * time.Minute)
+
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timeout:
+				return fmt.Errorf("failed to commit chunked upload, status: %d (verification timed out)", resp.StatusCode)
+			case <-ticker.C:
+				exists, size, errExists := p.FileExists(ctx, resourceType, filePath)
+				if errExists == nil && exists && size == fileSize {
+					return nil // Successfully committed and verified!
+				}
+			}
+		}
 	}
 
-	return nil
+	return fmt.Errorf("failed to commit chunked upload, status: %d", resp.StatusCode)
 }
 
-func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte) error {
+func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte, destURL string, totalSize int64) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		req, err := p.newRequest("PUT", chunkURL, bytes.NewReader(data))
@@ -491,6 +516,8 @@ func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL s
 		req = req.WithContext(ctx)
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = int64(len(data))
+		req.Header.Set("Destination", destURL)
+		req.Header.Set("OC-Total-Length", strconv.FormatInt(totalSize, 10))
 
 		resp, err := p.HTTPClient.Do(req)
 		if err != nil {
