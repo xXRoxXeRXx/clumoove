@@ -30,8 +30,7 @@ func main() {
 
 	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
 	if encryptionKey == "" {
-		encryptionKey = "default-secret-key-32-chars-long!!"
-		log.Println("WARNING: ENCRYPTION_SECRET_KEY not set. Using default insecure key.")
+		log.Fatal("ENCRYPTION_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
 	}
 
 	// 1. Initialize PostgreSQL

@@ -48,7 +48,7 @@ services:
     environment:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis-queue:6379
-      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-default-secret-key-32-chars-long!!}
+      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
       - PORT=8000
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
@@ -73,7 +73,7 @@ services:
     environment:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis-queue:6379
-      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-default-secret-key-32-chars-long!!}
+      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}

@@ -249,15 +249,17 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 		if err != nil {
 			return nil, err
 		}
-		defer contResp.Body.Close()
 
 		if contResp.StatusCode != http.StatusOK {
+			contResp.Body.Close()
 			return nil, fmt.Errorf("failed to continue folder listing, status: %d", contResp.StatusCode)
 		}
 
 		var contListResp dbxListFolderResponse
-		if err := json.NewDecoder(contResp.Body).Decode(&contListResp); err != nil {
-			return nil, err
+		decodeErr := json.NewDecoder(contResp.Body).Decode(&contListResp)
+		contResp.Body.Close() // close immediately, not deferred, to avoid connection leak over many pages
+		if decodeErr != nil {
+			return nil, decodeErr
 		}
 
 		for _, entry := range contListResp.Entries {
@@ -697,6 +699,39 @@ func (p *DropboxProvider) DeleteFile(ctx context.Context, resourceType, filePath
 	}
 
 	return fmt.Errorf("delete failed with status: %d", resp.StatusCode)
+}
+
+func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	if resourceType != "files" {
+		return fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
+	}
+
+	arg := map[string]interface{}{
+		"from_path":                p.cleanPath(oldPath),
+		"to_path":                  p.cleanPath(newPath),
+		"allow_shared_folder":      true,
+		"autorename":               false,
+		"allow_ownership_transfer": true,
+	}
+	body, err := json.Marshal(arg)
+	if err != nil {
+		return err
+	}
+	req, err := p.newRequest("POST", "https://api.dropboxapi.com/2/files/move_v2", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(ctx)
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("dropbox move failed with status: %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

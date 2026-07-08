@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"net/url"
@@ -365,6 +366,17 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ResourceType == "" {
 		req.ResourceType = "files"
+	}
+
+	// Whitelist provider values to fail fast with a clear error
+	validProviders := map[string]bool{"nextcloud": true, "webdav": true, "dropbox": true, "google": true}
+	if !validProviders[req.SourceProvider] {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": fmt.Sprintf("unsupported source provider: %s", req.SourceProvider)})
+		return
+	}
+	if !validProviders[req.TargetProvider] {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": fmt.Sprintf("unsupported target provider: %s", req.TargetProvider)})
+		return
 	}
 
 	// Test Source Connection
@@ -866,7 +878,15 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if origin == "" {
-		origin = "*"
+		log.Printf("handleOAuthAuth: rejected request with no determinable origin")
+		http.Error(w, "Missing origin: supply ?origin=https://your-app.example.com", http.StatusBadRequest)
+		return
+	}
+	// Validate origin is an absolute URL with a recognised scheme (no wildcard)
+	if parsedOrigin, err := url.Parse(origin); err != nil || (parsedOrigin.Scheme != "http" && parsedOrigin.Scheme != "https") {
+		log.Printf("handleOAuthAuth: rejected invalid origin %q", origin)
+		http.Error(w, "Invalid origin: must be an absolute http(s) URL", http.StatusBadRequest)
+		return
 	}
 	log.Printf("handleOAuthAuth: final origin set to %q", origin)
 
@@ -1060,7 +1080,7 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 		</html>
 	`, func() string {
 		if errStr != "" {
-			return fmt.Sprintf("<h3 style='color: #ef4444;'>Authorization Failed</h3><p>%s</p>", errStr)
+			return fmt.Sprintf("<h3 style='color: #ef4444;'>Authorization Failed</h3><p>%s</p>", html.EscapeString(errStr))
 		}
 		return "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
 	}(), script)

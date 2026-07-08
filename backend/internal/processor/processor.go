@@ -281,6 +281,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	_ = db.UpdateTaskStatus(p.db, task)
 
 	// 3. Conflict Resolution
+	var deleteAfterUpload bool // set true by OVERWRITE: delete original only after upload succeeds
 	targetPath := task.FilePath
 	if task.ResourceType == "files" {
 		// Use path (POSIX) rather than filepath: WebDAV/Nextcloud paths are always
@@ -311,10 +312,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 				return nil
 
 			case "OVERWRITE":
-				err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
-				if err != nil {
-					return fmt.Errorf("failed to delete target file for overwrite: %w", err)
-				}
+				// Do NOT delete before upload — if upload fails, the original would be lost.
+				// Instead, mark that we should delete after a successful upload.
+				deleteAfterUpload = true
 
 			case "RENAME":
 				// Generate new target name
@@ -344,6 +344,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	}
 
 	// 4. Download and Upload stream
+	uploadPath := targetPath
+	if deleteAfterUpload {
+		uploadPath = targetPath + ".tmp"
+	}
+
 	downloadStream, err := sourceClient.StreamDownload(ctx, task.ResourceType, task.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to download from source: %w", err)
@@ -437,7 +442,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
 	// If size > 50MB, do chunked upload
 	if task.FileSize > 50*1024*1024 {
-		err = targetClient.StreamUploadChunked(ctx, task.ResourceType, targetPath, hashingReader, task.FileSize, progressChan)
+		err = targetClient.StreamUploadChunked(ctx, task.ResourceType, uploadPath, hashingReader, task.FileSize, progressChan)
 	} else {
 		// Simple upload
 		// Wrap with a progress reporting reader
@@ -445,11 +450,20 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			Reader:       hashingReader,
 			ProgressChan: progressChan,
 		}
-		err = targetClient.StreamUpload(ctx, task.ResourceType, targetPath, progressReader, task.FileSize)
+		err = targetClient.StreamUpload(ctx, task.ResourceType, uploadPath, progressReader, task.FileSize)
 	}
 
 	if err != nil {
 		return fmt.Errorf("upload to target failed: %w", err)
+	}
+
+	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
+	if deleteAfterUpload {
+		// Attempt to delete original. Ignore not found error if it's already gone.
+		_ = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
+		if renameErr := targetClient.RenameFile(ctx, task.ResourceType, uploadPath, targetPath); renameErr != nil {
+			return fmt.Errorf("failed to rename temp file to target path: %w", renameErr)
+		}
 	}
 
 	// 5. Hash & Integrity Verification

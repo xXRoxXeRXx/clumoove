@@ -52,9 +52,17 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 }
 
 func (p *GoogleProvider) Connect(ctx context.Context) (bool, error) {
-	_, err := p.driveService.About.Get().Fields("user").Context(ctx).Do()
-	if err != nil {
-		return false, err
+	// Verify Drive access
+	if _, err := p.driveService.About.Get().Fields("user").Context(ctx).Do(); err != nil {
+		return false, fmt.Errorf("google drive not accessible: %w", err)
+	}
+	// Verify Calendar access
+	if _, err := p.calendarService.CalendarList.List().MaxResults(1).Context(ctx).Do(); err != nil {
+		return false, fmt.Errorf("google calendar not accessible: %w", err)
+	}
+	// Verify People (Contacts) access
+	if _, err := p.peopleService.People.Get("people/me").PersonFields("names").Context(ctx).Do(); err != nil {
+		return false, fmt.Errorf("google contacts (people) not accessible: %w", err)
 	}
 	return true, nil
 }
@@ -471,6 +479,24 @@ func (p *GoogleProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 	}
 }
 
+func (p *GoogleProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	if resourceType != "files" {
+		return fmt.Errorf("RenameFile not implemented for %s", resourceType)
+	}
+	id, err := p.resolveDriveFileID(ctx, oldPath)
+	if err != nil {
+		return err
+	}
+	lastSlash := strings.LastIndex(newPath, "/")
+	newName := newPath[lastSlash+1:]
+
+	f := &drive.File{
+		Name: newName,
+	}
+	_, err = p.driveService.Files.Update(id, f).Context(ctx).Do()
+	return err
+}
+
 func (p *GoogleProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	if resourceType == "files" {
 		res, err := p.InspectResource(ctx, resourceType, filePath)
@@ -617,13 +643,38 @@ func unescapeICSValue(s string) string {
 	return s
 }
 
+// unfoldLines implements RFC 5545 / RFC 6350 line unfolding:
+// a CRLF or LF immediately followed by a whitespace character (SPACE or TAB)
+// is a fold and must be removed, joining the continuation to the previous line.
+func unfoldLines(r io.Reader) []string {
+	scanner := bufio.NewScanner(r)
+	var lines []string
+	var current strings.Builder
+	for scanner.Scan() {
+		raw := scanner.Text()
+		// Continuation line: starts with a single space or tab
+		if len(raw) > 0 && (raw[0] == ' ' || raw[0] == '\t') {
+			current.WriteString(raw[1:])
+		} else {
+			if current.Len() > 0 {
+				lines = append(lines, current.String())
+			}
+			current.Reset()
+			current.WriteString(raw)
+		}
+	}
+	if current.Len() > 0 {
+		lines = append(lines, current.String())
+	}
+	return lines
+}
+
 func parseICS(r io.Reader) (*calendar.Event, error) {
 	event := &calendar.Event{}
-	scanner := bufio.NewScanner(r)
 
 	var inEvent bool
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, line := range unfoldLines(r) {
+		line = strings.TrimSpace(line)
 		if line == "BEGIN:VEVENT" {
 			inEvent = true
 			continue
@@ -661,7 +712,7 @@ func parseICS(r io.Reader) (*calendar.Event, error) {
 			event.End = parseICSTime(keyAttr, value)
 		}
 	}
-	return event, scanner.Err()
+	return event, nil
 }
 
 func parseICSTime(keyAttr, value string) *calendar.EventDateTime {
@@ -712,10 +763,9 @@ func formatPersonToVCF(p *people.Person) string {
 
 func parseVCF(r io.Reader) (*people.Person, error) {
 	person := &people.Person{}
-	scanner := bufio.NewScanner(r)
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, line := range unfoldLines(r) {
+		line = strings.TrimSpace(line)
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) < 2 {
 			continue
@@ -743,5 +793,5 @@ func parseVCF(r io.Reader) (*people.Person, error) {
 			})
 		}
 	}
-	return person, scanner.Err()
+	return person, nil
 }

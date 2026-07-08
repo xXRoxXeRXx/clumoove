@@ -69,14 +69,21 @@ func GetAuthURL(provider, redirectURI, state string) (string, error) {
 	if len(config.Scopes) > 0 {
 		q.Set("scope", strings.Join(config.Scopes, " "))
 	}
+	// Request offline access for Google to receive a refresh_token.
+	if provider == "google" {
+		q.Set("access_type", "offline")
+		q.Set("prompt", "consent") // force consent screen so refresh_token is always returned
+	}
 	u.RawQuery = q.Encode()
 
 	return u.String(), nil
 }
 
 type TokenResponse struct {
-	AccessToken string `json:"access_token"`
-	TokenType   string `json:"token_type"`
+	AccessToken  string `json:"access_token"`
+	TokenType    string `json:"token_type"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
 }
 
 func ExchangeCode(ctx context.Context, provider, code, redirectURI string) (*TokenResponse, error) {

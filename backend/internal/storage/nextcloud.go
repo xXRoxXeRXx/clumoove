@@ -66,7 +66,10 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 		Username: username,
 		Password: password,
 		HTTPClient: &http.Client{
-			Timeout: 0,
+			// Context-cancellation per request handles per-operation timeouts.
+			// This client-level timeout is a last-resort guard against servers
+			// that accept the connection but never send any data.
+			Timeout: 10 * time.Minute,
 		},
 	}, nil
 }
@@ -681,6 +684,29 @@ func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePa
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		return fmt.Errorf("delete failed with status: %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func (p *NextcloudProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	u := p.buildResourceURL(resourceType, oldPath)
+	req, err := p.newRequest("MOVE", u, nil)
+	if err != nil {
+		return err
+	}
+	req = req.WithContext(ctx)
+	destURL := p.buildResourceURL(resourceType, newPath)
+	req.Header.Set("Destination", destURL)
+	req.Header.Set("Overwrite", "T")
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("move failed with status: %d", resp.StatusCode)
 	}
 	return nil
 }

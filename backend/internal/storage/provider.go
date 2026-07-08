@@ -27,4 +27,5 @@ type StorageProvider interface {
 	GetFileHash(ctx context.Context, resourceType, filePath string) (string, error)
 	CreateParentDirectories(ctx context.Context, resourceType, filePath string) error
 	CreateDirectory(ctx context.Context, resourceType, dirPath string) error
+	RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error
 }

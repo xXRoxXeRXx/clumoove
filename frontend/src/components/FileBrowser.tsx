@@ -29,6 +29,15 @@ interface FileBrowserProps {
   onStartSuccess: (migrationId: string) => void;
 }
 
+// formatSize is defined at module level so it is not recreated on every render.
+const formatSize = (bytes: number): string => {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+};
+
 export const FileBrowser: React.FC<FileBrowserProps> = ({
   initialFiles,
   credentials,
@@ -293,15 +302,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     }
   };
 
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  };
 
-  // Render tree node recursively
   const renderNode = (file: CloudFile, depth: number = 0) => {
     const isExpanded = !!expandedPaths[file.path];
     const isSelected = !!selectedPaths[file.path];

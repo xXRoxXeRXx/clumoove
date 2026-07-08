@@ -1,6 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal, Link, Copy, Check } from 'lucide-react';
 
+// formatSize is defined at module level so it is not recreated on every render.
+const formatSize = (bytes: number): string => {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+};
+
 interface DashboardProps {
   migrationId: string;
   apiUrl: string;
@@ -54,13 +63,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const prevProcessedFilesRef = useRef<number>(0);
   const logsEndRef = useRef<HTMLDivElement | null>(null);
 
-  const formatSize = (bytes: number) => {
-    if (!bytes || bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-  };
 
   useEffect(() => {
     // Construct WebSocket URL
