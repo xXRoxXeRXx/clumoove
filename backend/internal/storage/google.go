@@ -96,21 +96,25 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 			for _, f := range result.Files {
 				isDir := f.MimeType == "application/vnd.google-apps.folder"
 				modTime, _ := time.Parse(time.RFC3339, f.ModifiedTime)
-				fullPath := f.Name
-				if dirPath == "/" || dirPath == "" {
-					fullPath = "/" + f.Name
-				} else {
-					fullPath = strings.TrimSuffix(dirPath, "/") + "/" + f.Name
-				}
-
+				displayName := f.Name
 				size := f.Size
 				if _, ext := googleDocsExtension(f.MimeType); ext != "" {
+					if !strings.HasSuffix(displayName, ext) {
+						displayName += ext
+					}
 					size = 0 // Google Workspace files do not have a pre-determined export size
+				}
+
+				fullPath := displayName
+				if dirPath == "/" || dirPath == "" {
+					fullPath = "/" + displayName
+				} else {
+					fullPath = strings.TrimSuffix(dirPath, "/") + "/" + displayName
 				}
 
 				resources = append(resources, CloudResource{
 					Path:         fullPath,
-					Name:         f.Name,
+					Name:         displayName,
 					Size:         size,
 					IsDir:        isDir,
 					Hash:         f.Md5Checksum,
@@ -266,15 +270,45 @@ func (p *GoogleProvider) resolveDriveFileID(ctx context.Context, filePath string
 	if err != nil {
 		return "", err
 	}
-	query := fmt.Sprintf("'%s' in parents and name = '%s' and trashed = false",
-		parentID, escapeDriveQuery(fileName))
-	res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
+
+	var candidates []string
+	candidates = append(candidates, fileName)
+
+	// If fileName ends with a known Google Doc extension, add the stripped name as a candidate
+	for _, ext := range []string{".docx", ".xlsx", ".pptx", ".png", ".pdf"} {
+		if strings.HasSuffix(strings.ToLower(fileName), ext) {
+			candidates = append(candidates, fileName[:len(fileName)-len(ext)])
+			break
+		}
+	}
+
+	var queryParts []string
+	for _, c := range candidates {
+		queryParts = append(queryParts, fmt.Sprintf("name = '%s'", escapeDriveQuery(c)))
+	}
+	nameQuery := "(" + strings.Join(queryParts, " or ") + ")"
+	query := fmt.Sprintf("'%s' in parents and %s and trashed = false", parentID, nameQuery)
+
+	res, err := p.driveService.Files.List().Q(query).Fields("files(id, name, mimeType)").Context(ctx).Do()
 	if err != nil {
 		return "", err
 	}
 	if len(res.Files) == 0 {
 		return "", fmt.Errorf("file not found: %s", filePath)
 	}
+
+	// Check for exact match (direct name match or Google Doc matching the requested extension)
+	for _, f := range res.Files {
+		if f.Name == fileName {
+			return f.Id, nil
+		}
+		_, ext := googleDocsExtension(f.MimeType)
+		if ext != "" && f.Name+ext == fileName {
+			return f.Id, nil
+		}
+	}
+
+	// Fallback to the first item if no exact match was resolved
 	return res.Files[0].Id, nil
 }
 
