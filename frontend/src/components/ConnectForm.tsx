@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Server, ArrowRight, ShieldCheck, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
+import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
 
 interface CloudFile {
   path: string;

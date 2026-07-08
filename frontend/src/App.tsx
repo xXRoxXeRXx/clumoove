@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { ConnectForm } from './components/ConnectForm';
 import { FileBrowser } from './components/FileBrowser';
 import { Dashboard } from './components/Dashboard';
-import { CloudLightning, Info } from 'lucide-react';
+import { CloudLightning } from 'lucide-react';
 
 type Step = 'connect' | 'select' | 'dashboard';
 

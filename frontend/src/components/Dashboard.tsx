@@ -3,7 +3,7 @@ import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal,
 
 // formatSize is defined at module level so it is not recreated on every render.
 const formatSize = (bytes: number): string => {
-  if (!bytes || bytes === 0) return '0 B';
+  if (!bytes || bytes <= 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -95,9 +95,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       });
   };
   
-  const prevBytes = useRef<number>(0);
-  const prevTime = useRef<number>(Date.now());
-  const startTime = useRef<number>(Date.now());
+  const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
+  const lastActiveSpeed = useRef<number>(0);
+  const lastActiveTime = useRef<number>(0);
 
   // Log tracking refs
   const prevActiveFileRef = useRef<string>('');
@@ -107,6 +107,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
 
   useEffect(() => {
+    progressHistory.current = [];
+    lastActiveSpeed.current = 0;
+    lastActiveTime.current = 0;
+
     // Construct WebSocket URL
     const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const cleanApiUrl = apiUrl.replace(/^https?:\/\//, '');
@@ -115,8 +119,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     let ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      startTime.current = Date.now();
-      prevTime.current = Date.now();
+      // Connection established
     };
 
     ws.onmessage = (event) => {
@@ -190,31 +193,81 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         setLogs((prev) => [...prev, ...newLogs]);
       }
 
+      // Reset progress history if status changes to avoid calculations across states
+      if (payload.status !== prevStatusRef.current) {
+        progressHistory.current = [];
+        lastActiveSpeed.current = 0;
+        lastActiveTime.current = 0;
+      }
+
       prevStatusRef.current = payload.status;
 
-      // Speed calculation
-      const now = Date.now();
-      const timeDiffSec = (now - prevTime.current) / 1000;
-      
-      if (timeDiffSec >= 0.8) { // Update speed at least every 800ms
-        const bytesDiff = payload.processed_bytes - prevBytes.current;
-        const currentSpeed = bytesDiff / timeDiffSec;
-        
-        setSpeed(currentSpeed > 0 ? currentSpeed : 0);
+      // Speed and ETA calculation
+      if (payload.status === 'COMPLETED') {
+        setSpeed(0);
+        setEta('Fertig');
+      } else if (payload.status === 'FAILED') {
+        setSpeed(0);
+        setEta('Fehlgeschlagen');
+      } else if (payload.status === 'INDEXING') {
+        setSpeed(0);
+        setEta('Indexierung...');
+      } else if (payload.status === 'PENDING') {
+        setSpeed(0);
+        setEta('Warte auf Start...');
+      } else if (payload.status === 'PAUSED_CONNECTION_LOSS') {
+        setSpeed(0);
+        setEta('Warte auf Verbindung...');
+      } else {
+        // RUNNING or other states
+        const now = Date.now();
+        progressHistory.current.push({ timestamp: now, bytes: payload.processed_bytes });
 
-        // ETA calculation
-        const remainingBytes = payload.total_bytes - payload.processed_bytes;
-        if (remainingBytes <= 0) {
-          setEta('Fertig');
-        } else if (currentSpeed > 0) {
-          const etaSec = remainingBytes / currentSpeed;
-          setEta(formatDuration(etaSec));
+        // Keep last 15 seconds of history to smooth speed
+        const windowLimit = now - 15000;
+        progressHistory.current = progressHistory.current.filter(item => item.timestamp >= windowLimit);
+
+        if (progressHistory.current.length >= 2) {
+          const oldest = progressHistory.current[0];
+          const newest = progressHistory.current[progressHistory.current.length - 1];
+          const timeDiffSec = (newest.timestamp - oldest.timestamp) / 1000;
+
+          if (timeDiffSec > 0.5) {
+            const bytesDiff = newest.bytes - oldest.bytes;
+            
+            let calculatedSpeed = 0;
+
+            if (bytesDiff > 0) {
+              calculatedSpeed = bytesDiff / timeDiffSec;
+              lastActiveSpeed.current = calculatedSpeed;
+              lastActiveTime.current = now;
+            } else {
+              // No progress in this window. Check if we are in the grace period
+              const timeSinceLastActive = now - lastActiveTime.current;
+              if (lastActiveSpeed.current > 0 && timeSinceLastActive < 15000) {
+                calculatedSpeed = lastActiveSpeed.current;
+              } else {
+                calculatedSpeed = 0;
+              }
+            }
+
+            setSpeed(calculatedSpeed);
+
+            // ETA calculation
+            const remainingBytes = payload.total_bytes - payload.processed_bytes;
+            if (remainingBytes <= 0) {
+              setEta('Fertig');
+            } else if (calculatedSpeed > 0) {
+              const etaSec = remainingBytes / calculatedSpeed;
+              setEta(formatDuration(etaSec));
+            } else {
+              setEta('Berechnung...');
+            }
+          }
         } else {
+          setSpeed(0);
           setEta('Berechnung...');
         }
-
-        prevBytes.current = payload.processed_bytes;
-        prevTime.current = now;
       }
     };
 
