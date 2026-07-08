@@ -109,7 +109,8 @@ func InitDB(connStr string) (*sql.DB, error) {
 				)
 			`)
 			if err != nil {
-				log.Printf("Failed schema migration (create users table): %v\n", err)
+				// Fatal: all other migrations depend on this table
+				return nil, fmt.Errorf("fatal schema migration (create users table): %w", err)
 			}
 
 			_, err = db.Exec(`
@@ -121,7 +122,8 @@ func InitDB(connStr string) (*sql.DB, error) {
 				)
 			`)
 			if err != nil {
-				log.Printf("Failed schema migration (create refresh_tokens table): %v\n", err)
+				// Fatal: authentication depends on this table
+				return nil, fmt.Errorf("fatal schema migration (create refresh_tokens table): %w", err)
 			}
 
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE`)
@@ -582,6 +584,9 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 			return nil, err
 		}
 		list = append(list, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return list, nil
 }

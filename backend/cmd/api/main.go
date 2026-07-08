@@ -36,10 +36,11 @@ var upgrader = websocket.Upgrader{
 }
 
 type APIServer struct {
-	db        *sql.DB
-	queue     *queue.Queue
-	secretKey string
-	ctx       context.Context
+	db            *sql.DB
+	queue         *queue.Queue
+	encryptionKey string // AES key for credential encryption
+	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
+	ctx           context.Context
 }
 
 func main() {
@@ -59,6 +60,12 @@ func main() {
 	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
 	if encryptionKey == "" {
 		log.Fatal("ENCRYPTION_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
+	}
+
+	// Separate secret for JWT signing — must not share AES encryption key
+	jwtSecret := os.Getenv("JWT_SECRET_KEY")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
 	}
 
 	port := os.Getenv("PORT")
@@ -88,7 +95,8 @@ func main() {
 	server := &APIServer{
 		db:        database,
 		queue:     q,
-		secretKey: encryptionKey,
+		encryptionKey: encryptionKey,
+		jwtSecret: jwtSecret,
 		ctx:       ctx,
 	}
 
@@ -103,10 +111,10 @@ func main() {
 	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
 	mux.HandleFunc("POST /api/auth/refresh", server.handleRefresh)
 	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
-	mux.HandleFunc("GET /api/auth/me", server.handleMe)
 
-	// Protected Migration Routes
-	jwtMiddleware := auth.AuthMiddleware(server.secretKey)
+	// Protected Auth Routes
+	jwtMiddleware := auth.AuthMiddleware(server.jwtSecret)
+	mux.Handle("GET /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleMe)))
 
 	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
 	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
@@ -160,15 +168,32 @@ func main() {
 	log.Println("API Server exited gracefully.")
 }
 
+// allowedOrigins defines the exact origins that may send credentialed cross-site requests.
+// Credentials (cookies) are only reflected for these origins; all others receive no Allow-Credentials header.
+var allowedOrigins = func() map[string]bool {
+	allowed := map[string]bool{
+		"http://localhost:5173": true, // Vite dev server
+		"http://localhost:3000": true, // alternative dev port
+	}
+	// Allow the production domain if set via environment variable
+	if prod := os.Getenv("CORS_ALLOWED_ORIGIN"); prod != "" {
+		allowed[prod] = true
+	}
+	return allowed
+}()
+
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" {
+		if allowedOrigins[origin] {
+			// Credentialed requests are only allowed from the whitelisted origins
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-		} else {
+		} else if origin == "" {
+			// Same-origin or non-browser requests — allow without credentials
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
+		// Requests from unknown origins receive no Allow-Origin header (blocked by browser)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Cookie")
 
@@ -489,13 +514,13 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Encrypt credentials
-	sourcePassEnc, err := crypto.Encrypt(req.SourcePassword, s.secretKey)
+	sourcePassEnc, err := crypto.Encrypt(req.SourcePassword, s.encryptionKey)
 	if err != nil {
 		http.Error(w, "Encryption failed", http.StatusInternalServerError)
 		return
 	}
 
-	targetPassEnc, err := crypto.Encrypt(req.TargetPassword, s.secretKey)
+	targetPassEnc, err := crypto.Encrypt(req.TargetPassword, s.encryptionKey)
 	if err != nil {
 		http.Error(w, "Encryption failed", http.StatusInternalServerError)
 		return
@@ -547,7 +572,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 	}
 
 	// Decrypt source credentials
-	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, s.secretKey)
+	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, s.encryptionKey)
 	if err != nil {
 		s.failMigration(migID, fmt.Sprintf("Failed to decrypt source password: %v", err))
 		return
@@ -825,7 +850,7 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := auth.ValidateToken(tokenStr, s.secretKey)
+	claims, err := auth.ValidateToken(tokenStr, s.jwtSecret)
 	if err != nil {
 		http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
 		return
@@ -1217,7 +1242,14 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Verify if user already exists
 	_, err := db.GetUserByEmail(s.db, req.Email)
 	if err == nil {
+		// User found — reject duplicate
 		http.Error(w, "User with this email already exists", http.StatusConflict)
+		return
+	}
+	if err != sql.ErrNoRows {
+		// Unexpected DB error — do not proceed with registration
+		log.Printf("Error checking existing user for %s: %v\n", req.Email, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -1272,7 +1304,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Access Token (15 mins)
-	accessToken, err := auth.GenerateAccessToken(u, s.secretKey)
+	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
 	if err != nil {
 		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
 		return
@@ -1309,8 +1341,8 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenHash := hashToken(cookie.Value)
-	userID, err := db.GetUserIDByRefreshToken(s.db, tokenHash)
+	oldTokenHash := hashToken(cookie.Value)
+	userID, err := db.GetUserIDByRefreshToken(s.db, oldTokenHash)
 	if err != nil {
 		http.Error(w, "Unauthorized: Invalid or expired refresh token", http.StatusUnauthorized)
 		return
@@ -1322,8 +1354,26 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rotate refresh token: invalidate old token before issuing new one
+	if err := db.DeleteRefreshToken(s.db, oldTokenHash); err != nil {
+		log.Printf("Warning: failed to delete old refresh token during rotation: %v\n", err)
+		// Non-fatal but logged; proceed with issuing new tokens
+	}
+
+	newRefreshToken, err := auth.GenerateRefreshToken()
+	if err != nil {
+		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
+		return
+	}
+	newExpiresAt := time.Now().Add(7 * 24 * time.Hour)
+	if err := db.StoreRefreshToken(s.db, hashToken(newRefreshToken), u.ID, newExpiresAt); err != nil {
+		http.Error(w, "Failed to store refresh token", http.StatusInternalServerError)
+		return
+	}
+	auth.SetRefreshTokenCookie(w, r, newRefreshToken, newExpiresAt)
+
 	// New Access Token
-	accessToken, err := auth.GenerateAccessToken(u, s.secretKey)
+	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
 	if err != nil {
 		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
 		return
@@ -1346,13 +1396,19 @@ func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	u, err := db.GetUserByID(s.db, userID)
-	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+	// All user data is already embedded in the validated JWT claims;
+	// no extra DB round-trip needed for a simple /me endpoint.
+	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
+	if !ok || claims == nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, u)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"id":           claims.UserID,
+		"email":        claims.Email,
+		"display_name": claims.DisplayName,
+		"role":         claims.Role,
+	})
 }
 
 func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request) {
