@@ -62,6 +62,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>({});
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
   const [conflictStrategy, setConflictStrategy] = useState('SKIP');
+  const [threads, setThreads] = useState(4);
   const [targetDir, setTargetDir] = useState('/');
   const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
   const [targetExpandedPaths, setTargetExpandedPaths] = useState<Record<string, boolean>>({});
@@ -302,6 +303,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           calendars: calendarsToMigrate,
           contacts: contactsToMigrate,
           target_dir: targetDir,
+          threads: threads,
         }),
       });
 
@@ -758,6 +760,27 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   </p>
                 </button>
               </div>
+            </div>
+
+            {/* Thread count selector */}
+            <div className="space-y-3 text-xs pt-4 border-t border-portal-border">
+              <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">Parallele Übertragungen (Threads)</label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="1"
+                  max="16"
+                  value={threads}
+                  onChange={(e) => setThreads(parseInt(e.target.value, 10))}
+                  className="flex-grow accent-portal-navy cursor-pointer"
+                />
+                <span className="font-mono text-sm font-bold text-portal-navy bg-slate-100 px-2.5 py-1 rounded-md min-w-[32px] text-center">
+                  {threads}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-550 leading-relaxed">
+                Höhere Werte beschleunigen die Migration, belasten aber Quell- und Zielserver.
+              </p>
             </div>
           </div>
 

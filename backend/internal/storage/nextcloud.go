@@ -20,6 +20,7 @@ type NextcloudProvider struct {
 	Username   string
 	Password   string
 	HTTPClient *http.Client
+	Threads    int
 }
 
 // XML structures for PROPFIND
@@ -71,6 +72,7 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 			// that accept the connection but never send any data.
 			Timeout: 10 * time.Minute,
 		},
+		Threads: 4,
 	}, nil
 }
 
@@ -427,7 +429,16 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		return fmt.Errorf("failed to create upload directory, status: %d", resp.StatusCode)
 	}
 
-	chunkSize := int64(256 * 1024 * 1024)
+	// Dynamically calculate chunk size so total memory limit is 256MB across all threads
+	threads := p.Threads
+	if threads < 1 {
+		threads = 4
+	}
+	megabytes := 256 / threads
+	if megabytes < 5 {
+		megabytes = 5 // Safety bound
+	}
+	chunkSize := int64(megabytes * 1024 * 1024)
 	buffer := make([]byte, chunkSize)
 	var chunkIndex int
 	var totalUploaded int64

@@ -41,6 +41,8 @@ interface ProgressData {
   failed_files: number;
   error_message: string;
   active_file: string;
+  active_files?: string[];
+  threads?: number;
   resource_stats?: MigrationResourceStats;
 }
 
@@ -127,6 +129,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
   // Log tracking refs
   const prevActiveFileRef = useRef<string>('');
+  const prevActiveFilesRef = useRef<string[]>([]);
   const prevStatusRef = useRef<string>('');
   const prevProcessedFilesRef = useRef<number>(0);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -163,7 +166,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         newLogs.push('⚡ Datenstrom gestartet. Kopiere Dateien direkt durch den RAM...');
       }
 
-      if (payload.active_file && payload.active_file !== prevActiveFileRef.current) {
+      if (payload.active_files && payload.active_files.length > 0) {
+        payload.active_files.forEach((file) => {
+          if (!prevActiveFilesRef.current.includes(file)) {
+            const fileName = file.split('/').pop() || file;
+            newLogs.push(`🚀 Kopiere: ${fileName}`);
+          }
+        });
+        prevActiveFilesRef.current = payload.active_files;
+      } else if (payload.active_file && payload.active_file !== prevActiveFileRef.current) {
         const fileName = payload.active_file.split('/').pop() || payload.active_file;
         newLogs.push(`🚀 Kopiere: ${fileName}`);
         prevActiveFileRef.current = payload.active_file;
@@ -483,6 +494,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </div>
             </div>
           </div>
+
+          {/* Active Transfers Card */}
+          {data.status === 'RUNNING' && data.active_files && data.active_files.length > 0 && (
+            <div className="border border-portal-border bg-white p-5 shadow-portal rounded-lg">
+              <div className="flex items-center gap-2 mb-3 pb-3 border-b border-portal-border">
+                <RefreshCw className="w-4.5 h-4.5 text-portal-orange animate-spin" />
+                <h4 className="font-display font-bold text-slate-450 text-[10px] uppercase tracking-wider">
+                  Aktive Übertragungen ({data.active_files.length} von {data.threads || 4} Threads)
+                </h4>
+              </div>
+              <div className="space-y-2">
+                {data.active_files.map((file, i) => {
+                  const fileName = file.split('/').pop() || file;
+                  return (
+                    <div key={i} className="flex items-center justify-between text-xs py-2 px-3.5 bg-slate-50 border border-slate-100 rounded-lg font-mono text-slate-650 min-w-0">
+                      <span className="truncate pr-4" title={file}>{fileName}</span>
+                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0">Läuft...</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Typewriter-Style Live Protocol Feed */}
           <div className="border border-portal-border bg-white shadow-portal rounded-lg p-5 flex flex-col h-[280px]">

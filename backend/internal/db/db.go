@@ -64,6 +64,7 @@ type Migration struct {
 	CreatedAt               time.Time               `json:"created_at"`
 	UpdatedAt               time.Time               `json:"updated_at"`
 	ResourceStats           *MigrationResourceStats `json:"resource_stats,omitempty"`
+	Threads                 int                     `json:"threads"`
 }
 
 
@@ -147,6 +148,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (target_dir): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS threads INT NOT NULL DEFAULT 4`)
+			if err != nil {
+				log.Printf("Failed schema migration (threads): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id)`)
 			if err != nil {
@@ -154,9 +159,9 @@ func InitDB(connStr string) (*sql.DB, error) {
 			}
 
 			// Set connection pool settings
-			db.SetMaxOpenConns(25)
-			db.SetMaxIdleConns(5)
-			db.SetConnMaxLifetime(5 * time.Minute)
+			db.SetMaxOpenConns(50)
+			db.SetMaxIdleConns(10)
+			db.SetConnMaxLifetime(time.Hour)
 			return db, nil
 		}
 		log.Printf("Waiting for PostgreSQL database to be ready (attempt %d/10): %v\n", attempt, pingErr)
@@ -172,15 +177,15 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 		INSERT INTO migrations (
 			user_id, source_url, source_username, source_password_encrypted,
 			target_url, target_username, target_password_encrypted,
-			source_provider, target_provider, status, conflict_strategy, target_dir
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			source_provider, target_provider, status, conflict_strategy, target_dir, threads
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
 		m.UserID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted,
-		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir,
+		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir, m.Threads,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err != nil {
@@ -196,7 +201,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		       target_url, target_username, target_password_encrypted,
 		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
 		       processed_files, processed_bytes, skipped_files, failed_files,
-		       error_message, created_at, updated_at, target_dir
+		       error_message, created_at, updated_at, target_dir, threads
 		FROM migrations WHERE id = $1
 	`
 	var m Migration
@@ -205,7 +210,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted,
 		&m.SourceProvider, &m.TargetProvider, &m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
 		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
-		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt, &m.TargetDir,
+		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
 	)
 	if err != nil {
 		return nil, err
@@ -245,6 +250,30 @@ func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (str
 		return "", nil
 	}
 	return path, err
+}
+
+// GetActiveTaskPaths returns the file_paths of all tasks currently in RUNNING state
+// for the given migration.
+func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]string, error) {
+	query := `SELECT file_path FROM tasks WHERE migration_id = $1 AND status = 'RUNNING' ORDER BY updated_at DESC`
+	rows, err := db.QueryContext(ctx, query, migrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }
 
 // IncrementMigrationProgress increments the counters of a migration in the database
@@ -559,7 +588,7 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 		       target_url, target_username, target_provider, status,
 		       conflict_strategy, total_files, total_bytes, processed_files,
 		       processed_bytes, skipped_files, failed_files, error_message,
-		       created_at, updated_at, target_dir
+		       created_at, updated_at, target_dir, threads
 		FROM migrations
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -578,7 +607,7 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 			&m.TargetURL, &m.TargetUsername, &m.TargetProvider, &m.Status,
 			&m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
 			&m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
-			&m.CreatedAt, &m.UpdatedAt, &m.TargetDir,
+			&m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
 		)
 		if err != nil {
 			return nil, err

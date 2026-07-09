@@ -2,18 +2,12 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-)
-
-const (
-	MainQueueKey       = "migration_tasks_queue"
-	ProcessingQueuePrefix = "migration_processing"
 )
 
 type Payload struct {
@@ -55,85 +49,53 @@ func NewQueue(redisAddr string) (*Queue, error) {
 	return nil, fmt.Errorf("failed to ping redis after 10 attempts: %w", pingErr)
 }
 
-// Enqueue adds a task payload to the main queue
-func (q *Queue) Enqueue(ctx context.Context, migrationID, taskID string) error {
-	payload := Payload{
-		MigrationID: migrationID,
-		TaskID:      taskID,
-	}
-
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	return q.client.LPush(ctx, MainQueueKey, data).Err()
-}
-
-// Dequeue pops a task from the main queue and pushes it to a worker-specific processing queue (reliable queue pattern)
-func (q *Queue) Dequeue(ctx context.Context, workerID string, timeout time.Duration) (*Payload, error) {
-	processingQueue := fmt.Sprintf("%s:%s", ProcessingQueuePrefix, workerID)
-
-	// BRPOPLPUSH source destination timeout
-	// Blocks until an item is available or timeout is reached
-	res, err := q.client.BRPopLPush(ctx, MainQueueKey, processingQueue, timeout).Result()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, nil // Timeout, no items
-		}
-		return nil, err
-	}
-
+// DequeueSQL pops a task from the database queue natively respecting migration thread limits.
+func (q *Queue) DequeueSQL(ctx context.Context, db *sql.DB, workerID string) (*Payload, error) {
+	query := `
+		WITH available_tasks AS (
+			SELECT t.id, t.migration_id
+			FROM tasks t
+			JOIN migrations m ON t.migration_id = m.id
+			WHERE t.status = 'PENDING'
+			AND m.status IN ('RUNNING', 'INDEXING')
+			AND (
+				SELECT COUNT(*) FROM tasks t2 
+				WHERE t2.migration_id = m.id AND t2.status = 'RUNNING'
+			) < m.threads
+			ORDER BY t.created_at ASC
+			LIMIT 1
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE tasks
+		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1
+		WHERE id = (SELECT id FROM available_tasks)
+		RETURNING id, migration_id
+	`
 	var payload Payload
-	if err := json.Unmarshal([]byte(res), &payload); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal queue payload: %w", err)
+	err := db.QueryRowContext(ctx, query, workerID).Scan(&payload.TaskID, &payload.MigrationID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No tasks available
+		}
+		return nil, fmt.Errorf("failed to dequeue task from sql: %w", err)
 	}
-
 	return &payload, nil
 }
 
-// Complete removes the task from the worker's processing queue after successful processing
-func (q *Queue) Complete(ctx context.Context, workerID string, payload *Payload) error {
-	processingQueue := fmt.Sprintf("%s:%s", ProcessingQueuePrefix, workerID)
-	data, err := json.Marshal(payload)
+// RecoverAbandonedTasks resets tasks for a dead worker back to PENDING.
+func (q *Queue) RecoverAbandonedTasks(ctx context.Context, db *sql.DB, workerID string) error {
+	query := `
+		UPDATE tasks 
+		SET status = 'PENDING', worker_hash = NULL, updated_at = CURRENT_TIMESTAMP 
+		WHERE status = 'RUNNING' AND worker_hash = $1
+	`
+	res, err := db.ExecContext(ctx, query, workerID)
 	if err != nil {
 		return err
 	}
-
-	// Remove item from processing queue
-	return q.client.LRem(ctx, processingQueue, 1, data).Err()
-}
-
-// RequeueFailed moves a failed task from the worker's processing queue back to the main queue
-func (q *Queue) RequeueFailed(ctx context.Context, workerID string, payload *Payload) error {
-	processingQueue := fmt.Sprintf("%s:%s", ProcessingQueuePrefix, workerID)
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-
-	// Remove from processing and push back to main queue in a transaction
-	pipe := q.client.TxPipeline()
-	pipe.LRem(ctx, processingQueue, 1, data)
-	pipe.LPush(ctx, MainQueueKey, data)
-	_, err = pipe.Exec(ctx)
-	return err
-}
-
-// CleanAbandonedTasks can be run by a manager routine to find tasks left in worker processing queues
-// (e.g. if a worker container is restarted or dies)
-func (q *Queue) RecoverAbandonedTasks(ctx context.Context, workerID string) error {
-	processingQueue := fmt.Sprintf("%s:%s", ProcessingQueuePrefix, workerID)
-	for {
-		// RPOPLPUSH from processing back to main queue
-		res, err := q.client.RPopLPush(ctx, processingQueue, MainQueueKey).Result()
-		if err != nil {
-			if err == redis.Nil {
-				break // No more items in processing queue
-			}
-			return err
-		}
-		log.Printf("[Queue] Recovered abandoned task payload: %s\n", res)
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected > 0 {
+		log.Printf("[Queue] Recovered %d abandoned tasks for worker %s\n", rowsAffected, workerID)
 	}
 	return nil
 }
@@ -152,29 +114,19 @@ func (q *Queue) RegisterActiveWorker(ctx context.Context, workerID string, ttl t
 	return q.client.Set(ctx, key, "1", ttl).Err()
 }
 
-// GetAbandonedWorkerQueues scans Redis for all processing queues and returns the worker IDs of dead workers
-func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context) ([]string, error) {
-	var cursor uint64
-	var keys []string
-	matchPattern := fmt.Sprintf("%s:*", ProcessingQueuePrefix)
-
-	for {
-		var err error
-		var scanKeys []string
-		scanKeys, cursor, err = q.client.Scan(ctx, cursor, matchPattern, 100).Result()
-		if err != nil {
-			return nil, err
-		}
-		keys = append(keys, scanKeys...)
-		if cursor == 0 {
-			break
-		}
+// GetAbandonedWorkerQueues scans the database for all workers currently processing tasks and cross-checks their liveness in Redis
+func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context, db *sql.DB) ([]string, error) {
+	query := `SELECT DISTINCT worker_hash FROM tasks WHERE status = 'RUNNING' AND worker_hash IS NOT NULL`
+	rows, err := db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
 	}
+	defer rows.Close()
 
 	var abandonedWorkers []string
-	for _, key := range keys {
-		workerID := strings.TrimPrefix(key, ProcessingQueuePrefix+":")
-		if workerID == "" {
+	for rows.Next() {
+		var workerID string
+		if err := rows.Scan(&workerID); err != nil {
 			continue
 		}
 
@@ -188,6 +140,9 @@ func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context) ([]string, error) 
 		if exists == 0 {
 			abandonedWorkers = append(abandonedWorkers, workerID)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 
 	return abandonedWorkers, nil

@@ -13,7 +13,9 @@ import (
 	"net"
 	"os"
 	"path"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"backend/internal/crypto"
@@ -23,27 +25,36 @@ import (
 )
 
 type Processor struct {
-	db       *sql.DB
-	queue    *queue.Queue
-	workerID string
-	secretKey string
+	db         *sql.DB
+	queue      *queue.Queue
+	workerID   string
+	secretKey  string
+	maxThreads int
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
+	maxThreads := 4
+	if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
+		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
+			maxThreads = val
+		}
+	}
+
 	return &Processor{
-		db:        database,
-		queue:     q,
-		workerID:  workerID,
-		secretKey: secretKey,
+		db:         database,
+		queue:      q,
+		workerID:   workerID,
+		secretKey:  secretKey,
+		maxThreads: maxThreads,
 	}
 }
 
 // Start runs the worker dequeue loop and background schedulers
 func (p *Processor) Start(ctx context.Context) {
-	fmt.Printf("[Worker %s] Started and waiting for tasks...\n", p.workerID)
+	fmt.Printf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
 	
 	// Recover any abandoned tasks on startup
-	if err := p.queue.RecoverAbandonedTasks(ctx, p.workerID); err != nil {
+	if err := p.queue.RecoverAbandonedTasks(ctx, p.db, p.workerID); err != nil {
 		fmt.Printf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
 	}
 
@@ -52,38 +63,51 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
 
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Printf("[Worker %s] Stopping...\n", p.workerID)
-			return
-		default:
-			// Dequeue task (block for 5 seconds)
-			payload, err := p.queue.Dequeue(ctx, p.workerID, 5*time.Second)
-			if err != nil {
-				if ctx.Err() != nil {
+	var wg sync.WaitGroup
+	for i := 0; i < p.maxThreads; i++ {
+		wg.Add(1)
+		go func(threadID int) {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
 					return
+				default:
+					// Dequeue task from PostgreSQL
+					payload, err := p.queue.DequeueSQL(ctx, p.db, p.workerID)
+					if err != nil {
+						if ctx.Err() != nil {
+							return
+						}
+						fmt.Printf("[Worker %s] Thread %d dequeue error: %v. Sleeping...\n", p.workerID, threadID, err)
+						time.Sleep(2 * time.Second)
+						continue
+					}
+
+					if payload == nil {
+						time.Sleep(2 * time.Second) // Sleep to avoid busy loop
+						continue // No task in queue
+					}
+
+					fmt.Printf("[Worker %s] Thread %d processing task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
+					
+					err = p.processTask(ctx, payload)
+					if err != nil {
+						fmt.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
+						p.handleTaskFailure(ctx, payload, err)
+					} else {
+						fmt.Printf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
+					}
 				}
-				fmt.Printf("[Worker %s] Dequeue error: %v. Sleeping...\n", p.workerID, err)
-				time.Sleep(2 * time.Second)
-				continue
 			}
-
-			if payload == nil {
-				continue // No task in queue
-			}
-
-			fmt.Printf("[Worker %s] Processing task %s for migration %s\n", p.workerID, payload.TaskID, payload.MigrationID)
-			
-			err = p.processTask(ctx, payload)
-			if err != nil {
-				fmt.Printf("[Worker %s] Error processing task %s: %v\n", p.workerID, payload.TaskID, err)
-				p.handleTaskFailure(ctx, payload, err)
-			} else {
-				fmt.Printf("[Worker %s] Successfully processed task %s\n", p.workerID, payload.TaskID)
-			}
-		}
+		}(i)
 	}
+
+	// Wait for shutdown signal
+	<-ctx.Done()
+	fmt.Printf("[Worker %s] Shutdown signal received. Waiting for active tasks to finish...\n", p.workerID)
+	wg.Wait()
+	fmt.Printf("[Worker %s] Worker loop stopped.\n", p.workerID)
 }
 
 // RunWorkerLiveness periodically registers this worker as active and recovers abandoned tasks
@@ -108,7 +132,7 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 				fmt.Printf("[Liveness] Error registering active worker: %v\n", err)
 			}
 		case <-cleanupTicker.C:
-			deadWorkers, err := p.queue.GetAbandonedWorkerQueues(ctx)
+			deadWorkers, err := p.queue.GetAbandonedWorkerQueues(ctx, p.db)
 			if err != nil {
 				fmt.Printf("[Liveness] Error scanning for dead workers: %v\n", err)
 				continue
@@ -125,7 +149,7 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 					continue // Another instance is already handling recovery for this worker
 				}
 				fmt.Printf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
-				if err := p.queue.RecoverAbandonedTasks(ctx, deadWorkerID); err != nil {
+				if err := p.queue.RecoverAbandonedTasks(ctx, p.db, deadWorkerID); err != nil {
 					fmt.Printf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
 				}
 			}
@@ -180,13 +204,7 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 			continue
 		}
 
-		// Enqueue back to Redis
-		err = p.queue.Enqueue(ctx, migrationID, taskID)
-		if err != nil {
-			fmt.Printf("[RetryScheduler] Error enqueuing task %s: %v\n", taskID, err)
-		} else {
-			fmt.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
-		}
+		fmt.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
 	}
 	if err := rows.Err(); err != nil {
 		fmt.Printf("[RetryScheduler] rows error: %v\n", err)
@@ -275,26 +293,25 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		return fmt.Errorf("failed to fetch migration: %w", err)
 	}
 
-	// If migration is paused or in connection loss, put the task back and sleep,
-	// then return nil to avoid incrementing attempts or marking it failed.
+	// If migration is paused or in connection loss, return nil (task stays in RUNNING, but we want it PENDING)
+	// Actually, DequeueSQL only picks PENDING. If migration is paused, DequeueSQL won't pick it!
+	// But just in case status changed right after dequeue:
 	if mig.Status == "PAUSED_CONNECTION_LOSS" || mig.Status == "PAUSED" {
-		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
-		select {
-		case <-ctx.Done():
-		case <-time.After(2 * time.Second):
-		}
+		// Set back to pending
+		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL WHERE id=$1", payload.TaskID)
+		time.Sleep(2 * time.Second)
 		return nil
 	}
 
-	// If migration is in a terminal state (COMPLETED or FAILED), discard the task from the queue.
+	// If migration is in a terminal state (COMPLETED or FAILED), mark task as skipped/failed
 	if mig.Status == "COMPLETED" || mig.Status == "FAILED" {
-		_ = p.queue.Complete(ctx, p.workerID, payload)
+		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='SKIPPED', worker_hash=NULL WHERE id=$1", payload.TaskID)
 		return nil
 	}
 
 	// If migration is in any other non-running state, requeue and return error
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
-		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
+		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL WHERE id=$1", payload.TaskID)
 		return fmt.Errorf("migration is in state %s, task skipped for now", mig.Status)
 	}
 
@@ -322,6 +339,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	targetClient, err := storage.NewProvider(ctx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to create target client: %w", err)
+	}
+
+	if nc, ok := sourceClient.(*storage.NextcloudProvider); ok {
+		nc.Threads = mig.Threads
+	}
+	if nc, ok := targetClient.(*storage.NextcloudProvider); ok {
+		nc.Threads = mig.Threads
 	}
 
 	// Update task status to RUNNING in DB
@@ -356,7 +380,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 				task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 				_ = db.UpdateTaskStatus(p.db, task)
 				_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
-				_ = p.queue.Complete(ctx, p.workerID, payload)
 				return nil
 
 			case "OVERWRITE":
@@ -507,7 +530,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			task.ErrorMessage = sql.NullString{String: "Sabredav: Calendar event UID already exists (SKIP)", Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
 			_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
-			_ = p.queue.Complete(ctx, p.workerID, payload)
 			return nil
 		}
 		return fmt.Errorf("upload to target failed: %w", err)
@@ -607,9 +629,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	// Increment processed files count (processed bytes already incremented by progress channel)
 	_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, 0, 0, 0)
 
-	// Delete from reliable queue
-	_ = p.queue.Complete(ctx, p.workerID, payload)
-
 	return nil
 }
 
@@ -618,6 +637,16 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	task, err := db.GetTask(p.db, payload.TaskID)
 	if err != nil {
 		fmt.Printf("Error fetching task on failure handler: %v\n", err)
+		return
+	}
+
+	// Check if context is cancelled (graceful shutdown)
+	isShutdown := errors.Is(procErr, context.Canceled) || ctx.Err() != nil
+	if isShutdown {
+		fmt.Printf("[Worker %s] Shutdown detected. Requeueing task %s...\n", p.workerID, payload.TaskID)
+
+		task.Status = "PENDING"
+		_ = db.UpdateTaskStatus(p.db, task)
 		return
 	}
 
@@ -632,10 +661,9 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		// Pause the migration
 		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "PAUSED_CONNECTION_LOSS", nil)
 		
-		// Move task from processing back to main queue so it can be retried immediately upon resume
+		// Task is set back to PENDING so it can be retried immediately upon resume
 		task.Status = "PENDING"
 		_ = db.UpdateTaskStatus(p.db, task)
-		_ = p.queue.RequeueFailed(ctx, p.workerID, payload)
 		return
 	}
 
@@ -666,8 +694,6 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 		_ = db.UpdateTaskStatus(p.db, task)
 		
-		// Remove from active processing queue (will be re-enqueued by manager cron based on next_retry_at)
-		_ = p.queue.Complete(ctx, p.workerID, payload)
 		fmt.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, backoffSec, task.Attempts)
 	} else {
 		// Max retries reached, fail permanently
@@ -675,8 +701,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		task.NextRetryAt = sql.NullTime{}
 		_ = db.UpdateTaskStatus(p.db, task)
 		
-		// Remove from active queue
-		_ = p.queue.Complete(ctx, p.workerID, payload)
+
 
 		// Increment migration failed files
 		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, task.FileSize, 0, 1)

@@ -487,6 +487,7 @@ type StartRequest struct {
 	Calendars        []string `json:"calendars"`         // List of selected calendars
 	Contacts         []string `json:"contacts"`          // List of selected contacts
 	TargetDir        string   `json:"target_dir"`        // Target directory to copy files to
+	Threads          int      `json:"threads"`
 }
 
 func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
@@ -529,6 +530,14 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	// Get userID from context
 	userID := auth.GetUserIDFromContext(r.Context())
 
+	// Validate threads
+	threads := req.Threads
+	if threads < 1 {
+		threads = 4
+	} else if threads > 16 {
+		threads = 16
+	}
+
 	// Create Migration Record
 	m := &db.Migration{
 		UserID:                  sql.NullString{String: userID, Valid: userID != ""},
@@ -543,6 +552,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		Status:                  "INDEXING",
 		ConflictStrategy:        req.ConflictStrategy,
 		TargetDir:               targetDir,
+		Threads:                 threads,
 	}
 
 	migrationID, err := db.CreateMigration(s.db, m)
@@ -678,14 +688,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 		return
 	}
 
-	// Push task IDs to Redis queue
-	for _, tID := range taskIDs {
-		err = s.queue.Enqueue(ctx, migID, tID)
-		if err != nil {
-			log.Printf("Failed to enqueue task %s in Redis: %v\n", tID, err)
-		}
-	}
-	log.Printf("Finished indexing migration %s. Total files: %d, Total size: %d bytes. Enqueued tasks.\n", migID, totalFiles, totalBytes)
+	log.Printf("Finished indexing migration %s. Total files: %d, Total size: %d bytes.\n", migID, totalFiles, totalBytes)
 }
 
 func (s *APIServer) indexFolder(ctx context.Context, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, taskIDs *[]string, indexedPaths map[string]bool) error {
@@ -891,8 +894,12 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// Query active file path
-		activeFile, _ := db.GetActiveTaskPath(s.db, r.Context(), id)
+		// Query active file paths
+		activeFiles, _ := db.GetActiveTaskPaths(s.db, r.Context(), id)
+		var activeFile string
+		if len(activeFiles) > 0 {
+			activeFile = activeFiles[0]
+		}
 
 		responsePayload := map[string]interface{}{
 			"id":              mig.ID,
@@ -905,6 +912,8 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"failed_files":    mig.FailedFiles,
 			"error_message":   "",
 			"active_file":     activeFile,
+			"active_files":    activeFiles,
+			"threads":         mig.Threads,
 		}
 
 		if mig.ErrorMessage.Valid {
