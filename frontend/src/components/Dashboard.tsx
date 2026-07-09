@@ -145,6 +145,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     const cleanApiUrl = apiUrl.replace(/^https?:\/\//, '');
     const wsUrl = `${wsProto}://${cleanApiUrl}/api/migration/${migrationId}/ws?token=${token}`;
 
+    let isMounted = true;
     let ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -309,6 +310,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     };
 
     ws.onerror = (err) => {
+      if (!isMounted) return;
       console.error('WS Error:', err);
       setLogs((prev) => [...prev, '⚠️ Websocket-Verbindungsfehler. Versuche automatischen Reconnect...']);
     };
@@ -317,7 +319,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     // a bookmarked URL and the server is temporarily down, we surface a clear banner
     // instead of leaving the user on a frozen loading spinner.
     let reconnectDelay = 1000;
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
     ws.onclose = () => {
+      if (!isMounted) return;
       if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'FAILED') {
         return;
       }
@@ -325,11 +329,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         setServerUnreachable(true);
         return;
       }
-      setTimeout(() => {
+      reconnectTimeout = setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
         const wsProtoR = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const cleanApiUrlR = apiUrl.replace(/^https?:\/\//, '');
-        const wsUrlR = `${wsProtoR}://${cleanApiUrlR}/api/migration/${migrationId}/ws`;
+        const wsUrlR = `${wsProtoR}://${cleanApiUrlR}/api/migration/${migrationId}/ws?token=${token}`;
         const wsR = new WebSocket(wsUrlR);
         wsR.onopen = ws.onopen;
         wsR.onmessage = ws.onmessage;
@@ -340,9 +344,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     };
 
     return () => {
+      isMounted = false;
+      clearTimeout(reconnectTimeout);
       ws.close();
     };
-  }, [migrationId, apiUrl]);
+  }, [migrationId, apiUrl, token]);
 
   // Auto-scroll logs container without moving the whole page window
   useEffect(() => {

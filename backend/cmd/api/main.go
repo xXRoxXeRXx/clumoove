@@ -174,6 +174,7 @@ var allowedOrigins = func() map[string]bool {
 	allowed := map[string]bool{
 		"http://localhost:5173": true, // Vite dev server
 		"http://localhost:3000": true, // alternative dev port
+		"http://localhost:3001": true, // docker compose port
 	}
 	// Allow the production domain if set via environment variable
 	if prod := os.Getenv("CORS_ALLOWED_ORIGIN"); prod != "" {

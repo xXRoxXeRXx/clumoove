@@ -50,7 +50,13 @@ function App() {
 
   // 1. Silent login / Refresh Token check on load
   useEffect(() => {
-    fetch(`${API_URL}/api/auth/refresh`, { method: 'POST' })
+    if (localStorage.getItem('has_session') !== 'true') {
+      setStep('login');
+      setIsValidating(false);
+      return;
+    }
+
+    fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' })
       .then(async (res) => {
         if (res.ok) {
           const data = await res.json();
@@ -84,14 +90,17 @@ function App() {
               setStep('history');
             }
           } else {
+            localStorage.removeItem('has_session');
             setStep('login');
           }
         } else {
+          localStorage.removeItem('has_session');
           setStep('login');
         }
       })
       .catch((err) => {
         console.error('Silent login error:', err);
+        localStorage.removeItem('has_session');
         setStep('login');
       })
       .finally(() => {
@@ -104,7 +113,7 @@ function App() {
     if (!token) return;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`${API_URL}/api/auth/refresh`, { method: 'POST' });
+        const res = await fetch(`${API_URL}/api/auth/refresh`, { method: 'POST', credentials: 'include' });
         if (res.ok) {
           const data = await res.json();
           setToken(data.access_token);
@@ -121,6 +130,7 @@ function App() {
   }, [token]);
 
   const handleAuthSuccess = (accessToken: string, loggedUser: any) => {
+    localStorage.setItem('has_session', 'true');
     setToken(accessToken);
     setUser(loggedUser);
     setStep('history');
@@ -128,10 +138,11 @@ function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_URL}/api/auth/logout`, { method: 'POST' });
+      await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
     } catch (e) {
       console.error('Logout request failed:', e);
     }
+    localStorage.removeItem('has_session');
     setToken('');
     setUser(null);
     setCredentials(null);

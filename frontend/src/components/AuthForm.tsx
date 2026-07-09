@@ -38,6 +38,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         headers: {
           'Content-Type': 'application/json',
         },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -125,6 +126,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               <input
                 type="email"
                 required
+                autoComplete="email"
                 placeholder="name@beispiel.de"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -145,6 +147,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
+                autoComplete={isLogin ? 'current-password' : 'new-password'}
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
