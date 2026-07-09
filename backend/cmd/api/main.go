@@ -189,11 +189,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 			// Credentialed requests are only allowed from the whitelisted origins
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-		} else if origin == "" {
-			// Same-origin or non-browser requests — allow without credentials
-			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
-		// Requests from unknown origins receive no Allow-Origin header (blocked by browser)
+		// Requests from unknown or empty origins receive no Allow-Origin header (blocked by browser if necessary)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Cookie")
 
@@ -1365,8 +1362,9 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// Rotate refresh token: invalidate old token before issuing new one
 	if err := db.DeleteRefreshToken(s.db, oldTokenHash); err != nil {
-		log.Printf("Warning: failed to delete old refresh token during rotation: %v\n", err)
-		// Non-fatal but logged; proceed with issuing new tokens
+		log.Printf("Error: failed to delete old refresh token during rotation: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
 
 	newRefreshToken, err := auth.GenerateRefreshToken()

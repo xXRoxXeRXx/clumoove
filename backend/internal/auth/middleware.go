@@ -8,7 +8,6 @@ import (
 
 type ContextKey string
 
-const UserIDKey ContextKey = "userID"
 const ClaimsKey ContextKey = "claims"
 
 // AuthMiddleware intercepts requests to validate the JWT bearer token and inject userID into context
@@ -34,9 +33,8 @@ func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Inject UserID and full Claims into request context
-			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
-			ctx = context.WithValue(ctx, ClaimsKey, claims)
+			// Inject full Claims into request context
+			ctx := context.WithValue(r.Context(), ClaimsKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -44,9 +42,9 @@ func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
 
 // GetUserIDFromContext retrieves the authenticated user's ID from the context
 func GetUserIDFromContext(ctx context.Context) string {
-	if val := ctx.Value(UserIDKey); val != nil {
-		if id, ok := val.(string); ok {
-			return id
+	if val := ctx.Value(ClaimsKey); val != nil {
+		if claims, ok := val.(*Claims); ok {
+			return claims.UserID
 		}
 	}
 	return ""
