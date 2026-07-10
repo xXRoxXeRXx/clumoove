@@ -372,12 +372,26 @@ func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, file
 	// CalDAV and CardDAV entries are small (typically a few KB). Use a tighter
 	// per-request timeout so a hanging server fails fast and can be retried via
 	// the normal backoff path rather than blocking a thread for 10 minutes.
+	// For regular files scale the timeout by size: allow at least 5 min plus
+	// 1 extra minute per 50 MB, capped at 30 minutes. This prevents a slow
+	// Nextcloud target from holding threads indefinitely while still giving
+	// large files (e.g. several GB) enough headroom.
 	uploadCtx := ctx
+	var uploadCancel context.CancelFunc
 	if resourceType == "calendars" || resourceType == "contacts" {
-		var cancel context.CancelFunc
-		uploadCtx, cancel = context.WithTimeout(ctx, 2*time.Minute)
-		defer cancel()
+		uploadCtx, uploadCancel = context.WithTimeout(ctx, 2*time.Minute)
+	} else {
+		baseTimeout := 5 * time.Minute
+		if size > 0 {
+			extraMinutes := time.Duration(size/(50*1024*1024)) * time.Minute
+			baseTimeout += extraMinutes
+		}
+		if baseTimeout > 30*time.Minute {
+			baseTimeout = 30 * time.Minute
+		}
+		uploadCtx, uploadCancel = context.WithTimeout(ctx, baseTimeout)
 	}
+	defer uploadCancel()
 
 	req, err := p.newRequest("PUT", u, stream)
 	if err != nil {
