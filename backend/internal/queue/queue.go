@@ -154,22 +154,46 @@ func (q *Queue) PublishCancelEvent(ctx context.Context, migrationID string) erro
 	return q.client.Publish(ctx, channel, migrationID).Err()
 }
 
-// SubscribeToCancelEvents listens for cancellation events and calls the callback
+// SubscribeToCancelEvents listens for cancellation events and calls the callback.
+// If the Pub/Sub channel closes (e.g. transient Redis disconnect) it reconnects
+// with exponential back-off so cancel events are never silently lost.
 func (q *Queue) SubscribeToCancelEvents(ctx context.Context, callback func(migrationID string)) {
 	channel := "migration-control:cancel"
-	pubsub := q.client.Subscribe(ctx, channel)
-	defer pubsub.Close()
+	backoff := time.Second
 
-	ch := pubsub.Channel()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		pubsub := q.client.Subscribe(ctx, channel)
+		ch := pubsub.Channel()
+
+		closed := false
+		for !closed {
+			select {
+			case <-ctx.Done():
+				pubsub.Close()
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					// Channel closed — Redis blip; reconnect after back-off
+					closed = true
+				} else {
+					backoff = time.Second // reset on successful message
+					callback(msg.Payload)
+				}
+			}
+		}
+		pubsub.Close()
+
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			callback(msg.Payload)
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
 		}
 	}
 }

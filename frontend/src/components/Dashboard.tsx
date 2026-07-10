@@ -146,7 +146,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       // Status will automatically update via WebSocket
     } catch (err) {
       console.error(err);
-      alert(`Fehler: ${err}`);
+      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setControlLoading(null);
     }

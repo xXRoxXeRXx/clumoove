@@ -403,6 +403,16 @@ func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	mig, err := db.GetMigration(s.db, id)
+	if err != nil {
+		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		return
+	}
+	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
+		http.Error(w, "Migration cannot be paused in its current state", http.StatusConflict)
+		return
+	}
+
 	err = db.UpdateMigrationStatus(s.db, id, "PAUSED", nil)
 	if err != nil {
 		http.Error(w, "Failed to pause migration", http.StatusInternalServerError)
@@ -423,6 +433,16 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	mig, err := db.GetMigration(s.db, id)
+	if err != nil {
+		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		return
+	}
+	if mig.Status != "PAUSED" && mig.Status != "PAUSED_CONNECTION_LOSS" {
+		http.Error(w, "Migration cannot be resumed in its current state", http.StatusConflict)
 		return
 	}
 
@@ -463,7 +483,9 @@ func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Publish Redis PubSub event to cancel running contexts on workers
-	_ = s.queue.PublishCancelEvent(r.Context(), id)
+	if err := s.queue.PublishCancelEvent(r.Context(), id); err != nil {
+		log.Printf("Warning: failed to publish cancel event for migration %s: %v — in-flight tasks will be aborted via DB status check", id, err)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }

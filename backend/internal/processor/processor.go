@@ -411,6 +411,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		return nil
 	}
 
+	// If migration was cancelled, mark the task cancelled and stop
+	if mig.Status == "CANCELLED" {
+		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='CANCELLED', worker_hash=NULL WHERE id=$1", payload.TaskID)
+		return nil
+	}
+
 	// If migration is in any other non-running state, requeue and return error
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
 		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL WHERE id=$1", payload.TaskID)
