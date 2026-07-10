@@ -62,6 +62,7 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunWorkerLiveness(ctx)
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
+	go p.RunOrphanedPendingTasksRecovery(ctx)
 
 	var wg sync.WaitGroup
 	for i := 0; i < p.maxThreads; i++ {
@@ -208,6 +209,71 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	}
 	if err := rows.Err(); err != nil {
 		fmt.Printf("[RetryScheduler] rows error: %v\n", err)
+	}
+}
+
+// RunOrphanedPendingTasksRecovery detects PENDING tasks that exist in the DB but have been
+// lost from the Redis queue (e.g. due to a Redis restart, flush, or replication attack) and
+// re-enqueues them. It waits 5 minutes after startup before the first scan so that a freshly
+// indexed migration has time to fill the queue normally.
+func (p *Processor) RunOrphanedPendingTasksRecovery(ctx context.Context) {
+	// Delay first check so normal startup enqueuing isn't mistaken for orphans.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(5 * time.Minute):
+	}
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.requeueOrphanedPendingTasks(ctx)
+		}
+	}
+}
+
+// requeueOrphanedPendingTasks scans for PENDING tasks belonging to active migrations whose
+// updated_at is older than 10 minutes (i.e. they were never picked up from the queue).
+func (p *Processor) requeueOrphanedPendingTasks(ctx context.Context) {
+	// A task stays PENDING until a worker sets it to RUNNING on dequeue. If it has been
+	// PENDING for more than 10 minutes while its migration is still active, it is almost
+	// certainly no longer in the Redis queue and must be re-enqueued.
+	query := `
+		SELECT t.id, t.migration_id
+		FROM tasks t
+		JOIN migrations m ON t.migration_id = m.id
+		WHERE t.status = 'PENDING'
+		  AND t.updated_at < NOW() - INTERVAL '10 minutes'
+		  AND m.status IN ('RUNNING', 'INDEXING')
+	`
+	rows, err := p.db.QueryContext(ctx, query)
+	if err != nil {
+		fmt.Printf("[OrphanedTaskRecovery] DB query error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	var count int
+	for rows.Next() {
+		var taskID, migrationID string
+		if err := rows.Scan(&taskID, &migrationID); err != nil {
+			continue
+		}
+		if err := p.queue.Enqueue(ctx, migrationID, taskID); err != nil {
+			fmt.Printf("[OrphanedTaskRecovery] Error enqueuing task %s: %v\n", taskID, err)
+		} else {
+			count++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("[OrphanedTaskRecovery] rows error: %v\n", err)
+	}
+	if count > 0 {
+		fmt.Printf("[OrphanedTaskRecovery] Re-enqueued %d orphaned PENDING tasks\n", count)
 	}
 }
 
