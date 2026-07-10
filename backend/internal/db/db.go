@@ -342,6 +342,7 @@ func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelt
 			SET status = $1,
 			    error_message = COALESCE($2, error_message)
 			WHERE id = $3
+			  AND status IN ('RUNNING', 'INDEXING')
 		`
 		_, err = tx.Exec(statusQuery, finalStatus, errMessage, id)
 		if err != nil {
