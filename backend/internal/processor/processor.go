@@ -762,6 +762,28 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		isPermanent = true
 	}
 
+	// Detect OAuth 401 authentication errors.
+	// These mean the stored access token is invalid and no refresh token is available
+	// (or the refresh failed). Retrying the same task will never help — we must stop
+	// the entire migration immediately so the user can re-authenticate.
+	isAuthError := strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "authError") ||
+		strings.Contains(errStr, "Invalid Credentials") ||
+		strings.Contains(errStr, "invalid authentication credentials")
+
+	if isAuthError {
+		fmt.Printf("[Worker %s] OAuth 401 detected for task %s (migration %s) — stopping migration immediately\n",
+			p.workerID, payload.TaskID, payload.MigrationID)
+		authErrMsg := fmt.Sprintf("OAuth authentication failed: %v — please reconnect your account and start a new migration", procErr)
+		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "FAILED", &authErrMsg)
+		// Mark this individual task failed too so progress counters stay accurate
+		task.Status = "FAILED"
+		task.NextRetryAt = sql.NullTime{}
+		_ = db.UpdateTaskStatus(p.db, task)
+		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, task.FileSize, 0, 1)
+		return
+	}
+
 	// If it is a normal file transfer failure
 	if task.Attempts < 3 && !isPermanent {
 		// Exponential Backoff: 10s, 30s, 90s
