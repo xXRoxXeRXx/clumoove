@@ -138,6 +138,7 @@ func main() {
 	mux.Handle("POST /api/migration/{id}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancel)))
 	mux.Handle("DELETE /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteMigration)))
 	mux.Handle("GET /api/migration/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadReport)))
+	mux.Handle("POST /api/migration/{id}/retry-failed", jwtMiddleware(http.HandlerFunc(server.handleRetryFailed)))
 
 	// WebSockets & OAuth Callbacks (Require custom/token-based verification inside handler)
 	mux.HandleFunc("GET /api/migration/{id}/ws", server.handleWebSocket)
@@ -474,6 +475,40 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil || !owns {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	mig, err := db.GetMigration(s.db, id)
+	if err != nil {
+		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		return
+	}
+	if mig.Status != "COMPLETED" && mig.Status != "FAILED" {
+		http.Error(w, "Migration cannot be retried in its current state", http.StatusConflict)
+		return
+	}
+
+	count, err := db.ResetFailedTasksForRetry(s.db, id)
+	if err != nil {
+		log.Printf("Error resetting failed tasks for retry: %v", err)
+		http.Error(w, "Failed to retry failed tasks", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "retried": count})
 }
 
 func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {

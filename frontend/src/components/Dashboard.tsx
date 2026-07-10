@@ -92,6 +92,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [eta, setEta] = useState<string>('Berechnung...');
   const [copied, setCopied] = useState<boolean>(false);
   const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
+  const [reconnectNonce, setReconnectNonce] = useState<number>(0);
 
   const directLink = `${window.location.origin}${window.location.pathname}?migration=${migrationId}`;
 
@@ -158,6 +159,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   };
 
   const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
+
+  const handleRetryFailed = async () => {
+    if (!window.confirm('Möchtest du die fehlgeschlagenen Elemente erneut migrieren?')) {
+      return;
+    }
+
+    setControlLoading('retry');
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/retry-failed`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error('Erneuter Versuch fehlgeschlagen.');
+      }
+      const resData = await response.json();
+      if (resData.success && resData.retried > 0) {
+        setReconnectNonce((n) => n + 1);
+      } else {
+        alert('Keine fehlgeschlagenen Elemente zum erneuten Versuch gefunden.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setControlLoading(null);
+    }
+  };
+
   const lastActiveSpeed = useRef<number>(0);
   const lastActiveTime = useRef<number>(0);
 
@@ -316,7 +348,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       clearTimeout(reconnectTimeout);
       ws.close();
     };
-  }, [migrationId, apiUrl, token]);
+  }, [migrationId, apiUrl, token, reconnectNonce]);
 
   if (serverUnreachable) {
     return (
@@ -553,6 +585,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               >
                 <Download className="w-4 h-4 text-portal-orange" />
                 Fehlerbericht (.CSV)
+              </button>
+            )}
+
+            {/* Retry Failed Elements */}
+            {(data.status === 'COMPLETED' || data.status === 'FAILED') && data.failed_files > 0 && (
+              <button
+                onClick={handleRetryFailed}
+                disabled={controlLoading !== null}
+                className="w-full flex items-center justify-center gap-2 py-4 bg-portal-orange text-white rounded-lg font-display text-sm font-bold shadow-sm hover:bg-portal-orange-hover hover:scale-101 active:scale-99 transition-all duration-200 cursor-pointer disabled:opacity-50"
+              >
+                {controlLoading === 'retry' ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 text-white" />
+                )}
+                Fehlgeschlagene erneut versuchen
               </button>
             )}
 

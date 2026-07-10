@@ -472,6 +472,9 @@ func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 		}
 		tasks = append(tasks, t)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return tasks, nil
 }
 
@@ -545,6 +548,9 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 		}
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return stats, nil
 }
 
@@ -775,4 +781,72 @@ func CancelPendingTasks(db *sql.DB, migrationID string) error {
 	`
 	_, err := db.Exec(query, migrationID)
 	return err
+}
+
+// ResetFailedTasksForRetry resets failed tasks for a migration to PENDING, resets their attempts,
+// and updates the migration status back to RUNNING, returning the number of reset tasks.
+func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	// 1. Zähle FAILED Tasks und summiere ihre Dateigröße
+	// In terminal states, status='FAILED' tasks are permanent failures and match failed_files.
+	var count int
+	var bytesSum int64
+	err = tx.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(file_size), 0)
+		FROM tasks
+		WHERE migration_id = $1 AND status = 'FAILED'
+	`, migrationID).Scan(&count, &bytesSum)
+	if err != nil {
+		return 0, err
+	}
+
+	if count == 0 {
+		return 0, nil
+	}
+
+	// 2. Setze diese Tasks zurück
+	_, err = tx.Exec(`
+		UPDATE tasks 
+		SET status = 'PENDING', attempts = 0, next_retry_at = NULL, worker_hash = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE migration_id = $1 AND status = 'FAILED'
+	`, migrationID)
+	if err != nil {
+		return 0, err
+	}
+
+	// 3. Passe die Migration an (nur in terminalem Zustand)
+	res, err := tx.Exec(`
+		UPDATE migrations 
+		SET failed_files = failed_files - $1, 
+		    processed_files = processed_files - $1, 
+		    processed_bytes = processed_bytes - $2, 
+		    status = 'RUNNING', 
+		    error_message = NULL, 
+		    updated_at = CURRENT_TIMESTAMP 
+		WHERE id = $3 AND status IN ('COMPLETED', 'FAILED')
+	`, count, bytesSum, migrationID)
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	// If no migration rows were updated (e.g. invalid state or ID), rollback
+	if rowsAffected == 0 {
+		return 0, nil
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
