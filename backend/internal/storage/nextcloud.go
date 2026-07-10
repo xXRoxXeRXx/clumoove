@@ -369,11 +369,21 @@ func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, file
 		return fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
+	// CalDAV and CardDAV entries are small (typically a few KB). Use a tighter
+	// per-request timeout so a hanging server fails fast and can be retried via
+	// the normal backoff path rather than blocking a thread for 10 minutes.
+	uploadCtx := ctx
+	if resourceType == "calendars" || resourceType == "contacts" {
+		var cancel context.CancelFunc
+		uploadCtx, cancel = context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+	}
+
 	req, err := p.newRequest("PUT", u, stream)
 	if err != nil {
 		return err
 	}
-	req = req.WithContext(ctx)
+	req = req.WithContext(uploadCtx)
 	if size > 0 {
 		req.ContentLength = size
 	}

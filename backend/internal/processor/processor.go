@@ -810,7 +810,5 @@ func isNetworkError(err error) bool {
 		strings.Contains(errStr, "i/o timeout") ||
 		strings.Contains(errStr, "broken pipe") ||
 		strings.Contains(errStr, "handshake failure") ||
-		strings.Contains(errStr, "http2: server sent goaway") ||
-		errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, os.ErrDeadlineExceeded)
+		strings.Contains(errStr, "http2: server sent goaway")
 }
