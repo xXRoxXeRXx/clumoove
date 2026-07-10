@@ -246,20 +246,18 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := sourceClient.Connect(ctx)
 	if !ok {
-		errMsg := "Source connection failed"
-		if err != nil {
-			errMsg = fmt.Sprintf("Source connection failed: %v", err)
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": errMsg})
+		log.Printf("handleBrowse: source connection failed for provider %s: %v", req.SourceProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Source connection failed. Check URL and credentials."})
 		return
 	}
 
 	// List the root of the resource type — each top-level collection is one calendar / addressbook
 	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, "/")
 	if err != nil {
+		log.Printf("handleBrowse: failed to list %s for provider %s: %v", req.ResourceType, req.SourceProvider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": false,
-			"error":   fmt.Sprintf("Failed to list %s: %v", req.ResourceType, err),
+			"error":   fmt.Sprintf("Failed to list %s. Check URL and credentials.", req.ResourceType),
 		})
 		return
 	}
@@ -440,11 +438,8 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	sourceOK, err := sourceClient.Connect(srcCtx)
 	srcCancel()
 	if !sourceOK {
-		errMsg := "Source connection failed"
-		if err != nil {
-			errMsg = fmt.Sprintf("Source connection failed: %v", err)
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": errMsg})
+		log.Printf("handleConnect: source connection failed for provider %s: %v", req.SourceProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Source connection failed. Check URL and credentials."})
 		return
 	}
 
@@ -458,11 +453,8 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	targetOK, err := targetClient.Connect(tgtCtx)
 	tgtCancel()
 	if !targetOK {
-		errMsg := "Target connection failed"
-		if err != nil {
-			errMsg = fmt.Sprintf("Target connection failed: %v", err)
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": errMsg})
+		log.Printf("handleConnect: target connection failed for provider %s: %v", req.TargetProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Target connection failed. Check URL and credentials."})
 		return
 	}
 
@@ -475,7 +467,8 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	defer listCancel()
 	files, err := sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to list source files for path %s: %v", reqPath, err)})
+		log.Printf("handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to list source files. Check URL and credentials."})
 		return
 	}
 
