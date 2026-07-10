@@ -202,6 +202,66 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 	}
 }
 
+// RefreshToken exchanges a refresh token for a new access (and possibly refresh) token.
+// If the provider does not return a new refresh token (e.g. Google), the original
+// refresh token is preserved in the returned TokenResponse.
+func RefreshToken(ctx context.Context, provider, refreshToken string) (*TokenResponse, error) {
+	config, ok := configs[provider]
+	if !ok {
+		return nil, fmt.Errorf("unknown provider: %s", provider)
+	}
+	if config.ClientID == "" || config.ClientSecret == "" {
+		return nil, fmt.Errorf("client ID/secret for %s is not configured in backend environment", provider)
+	}
+
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", refreshToken)
+	data.Set("client_id", config.ClientID)
+	data.Set("client_secret", config.ClientSecret)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp struct {
+			ErrorDescription string `json:"error_description"`
+			Error            string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		if errResp.ErrorDescription != "" {
+			return nil, fmt.Errorf("token refresh failed: %s", errResp.ErrorDescription)
+		}
+		return nil, fmt.Errorf("token refresh failed with status: %d", resp.StatusCode)
+	}
+
+	var tr TokenResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+		return nil, err
+	}
+
+	// Google and some providers don't return a new refresh_token on every refresh;
+	// preserve the original so we can keep rotating.
+	if tr.RefreshToken == "" {
+		tr.RefreshToken = refreshToken
+	}
+	// Default expiry to 1 hour if provider didn't specify
+	if tr.ExpiresIn == 0 {
+		tr.ExpiresIn = 3600
+	}
+
+	return &tr, nil
+}
+
 // bytesReaderNull returns an io.Reader containing "null" to satisfy Dropbox's JSON body requirement.
 func bytesReaderNull() *strings.Reader {
 	return strings.NewReader("null")

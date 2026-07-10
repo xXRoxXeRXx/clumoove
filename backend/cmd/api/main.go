@@ -146,6 +146,9 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
+	// Start the OAuth Token Rotation Daemon (PRD-12)
+	go server.RunOAuthRotationDaemon(ctx)
+
 	go func() {
 		log.Printf("API Server listening on port %s\n", port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -383,16 +386,20 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 }
 
 type ConnectRequest struct {
-	SourceURL      string `json:"source_url"`
-	SourceUsername string `json:"source_username"`
-	SourcePassword string `json:"source_password"`
-	TargetURL      string `json:"target_url"`
-	TargetUsername string `json:"target_username"`
-	TargetPassword string `json:"target_password"`
-	SourceProvider string `json:"source_provider"`
-	TargetProvider string `json:"target_provider"`
-	Path           string `json:"path"`
-	ResourceType   string `json:"resource_type"`
+	SourceURL             string `json:"source_url"`
+	SourceUsername        string `json:"source_username"`
+	SourcePassword        string `json:"source_password"`
+	SourceRefreshToken    string `json:"source_refresh_token"`
+	SourceTokenExpiresIn  int    `json:"source_token_expires_in"`
+	TargetURL             string `json:"target_url"`
+	TargetUsername        string `json:"target_username"`
+	TargetPassword        string `json:"target_password"`
+	TargetRefreshToken    string `json:"target_refresh_token"`
+	TargetTokenExpiresIn  int    `json:"target_token_expires_in"`
+	SourceProvider        string `json:"source_provider"`
+	TargetProvider        string `json:"target_provider"`
+	Path                  string `json:"path"`
+	ResourceType          string `json:"resource_type"`
 }
 
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -525,6 +532,39 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Encrypt OAuth refresh tokens (if provided)
+	var sourceRefreshEnc sql.NullString
+	var sourceTokenExpiresAt sql.NullTime
+	if req.SourceRefreshToken != "" {
+		enc, err := crypto.Encrypt(req.SourceRefreshToken, s.encryptionKey)
+		if err != nil {
+			http.Error(w, "Encryption failed", http.StatusInternalServerError)
+			return
+		}
+		sourceRefreshEnc = sql.NullString{String: enc, Valid: true}
+		expiresIn := req.SourceTokenExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 3600
+		}
+		sourceTokenExpiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
+	}
+
+	var targetRefreshEnc sql.NullString
+	var targetTokenExpiresAt sql.NullTime
+	if req.TargetRefreshToken != "" {
+		enc, err := crypto.Encrypt(req.TargetRefreshToken, s.encryptionKey)
+		if err != nil {
+			http.Error(w, "Encryption failed", http.StatusInternalServerError)
+			return
+		}
+		targetRefreshEnc = sql.NullString{String: enc, Valid: true}
+		expiresIn := req.TargetTokenExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 3600
+		}
+		targetTokenExpiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
+	}
+
 	// Get userID from context
 	userID := auth.GetUserIDFromContext(r.Context())
 
@@ -538,19 +578,23 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	// Create Migration Record
 	m := &db.Migration{
-		UserID:                  sql.NullString{String: userID, Valid: userID != ""},
-		SourceURL:               req.SourceURL,
-		SourceUsername:          req.SourceUsername,
-		SourcePasswordEncrypted: sourcePassEnc,
-		TargetURL:               req.TargetURL,
-		TargetUsername:          req.TargetUsername,
-		TargetPasswordEncrypted: targetPassEnc,
-		SourceProvider:          req.SourceProvider,
-		TargetProvider:          req.TargetProvider,
-		Status:                  "INDEXING",
-		ConflictStrategy:        req.ConflictStrategy,
-		TargetDir:               targetDir,
-		Threads:                 threads,
+		UserID:                          sql.NullString{String: userID, Valid: userID != ""},
+		SourceURL:                       req.SourceURL,
+		SourceUsername:                  req.SourceUsername,
+		SourcePasswordEncrypted:         sourcePassEnc,
+		SourceRefreshTokenEncrypted:     sourceRefreshEnc,
+		SourceTokenExpiresAt:            sourceTokenExpiresAt,
+		TargetURL:                       req.TargetURL,
+		TargetUsername:                  req.TargetUsername,
+		TargetPasswordEncrypted:         targetPassEnc,
+		TargetRefreshTokenEncrypted:     targetRefreshEnc,
+		TargetTokenExpiresAt:            targetTokenExpiresAt,
+		SourceProvider:                  req.SourceProvider,
+		TargetProvider:                  req.TargetProvider,
+		Status:                          "INDEXING",
+		ConflictStrategy:                req.ConflictStrategy,
+		TargetDir:                       targetDir,
+		Threads:                         threads,
 	}
 
 	migrationID, err := db.CreateMigration(s.db, m)
@@ -1066,14 +1110,14 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if code == "" || state == "" {
 		log.Printf("handleOAuthCallback: Missing code or state")
-		s.renderOAuthResultHTML(w, "", "", "", "*", "Authorization code or state missing")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "*", "Authorization code or state missing")
 		return
 	}
 
 	parts := strings.SplitN(state, ":", 3)
 	if len(parts) < 3 {
 		log.Printf("handleOAuthCallback: Invalid state format (length %d)", len(parts))
-		s.renderOAuthResultHTML(w, "", "", "", "*", "Invalid state parameter format")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "*", "Invalid state parameter format")
 		return
 	}
 	stateToken := parts[0]
@@ -1085,7 +1129,7 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
 		log.Printf("handleOAuthCallback: CSRF check failed. Cookie err: %v, stateToken: %q", err, stateToken)
-		s.renderOAuthResultHTML(w, "", "", "", "*", "CSRF verification failed: state mismatch")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "*", "CSRF verification failed: state mismatch")
 		return
 	}
 
@@ -1107,7 +1151,7 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	tokenResp, err := oauth.ExchangeCode(ctx, provider, code, redirectURI)
 	if err != nil {
 		log.Printf("handleOAuthCallback: ExchangeCode failed: %v", err)
-		s.renderOAuthResultHTML(w, "", "", "", origin, fmt.Sprintf("Failed to exchange code: %v", err))
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", origin, fmt.Sprintf("Failed to exchange code: %v", err))
 		return
 	}
 
@@ -1119,10 +1163,10 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	log.Printf("handleOAuthCallback: rendering successful login for user %q", username)
-	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, username, origin)
+	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, origin)
 }
 
-func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, username, targetOrigin string, errorMsg ...string) {
+func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, targetOrigin string, errorMsg ...string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	var errStr string
@@ -1166,6 +1210,8 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 						type: "oauth-success",
 						provider: %q,
 						token: %q,
+						refreshToken: %q,
+						expiresIn: %d,
 						username: %q
 					}, %q);
 					console.log("postMessage sent successfully.");
@@ -1178,7 +1224,7 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 				errMsg.innerText = "Fehler beim Senden der Anmeldedaten: " + e.message;
 				document.querySelector(".card").appendChild(errMsg);
 			}
-		`, targetOrigin, provider, token, username, targetOrigin)
+		`, targetOrigin, provider, token, refreshToken, expiresIn, username, targetOrigin)
 	}
 
 	fmt.Fprintf(w, `
@@ -1403,6 +1449,91 @@ func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
+// RunOAuthRotationDaemon is the PRD-12 background goroutine.
+// It scans every 5 minutes for active migrations whose OAuth access token expires
+// within the next 15 minutes and proactively refreshes them using the stored
+// refresh token, ensuring long-running jobs never hit a 401.
+func (s *APIServer) RunOAuthRotationDaemon(ctx context.Context) {
+	log.Println("[OAuthDaemon] Started. Scanning every 5 minutes for expiring tokens...")
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("[OAuthDaemon] Shutting down.")
+			return
+		case <-ticker.C:
+			s.rotateExpiringOAuthTokens(ctx)
+		}
+	}
+}
+
+func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
+	expiring, err := db.GetExpiringOAuthMigrations(s.db)
+	if err != nil {
+		log.Printf("[OAuthDaemon] Error querying expiring tokens: %v\n", err)
+		return
+	}
+
+	for _, entry := range expiring {
+		// Decrypt refresh token — happens immediately before the HTTP call (Zero Plaintext rule)
+		refreshToken, err := crypto.Decrypt(entry.RefreshTokenEncrypted, s.encryptionKey)
+		if err != nil {
+			log.Printf("[OAuthDaemon] Failed to decrypt refresh token for migration %s (%s): %v\n",
+				entry.MigrationID, entry.Role, err)
+			continue
+		}
+
+		refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		tokenResp, err := oauth.RefreshToken(refreshCtx, entry.Provider, refreshToken)
+		cancel()
+
+		if err != nil {
+			log.Printf("[OAuthDaemon] Refresh failed for migration %s (%s provider=%s): %v — marking INVALID\n",
+				entry.MigrationID, entry.Role, entry.Provider, err)
+			// F-05: mark connection as invalid so workers stop retrying
+			errMsg := fmt.Sprintf("OAuth token refresh failed (%s): %v", entry.Provider, err)
+			_ = db.UpdateMigrationStatus(s.db, entry.MigrationID, "FAILED", &errMsg)
+			continue
+		}
+
+		// Encrypt new tokens immediately after receipt (Zero Plaintext rule)
+		newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
+		if err != nil {
+			log.Printf("[OAuthDaemon] Failed to encrypt new access token for migration %s: %v\n", entry.MigrationID, err)
+			continue
+		}
+		newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
+		if err != nil {
+			log.Printf("[OAuthDaemon] Failed to encrypt new refresh token for migration %s: %v\n", entry.MigrationID, err)
+			continue
+		}
+
+		expiresIn := tokenResp.ExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 3600
+		}
+		newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+		// Atomically overwrite old tokens (Token Rotation Constraint F-03)
+		err = db.UpdateMigrationOAuthTokens(s.db, db.OAuthTokenUpdate{
+			MigrationID:           entry.MigrationID,
+			Role:                  entry.Role,
+			AccessTokenEncrypted:  newAccessEnc,
+			RefreshTokenEncrypted: newRefreshEnc,
+			ExpiresAt:             newExpiresAt,
+		})
+		if err != nil {
+			log.Printf("[OAuthDaemon] Failed to persist new tokens for migration %s (%s): %v\n",
+				entry.MigrationID, entry.Role, err)
+			continue
+		}
+
+		log.Printf("[OAuthDaemon] Successfully rotated %s OAuth token for migration %s (provider=%s, new_expires_at=%s)\n",
+			entry.Role, entry.MigrationID, entry.Provider, newExpiresAt.Format(time.RFC3339))
+	}
+}
 func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	// All user data is already embedded in the validated JWT claims;
 	// no extra DB round-trip needed for a simple /me endpoint.

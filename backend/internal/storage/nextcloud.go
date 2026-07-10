@@ -192,7 +192,7 @@ func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, r
 		if strings.Contains(pstat.Status, "200 OK") {
 			prop := pstat.Prop
 			res.IsDir = prop.ResourceType.Collection != nil
-			
+
 			if !res.IsDir {
 				if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {
 					res.Size = size
@@ -259,7 +259,7 @@ func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceTyp
 	}
 
 	var resources []CloudResource
-	
+
 	uParsed, parseErr := url.Parse(p.BaseURL)
 	var basePath string
 	if parseErr == nil {
@@ -309,7 +309,7 @@ func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceTyp
 			if strings.Contains(pstat.Status, "200 OK") {
 				prop := pstat.Prop
 				res.IsDir = prop.ResourceType.Collection != nil
-				
+
 				if !res.IsDir {
 					if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {
 						res.Size = size
@@ -363,7 +363,7 @@ func (p *NextcloudProvider) StreamDownload(ctx context.Context, resourceType, fi
 
 func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	u := p.buildResourceURL(resourceType, filePath)
-	
+
 	err := p.CreateParentDirectories(ctx, resourceType, filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directories: %w", err)
@@ -422,7 +422,7 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 	transferID := fmt.Sprintf("upload-%x", time.Now().UnixNano())
 	uploadsFolderURL := p.buildUploadsURL("/" + transferID)
 	destURL := p.buildResourceURL(resourceType, filePath)
-	
+
 	req, err := p.newRequest("MKCOL", uploadsFolderURL, nil)
 	if err != nil {
 		return err
@@ -466,7 +466,7 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		chunkData := buffer[:bytesRead]
 		// Naming of chunks is limited to be between 1 and 10000. Padded to 5 digits.
 		chunkURL := fmt.Sprintf("%s/%05d", uploadsFolderURL, chunkIndex+1)
-		
+
 		err := p.uploadChunkWithRetry(ctx, chunkURL, chunkData, destURL, fileSize)
 		if err != nil {
 			return fmt.Errorf("failed to upload chunk %d: %w", chunkIndex+1, err)
@@ -489,7 +489,7 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		return err
 	}
 	req = req.WithContext(ctx)
-	
+
 	req.Header.Set("Destination", destURL)
 	req.Header.Set("Overwrite", "T")
 	req.Header.Set("OC-Total-Length", strconv.FormatInt(fileSize, 10))
@@ -503,7 +503,7 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 	if (resp.StatusCode >= 200 && resp.StatusCode < 300) ||
 		resp.StatusCode == http.StatusGatewayTimeout ||
 		resp.StatusCode == http.StatusBadGateway {
-		
+
 		// Poll to verify if the file eventually appears with the correct size.
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -575,7 +575,7 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 	for i, part := range parts {
 		currentPath = currentPath + "/" + part
 		u := p.buildResourceURL(resourceType, currentPath)
-		
+
 		var req *http.Request
 		var err error
 
@@ -608,7 +608,7 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 			return err
 		}
 		req = req.WithContext(ctx)
-		
+
 		resp, err := p.HTTPClient.Do(req)
 		if err != nil {
 			return err
@@ -804,7 +804,7 @@ func ParseHashString(hashStr string) (string, string) {
 	if len(parts) == 2 {
 		return strings.ToUpper(parts[0]), strings.ToLower(parts[1])
 	}
-	
+
 	if hexRegexp.MatchString(hashStr) {
 		if len(hashStr) == 32 {
 			return "MD5", strings.ToLower(hashStr)

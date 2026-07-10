@@ -20,6 +20,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/storage"
 )
@@ -396,6 +397,19 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	targetPass, err := crypto.Decrypt(mig.TargetPasswordEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target password: %w", err)
+	}
+
+	// For OAuth providers: if the token is expired or within 2 minutes of expiry,
+	// refresh it now so this task does not hit a 401. The daemon already handles
+	// proactive rotation every 5 min, but tasks could be dequeued right as a token
+	// expires, so we have this last-resort inline refresh.
+	sourcePass, err = p.ensureFreshOAuthToken(ctx, mig, "source", sourcePass)
+	if err != nil {
+		return fmt.Errorf("failed to refresh source OAuth token: %w", err)
+	}
+	targetPass, err = p.ensureFreshOAuthToken(ctx, mig, "target", targetPass)
+	if err != nil {
+		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
 
 	// Create storage providers
@@ -812,4 +826,74 @@ func isNetworkError(err error) bool {
 		strings.Contains(errStr, "broken pipe") ||
 		strings.Contains(errStr, "handshake failure") ||
 		strings.Contains(errStr, "http2: server sent goaway")
+}
+
+// ensureFreshOAuthToken checks whether a migration's OAuth access token is expired
+// (or within 2 minutes of expiry) and, if so, performs an inline token refresh before
+// the storage provider is constructed. The freshly decrypted access token is returned.
+// For non-OAuth providers (no refresh token stored) the original accessToken is returned
+// unchanged, making this a safe no-op for Nextcloud/WebDAV.
+func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration, role string, accessToken string) (string, error) {
+	var refreshTokenEnc sql.NullString
+	var expiresAt sql.NullTime
+	var provider string
+
+	if role == "source" {
+		refreshTokenEnc = mig.SourceRefreshTokenEncrypted
+		expiresAt = mig.SourceTokenExpiresAt
+		provider = mig.SourceProvider
+	} else {
+		refreshTokenEnc = mig.TargetRefreshTokenEncrypted
+		expiresAt = mig.TargetTokenExpiresAt
+		provider = mig.TargetProvider
+	}
+
+	// No refresh token stored → not an OAuth provider, nothing to do.
+	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
+		return accessToken, nil
+	}
+
+	// Token still valid with >2 min margin → use as-is.
+	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+		return accessToken, nil
+	}
+
+	fmt.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
+		p.workerID, role, mig.ID)
+
+	// Decrypt refresh token immediately before use (Zero Plaintext rule from PRD-12)
+	refreshToken, err := crypto.Decrypt(refreshTokenEnc.String, p.secretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt %s refresh token: %w", role, err)
+	}
+
+	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	tokenResp, err := oauth.RefreshToken(refreshCtx, provider, refreshToken)
+	cancel()
+	if err != nil {
+		return "", fmt.Errorf("OAuth refresh failed for %s (%s): %w", role, provider, err)
+	}
+
+	// Encrypt and persist the new token pair atomically (Token Rotation Constraint F-03)
+	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
+	if err != nil {
+		return tokenResp.AccessToken, nil // still use new token even if persist fails
+	}
+	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, p.secretKey)
+	if err != nil {
+		return tokenResp.AccessToken, nil
+	}
+	expiresIn := tokenResp.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	_ = db.UpdateMigrationOAuthTokens(p.db, db.OAuthTokenUpdate{
+		MigrationID:           mig.ID,
+		Role:                  role,
+		AccessTokenEncrypted:  newAccessEnc,
+		RefreshTokenEncrypted: newRefreshEnc,
+		ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
+	})
+
+	return tokenResp.AccessToken, nil
 }

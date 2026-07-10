@@ -14,9 +14,13 @@ interface MigrationConfig {
   source_url: string;
   source_username: string;
   source_password: string;
+  source_refresh_token: string;
+  source_token_expires_in: number;
   target_url: string;
   target_username: string;
   target_password: string;
+  target_refresh_token: string;
+  target_token_expires_in: number;
   source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
   target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
 }
@@ -31,10 +35,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
   const [sourcePass, setSourcePass] = useState('');
+  const [sourceRefreshToken, setSourceRefreshToken] = useState('');
+  const [sourceTokenExpiresIn, setSourceTokenExpiresIn] = useState(0);
 
   const [targetUrl, setTargetUrl] = useState('');
   const [targetUser, setTargetUser] = useState('');
   const [targetPass, setTargetPass] = useState('');
+  const [targetRefreshToken, setTargetRefreshToken] = useState('');
+  const [targetTokenExpiresIn, setTargetTokenExpiresIn] = useState(0);
   const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google'>('nextcloud');
   const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google'>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
@@ -68,11 +76,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           setSourceUrl(`https://api.${provider}.com`);
           setSourceUser(event.data.username || provider);
           setSourcePass(event.data.token);
+          setSourceRefreshToken(event.data.refreshToken || '');
+          setSourceTokenExpiresIn(event.data.expiresIn || 3600);
         } else {
           setTargetOAuthUser(event.data.username || provider);
           setTargetUrl(`https://api.${provider}.com`);
           setTargetUser(event.data.username || provider);
           setTargetPass(event.data.token);
+          setTargetRefreshToken(event.data.refreshToken || '');
+          setTargetTokenExpiresIn(event.data.expiresIn || 3600);
         }
         window.removeEventListener('message', handleMessage);
       } else if (event.data && event.data.type === 'oauth-error') {
@@ -110,9 +122,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           source_url: finalSourceUrl,
           source_username: finalSourceUser,
           source_password: sourcePass,
+          source_refresh_token: sourceRefreshToken,
+          source_token_expires_in: sourceTokenExpiresIn,
           target_url: finalTargetUrl,
           target_username: finalTargetUser,
           target_password: targetPass,
+          target_refresh_token: targetRefreshToken,
+          target_token_expires_in: targetTokenExpiresIn,
           source_provider: sourceProvider,
           target_provider: targetProvider,
         }),
@@ -129,9 +145,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             source_url: finalSourceUrl,
             source_username: finalSourceUser,
             source_password: sourcePass,
+            source_refresh_token: sourceRefreshToken,
+            source_token_expires_in: sourceTokenExpiresIn,
             target_url: finalTargetUrl,
             target_username: finalTargetUser,
             target_password: targetPass,
+            target_refresh_token: targetRefreshToken,
+            target_token_expires_in: targetTokenExpiresIn,
             source_provider: sourceProvider,
             target_provider: targetProvider,
           },

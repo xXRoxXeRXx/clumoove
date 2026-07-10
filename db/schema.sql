@@ -28,9 +28,13 @@ CREATE TABLE IF NOT EXISTS migrations (
     source_url TEXT NOT NULL,
     source_username TEXT NOT NULL,
     source_password_encrypted TEXT NOT NULL,
+    source_refresh_token_encrypted TEXT,
+    source_token_expires_at TIMESTAMP WITH TIME ZONE,
     target_url TEXT NOT NULL,
     target_username TEXT NOT NULL,
     target_password_encrypted TEXT NOT NULL,
+    target_refresh_token_encrypted TEXT,
+    target_token_expires_at TIMESTAMP WITH TIME ZONE,
     source_provider TEXT NOT NULL DEFAULT 'nextcloud',
     target_provider TEXT NOT NULL DEFAULT 'nextcloud',
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED

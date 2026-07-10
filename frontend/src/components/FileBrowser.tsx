@@ -14,9 +14,13 @@ interface MigrationConfig {
   source_url: string;
   source_username: string;
   source_password: string;
+  source_refresh_token: string;
+  source_token_expires_in: number;
   target_url: string;
   target_username: string;
   target_password: string;
+  target_refresh_token: string;
+  target_token_expires_in: number;
   source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
   target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
 }
