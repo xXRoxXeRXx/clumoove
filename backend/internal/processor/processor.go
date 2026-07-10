@@ -902,26 +902,32 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 		return "", fmt.Errorf("OAuth refresh failed for %s (%s): %w", role, provider, err)
 	}
 
-	// Encrypt and persist the new token pair atomically (Token Rotation Constraint F-03)
+	// Encrypt and persist the new token pair atomically (Token Rotation Constraint F-03).
+	// Encryption failure is fatal: for single-use refresh tokens (e.g. Google) the old
+	// refresh token has already been invalidated by the provider. Proceeding without
+	// persisting the new one would leave the DB with a stale token and cause a permanent
+	// auth failure on the next refresh attempt.
 	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
 	if err != nil {
-		return tokenResp.AccessToken, nil // still use new token even if persist fails
+		return "", fmt.Errorf("failed to encrypt new %s access token after refresh: %w", role, err)
 	}
 	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, p.secretKey)
 	if err != nil {
-		return tokenResp.AccessToken, nil
+		return "", fmt.Errorf("failed to encrypt new %s refresh token after refresh: %w", role, err)
 	}
 	expiresIn := tokenResp.ExpiresIn
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
-	_ = db.UpdateMigrationOAuthTokens(p.db, db.OAuthTokenUpdate{
+	if err := db.UpdateMigrationOAuthTokens(p.db, db.OAuthTokenUpdate{
 		MigrationID:           mig.ID,
 		Role:                  role,
 		AccessTokenEncrypted:  newAccessEnc,
 		RefreshTokenEncrypted: newRefreshEnc,
 		ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
-	})
+	}); err != nil {
+		return "", fmt.Errorf("failed to persist new %s OAuth tokens after refresh: %w", role, err)
+	}
 
 	return tokenResp.AccessToken, nil
 }
