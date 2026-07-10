@@ -41,36 +41,35 @@ type RefreshToken struct {
 }
 
 type Migration struct {
-	ID                              string                  `json:"id"`
-	UserID                          sql.NullString          `json:"user_id"`
-	SourceURL                       string                  `json:"source_url"`
-	SourceUsername                  string                  `json:"source_username"`
-	SourcePasswordEncrypted         string                  `json:"-"`
-	SourceRefreshTokenEncrypted     sql.NullString          `json:"-"`
-	SourceTokenExpiresAt            sql.NullTime            `json:"source_token_expires_at,omitempty"`
-	TargetURL                       string                  `json:"target_url"`
-	TargetUsername                  string                  `json:"target_username"`
-	TargetPasswordEncrypted         string                  `json:"-"`
-	TargetRefreshTokenEncrypted     sql.NullString          `json:"-"`
-	TargetTokenExpiresAt            sql.NullTime            `json:"target_token_expires_at,omitempty"`
-	SourceProvider                  string                  `json:"source_provider"`
-	TargetProvider                  string                  `json:"target_provider"`
-	TargetDir                       string                  `json:"target_dir"`
-	Status                          string                  `json:"status"`            // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
-	ConflictStrategy                string                  `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
-	TotalFiles                      int                     `json:"total_files"`
-	TotalBytes                      int64                   `json:"total_bytes"`
-	ProcessedFiles                  int                     `json:"processed_files"`
-	ProcessedBytes                  int64                   `json:"processed_bytes"`
-	SkippedFiles                    int                     `json:"skipped_files"`
-	FailedFiles                     int                     `json:"failed_files"`
-	ErrorMessage                    sql.NullString          `json:"error_message"`
-	CreatedAt                       time.Time               `json:"created_at"`
-	UpdatedAt                       time.Time               `json:"updated_at"`
-	ResourceStats                   *MigrationResourceStats `json:"resource_stats,omitempty"`
-	Threads                         int                     `json:"threads"`
+	ID                          string                  `json:"id"`
+	UserID                      sql.NullString          `json:"user_id"`
+	SourceURL                   string                  `json:"source_url"`
+	SourceUsername              string                  `json:"source_username"`
+	SourcePasswordEncrypted     string                  `json:"-"`
+	SourceRefreshTokenEncrypted sql.NullString          `json:"-"`
+	SourceTokenExpiresAt        sql.NullTime            `json:"source_token_expires_at,omitempty"`
+	TargetURL                   string                  `json:"target_url"`
+	TargetUsername              string                  `json:"target_username"`
+	TargetPasswordEncrypted     string                  `json:"-"`
+	TargetRefreshTokenEncrypted sql.NullString          `json:"-"`
+	TargetTokenExpiresAt        sql.NullTime            `json:"target_token_expires_at,omitempty"`
+	SourceProvider              string                  `json:"source_provider"`
+	TargetProvider              string                  `json:"target_provider"`
+	TargetDir                   string                  `json:"target_dir"`
+	Status                      string                  `json:"status"`            // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+	ConflictStrategy            string                  `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
+	TotalFiles                  int                     `json:"total_files"`
+	TotalBytes                  int64                   `json:"total_bytes"`
+	ProcessedFiles              int                     `json:"processed_files"`
+	ProcessedBytes              int64                   `json:"processed_bytes"`
+	SkippedFiles                int                     `json:"skipped_files"`
+	FailedFiles                 int                     `json:"failed_files"`
+	ErrorMessage                sql.NullString          `json:"error_message"`
+	CreatedAt                   time.Time               `json:"created_at"`
+	UpdatedAt                   time.Time               `json:"updated_at"`
+	ResourceStats               *MigrationResourceStats `json:"resource_stats,omitempty"`
+	Threads                     int                     `json:"threads"`
 }
-
 
 type Task struct {
 	ID           string         `json:"id"`
@@ -80,7 +79,7 @@ type Task struct {
 	SourceHash   sql.NullString `json:"source_hash"`
 	WorkerHash   sql.NullString `json:"worker_hash"`
 	TargetHash   sql.NullString `json:"target_hash"`
-	Status       string         `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
+	Status       string         `json:"status"`        // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
 	ResourceType string         `json:"resource_type"` // files, calendars, contacts
 	ErrorMessage sql.NullString `json:"error_message"`
 	Attempts     int            `json:"attempts"`
@@ -612,11 +611,11 @@ func DeleteMigrationCascade(db *sql.DB, migrationID string) error {
 
 // OAuthTokenUpdate holds new token data for UpdateMigrationOAuthTokens.
 type OAuthTokenUpdate struct {
-	MigrationID             string
-	Role                    string // "source" or "target"
-	AccessTokenEncrypted    string
-	RefreshTokenEncrypted   string
-	ExpiresAt               time.Time
+	MigrationID           string
+	Role                  string // "source" or "target"
+	AccessTokenEncrypted  string
+	RefreshTokenEncrypted string
+	ExpiresAt             time.Time
 }
 
 // UpdateMigrationOAuthTokens atomically overwrites the access+refresh token pair
@@ -650,10 +649,10 @@ func UpdateMigrationOAuthTokens(db *sql.DB, u OAuthTokenUpdate) error {
 
 // ExpiringOAuthMigration is a lightweight row returned by GetExpiringOAuthMigrations.
 type ExpiringOAuthMigration struct {
-	MigrationID             string
-	Role                    string // "source" or "target"
-	Provider                string
-	RefreshTokenEncrypted   string
+	MigrationID           string
+	Role                  string // "source" or "target"
+	Provider              string
+	RefreshTokenEncrypted string
 }
 
 // GetExpiringOAuthMigrations returns all (migration_id, role, provider, refresh_token_encrypted)
@@ -732,4 +731,3 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 	}
 	return list, nil
 }
-

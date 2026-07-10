@@ -156,7 +156,7 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 		if strings.Contains(pstat.Status, "200 OK") {
 			prop := pstat.Prop
 			res.IsDir = prop.ResourceType.Collection != nil
-			
+
 			if !res.IsDir {
 				if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {
 					res.Size = size
@@ -212,7 +212,7 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 	}
 
 	var resources []CloudResource
-	
+
 	uParsed, parseErr := url.Parse(p.BaseURL)
 	var prefixPath string
 	if parseErr == nil {
@@ -255,7 +255,7 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 			if strings.Contains(pstat.Status, "200 OK") {
 				prop := pstat.Prop
 				res.IsDir = prop.ResourceType.Collection != nil
-				
+
 				if !res.IsDir {
 					if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {
 						res.Size = size
@@ -464,13 +464,13 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	for _, part := range parts {
 		currentPath = currentPath + "/" + part
 		u := p.buildResourceURL(resourceType, currentPath)
-		
+
 		req, err := p.newRequest("MKCOL", u, nil)
 		if err != nil {
 			return err
 		}
 		req = req.WithContext(ctx)
-		
+
 		resp, err := p.HTTPClient.Do(req)
 		if err != nil {
 			return err

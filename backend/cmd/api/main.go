@@ -22,9 +22,9 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/storage"
-	"backend/internal/oauth"
 
 	"github.com/gorilla/websocket"
 )
@@ -93,11 +93,11 @@ func main() {
 	defer cancel()
 
 	server := &APIServer{
-		db:        database,
-		queue:     q,
+		db:            database,
+		queue:         q,
 		encryptionKey: encryptionKey,
-		jwtSecret: jwtSecret,
-		ctx:       ctx,
+		jwtSecret:     jwtSecret,
+		ctx:           ctx,
 	}
 
 	// Start Garbage Collector (GC) is removed as per requirements (permanent history until manual deletion)
@@ -386,20 +386,20 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 }
 
 type ConnectRequest struct {
-	SourceURL             string `json:"source_url"`
-	SourceUsername        string `json:"source_username"`
-	SourcePassword        string `json:"source_password"`
-	SourceRefreshToken    string `json:"source_refresh_token"`
-	SourceTokenExpiresIn  int    `json:"source_token_expires_in"`
-	TargetURL             string `json:"target_url"`
-	TargetUsername        string `json:"target_username"`
-	TargetPassword        string `json:"target_password"`
-	TargetRefreshToken    string `json:"target_refresh_token"`
-	TargetTokenExpiresIn  int    `json:"target_token_expires_in"`
-	SourceProvider        string `json:"source_provider"`
-	TargetProvider        string `json:"target_provider"`
-	Path                  string `json:"path"`
-	ResourceType          string `json:"resource_type"`
+	SourceURL            string `json:"source_url"`
+	SourceUsername       string `json:"source_username"`
+	SourcePassword       string `json:"source_password"`
+	SourceRefreshToken   string `json:"source_refresh_token"`
+	SourceTokenExpiresIn int    `json:"source_token_expires_in"`
+	TargetURL            string `json:"target_url"`
+	TargetUsername       string `json:"target_username"`
+	TargetPassword       string `json:"target_password"`
+	TargetRefreshToken   string `json:"target_refresh_token"`
+	TargetTokenExpiresIn int    `json:"target_token_expires_in"`
+	SourceProvider       string `json:"source_provider"`
+	TargetProvider       string `json:"target_provider"`
+	Path                 string `json:"path"`
+	ResourceType         string `json:"resource_type"`
 }
 
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -578,23 +578,23 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	// Create Migration Record
 	m := &db.Migration{
-		UserID:                          sql.NullString{String: userID, Valid: userID != ""},
-		SourceURL:                       req.SourceURL,
-		SourceUsername:                  req.SourceUsername,
-		SourcePasswordEncrypted:         sourcePassEnc,
-		SourceRefreshTokenEncrypted:     sourceRefreshEnc,
-		SourceTokenExpiresAt:            sourceTokenExpiresAt,
-		TargetURL:                       req.TargetURL,
-		TargetUsername:                  req.TargetUsername,
-		TargetPasswordEncrypted:         targetPassEnc,
-		TargetRefreshTokenEncrypted:     targetRefreshEnc,
-		TargetTokenExpiresAt:            targetTokenExpiresAt,
-		SourceProvider:                  req.SourceProvider,
-		TargetProvider:                  req.TargetProvider,
-		Status:                          "INDEXING",
-		ConflictStrategy:                req.ConflictStrategy,
-		TargetDir:                       targetDir,
-		Threads:                         threads,
+		UserID:                      sql.NullString{String: userID, Valid: userID != ""},
+		SourceURL:                   req.SourceURL,
+		SourceUsername:              req.SourceUsername,
+		SourcePasswordEncrypted:     sourcePassEnc,
+		SourceRefreshTokenEncrypted: sourceRefreshEnc,
+		SourceTokenExpiresAt:        sourceTokenExpiresAt,
+		TargetURL:                   req.TargetURL,
+		TargetUsername:              req.TargetUsername,
+		TargetPasswordEncrypted:     targetPassEnc,
+		TargetRefreshTokenEncrypted: targetRefreshEnc,
+		TargetTokenExpiresAt:        targetTokenExpiresAt,
+		SourceProvider:              req.SourceProvider,
+		TargetProvider:              req.TargetProvider,
+		Status:                      "INDEXING",
+		ConflictStrategy:            req.ConflictStrategy,
+		TargetDir:                   targetDir,
+		Threads:                     threads,
 	}
 
 	migrationID, err := db.CreateMigration(s.db, m)
