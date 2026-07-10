@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"backend/internal/db"
 	"backend/internal/processor"
@@ -66,17 +65,14 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	// Start processor loop in background
-	go proc.Start(ctx)
+	// Cancel context on signal, in a separate goroutine so Start() blocks main.
+	go func() {
+		sig := <-sigChan
+		log.Printf("Received signal %v. Initiating graceful shutdown...\n", sig)
+		cancel()
+	}()
 
-	// Block until signal received
-	sig := <-sigChan
-	log.Printf("Received signal %v. Initiating graceful shutdown...\n", sig)
-
-	// Cancel context to stop processor loops
-	cancel()
-
-	// Allow some time for active tasks to finalize
-	time.Sleep(3 * time.Second)
+	// Block until context is cancelled AND all in-flight tasks have finished.
+	proc.Start(ctx)
 	log.Println("Worker shut down successfully.")
 }
