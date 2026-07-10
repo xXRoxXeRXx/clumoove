@@ -21,8 +21,8 @@ interface MigrationConfig {
   target_password: string;
   target_refresh_token: string;
   target_token_expires_in: number;
-  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
-  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
+  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
+  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
 }
 
 interface FileBrowserProps {

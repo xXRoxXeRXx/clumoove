@@ -604,6 +604,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	if mig.TargetProvider == "dropbox" {
 		targetAlgo = "DROPBOX"
 		targetHasher = storage.NewDropboxHasher()
+	} else if mig.TargetProvider == "s3" {
+		targetAlgo = "SHA256"
+		targetHasher = sha256.New()
 	} else {
 		targetAlgo = "SHA1"
 		targetHasher = sha1.New()

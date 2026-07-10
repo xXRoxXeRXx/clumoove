@@ -30,8 +30,9 @@
 
 ### Storage Providers
 - Every provider must implement the `StorageProvider` interface in [provider.go](backend/internal/storage/provider.go) and be registered in [factory.go](backend/internal/storage/factory.go).
-- Valid provider values: `nextcloud`, `webdav`, `dropbox`, `google`, `smb`. Whitelist these explicitly — never pass unvalidated provider strings to `NewProvider`.
+- Valid provider values: `nextcloud`, `webdav`, `dropbox`, `google`, `smb`, `s3`. Whitelist these explicitly — never pass unvalidated provider strings to `NewProvider`.
 - Resource types: `files`, `calendars`, `contacts`. Calendars/contacts are always overwritten on conflict (dynamic data — SKIP would silently leave stale entries).
+- S3 Insecure HTTP endpoints (`insecure=true`) check literal IPs or `*.local`/`localhost` directly without DNS resolution to prevent DNS-rebinding SSRF. Users must use literal loopback/private IPs or local domain names.
 
 ### Security
 - **Credential handling**: Never pass plaintext credentials to background goroutines. Query from database by `MigrationID` and decrypt at the last moment using `crypto.Decrypt`.

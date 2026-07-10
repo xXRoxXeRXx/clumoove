@@ -61,6 +61,7 @@ Das Storage-Subsystem ist über das `StorageProvider`-Interface vollständig abs
 | **Generisches WebDAV** | WebDAV | Benutzername/Passwort | Dateien |
 | **Dropbox** | Dropbox API v2 | OAuth2 (PKCE) | Dateien |
 | **Google Drive** | Google Drive API v3 | OAuth2 (PKCE) | Dateien, Kalender (Calendar API), Kontakte (People API) |
+| **S3-kompatibler Speicher** | S3-Protokoll (Wasabi, MinIO, B2) | Access Key / Secret Key | Dateien |
 
 Der `RunOAuthRotationDaemon` im API-Gateway erneuert OAuth2-Refresh-Tokens automatisch im Hintergrund, bevor sie ablaufen, und speichert sie verschlüsselt in der Datenbank.
 

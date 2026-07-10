@@ -21,8 +21,8 @@ interface MigrationConfig {
   target_password: string;
   target_refresh_token: string;
   target_token_expires_in: number;
-  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
-  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
+  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
+  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
 }
 
 interface ConnectFormProps {
@@ -43,8 +43,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetPass, setTargetPass] = useState('');
   const [targetRefreshToken, setTargetRefreshToken] = useState('');
   const [targetTokenExpiresIn, setTargetTokenExpiresIn] = useState(0);
-  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb'>('nextcloud');
-  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb'>('nextcloud');
+  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3'>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3'>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
 
@@ -57,6 +57,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetSmbPort, setTargetSmbPort] = useState('445');
   const [targetSmbShare, setTargetSmbShare] = useState('');
   const [targetSmbDomain, setTargetSmbDomain] = useState('');
+
+  const [sourceS3Endpoint, setSourceS3Endpoint] = useState('');
+  const [sourceS3Region, setSourceS3Region] = useState('us-east-1');
+  const [sourceS3Bucket, setSourceS3Bucket] = useState('');
+  const [sourceS3Insecure, setSourceS3Insecure] = useState(false);
+
+  const [targetS3Endpoint, setTargetS3Endpoint] = useState('');
+  const [targetS3Region, setTargetS3Region] = useState('us-east-1');
+  const [targetS3Bucket, setTargetS3Bucket] = useState('');
+  const [targetS3Insecure, setTargetS3Insecure] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -125,10 +135,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     e.preventDefault();
     const finalSourceUrl = sourceProvider === 'smb'
       ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
+      : sourceProvider === 's3'
+      ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
       : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl);
     const finalSourceUser = (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser;
     const finalTargetUrl = targetProvider === 'smb'
       ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
+      : targetProvider === 's3'
+      ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
       : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl);
     const finalTargetUser = (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser;
 
@@ -138,9 +152,21 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         return;
       }
     }
+    if (sourceProvider === 's3') {
+      if (!sourceS3Bucket.trim() || !sourceS3Region.trim()) {
+        setError('Bitte gib einen Bucket-Namen und eine Region für die Quelle an.');
+        return;
+      }
+    }
     if (targetProvider === 'smb') {
       if (!targetSmbHost.trim() || !targetSmbShare.trim()) {
         setError('Bitte gib einen Server Host und einen Freigabe-Namen für das Ziel an.');
+        return;
+      }
+    }
+    if (targetProvider === 's3') {
+      if (!targetS3Bucket.trim() || !targetS3Region.trim()) {
+        setError('Bitte gib einen Bucket-Namen und eine Region für das Ziel an.');
         return;
       }
     }
@@ -234,7 +260,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={sourceProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
                     setSourceProvider(val);
                     if (val === 'dropbox' || val === 'google') {
                       setSourceUrl(`https://api.${val}.com`);
@@ -249,6 +275,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       setSourceSmbPort('445');
                       setSourceSmbShare('');
                       setSourceSmbDomain('');
+                    } else if (val === 's3') {
+                      setSourceUrl('');
+                      setSourceUser('');
+                      setSourcePass('');
+                      setSourceS3Endpoint('');
+                      setSourceS3Region('us-east-1');
+                      setSourceS3Bucket('');
+                      setSourceS3Insecure(false);
                     } else {
                       setSourceUrl('');
                       setSourceUser('');
@@ -260,6 +294,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
                   <option value="webdav">Generischer WebDAV-Server</option>
                   <option value="smb">SMB/CIFS Freigabe</option>
+                  <option value="s3">S3-kompatibler Speicher</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
                   <option value="google">Google (OAuth2)</option>
                 </select>
@@ -338,6 +373,81 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
                       required
                     />
+                  </div>
+                </>
+              ) : sourceProvider === 's3' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Bucket Name</label>
+                      <input
+                        type="text"
+                        placeholder="mein-bucket"
+                        value={sourceS3Bucket}
+                        onChange={(e) => setSourceS3Bucket(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Region</label>
+                      <input
+                        type="text"
+                        placeholder="us-east-1"
+                        value={sourceS3Region}
+                        onChange={(e) => setSourceS3Region(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Custom Endpoint URL (Optional)</label>
+                    <input
+                      type="url"
+                      placeholder="https://s3.eu-central-1.wasabisys.com oder http://127.0.0.1:9000 (HTTP erfordert lokale IP/localhost)"
+                      value={sourceS3Endpoint}
+                      onChange={(e) => setSourceS3Endpoint(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Access Key</label>
+                    <input
+                      type="text"
+                      placeholder="AKIAIOSFODNN7EXAMPLE"
+                      value={sourceUser}
+                      onChange={(e) => setSourceUser(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Secret Key</label>
+                    <input
+                      type="password"
+                      placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+                      value={sourcePass}
+                      onChange={(e) => setSourcePass(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="sourceS3Insecure"
+                      checked={sourceS3Insecure}
+                      onChange={(e) => setSourceS3Insecure(e.target.checked)}
+                      className="rounded border-portal-border text-portal-orange focus:ring-portal-orange"
+                    />
+                    <label htmlFor="sourceS3Insecure" className="text-slate-650 cursor-pointer font-sans select-none">
+                      HTTP erlauben (nur für lokale/MinIO Entwicklungsendpunkte)
+                    </label>
                   </div>
                 </>
               ) : sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
@@ -443,7 +553,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={targetProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
                     setTargetProvider(val);
                     if (val === 'dropbox' || val === 'google') {
                       setTargetUrl(`https://api.${val}.com`);
@@ -458,6 +568,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       setTargetSmbPort('445');
                       setTargetSmbShare('');
                       setTargetSmbDomain('');
+                    } else if (val === 's3') {
+                      setTargetUrl('');
+                      setTargetUser('');
+                      setTargetPass('');
+                      setTargetS3Endpoint('');
+                      setTargetS3Region('us-east-1');
+                      setTargetS3Bucket('');
+                      setTargetS3Insecure(false);
                     } else {
                       setTargetUrl('');
                       setTargetUser('');
@@ -469,6 +587,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
                   <option value="webdav">Generischer WebDAV-Server</option>
                   <option value="smb">SMB/CIFS Freigabe</option>
+                  <option value="s3">S3-kompatibler Speicher</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
                   <option value="google">Google (OAuth2)</option>
                 </select>
@@ -547,6 +666,81 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
                       required
                     />
+                  </div>
+                </>
+              ) : targetProvider === 's3' ? (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Bucket Name</label>
+                      <input
+                        type="text"
+                        placeholder="mein-bucket"
+                        value={targetS3Bucket}
+                        onChange={(e) => setTargetS3Bucket(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Region</label>
+                      <input
+                        type="text"
+                        placeholder="us-east-1"
+                        value={targetS3Region}
+                        onChange={(e) => setTargetS3Region(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Custom Endpoint URL (Optional)</label>
+                    <input
+                      type="url"
+                      placeholder="https://s3.eu-central-1.wasabisys.com oder http://127.0.0.1:9000 (HTTP erfordert lokale IP/localhost)"
+                      value={targetS3Endpoint}
+                      onChange={(e) => setTargetS3Endpoint(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Access Key</label>
+                    <input
+                      type="text"
+                      placeholder="AKIAIOSFODNN7EXAMPLE"
+                      value={targetUser}
+                      onChange={(e) => setTargetUser(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Secret Key</label>
+                    <input
+                      type="password"
+                      placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+                      value={targetPass}
+                      onChange={(e) => setTargetPass(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="targetS3Insecure"
+                      checked={targetS3Insecure}
+                      onChange={(e) => setTargetS3Insecure(e.target.checked)}
+                      className="rounded border-portal-border text-portal-orange focus:ring-portal-orange"
+                    />
+                    <label htmlFor="targetS3Insecure" className="text-slate-650 cursor-pointer font-sans select-none">
+                      HTTP erlauben (nur für lokale/MinIO Entwicklungsendpunkte)
+                    </label>
                   </div>
                 </>
               ) : targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
