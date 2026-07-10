@@ -10,8 +10,8 @@ services:
     image: postgres:15-alpine
     container_name: migration-postgres
     restart: unless-stopped
-    ports:
-      - "5433:5432"
+    # Do NOT expose PostgreSQL to the host network. Only reachable from
+    # within the Docker network by api-backend and migration-worker.
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
