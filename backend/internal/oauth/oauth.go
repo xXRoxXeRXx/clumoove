@@ -23,6 +23,10 @@ var configs = map[string]ProviderConfig{}
 
 var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
+	Transport: &http.Transport{
+		IdleConnTimeout: 30 * time.Second,
+		MaxIdleConns:    10,
+	},
 }
 
 func InitConfigs() {

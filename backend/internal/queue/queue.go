@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -25,13 +26,23 @@ func NewQueue(redisAddr string) (*Queue, error) {
 	if err != nil {
 		// Fallback to simple address if not a full URL
 		client = redis.NewClient(&redis.Options{
-			Addr: redisAddr,
+			Addr:     redisAddr,
+			Password: os.Getenv("REDIS_PASSWORD"),
 		})
 	} else {
-		if opt.Password == "redis_secret" {
-			return nil, fmt.Errorf("insecure REDIS_PASSWORD: 'redis_secret' is the default weak password. Please set a secure password in the environment variables.")
+		if opt.Password == "" {
+			opt.Password = os.Getenv("REDIS_PASSWORD")
 		}
 		client = redis.NewClient(opt)
+	}
+
+	// Always validate password presence and security (Finding 5)
+	password := client.Options().Password
+	if password == "" {
+		return nil, fmt.Errorf("REDIS_PASSWORD is required for secure queue operations")
+	}
+	if password == "redis_secret" {
+		return nil, fmt.Errorf("insecure REDIS_PASSWORD: 'redis_secret' is the default weak password. Please set a secure password in the environment variables.")
 	}
 
 	// Ping test with retry loop (resilient to Docker startup order)
@@ -91,6 +102,7 @@ func (q *Queue) RecoverAbandonedTasks(ctx context.Context, db *sql.DB, workerID 
 		UPDATE tasks 
 		SET status = 'PENDING', worker_hash = NULL, updated_at = CURRENT_TIMESTAMP 
 		WHERE status = 'RUNNING' AND worker_hash = $1
+		  AND updated_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes'
 	`
 	res, err := db.ExecContext(ctx, query, workerID)
 	if err != nil {

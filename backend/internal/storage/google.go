@@ -16,6 +16,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/api/people/v1"
+	"sync"
 )
 
 type GoogleProvider struct {
@@ -23,6 +24,7 @@ type GoogleProvider struct {
 	calendarService *calendar.Service
 	peopleService   *people.Service
 	httpClient      *http.Client
+	pathCache       sync.Map // path string -> folderID string
 }
 
 func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, error) {
@@ -250,15 +252,37 @@ func escapeDriveQuery(s string) string {
 }
 
 func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (string, error) {
-	if path == "/" || path == "" {
+	cleanPath := strings.Trim(path, "/")
+	if cleanPath == "" {
 		return "root", nil
 	}
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+
+	// Try the entire path from cache first
+	if val, ok := p.pathCache.Load(cleanPath); ok {
+		return val.(string), nil
+	}
+
+	parts := strings.Split(cleanPath, "/")
 	currentID := "root"
+	currentPath := ""
+
 	for _, part := range parts {
 		if part == "" {
 			continue
 		}
+		if currentPath == "" {
+			currentPath = part
+		} else {
+			currentPath = currentPath + "/" + part
+		}
+
+		// Check if this segment path is already cached
+		if val, ok := p.pathCache.Load(currentPath); ok {
+			currentID = val.(string)
+			continue
+		}
+
+		// If not cached, query Google Drive
 		query := fmt.Sprintf("'%s' in parents and name = '%s' and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
 			currentID, escapeDriveQuery(part))
 		res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
@@ -269,7 +293,9 @@ func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (str
 			return "", fmt.Errorf("path not found: %s", path)
 		}
 		currentID = res.Files[0].Id
+		p.pathCache.Store(currentPath, currentID)
 	}
+
 	return currentID, nil
 }
 
@@ -481,6 +507,16 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 			if err != nil {
 				return fmt.Errorf("failed to parse ICS: %w", err)
 			}
+			
+			// Overwrite conflict strategy (Finding 15)
+			if event.ICalUID != "" {
+				existingList, err := p.calendarService.Events.List(calendarID).ICalUID(event.ICalUID).Context(ctx).Do()
+				if err == nil && len(existingList.Items) > 0 {
+					_, err = p.calendarService.Events.Update(calendarID, existingList.Items[0].Id, event).Context(ctx).Do()
+					return err
+				}
+			}
+			
 			_, err = p.calendarService.Events.Insert(calendarID, event).Context(ctx).Do()
 			return err
 		}
@@ -491,6 +527,18 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 		if err != nil {
 			return fmt.Errorf("failed to parse VCF: %w", err)
 		}
+		
+		// Overwrite conflict strategy (Finding 15)
+		resourceName, err := p.findExistingContact(ctx, person)
+		if err == nil && resourceName != "" {
+			existing, err := p.peopleService.People.Get(resourceName).PersonFields("names,emailAddresses,phoneNumbers,metadata").Context(ctx).Do()
+			if err == nil {
+				person.Etag = existing.Etag
+				_, err = p.peopleService.People.UpdateContact(resourceName, person).UpdatePersonFields("names,emailAddresses,phoneNumbers").Context(ctx).Do()
+				return err
+			}
+		}
+		
 		_, err = p.peopleService.People.CreateContact(person).Context(ctx).Do()
 		return err
 
@@ -763,6 +811,8 @@ func parseICS(r io.Reader) (*calendar.Event, error) {
 		}
 
 		switch key {
+		case "UID":
+			event.ICalUID = unescapeICSValue(value)
 		case "SUMMARY":
 			event.Summary = unescapeICSValue(value)
 		case "DESCRIPTION":
@@ -857,4 +907,48 @@ func parseVCF(r io.Reader) (*people.Person, error) {
 		}
 	}
 	return person, nil
+}
+
+func (p *GoogleProvider) findExistingContact(ctx context.Context, person *people.Person) (string, error) {
+	if len(person.Names) == 0 && len(person.EmailAddresses) == 0 {
+		return "", nil
+	}
+
+	var query string
+	if len(person.Names) > 0 && person.Names[0].DisplayName != "" {
+		query = person.Names[0].DisplayName
+	} else if len(person.EmailAddresses) > 0 {
+		query = person.EmailAddresses[0].Value
+	}
+
+	if query == "" {
+		return "", nil
+	}
+
+	res, err := p.peopleService.People.SearchContacts().Query(query).ReadMask("names,emailAddresses").Context(ctx).Do()
+	if err != nil {
+		return "", err
+	}
+
+	for _, match := range res.Results {
+		if match.Person == nil {
+			continue
+		}
+		// Match Display Name
+		if len(person.Names) > 0 && len(match.Person.Names) > 0 {
+			if strings.EqualFold(person.Names[0].DisplayName, match.Person.Names[0].DisplayName) {
+				return match.Person.ResourceName, nil
+			}
+		}
+		// Match Email Address
+		for _, e1 := range person.EmailAddresses {
+			for _, e2 := range match.Person.EmailAddresses {
+				if strings.EqualFold(e1.Value, e2.Value) {
+					return match.Person.ResourceName, nil
+				}
+			}
+		}
+	}
+
+	return "", nil
 }

@@ -29,6 +29,8 @@ const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
+let refreshPromise: Promise<string> | null = null;
+
 const setMigrationInUrl = (id: string) => {
   const url = new URL(window.location.href);
   if (id) {
@@ -164,32 +166,41 @@ function App() {
       if (response.status === 401 && !isAuthRequest) {
         console.log('401 Unauthorized detected on URL:', url, 'Attempting silent token refresh...');
         try {
-          const refreshRes = await originalFetch(`${API_URL}/api/auth/refresh`, {
-            method: 'POST',
-            credentials: 'include',
-          });
-          if (refreshRes.ok) {
-            const data = await refreshRes.json();
-            const newAccessToken = data.access_token;
-
-            setToken(newAccessToken);
-
-            if (init) {
-              const headers = init.headers ? new Headers(init.headers) : new Headers();
-              headers.set('Authorization', `Bearer ${newAccessToken}`);
-              init.headers = headers;
-            } else {
-              init = {
-                headers: new Headers({
-                  'Authorization': `Bearer ${newAccessToken}`
-                })
-              };
-            }
-            return originalFetch(input, init);
-          } else {
-            console.warn('Silent refresh failed on 401');
-            handleLogout();
+          if (!refreshPromise) {
+            refreshPromise = (async () => {
+              try {
+                const refreshRes = await originalFetch(`${API_URL}/api/auth/refresh`, {
+                  method: 'POST',
+                  credentials: 'include',
+                });
+                if (refreshRes.ok) {
+                  const data = await refreshRes.json();
+                  return data.access_token;
+                }
+                throw new Error('Silent refresh failed');
+              } finally {
+                setTimeout(() => {
+                  refreshPromise = null;
+                }, 1000);
+              }
+            })();
           }
+
+          const newAccessToken = await refreshPromise;
+          setToken(newAccessToken);
+
+          if (init) {
+            const headers = init.headers ? new Headers(init.headers) : new Headers();
+            headers.set('Authorization', `Bearer ${newAccessToken}`);
+            init.headers = headers;
+          } else {
+            init = {
+              headers: new Headers({
+                'Authorization': `Bearer ${newAccessToken}`
+              })
+            };
+          }
+          return originalFetch(input, init);
         } catch (refreshErr) {
           console.error('Error during automatic token refresh:', refreshErr);
           handleLogout();

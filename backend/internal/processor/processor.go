@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"math"
 	"net"
 	"os"
 	"path"
@@ -32,12 +31,13 @@ type activeTaskInfo struct {
 }
 
 type Processor struct {
-	db         *sql.DB
-	queue      *queue.Queue
-	workerID   string
-	secretKey  string
-	maxThreads int
-	activeTasks sync.Map
+	db           *sql.DB
+	queue        *queue.Queue
+	workerID     string
+	secretKey    string
+	maxThreads   int
+	activeTasks  sync.Map
+	refreshLocks sync.Map // migrationID string -> *sync.Mutex
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
@@ -57,6 +57,11 @@ func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey s
 		secretKey:  secretKey,
 		maxThreads: maxThreads,
 	}
+}
+
+func (p *Processor) getOrCreateRefreshLock(migrationID string) *sync.Mutex {
+	actual, _ := p.refreshLocks.LoadOrStore(migrationID, &sync.Mutex{})
+	return actual.(*sync.Mutex)
 }
 
 // Start runs the worker dequeue loop and background schedulers
@@ -136,9 +141,9 @@ func (p *Processor) Start(ctx context.Context) {
 
 // RunWorkerLiveness periodically registers this worker as active and recovers abandoned tasks
 func (p *Processor) RunWorkerLiveness(ctx context.Context) {
-	// Register immediately with a 60s TTL — generous enough to survive a brief Redis hiccup
-	// without the liveness key expiring between heartbeat ticks (tick=10s, TTL=60s → 6 chances).
-	_ = p.queue.RegisterActiveWorker(ctx, p.workerID, 60*time.Second)
+	// Register immediately with a 120s TTL — generous enough to survive a brief Redis hiccup
+	// without the liveness key expiring between heartbeat ticks (tick=10s, TTL=120s → 12 chances).
+	_ = p.queue.RegisterActiveWorker(ctx, p.workerID, 120*time.Second)
 
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -151,7 +156,7 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 60*time.Second)
+			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 120*time.Second)
 			if err != nil {
 				fmt.Printf("[Liveness] Error registering active worker: %v\n", err)
 			}
@@ -168,7 +173,7 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 				// Claim a distributed recovery lock (Redis SETNX) before touching the dead
 				// worker's queue. This prevents two processor instances from simultaneously
 				// recovering the same worker and enqueuing tasks twice.
-				claimed, lockErr := p.queue.TryClaimWorkerRecoveryLock(ctx, deadWorkerID, 60*time.Second)
+				claimed, lockErr := p.queue.TryClaimWorkerRecoveryLock(ctx, deadWorkerID, 120*time.Second)
 				if lockErr != nil || !claimed {
 					continue // Another instance is already handling recovery for this worker
 				}
@@ -895,11 +900,15 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 	// If it is a normal file transfer failure
 	if task.Attempts < 3 && !isPermanent {
-		// Exponential Backoff: 10s, 30s
-		backoffSec := int(math.Pow(3, float64(task.Attempts-1))) * 10
-		if backoffSec > 90 {
-			backoffSec = 90
+		// Exponential Backoff: 10s, 30s (Finding 10)
+		backoffTable := []int{10, 30, 90}
+		idx := task.Attempts - 1
+		if idx < 0 {
+			idx = 0
+		} else if idx >= len(backoffTable) {
+			idx = len(backoffTable) - 1
 		}
+		backoffSec := backoffTable[idx]
 
 		nextRetry := time.Now().Add(time.Duration(backoffSec) * time.Second)
 		task.Status = "FAILED" // Kept as failed until cron schedules retry
@@ -984,7 +993,39 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 		return accessToken, nil
 	}
 
-	// Token still valid with >2 min margin → use as-is.
+	// Acquire lock to serialize token refresh requests for the same migration (Finding 7)
+	mu := p.getOrCreateRefreshLock(mig.ID)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Double-check: re-query the migration from the database after acquiring the lock to get the latest tokens.
+	latestMig, err := db.GetMigration(p.db, mig.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch latest migration details inside refresh lock: %w", err)
+	}
+
+	// Determine latest fields and decrypt updated access token if exists
+	if role == "source" {
+		refreshTokenEnc = latestMig.SourceRefreshTokenEncrypted
+		expiresAt = latestMig.SourceTokenExpiresAt
+		provider = latestMig.SourceProvider
+		latestAccessEnc := latestMig.SourcePasswordEncrypted
+		latestAccess, err := crypto.Decrypt(latestAccessEnc, p.secretKey)
+		if err == nil {
+			accessToken = latestAccess
+		}
+	} else {
+		refreshTokenEnc = latestMig.TargetRefreshTokenEncrypted
+		expiresAt = latestMig.TargetTokenExpiresAt
+		provider = latestMig.TargetProvider
+		latestAccessEnc := latestMig.TargetPasswordEncrypted
+		latestAccess, err := crypto.Decrypt(latestAccessEnc, p.secretKey)
+		if err == nil {
+			accessToken = latestAccess
+		}
+	}
+
+	// Token still valid with >2 min margin (updated by a concurrent thread) → use as-is.
 	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
 		return accessToken, nil
 	}

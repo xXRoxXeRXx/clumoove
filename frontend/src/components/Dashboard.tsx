@@ -173,11 +173,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
     // Construct WebSocket URL
     const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const cleanApiUrl = apiUrl.replace(/^https?:\/\//, '');
-    const wsUrl = `${wsProto}://${cleanApiUrl}/api/migration/${migrationId}/ws?token=${token}`;
+    const apiUrlObj = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
+    const wsUrl = `${wsProto}://${apiUrlObj.host}/api/migration/${migrationId}/ws`;
 
     let isMounted = true;
-    let ws = new WebSocket(wsUrl);
+    let ws = new WebSocket(wsUrl, token);
 
     ws.onopen = () => {
       // Connection established
@@ -375,9 +375,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       reconnectTimeout = setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
         const wsProtoR = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const cleanApiUrlR = apiUrl.replace(/^https?:\/\//, '');
-        const wsUrlR = `${wsProtoR}://${cleanApiUrlR}/api/migration/${migrationId}/ws?token=${token}`;
-        const wsR = new WebSocket(wsUrlR);
+        const apiUrlObjR = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
+        const wsUrlR = `${wsProtoR}://${apiUrlObjR.host}/api/migration/${migrationId}/ws`;
+        const wsR = new WebSocket(wsUrlR, token);
         wsR.onopen = ws.onopen;
         wsR.onmessage = ws.onmessage;
         wsR.onerror = ws.onerror;

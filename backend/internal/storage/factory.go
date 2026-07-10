@@ -3,9 +3,26 @@ package storage
 import (
 	"context"
 	"fmt"
+	"net/url"
 )
 
 func NewProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
+	// Sanitize URL credentials to prevent leakage in url.Error (Finding 2)
+	if providerType == "nextcloud" || providerType == "webdav" {
+		if parsed, err := url.Parse(urlStr); err == nil && parsed.User != nil {
+			if username == "" {
+				username = parsed.User.Username()
+			}
+			if password == "" {
+				if pass, ok := parsed.User.Password(); ok {
+					password = pass
+				}
+			}
+			parsed.User = nil
+			urlStr = parsed.String()
+		}
+	}
+
 	switch providerType {
 	case "nextcloud":
 		return NewNextcloudProvider(urlStr, username, password)
@@ -20,3 +37,4 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 		return nil, fmt.Errorf("unsupported provider type: %q", providerType)
 	}
 }
+

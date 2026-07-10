@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/csv"
 	"encoding/hex"
@@ -71,6 +72,11 @@ func main() {
 	if jwtSecret == "" {
 		log.Fatal("JWT_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
 	}
+
+	if subtle.ConstantTimeCompare([]byte(encryptionKey), []byte(jwtSecret)) == 1 {
+		log.Fatal("ENCRYPTION_SECRET_KEY and JWT_SECRET_KEY must be different to maintain cryptographic key segregation.")
+	}
+
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -196,7 +202,11 @@ var allowedOrigins = func() map[string]bool {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if allowedOrigins[origin] {
+		if origin != "" {
+			if !allowedOrigins[origin] {
+				http.Error(w, "Forbidden: untrusted origin", http.StatusForbidden)
+				return
+			}
 			// Credentialed requests are only allowed from the whitelisted origins
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -1005,19 +1015,31 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenStr := r.URL.Query().Get("token")
+	tokenStr := ""
 	isProtocolToken := false
-	if tokenStr == "" {
-		if protocol := r.Header.Get("Sec-WebSocket-Protocol"); protocol != "" {
-			parts := strings.Split(protocol, ",")
-			for _, part := range parts {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					tokenStr = trimmed
-					isProtocolToken = true
-					break
-				}
+
+	if protocol := r.Header.Get("Sec-WebSocket-Protocol"); protocol != "" {
+		parts := strings.Split(protocol, ",")
+		for _, part := range parts {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				tokenStr = trimmed
+				isProtocolToken = true
+				break
 			}
+		}
+	}
+
+	if tokenStr == "" {
+		// Fallback to query param, but reject on secure HTTPS connections
+		queryToken := r.URL.Query().Get("token")
+		if queryToken != "" {
+			isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+			if isHTTPS {
+				http.Error(w, "Unauthorized: token in query string is disallowed on secure connections. Use Sec-WebSocket-Protocol subprotocol header instead.", http.StatusUnauthorized)
+				return
+			}
+			tokenStr = queryToken
 		}
 	}
 
@@ -1066,68 +1088,96 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("WebSocket client connected for migration: %s\n", id)
 
+	// Set read limits and deadlines (Finding 11)
+	ws.SetReadLimit(512) // small control frames only
+	ws.SetReadDeadline(time.Now().Add(35 * time.Second))
+	ws.SetPongHandler(func(string) error {
+		ws.SetReadDeadline(time.Now().Add(35 * time.Second))
+		return nil
+	})
+
+	// Start discard loop to process control frames (ping/pong/close)
+	go func() {
+		for {
+			if _, _, err := ws.NextReader(); err != nil {
+				break
+			}
+		}
+	}()
+
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		// Fetch migration state
-		mig, err = db.GetMigration(s.db, id)
-		if err != nil {
-			break
-		}
+	pingTicker := time.NewTicker(15 * time.Second)
+	defer pingTicker.Stop()
 
-		// Query active file paths
-		activeFiles, _ := db.GetActiveTaskPaths(s.db, r.Context(), id)
-		var activeFile string
-		if len(activeFiles) > 0 {
-			activeFile = activeFiles[0]
-		}
+	for {
+		select {
+		case <-pingTicker.C:
+			if err := ws.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
+				log.Printf("WebSocket write ping error: %v\n", err)
+				return
+			}
+		case <-ticker.C:
+			// Fetch migration state
+			mig, err = db.GetMigration(s.db, id)
+			if err != nil {
+				return
+			}
 
-		responsePayload := map[string]interface{}{
-			"id":              mig.ID,
-			"status":          mig.Status,
-			"total_files":     mig.TotalFiles,
-			"total_bytes":     mig.TotalBytes,
-			"processed_files": mig.ProcessedFiles,
-			"processed_bytes": mig.ProcessedBytes,
-			"skipped_files":   mig.SkippedFiles,
-			"failed_files":    mig.FailedFiles,
-			"error_message":   "",
-			"active_file":     activeFile,
-			"active_files":    activeFiles,
-			"threads":         mig.Threads,
-		}
+			// Query active file paths
+			activeFiles, _ := db.GetActiveTaskPaths(s.db, r.Context(), id)
+			var activeFile string
+			if len(activeFiles) > 0 {
+				activeFile = activeFiles[0]
+			}
 
-		if mig.ErrorMessage.Valid {
-			responsePayload["error_message"] = mig.ErrorMessage.String
-		}
+			responsePayload := map[string]interface{}{
+				"id":              mig.ID,
+				"status":          mig.Status,
+				"total_files":     mig.TotalFiles,
+				"total_bytes":     mig.TotalBytes,
+				"processed_files": mig.ProcessedFiles,
+				"processed_bytes": mig.ProcessedBytes,
+				"skipped_files":   mig.SkippedFiles,
+				"failed_files":    mig.FailedFiles,
+				"error_message":   "",
+				"active_file":     activeFile,
+				"active_files":    activeFiles,
+				"threads":         mig.Threads,
+			}
 
-		stats, err := db.GetMigrationResourceStats(s.db, id)
-		if err == nil {
-			responsePayload["resource_stats"] = stats
-		} else {
-			log.Printf("WebSocket error fetching resource stats: %v\n", err)
-		}
+			if mig.ErrorMessage.Valid {
+				responsePayload["error_message"] = mig.ErrorMessage.String
+			}
 
-		// Write to WS
-		data, err := json.Marshal(responsePayload)
-		if err != nil {
-			break
-		}
+			stats, err := db.GetMigrationResourceStats(s.db, id)
+			if err == nil {
+				responsePayload["resource_stats"] = stats
+			} else {
+				log.Printf("WebSocket error fetching resource stats: %v\n", err)
+			}
 
-		err = ws.WriteMessage(websocket.TextMessage, data)
-		if err != nil {
-			break // Client disconnected
-		}
+			// Write to WS
+			data, err := json.Marshal(responsePayload)
+			if err != nil {
+				return
+			}
 
-		// If migration is in a terminal state (COMPLETED or FAILED) and all tasks finished, close socket after final state
-		if (mig.Status == "COMPLETED" || mig.Status == "FAILED") && mig.ProcessedFiles >= mig.TotalFiles {
-			// Pause a bit to let client read the final completed status
-			time.Sleep(1 * time.Second)
-			break
+			ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			err = ws.WriteMessage(websocket.TextMessage, data)
+			if err != nil {
+				return // Client disconnected
+			}
+
+			// If migration is in a terminal state (COMPLETED or FAILED) and all tasks finished, close socket after final state
+			if (mig.Status == "COMPLETED" || mig.Status == "FAILED") && mig.ProcessedFiles >= mig.TotalFiles {
+				// Pause a bit to let client read the final completed status
+				time.Sleep(1 * time.Second)
+				return
+			}
 		}
 	}
-	log.Printf("WebSocket client disconnected for migration: %s\n", id)
 }
 
 func (s *APIServer) runGarbageCollector(ctx context.Context) {
@@ -1222,13 +1272,19 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isSecure := r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https"
+	sameSite := http.SameSiteLaxMode
+	if isSecure {
+		sameSite = http.SameSiteNoneMode
+	}
+
 	cookie := &http.Cookie{
 		Name:     "oauth_state",
 		Value:    stateToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-		SameSite: http.SameSiteLaxMode,
+		Secure:   isSecure,
+		SameSite: sameSite,
 		MaxAge:   300,
 	}
 	http.SetCookie(w, cookie)
@@ -1285,11 +1341,19 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	isSecure := r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https"
+	sameSite := http.SameSiteLaxMode
+	if isSecure {
+		sameSite = http.SameSiteNoneMode
+	}
+
 	clearCookie := &http.Cookie{
 		Name:     "oauth_state",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   isSecure,
+		SameSite: sameSite,
 		MaxAge:   -1,
 	}
 	http.SetCookie(w, clearCookie)

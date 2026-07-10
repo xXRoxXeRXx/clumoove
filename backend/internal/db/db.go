@@ -180,6 +180,16 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (idx_migrations_user_id): %v\n", err)
 			}
 
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_migration_status ON tasks(migration_id, status)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_migration_status): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_retry): %v\n", err)
+			}
+
 			// Set connection pool settings
 			maxConns := 50
 			if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
