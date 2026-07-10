@@ -98,10 +98,21 @@ func GenerateRefreshToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// SetRefreshTokenCookie sets the refresh token in an HTTP-only, secure, SameSite cookie
+// SetRefreshTokenCookie sets the refresh token in an HTTP-only, secure, SameSite cookie.
+// When the connection is HTTPS (production), SameSite=None is used so the cookie is sent
+// on cross-site credentialed requests (e.g. app.example.com → api.example.com).
+// SameSite=None requires Secure=true, which is already true on HTTPS.
+// On plain HTTP (local dev), SameSite=Lax is used; same-site localhost still works
+// because browsers ignore port differences for the SameSite check.
 func SetRefreshTokenCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time) {
 	// Determine if connection is HTTPS (either TLS is active, or we are behind a proxy with X-Forwarded-Proto)
 	isSecure := r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https"
+
+	sameSite := http.SameSiteLaxMode
+	if isSecure {
+		// SameSite=None is required for cross-site cookie delivery; only valid over HTTPS.
+		sameSite = http.SameSiteNoneMode
+	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
@@ -110,13 +121,20 @@ func SetRefreshTokenCookie(w http.ResponseWriter, r *http.Request, token string,
 		Expires:  expiresAt,
 		HttpOnly: true,
 		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode, // Lax is suitable for cross-origin credentials exchange (e.g. Vite to Go API)
+		SameSite: sameSite,
 	})
 }
 
-// ClearRefreshTokenCookie clears the refresh token cookie
+// ClearRefreshTokenCookie clears the refresh token cookie.
+// Must mirror the same Secure/SameSite attributes used when setting it, otherwise browsers
+// treat it as a different cookie and the clear has no effect.
 func ClearRefreshTokenCookie(w http.ResponseWriter, r *http.Request) {
 	isSecure := r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https"
+
+	sameSite := http.SameSiteLaxMode
+	if isSecure {
+		sameSite = http.SameSiteNoneMode
+	}
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
@@ -126,6 +144,6 @@ func ClearRefreshTokenCookie(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		Secure:   isSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: sameSite,
 	})
 }
