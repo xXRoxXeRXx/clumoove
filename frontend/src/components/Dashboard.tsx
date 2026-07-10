@@ -76,8 +76,6 @@ const renderResourceSection = (title: string, stats: ResourceStats | undefined) 
 
 export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onReset, token }) => {
   const [data, setData] = useState<ProgressData | null>(null);
-  const [totalItems, setTotalItems] = useState<number>(0);
-  const [successItems, setSuccessItems] = useState<number>(0);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
   const [speed, setSpeed] = useState<number>(0); // Bytes per second
   const [eta, setEta] = useState<string>('Berechnung...');
@@ -168,6 +166,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     progressHistory.current = [];
     lastActiveSpeed.current = 0;
     lastActiveTime.current = 0;
+    prevActiveFileRef.current = '';
+    prevActiveFilesRef.current = [];
+    prevStatusRef.current = '';
+    prevProcessedFilesRef.current = 0;
 
     // Construct WebSocket URL
     const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -182,7 +184,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     };
 
     ws.onmessage = (event) => {
-      const payload: ProgressData = JSON.parse(event.data);
+      let payload: ProgressData;
+      try {
+        payload = JSON.parse(event.data);
+      } catch (err) {
+        console.error("Failed to parse progress data:", err);
+        return;
+      }
       setData(payload);
 
       // Add friendly logs dynamically based on state changes
@@ -354,6 +362,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'FAILED') {
         return;
       }
+      
+      // Ping API to trigger token refresh if it expired during WebSocket connection (I4 WS fix)
+      fetch(`${apiUrl}/api/auth/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      }).catch(err => console.error("WS connection loss auth check failed:", err));
+
       if (reconnectDelay > 15000) {
         setServerUnreachable(true);
         return;

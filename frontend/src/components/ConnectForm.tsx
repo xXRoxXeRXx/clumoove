@@ -60,15 +60,23 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
     const targetOrigin = new URL(apiUrl, window.location.origin).origin;
 
-    window.open(
+    const popup = window.open(
       `${apiUrl}/api/oauth/auth?provider=${provider}&origin=${encodeURIComponent(window.location.origin)}`,
       'OAuth',
       `width=${width},height=${height},left=${left},top=${top}`
     );
 
+    const cleanup = () => {
+      window.removeEventListener('message', handleMessage);
+      clearInterval(checkClosedInterval);
+    };
+
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== targetOrigin) {
         return;
+      }
+      if (event.source !== popup) {
+        return; // Ensure the event was posted from our specific popup window (I7 fix)
       }
       if (event.data && event.data.type === 'oauth-success' && event.data.provider === provider) {
         if (type === 'source') {
@@ -86,12 +94,19 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           setTargetRefreshToken(event.data.refreshToken || '');
           setTargetTokenExpiresIn(event.data.expiresIn || 3600);
         }
-        window.removeEventListener('message', handleMessage);
+        cleanup();
       } else if (event.data && event.data.type === 'oauth-error') {
         setError(`OAuth Fehler: ${event.data.error}`);
-        window.removeEventListener('message', handleMessage);
+        cleanup();
       }
     };
+
+    // Periodically check if user closed the popup manually to clean up listener leaks (I7 fix)
+    const checkClosedInterval = setInterval(() => {
+      if (!popup || popup.closed) {
+        cleanup();
+      }
+    }, 1000);
 
     window.addEventListener('message', handleMessage);
   };

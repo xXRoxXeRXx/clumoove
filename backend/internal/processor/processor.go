@@ -41,9 +41,9 @@ type Processor struct {
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
-	// Default to a large worker pool (50).
+	// Default to a conservative worker pool (4) as documented in AGENTS.md.
 	// The actual concurrency per migration is limited by the m.threads setting in the database during DequeueSQL.
-	maxThreads := 50
+	maxThreads := 4
 	if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
 		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
 			maxThreads = val
@@ -374,7 +374,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	}
 }
 
-func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) error {
+func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (err error) {
 	// Shadow ctx with a cancelable one
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -615,8 +615,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 
 	// Setup progress notification channel
 	progressChan := make(chan int64, 10)
-	defer close(progressChan)
+	progressDone := make(chan struct{})
+	var totalBytesReported int64
+
 	go func() {
+		defer close(progressDone)
 		// This goroutine updates progress of migration in the DB
 		// Buffer progress updates to reduce database load
 		var bufferedBytes int64
@@ -633,6 +636,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 					// Final flush
 					if bufferedBytes > 0 {
 						_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, bufferedBytes, 0, 0)
+						totalBytesReported += bufferedBytes
 					}
 					return
 				}
@@ -641,6 +645,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			case <-ticker.C:
 				if bufferedBytes > 0 {
 					_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, bufferedBytes, 0, 0)
+					totalBytesReported += bufferedBytes
 					bufferedBytes = 0
 				}
 				// Heartbeat updated_at for this task to avoid triggering orphan recovery
@@ -652,6 +657,18 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 					}
 					lastHeartbeat = time.Now()
 				}
+			}
+		}
+	}()
+
+	// Defer cleanup of progress channel and progress rollback on failure (Nitpick fix)
+	defer func() {
+		close(progressChan)
+		<-progressDone
+		if err != nil {
+			// Rollback progress reported to DB during this failed run
+			if totalBytesReported > 0 {
+				_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, -totalBytesReported, 0, 0)
 			}
 		}
 	}()

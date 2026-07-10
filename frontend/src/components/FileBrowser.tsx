@@ -243,14 +243,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
     setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     try {
-      const response = await fetch(`${apiUrl}/api/migration/connect`, {
+      const response = await fetch(`${apiUrl}/api/migration/browse`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          ...credentials,
+          source_url: credentials.source_url,
+          source_username: credentials.source_username,
+          source_password: credentials.source_password,
+          source_provider: credentials.source_provider,
+          resource_type: 'files',
           path: folderPath,
         }),
       });
@@ -259,7 +263,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       const data = await response.json();
       if (data.success) {
-        setDirectoryContents((prev) => ({ ...prev, [folderPath]: data.files || [] }));
+        setDirectoryContents((prev) => ({ ...prev, [folderPath]: data.items || data.files || [] }));
       }
     } catch (err) {
       console.error(err);

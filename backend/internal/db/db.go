@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -179,7 +181,16 @@ func InitDB(connStr string) (*sql.DB, error) {
 			}
 
 			// Set connection pool settings
-			db.SetMaxOpenConns(50)
+			maxConns := 50
+			if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
+				if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
+					maxConns = val * 2 // ensure pool has enough connections for main threads + helper queries
+					if maxConns < 50 {
+						maxConns = 50
+					}
+				}
+			}
+			db.SetMaxOpenConns(maxConns)
 			db.SetMaxIdleConns(10)
 			db.SetConnMaxLifetime(time.Hour)
 			return db, nil
@@ -263,6 +274,17 @@ func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string)
 		UPDATE migrations
 		SET status = $1
 		WHERE id = $2
+	`
+	_, err := db.Exec(query, status, id)
+	return err
+}
+
+// UpdateMigrationStatusIfIndexing updates the migration status to the new status only if it is currently 'INDEXING'.
+func UpdateMigrationStatusIfIndexing(db *sql.DB, id string, status string) error {
+	query := `
+		UPDATE migrations
+		SET status = $1
+		WHERE id = $2 AND status = 'INDEXING'
 	`
 	_, err := db.Exec(query, status, id)
 	return err

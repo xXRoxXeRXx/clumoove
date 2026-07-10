@@ -152,6 +152,57 @@ function App() {
     setStep('login');
   };
 
+  // Patch global fetch to handle 401 token refresh automatically (I4 frontend fix)
+  useEffect(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      let response = await originalFetch(input, init);
+
+      const url = typeof input === 'string' ? input : (input as Request).url;
+      const isAuthRequest = url.includes('/api/auth/login') || url.includes('/api/auth/register') || url.includes('/api/auth/refresh');
+
+      if (response.status === 401 && !isAuthRequest) {
+        console.log('401 Unauthorized detected on URL:', url, 'Attempting silent token refresh...');
+        try {
+          const refreshRes = await originalFetch(`${API_URL}/api/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+          });
+          if (refreshRes.ok) {
+            const data = await refreshRes.json();
+            const newAccessToken = data.access_token;
+
+            setToken(newAccessToken);
+
+            if (init) {
+              const headers = init.headers ? new Headers(init.headers) : new Headers();
+              headers.set('Authorization', `Bearer ${newAccessToken}`);
+              init.headers = headers;
+            } else {
+              init = {
+                headers: new Headers({
+                  'Authorization': `Bearer ${newAccessToken}`
+                })
+              };
+            }
+            return originalFetch(input, init);
+          } else {
+            console.warn('Silent refresh failed on 401');
+            handleLogout();
+          }
+        } catch (refreshErr) {
+          console.error('Error during automatic token refresh:', refreshErr);
+          handleLogout();
+        }
+      }
+      return response;
+    };
+
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, [token]);
+
   const handleConnectSuccess = (config: any, files: any[]) => {
     setCredentials(config);
     setInitialFiles(files);

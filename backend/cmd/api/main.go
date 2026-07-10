@@ -222,10 +222,11 @@ type BrowseRequest struct {
 	SourceUsername string `json:"source_username"`
 	SourcePassword string `json:"source_password"`
 	SourceProvider string `json:"source_provider"`
-	ResourceType   string `json:"resource_type"` // "calendars" or "contacts"
+	ResourceType   string `json:"resource_type"` // "calendars", "contacts", or "files"
+	Path           string `json:"path"`
 }
 
-// handleBrowse lists the top-level calendar collections or addressbooks on the source server.
+// handleBrowse lists the top-level calendar collections or addressbooks, or files/directories on the source server.
 // It contacts only the source, avoiding the two extra round-trips that reusing handleConnect would cause.
 func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	var req BrowseRequest
@@ -237,8 +238,8 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	if req.SourceProvider == "" {
 		req.SourceProvider = "nextcloud"
 	}
-	if req.ResourceType != "calendars" && req.ResourceType != "contacts" {
-		http.Error(w, "resource_type must be 'calendars' or 'contacts'", http.StatusBadRequest)
+	if req.ResourceType != "calendars" && req.ResourceType != "contacts" && req.ResourceType != "files" {
+		http.Error(w, "resource_type must be 'calendars', 'contacts', or 'files'", http.StatusBadRequest)
 		return
 	}
 
@@ -259,10 +260,15 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// List the root of the resource type — each top-level collection is one calendar / addressbook
-	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, "/")
+	reqPath := req.Path
+	if reqPath == "" {
+		reqPath = "/"
+	}
+
+	// List the requested path for files, or root "/" for calendars/contacts
+	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, reqPath)
 	if err != nil {
-		log.Printf("handleBrowse: failed to list %s for provider %s: %v", req.ResourceType, req.SourceProvider, err)
+		log.Printf("handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, req.SourceProvider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": false,
 			"error":   fmt.Sprintf("Failed to list %s. Check URL and credentials.", req.ResourceType),
@@ -270,10 +276,10 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only return top-level collections (IsDir == true); individual resource files are not selectable here
+	// For files, return all resources. For calendars/contacts, only return directories (collections).
 	var collections []storage.CloudResource
 	for _, item := range items {
-		if item.IsDir {
+		if req.ResourceType == "files" || item.IsDir {
 			collections = append(collections, item)
 		}
 	}
@@ -281,6 +287,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"items":   collections,
+		"files":   collections, // back-compat for frontend using data.files
 	})
 }
 
@@ -832,7 +839,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 		return
 	}
 
-	err = db.UpdateMigrationStatus(s.db, migID, "RUNNING", nil)
+	err = db.UpdateMigrationStatusIfIndexing(s.db, migID, "RUNNING")
 	if err != nil {
 		s.failMigration(migID, fmt.Sprintf("Failed to set migration running: %v", err))
 		return
@@ -1200,6 +1207,12 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid origin: must be an absolute http(s) URL", http.StatusBadRequest)
 		return
 	}
+	// Check against allowedOrigins whitelist (C1 security fix)
+	if !allowedOrigins[origin] {
+		log.Printf("handleOAuthAuth: rejected untrusted origin %q", origin)
+		http.Error(w, "Untrusted origin: must be whitelisted", http.StatusBadRequest)
+		return
+	}
 	log.Printf("handleOAuthAuth: final origin set to %q", origin)
 
 	stateToken := generateRandomString(16)
@@ -1258,6 +1271,12 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	origin := parts[2]
 
 	log.Printf("handleOAuthCallback: parsed provider=%s, origin=%s", provider, origin)
+
+	if !allowedOrigins[origin] {
+		log.Printf("handleOAuthCallback: rejected untrusted origin %q in state", origin)
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "http://localhost:5173", "CSRF verification failed: untrusted origin")
+		return
+	}
 
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
