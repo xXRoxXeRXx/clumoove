@@ -123,6 +123,9 @@ func main() {
 	mux.Handle("POST /api/migration/target/mkdir", jwtMiddleware(http.HandlerFunc(server.handleTargetMkdir)))
 	mux.Handle("POST /api/migration/start", jwtMiddleware(http.HandlerFunc(server.handleStart)))
 	mux.Handle("GET /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetStatus)))
+	mux.Handle("POST /api/migration/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePause)))
+	mux.Handle("POST /api/migration/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResume)))
+	mux.Handle("POST /api/migration/{id}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancel)))
 	mux.Handle("DELETE /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteMigration)))
 	mux.Handle("GET /api/migration/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadReport)))
 
@@ -384,6 +387,85 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 	})
+}
+
+func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil || !owns {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	err = db.UpdateMigrationStatus(s.db, id, "PAUSED", nil)
+	if err != nil {
+		http.Error(w, "Failed to pause migration", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil || !owns {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	err = db.UpdateMigrationStatus(s.db, id, "RUNNING", nil)
+	if err != nil {
+		http.Error(w, "Failed to resume migration", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil || !owns {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// 1. Update Migration Status
+	err = db.UpdateMigrationStatus(s.db, id, "CANCELLED", nil)
+	if err != nil {
+		http.Error(w, "Failed to cancel migration", http.StatusInternalServerError)
+		return
+	}
+
+	// 2. Mark pending tasks as CANCELLED
+	err = db.CancelPendingTasks(s.db, id)
+	if err != nil {
+		log.Printf("Warning: failed to cancel pending tasks for migration %s: %v", id, err)
+	}
+
+	// 3. Publish Redis PubSub event to cancel running contexts on workers
+	_ = s.queue.PublishCancelEvent(r.Context(), id)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 type ConnectRequest struct {

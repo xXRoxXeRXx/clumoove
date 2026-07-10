@@ -732,3 +732,15 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 	}
 	return list, nil
 }
+
+
+// CancelPendingTasks marks all pending tasks of a migration as CANCELLED
+func CancelPendingTasks(db *sql.DB, migrationID string) error {
+	query := `
+		UPDATE tasks 
+		SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
+		WHERE migration_id = $1 AND status = 'PENDING'
+	`
+	_, err := db.Exec(query, migrationID)
+	return err
+}

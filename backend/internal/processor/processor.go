@@ -25,16 +25,24 @@ import (
 	"backend/internal/storage"
 )
 
+type activeTaskInfo struct {
+	migrationID string
+	cancel      context.CancelFunc
+}
+
 type Processor struct {
 	db         *sql.DB
 	queue      *queue.Queue
 	workerID   string
 	secretKey  string
 	maxThreads int
+	activeTasks sync.Map
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
-	maxThreads := 4
+	// Default to a large worker pool (50).
+	// The actual concurrency per migration is limited by the m.threads setting in the database during DequeueSQL.
+	maxThreads := 50
 	if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
 		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
 			maxThreads = val
@@ -64,6 +72,19 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
 	go p.RunOrphanedPendingTasksRecovery(ctx)
+
+	// Start Cancel Listener
+	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {
+		fmt.Printf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
+		p.activeTasks.Range(func(key, value interface{}) bool {
+			info, ok := value.(activeTaskInfo)
+			if ok && info.migrationID == migrationID {
+				fmt.Printf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
+				info.cancel()
+			}
+			return true
+		})
+	})
 
 	var wg sync.WaitGroup
 	for i := 0; i < p.maxThreads; i++ {
@@ -358,6 +379,16 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 }
 
 func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) error {
+	// Shadow ctx with a cancelable one
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	p.activeTasks.Store(payload.TaskID, activeTaskInfo{
+		migrationID: payload.MigrationID,
+		cancel:      cancel,
+	})
+	defer p.activeTasks.Delete(payload.TaskID)
+
 	// 1. Fetch Migration from DB
 	mig, err := db.GetMigration(p.db, payload.MigrationID)
 	if err != nil {
@@ -723,6 +754,15 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	task, err := db.GetTask(p.db, payload.TaskID)
 	if err != nil {
 		fmt.Printf("Error fetching task on failure handler: %v\n", err)
+		return
+	}
+
+	// Check if migration was manually cancelled
+	mig, migErr := db.GetMigration(p.db, payload.MigrationID)
+	if migErr == nil && mig.Status == "CANCELLED" {
+		fmt.Printf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
+		task.Status = "CANCELLED"
+		_ = db.UpdateTaskStatus(p.db, task)
 		return
 	}
 

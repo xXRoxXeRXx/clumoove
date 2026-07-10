@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -41,11 +42,21 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		return nil, fmt.Errorf("invalid URL format: must be an absolute URL with scheme and host")
 	}
 
+	tr := &http.Transport{
+		ForceAttemptHTTP2:     false,
+		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &WebDAVProvider{
 		BaseURL:  baseURL,
 		Username: username,
 		Password: password,
 		HTTPClient: &http.Client{
+			Transport: tr,
 			// Context-cancellation per request handles per-operation timeouts.
 			// This client-level timeout is a last-resort guard against servers
 			// that accept the connection but never send any data.

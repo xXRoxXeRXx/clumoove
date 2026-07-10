@@ -89,6 +89,13 @@ export function MigrationsDashboard({
             FEHLGESCHLAGEN
           </span>
         );
+      case 'CANCELLED':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+            <XCircle className="w-3.5 h-3.5" />
+            ABGEBROCHEN
+          </span>
+        );
       case 'RUNNING':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal, Link, Copy, Check } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal, Link, Copy, Check, Pause, Play, XCircle, Loader2 } from 'lucide-react';
 
 // formatSize is defined at module level so it is not recreated on every render.
 const formatSize = (bytes: number): string => {
@@ -76,6 +76,9 @@ const renderResourceSection = (title: string, stats: ResourceStats | undefined) 
 
 export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onReset, token }) => {
   const [data, setData] = useState<ProgressData | null>(null);
+  const [totalItems, setTotalItems] = useState<number>(0);
+  const [successItems, setSuccessItems] = useState<number>(0);
+  const [controlLoading, setControlLoading] = useState<string | null>(null);
   const [speed, setSpeed] = useState<number>(0); // Bytes per second
   const [eta, setEta] = useState<string>('Berechnung...');
   const [logs, setLogs] = useState<string[]>([
@@ -118,8 +121,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      alert(err.message || 'Fehler beim Herunterladen des Berichts.');
+    } catch (err) {
+      console.error(err);
+      alert('Bericht konnte nicht heruntergeladen werden.');
+    }
+  };
+
+  const handleMigrationControl = async (action: 'pause' | 'resume' | 'cancel') => {
+    if (action === 'cancel' && !window.confirm('Möchtest du diese Migration wirklich abbrechen? Dies kann nicht rückgängig gemacht werden.')) {
+      return;
+    }
+    
+    setControlLoading(action);
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/${action}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`Aktion ${action} fehlgeschlagen.`);
+      }
+      // Status will automatically update via WebSocket
+    } catch (err) {
+      console.error(err);
+      alert(`Fehler: ${err}`);
+    } finally {
+      setControlLoading(null);
     }
   };
 
@@ -571,9 +600,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5">
                 FEHLGESCHLAGEN
               </div>
-            ) : data.status === 'PAUSED_CONNECTION_LOSS' ? (
+            ) : data.status === 'PAUSED_CONNECTION_LOSS' || data.status === 'PAUSED' ? (
               <div className="bg-amber-50 text-amber-700 border border-amber-250 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5 animate-pulse">
                 VORÜBERGEHEND PAUSIERT
+              </div>
+            ) : data.status === 'CANCELLED' ? (
+              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5">
+                ABGEBROCHEN
               </div>
             ) : (
               <div className="bg-slate-50 text-portal-navy border border-portal-navy/20 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5 animate-pulse">
@@ -636,8 +669,42 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </button>
             )}
 
+            {/* Migration Controls */}
+            {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
+              <button
+                onClick={() => handleMigrationControl('pause')}
+                disabled={controlLoading !== null}
+                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-portal-border rounded-lg shadow-sm text-slate-700 hover:bg-slate-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
+              >
+                {controlLoading === 'pause' ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" /> : <Pause className="w-4 h-4 text-amber-500" />}
+                Pausieren
+              </button>
+            )}
+
+            {(data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS') && (
+              <button
+                onClick={() => handleMigrationControl('resume')}
+                disabled={controlLoading !== null}
+                className="w-full flex items-center justify-center gap-2 py-4 bg-emerald-50 border border-emerald-200 rounded-lg shadow-sm text-emerald-700 hover:bg-emerald-100 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
+              >
+                {controlLoading === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                Fortsetzen
+              </button>
+            )}
+
+            {(data.status === 'RUNNING' || data.status === 'INDEXING' || data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS') && (
+              <button
+                onClick={() => handleMigrationControl('cancel')}
+                disabled={controlLoading !== null}
+                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-rose-200 rounded-lg shadow-sm text-rose-600 hover:bg-rose-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50 mt-4"
+              >
+                {controlLoading === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                Abbrechen
+              </button>
+            )}
+
             {/* Reset Button */}
-            {(data.status === 'COMPLETED' || data.status === 'FAILED') && (
+            {(data.status === 'COMPLETED' || data.status === 'FAILED' || data.status === 'CANCELLED') && (
               <button
                 onClick={onReset}
                 className="w-full flex items-center justify-center gap-2 py-4 bg-portal-orange text-white rounded-lg font-display text-sm font-bold shadow-sm hover:bg-portal-orange-hover hover:scale-101 active:scale-99 transition-all duration-200 cursor-pointer"

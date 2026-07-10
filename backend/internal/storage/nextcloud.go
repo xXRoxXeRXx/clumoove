@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -62,11 +63,21 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 		baseURL = baseURL + "/remote.php/dav"
 	}
 
+	tr := &http.Transport{
+		ForceAttemptHTTP2:     false,
+		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	return &NextcloudProvider{
 		BaseURL:  baseURL,
 		Username: username,
 		Password: password,
 		HTTPClient: &http.Client{
+			Transport: tr,
 			// Context-cancellation per request handles per-operation timeouts.
 			// This client-level timeout is a last-resort guard against servers
 			// that accept the connection but never send any data.

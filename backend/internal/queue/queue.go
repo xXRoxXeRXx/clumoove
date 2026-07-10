@@ -147,3 +147,29 @@ func (q *Queue) GetAbandonedWorkerQueues(ctx context.Context, db *sql.DB) ([]str
 
 	return abandonedWorkers, nil
 }
+
+// PublishCancelEvent publishes a cancellation event for a migration via Redis Pub/Sub
+func (q *Queue) PublishCancelEvent(ctx context.Context, migrationID string) error {
+	channel := "migration-control:cancel"
+	return q.client.Publish(ctx, channel, migrationID).Err()
+}
+
+// SubscribeToCancelEvents listens for cancellation events and calls the callback
+func (q *Queue) SubscribeToCancelEvents(ctx context.Context, callback func(migrationID string)) {
+	channel := "migration-control:cancel"
+	pubsub := q.client.Subscribe(ctx, channel)
+	defer pubsub.Close()
+
+	ch := pubsub.Channel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			callback(msg.Payload)
+		}
+	}
+}
