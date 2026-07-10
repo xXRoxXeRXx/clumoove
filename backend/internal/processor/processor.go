@@ -52,7 +52,7 @@ func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey s
 // Start runs the worker dequeue loop and background schedulers
 func (p *Processor) Start(ctx context.Context) {
 	fmt.Printf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
-	
+
 	// Recover any abandoned tasks on startup
 	if err := p.queue.RecoverAbandonedTasks(ctx, p.db, p.workerID); err != nil {
 		fmt.Printf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
@@ -87,11 +87,11 @@ func (p *Processor) Start(ctx context.Context) {
 
 					if payload == nil {
 						time.Sleep(2 * time.Second) // Sleep to avoid busy loop
-						continue // No task in queue
+						continue                    // No task in queue
 					}
 
 					fmt.Printf("[Worker %s] Thread %d processing task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
-					
+
 					err = p.processTask(ctx, payload)
 					if err != nil {
 						fmt.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
@@ -726,7 +726,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		fmt.Printf("[Worker %s] Connection loss detected: %v\n", p.workerID, procErr)
 		// Pause the migration
 		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "PAUSED_CONNECTION_LOSS", nil)
-		
+
 		// Task is set back to PENDING so it can be retried immediately upon resume
 		task.Status = "PENDING"
 		_ = db.UpdateTaskStatus(p.db, task)
@@ -754,20 +754,18 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		if backoffSec > 90 {
 			backoffSec = 90
 		}
-		
+
 		nextRetry := time.Now().Add(time.Duration(backoffSec) * time.Second)
 		task.Status = "FAILED" // Kept as failed until cron schedules retry
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 		_ = db.UpdateTaskStatus(p.db, task)
-		
+
 		fmt.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, backoffSec, task.Attempts)
 	} else {
 		// Max retries reached, fail permanently
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
 		_ = db.UpdateTaskStatus(p.db, task)
-		
-
 
 		// Increment migration failed files
 		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, task.FileSize, 0, 1)
@@ -793,20 +791,20 @@ func isNetworkError(err error) bool {
 	if err == nil {
 		return false
 	}
-	
+
 	// Direct type assertions
 	var netErr net.Error
 	if errors.As(err, &netErr) {
 		return true
 	}
-	
+
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
 		return true
 	}
 
 	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "connection refused") || 
+	return strings.Contains(errStr, "connection refused") ||
 		strings.Contains(errStr, "connection reset") ||
 		strings.Contains(errStr, "no such host") ||
 		strings.Contains(errStr, "i/o timeout") ||
