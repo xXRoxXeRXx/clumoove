@@ -13,7 +13,6 @@ var ErrDuplicateUID = errors.New("sabredav: duplicate UID index violation")
 // Use errors.Is to detect it rather than substring-matching error strings.
 var ErrAuth = errors.New("authentication failed: invalid credentials")
 
-
 type CloudResource struct {
 	Path         string    `json:"path"`
 	Name         string    `json:"name"`
@@ -24,6 +23,9 @@ type CloudResource struct {
 }
 
 type StorageProvider interface {
+	// Close releases any idle connections held by the provider's HTTP client.
+	// It must be called when the provider is no longer needed.
+	Close() error
 	Connect(ctx context.Context) (bool, error)
 	GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error)
 	InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error)

@@ -328,6 +328,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		}
 		tClient, err := storage.NewProvider(ctx, tProv, tURL, tUser, tPass)
 		if err != nil {
+			sClient.Close()
 			continue
 		}
 
@@ -335,6 +336,8 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		sOK, _ := sClient.Connect(connCtx)
 		tOK, _ := tClient.Connect(connCtx)
 		connCancel()
+		sClient.Close()
+		tClient.Close()
 
 		if sOK && tOK {
 			fmt.Printf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
@@ -417,10 +420,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	if err != nil {
 		return fmt.Errorf("failed to create source client: %w", err)
 	}
+	defer sourceClient.Close()
 	targetClient, err := storage.NewProvider(ctx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to create target client: %w", err)
 	}
+	defer targetClient.Close()
 
 	if nc, ok := sourceClient.(*storage.NextcloudProvider); ok {
 		nc.Threads = mig.Threads

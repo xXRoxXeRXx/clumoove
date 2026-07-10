@@ -76,6 +76,11 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 	}, nil
 }
 
+func (p *NextcloudProvider) Close() error {
+	p.HTTPClient.CloseIdleConnections()
+	return nil
+}
+
 func (p *NextcloudProvider) buildResourceURL(resourceType string, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
 	escapedPath := &url.URL{Path: cleanPath}

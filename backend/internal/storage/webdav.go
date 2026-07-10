@@ -54,6 +54,11 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 	}, nil
 }
 
+func (p *WebDAVProvider) Close() error {
+	p.HTTPClient.CloseIdleConnections()
+	return nil
+}
+
 func (p *WebDAVProvider) buildResourceURL(resourceType string, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
 	if cleanPath == "" {

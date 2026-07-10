@@ -240,6 +240,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
 		return
 	}
+	defer sourceClient.Close()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
@@ -300,6 +301,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
 		return
 	}
+	defer targetClient.Close()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -358,6 +360,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
 		return
 	}
+	defer targetClient.Close()
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
@@ -434,6 +437,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
 		return
 	}
+	defer sourceClient.Close()
 	srcCtx, srcCancel := context.WithTimeout(r.Context(), 15*time.Second)
 	sourceOK, err := sourceClient.Connect(srcCtx)
 	srcCancel()
@@ -449,6 +453,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
 		return
 	}
+	defer targetClient.Close()
 	tgtCtx, tgtCancel := context.WithTimeout(r.Context(), 15*time.Second)
 	targetOK, err := targetClient.Connect(tgtCtx)
 	tgtCancel()
@@ -628,6 +633,7 @@ func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths
 		s.failMigration(migID, fmt.Sprintf("Failed to create storage provider: %v", err))
 		return
 	}
+	defer sourceClient.Close()
 
 	var totalFiles int
 	var totalBytes int64

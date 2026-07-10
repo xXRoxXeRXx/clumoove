@@ -98,6 +98,11 @@ func NewDropboxProvider(token string) (*DropboxProvider, error) {
 	}, nil
 }
 
+func (p *DropboxProvider) Close() error {
+	p.HTTPClient.CloseIdleConnections()
+	return nil
+}
+
 func (p *DropboxProvider) cleanPath(filePath string) string {
 	clean := "/" + strings.Trim(filePath, "/")
 	if clean == "/" {
@@ -157,12 +162,12 @@ func (p *DropboxProvider) Connect(ctx context.Context) (bool, error) {
 }
 
 type dbxEntry struct {
-	Tag            string    `json:".tag"`
-	Name           string    `json:"name"`
-	PathDisplay    string    `json:"path_display"`
-	Size           int64     `json:"size,omitempty"`
-	ContentHash    string    `json:"content_hash,omitempty"`
-	ServerModified string    `json:"server_modified,omitempty"`
+	Tag            string `json:".tag"`
+	Name           string `json:"name"`
+	PathDisplay    string `json:"path_display"`
+	Size           int64  `json:"size,omitempty"`
+	ContentHash    string `json:"content_hash,omitempty"`
+	ServerModified string `json:"server_modified,omitempty"`
 }
 
 type dbxListFolderResponse struct {

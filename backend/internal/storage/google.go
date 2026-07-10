@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ type GoogleProvider struct {
 	driveService    *drive.Service
 	calendarService *calendar.Service
 	peopleService   *people.Service
+	httpClient      *http.Client
 }
 
 func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, error) {
@@ -38,7 +40,6 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to create calendar service: %v", err)
 	}
-
 	peopleSvc, err := people.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create people service: %v", err)
@@ -48,7 +49,13 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 		driveService:    driveSvc,
 		calendarService: calendarSvc,
 		peopleService:   peopleSvc,
+		httpClient:      client,
 	}, nil
+}
+
+func (p *GoogleProvider) Close() error {
+	p.httpClient.CloseIdleConnections()
+	return nil
 }
 
 func (p *GoogleProvider) Connect(ctx context.Context) (bool, error) {
