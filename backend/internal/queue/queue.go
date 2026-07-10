@@ -28,6 +28,9 @@ func NewQueue(redisAddr string) (*Queue, error) {
 			Addr: redisAddr,
 		})
 	} else {
+		if opt.Password == "redis_secret" {
+			return nil, fmt.Errorf("insecure REDIS_PASSWORD: 'redis_secret' is the default weak password. Please set a secure password in the environment variables.")
+		}
 		client = redis.NewClient(opt)
 	}
 

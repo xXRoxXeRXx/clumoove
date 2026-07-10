@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -200,7 +201,6 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 		FROM tasks t
 		JOIN migrations m ON t.migration_id = m.id
 		WHERE t.status = 'FAILED' 
-		  AND t.attempts < 3 
 		  AND t.next_retry_at <= $1
 		  AND m.status IN ('RUNNING', 'INDEXING')
 	`
@@ -577,11 +577,17 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		}
 	}
 
+	if mig.SourceProvider == "dropbox" {
+		sourceAlgo = "DROPBOX"
+	}
+
 	// Instantiate source hasher
 	if sourceAlgo == "MD5" {
 		sourceHasher = md5.New()
 	} else if sourceAlgo == "DROPBOX" {
 		sourceHasher = storage.NewDropboxHasher()
+	} else if sourceAlgo == "SHA256" {
+		sourceHasher = sha256.New()
 	} else {
 		sourceHasher = sha1.New()
 		sourceAlgo = "SHA1"
@@ -722,6 +728,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		if errTargetHash == nil {
 			task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
 			targetReturnedAlgo, cleanTargetHash := storage.ParseHashString(targetHashVal)
+			if mig.TargetProvider == "dropbox" {
+				targetReturnedAlgo = "DROPBOX"
+			}
 
 			var workerTargetHashVal string
 			hasMatchingAlgo := false
@@ -869,8 +878,8 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 	// If it is a normal file transfer failure
 	if task.Attempts < 3 && !isPermanent {
-		// Exponential Backoff: 10s, 30s, 90s
-		backoffSec := int(math.Pow(3, float64(task.Attempts))) * 10
+		// Exponential Backoff: 10s, 30s
+		backoffSec := int(math.Pow(3, float64(task.Attempts-1))) * 10
 		if backoffSec > 90 {
 			backoffSec = 90
 		}
@@ -889,7 +898,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 		// Increment migration failed files
 		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, task.FileSize, 0, 1)
-		fmt.Printf("[Worker %s] Task %s failed permanently after 3 attempts\n", p.workerID, task.ID)
+		fmt.Printf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
 	}
 }
 

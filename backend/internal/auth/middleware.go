@@ -29,7 +29,7 @@ func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
 			tokenStr := parts[1]
 			claims, err := ValidateToken(tokenStr, secretKey)
 			if err != nil {
-				http.Error(w, "Unauthorized: Invalid or expired token: "+err.Error(), http.StatusUnauthorized)
+				http.Error(w, "Unauthorized: Invalid or expired token", http.StatusUnauthorized)
 				return
 			}
 

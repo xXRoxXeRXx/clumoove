@@ -460,10 +460,10 @@ func DeleteOldMigrations(db *sql.DB) (int64, error) {
 // GetMigrationResourceStats returns the count statistics grouped by resource_type (files, calendars, contacts)
 func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResourceStats, error) {
 	query := `
-		SELECT resource_type, status, attempts, COUNT(*)
+		SELECT resource_type, status, (next_retry_at IS NULL) AS permanent_fail, COUNT(*)
 		FROM tasks
 		WHERE migration_id = $1
-		GROUP BY resource_type, status, attempts
+		GROUP BY resource_type, status, (next_retry_at IS NULL)
 	`
 	rows, err := db.Query(query, migrationID)
 	if err != nil {
@@ -480,9 +480,9 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 	for rows.Next() {
 		var resourceType string
 		var status string
-		var attempts int
+		var permanentFail bool
 		var count int
-		if err := rows.Scan(&resourceType, &status, &attempts, &count); err != nil {
+		if err := rows.Scan(&resourceType, &status, &permanentFail, &count); err != nil {
 			return nil, err
 		}
 
@@ -506,7 +506,7 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 			r.Skipped += count
 			r.Processed += count
 		case "FAILED":
-			if attempts >= 3 {
+			if permanentFail {
 				r.Failed += count
 				r.Processed += count
 			}

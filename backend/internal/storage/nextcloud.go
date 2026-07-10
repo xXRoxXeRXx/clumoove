@@ -937,7 +937,17 @@ func ParseHashString(hashStr string) (string, string) {
 	hashStr = strings.Trim(hashStr, "\"")
 	parts := strings.SplitN(hashStr, ":", 2)
 	if len(parts) == 2 {
-		return strings.ToUpper(parts[0]), strings.ToLower(parts[1])
+		algo := strings.ToUpper(parts[0])
+		if algo == "SHA-256" || algo == "SHA256" {
+			algo = "SHA256"
+		}
+		if algo == "SHA-1" || algo == "SHA1" {
+			algo = "SHA1"
+		}
+		if algo == "MD-5" || algo == "MD5" {
+			algo = "MD5"
+		}
+		return algo, strings.ToLower(parts[1])
 	}
 
 	if hexRegexp.MatchString(hashStr) {
@@ -948,7 +958,7 @@ func ParseHashString(hashStr string) (string, string) {
 			return "SHA1", strings.ToLower(hashStr)
 		}
 		if len(hashStr) == 64 {
-			return "DROPBOX", strings.ToLower(hashStr)
+			return "SHA256", strings.ToLower(hashStr)
 		}
 	}
 	return "UNKNOWN", hashStr

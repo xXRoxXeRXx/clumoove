@@ -3,6 +3,7 @@ package storage
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"golang.org/x/oauth2"
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/api/people/v1"
 )
@@ -243,6 +245,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 }
 
 func escapeDriveQuery(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
@@ -502,7 +505,11 @@ func (p *GoogleProvider) FileExists(ctx context.Context, resourceType, filePath 
 	if resourceType == "files" {
 		res, err := p.InspectResource(ctx, resourceType, filePath)
 		if err != nil {
-			if strings.Contains(err.Error(), "not found") {
+			var gErr *googleapi.Error
+			if errors.As(err, &gErr) && gErr.Code == http.StatusNotFound {
+				return false, 0, nil
+			}
+			if strings.Contains(strings.ToLower(err.Error()), "not found") {
 				return false, 0, nil
 			}
 			return false, 0, err

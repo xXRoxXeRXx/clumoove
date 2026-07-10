@@ -31,7 +31,11 @@ import (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for dev
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		return allowedOrigins[origin]
 	},
 }
 
@@ -701,7 +705,8 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	migrationID, err := db.CreateMigration(s.db, m)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to save migration: %v", err), http.StatusInternalServerError)
+		log.Printf("Start migration error: failed to create migration: %v\n", err)
+		http.Error(w, "Failed to start migration", http.StatusInternalServerError)
 		return
 	}
 
@@ -956,7 +961,8 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 
 	tasks, err := db.GetFailedTasksForReport(s.db, id)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get report: %v", err), http.StatusInternalServerError)
+		log.Printf("Download report error: failed to get report: %v\n", err)
+		http.Error(w, "Failed to generate report", http.StatusInternalServerError)
 		return
 	}
 
@@ -993,8 +999,23 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tokenStr := r.URL.Query().Get("token")
+	isProtocolToken := false
 	if tokenStr == "" {
-		http.Error(w, "Unauthorized: token query parameter missing", http.StatusUnauthorized)
+		if protocol := r.Header.Get("Sec-WebSocket-Protocol"); protocol != "" {
+			parts := strings.Split(protocol, ",")
+			for _, part := range parts {
+				trimmed := strings.TrimSpace(part)
+				if trimmed != "" {
+					tokenStr = trimmed
+					isProtocolToken = true
+					break
+				}
+			}
+		}
+	}
+
+	if tokenStr == "" {
+		http.Error(w, "Unauthorized: token missing", http.StatusUnauthorized)
 		return
 	}
 
@@ -1020,7 +1041,16 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ws, err := upgrader.Upgrade(w, r, nil)
+	var responseHeader http.Header
+	if isProtocolToken {
+		// Echo the extracted token back in the Sec-WebSocket-Protocol header.
+		// Browser WebSocket clients require the upgraded response to contain the selected
+		// subprotocol from the handshake request, otherwise the browser will refuse the connection.
+		responseHeader = make(http.Header)
+		responseHeader.Set("Sec-WebSocket-Protocol", tokenStr)
+	}
+
+	ws, err := upgrader.Upgrade(w, r, responseHeader)
 	if err != nil {
 		log.Printf("Failed to upgrade WebSocket: %v\n", err)
 		return
@@ -1197,7 +1227,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	authURL, err := oauth.GetAuthURL(provider, redirectURI, stateParam)
 	if err != nil {
 		log.Printf("handleOAuthAuth: GetAuthURL failed: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Failed to generate OAuth URL", http.StatusInternalServerError)
 		return
 	}
 
@@ -1419,7 +1449,8 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Create user
 	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create user: %v", err), http.StatusInternalServerError)
+		log.Printf("Register error: failed to create user: %v\n", err)
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
 		return
 	}
 
@@ -1510,9 +1541,17 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rotate refresh token: invalidate old token before issuing new one
-	if err := db.DeleteRefreshToken(s.db, oldTokenHash); err != nil {
-		log.Printf("Error: failed to delete old refresh token during rotation: %v\n", err)
+	// Rotate refresh token atomically using a database transaction
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	deleteQuery := `DELETE FROM refresh_tokens WHERE token_hash = $1`
+	if _, err := tx.ExecContext(r.Context(), deleteQuery, oldTokenHash); err != nil {
+		log.Printf("Error deleting old refresh token in tx: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -1523,10 +1562,24 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newExpiresAt := time.Now().Add(7 * 24 * time.Hour)
-	if err := db.StoreRefreshToken(s.db, hashToken(newRefreshToken), u.ID, newExpiresAt); err != nil {
-		http.Error(w, "Failed to store refresh token", http.StatusInternalServerError)
+	newHashedToken := hashToken(newRefreshToken)
+
+	insertQuery := `
+		INSERT INTO refresh_tokens (token_hash, user_id, expires_at)
+		VALUES ($1, $2, $3)
+	`
+	if _, err := tx.ExecContext(r.Context(), insertQuery, newHashedToken, u.ID, newExpiresAt); err != nil {
+		log.Printf("Error storing new refresh token in tx: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("Error committing token rotation transaction: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	auth.SetRefreshTokenCookie(w, r, newRefreshToken, newExpiresAt)
 
 	// New Access Token
