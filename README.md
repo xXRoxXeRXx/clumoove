@@ -43,7 +43,7 @@ Da Cloud-Dienste oft Verbindungsschwankungen aufweisen, ist das Backend extrem r
 * **Worker-Liveness & verteiltes Recovery:** Jeder Worker meldet seinen Heartbeat alle 10 Sekunden via Redis. Ein separater Scheduler (`RunWorkerLiveness`) erkennt tote Worker und beansprucht deren Recovery-Lock atomar per Redis `SET NX`, um doppelte Wiederherstellung zu verhindern.
 * **Exponential Backoff:** Bricht eine Übertragung ab, markiert der Worker den Task als `FAILED` und plant ihn mit steigender Wartezeit ($10 \times 3^{\text{attempt}}$ Sekunden, also 10 s, 30 s, 90 s) neu ein (maximal 3 Versuche). Permanente Fehler (z. B. ungültige OAuth-Tokens) überspringen das Retry sofort.
 * **Verbindungsausfall-Auto-Pausierung (`PAUSED_CONNECTION_LOSS`):** Ist ein Dienst dauerhaft offline (z. B. Netzwerkfehler, DNS-Ausfall), pausiert die gesamte Migration selbstständig (`RunConnectionRecoveryScheduler`). Der Scheduler prüft alle 60 Sekunden, ob die Server wieder antworten, und setzt die Queue am Abbruchpunkt fort.
-* **Orphaned-Task-Recovery:** `RunOrphanedPendingTasksRecovery` erkennt Tasks, die seit mehr als 10 Minuten im Status `RUNNING` feststecken, und setzt sie auf `PENDING` zurück.
+* **Orphaned-Task-Recovery:** `RunOrphanedRunningTasksRecovery` erkennt Tasks, die seit mehr als 10 Minuten im Status `RUNNING` feststecken, und setzt sie auf `PENDING` zurück.
 
 ### 2.2. Datenintegrität (3-Wege-Hash-Check)
 Um Silent Data Corruption zu verhindern, wird jede Datei mathematisch verifiziert:

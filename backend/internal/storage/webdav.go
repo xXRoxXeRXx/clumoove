@@ -49,6 +49,7 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
 	}
 
 	return &WebDAVProvider{
@@ -57,10 +58,7 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		Password: password,
 		HTTPClient: &http.Client{
 			Transport: tr,
-			// Context-cancellation per request handles per-operation timeouts.
-			// This client-level timeout is a last-resort guard against servers
-			// that accept the connection but never send any data.
-			Timeout: 10 * time.Minute,
+			Timeout:   0,
 		},
 	}, nil
 }
@@ -90,6 +88,8 @@ func (p *WebDAVProvider) newRequest(method, urlStr string, body io.Reader) (*htt
 }
 
 func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	u := p.buildResourceURL("files", "/")
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:">
@@ -123,6 +123,8 @@ func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
 }
 
 func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, resourcePath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -194,6 +196,8 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 }
 
 func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, dirPath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -337,8 +341,8 @@ func (p *WebDAVProvider) StreamUpload(ctx context.Context, resourceType, filePat
 	if size > 0 {
 		baseTimeout += time.Duration(size/(50*1024*1024)) * time.Minute
 	}
-	if baseTimeout > 30*time.Minute {
-		baseTimeout = 30 * time.Minute
+	if baseTimeout > 12*time.Hour {
+		baseTimeout = 12 * time.Hour
 	}
 	uploadCtx, cancel := context.WithTimeout(ctx, baseTimeout)
 	defer cancel()
@@ -378,6 +382,8 @@ func (p *WebDAVProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 }
 
 func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propfind xmlns:d="DAV:">
@@ -438,6 +444,8 @@ func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath 
 }
 
 func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, filePath)
 	req, err := p.newRequest("DELETE", u, nil)
 	if err != nil {
@@ -461,6 +469,8 @@ func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 }
 
 func (p *WebDAVProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, oldPath)
 	req, err := p.newRequest("MOVE", u, nil)
 	if err != nil {
@@ -487,10 +497,14 @@ func (p *WebDAVProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 }
 
 func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	return "", fmt.Errorf("checksum not available")
 }
 
 func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	dir := path.Dir(filePath)
 	if dir == "." || dir == "/" || dir == "" {
 		return nil
@@ -530,6 +544,8 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 // the WebDAV server using MKCOL requests. It is idempotent — 405 Method Not Allowed
 // (already exists) is treated as success.
 func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	// Ensure all ancestor directories exist first.
 	if err := p.CreateParentDirectories(ctx, resourceType, dirPath); err != nil {
 		return err

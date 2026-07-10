@@ -70,6 +70,7 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
 	}
 
 	return &NextcloudProvider{
@@ -78,10 +79,7 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 		Password: password,
 		HTTPClient: &http.Client{
 			Transport: tr,
-			// Context-cancellation per request handles per-operation timeouts.
-			// This client-level timeout is a last-resort guard against servers
-			// that accept the connection but never send any data.
-			Timeout: 10 * time.Minute,
+			Timeout:   0,
 		},
 		Threads: 4,
 	}, nil
@@ -125,6 +123,8 @@ func (p *NextcloudProvider) newRequest(method, urlStr string, body io.Reader) (*
 }
 
 func (p *NextcloudProvider) Connect(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	// Query root folders via PROPFIND to test credentials
 	u := p.buildResourceURL("files", "/")
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -159,6 +159,8 @@ func (p *NextcloudProvider) Connect(ctx context.Context) (bool, error) {
 }
 
 func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, resourcePath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -241,6 +243,8 @@ func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, r
 }
 
 func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, dirPath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -412,8 +416,8 @@ func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, file
 			extraMinutes := time.Duration(size/(50*1024*1024)) * time.Minute
 			baseTimeout += extraMinutes
 		}
-		if baseTimeout > 30*time.Minute {
-			baseTimeout = 30 * time.Minute
+		if baseTimeout > 12*time.Hour {
+			baseTimeout = 12 * time.Hour
 		}
 		uploadCtx, uploadCancel = context.WithTimeout(ctx, baseTimeout)
 	}
@@ -610,6 +614,8 @@ func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL s
 }
 
 func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	dir := path.Dir(filePath)
 	if dir == "." || dir == "/" || dir == "" {
 		return nil
@@ -711,6 +717,8 @@ func (p *NextcloudProvider) mkcolRequest(ctx context.Context, resourceType, dirP
 // Uses the correct method per resource type (MKCALENDAR, CardDAV MKCOL, or plain MKCOL).
 // 405 Method Not Allowed (already exists) is treated as success.
 func (p *NextcloudProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	// Ensure all ancestor directories exist first.
 	if err := p.CreateParentDirectories(ctx, resourceType, dirPath); err != nil {
 		return err
@@ -739,6 +747,8 @@ func (p *NextcloudProvider) CreateDirectory(ctx context.Context, resourceType, d
 }
 
 func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
@@ -807,6 +817,8 @@ func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, fileP
 }
 
 func (p *NextcloudProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propfind xmlns:d="DAV:">
@@ -867,6 +879,8 @@ func (p *NextcloudProvider) FileExists(ctx context.Context, resourceType, filePa
 }
 
 func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, filePath)
 	req, err := p.newRequest("DELETE", u, nil)
 	if err != nil {
@@ -890,6 +904,8 @@ func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePa
 }
 
 func (p *NextcloudProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	u := p.buildResourceURL(resourceType, oldPath)
 	req, err := p.newRequest("MOVE", u, nil)
 	if err != nil {

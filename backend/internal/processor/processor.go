@@ -71,7 +71,7 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunWorkerLiveness(ctx)
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
-	go p.RunOrphanedPendingTasksRecovery(ctx)
+	go p.RunOrphanedRunningTasksRecovery(ctx)
 
 	// Start Cancel Listener
 	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {
@@ -234,12 +234,11 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	}
 }
 
-// RunOrphanedPendingTasksRecovery detects PENDING tasks that exist in the DB but have been
-// lost from the Redis queue (e.g. due to a Redis restart, flush, or replication attack) and
-// re-enqueues them. It waits 5 minutes after startup before the first scan so that a freshly
-// indexed migration has time to fill the queue normally.
-func (p *Processor) RunOrphanedPendingTasksRecovery(ctx context.Context) {
-	// Delay first check so normal startup enqueuing isn't mistaken for orphans.
+// RunOrphanedRunningTasksRecovery detects RUNNING tasks that are stuck (e.g. due to a worker
+// crashing or a thread dying silently) and resets them back to PENDING. It waits 5 minutes
+// after startup before the first scan.
+func (p *Processor) RunOrphanedRunningTasksRecovery(ctx context.Context) {
+	// Delay first check.
 	select {
 	case <-ctx.Done():
 		return
@@ -253,22 +252,19 @@ func (p *Processor) RunOrphanedPendingTasksRecovery(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			p.requeueOrphanedPendingTasks(ctx)
+			p.requeueOrphanedRunningTasks(ctx)
 		}
 	}
 }
 
-// requeueOrphanedPendingTasks scans for PENDING tasks belonging to active migrations whose
-// updated_at is older than 10 minutes (i.e. they were never picked up from the queue).
-func (p *Processor) requeueOrphanedPendingTasks(ctx context.Context) {
-	// A task stays PENDING until a worker sets it to RUNNING on dequeue. If it has been
-	// PENDING for more than 10 minutes while its migration is still active, it is almost
-	// certainly no longer in the Redis queue and must be re-enqueued.
+// requeueOrphanedRunningTasks scans for RUNNING tasks belonging to active migrations whose
+// updated_at is older than 10 minutes (i.e. they were picked up but never finished).
+func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 	query := `
 		SELECT t.id, t.migration_id
 		FROM tasks t
 		JOIN migrations m ON t.migration_id = m.id
-		WHERE t.status = 'PENDING'
+		WHERE t.status = 'RUNNING'
 		  AND t.updated_at < NOW() - INTERVAL '10 minutes'
 		  AND m.status IN ('RUNNING', 'INDEXING')
 	`
@@ -285,7 +281,7 @@ func (p *Processor) requeueOrphanedPendingTasks(ctx context.Context) {
 		if err := rows.Scan(&taskID, &migrationID); err != nil {
 			continue
 		}
-		_, err := p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL, updated_at=NOW() WHERE id=$1 AND status='PENDING'", taskID)
+		_, err := p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL, updated_at=NOW() WHERE id=$1 AND status='RUNNING'", taskID)
 		if err != nil {
 			fmt.Printf("[OrphanedTaskRecovery] Error resetting task %s: %v\n", taskID, err)
 		} else {
@@ -296,7 +292,7 @@ func (p *Processor) requeueOrphanedPendingTasks(ctx context.Context) {
 		fmt.Printf("[OrphanedTaskRecovery] rows error: %v\n", err)
 	}
 	if count > 0 {
-		fmt.Printf("[OrphanedTaskRecovery] Re-enqueued %d orphaned PENDING tasks\n", count)
+		fmt.Printf("[OrphanedTaskRecovery] Re-enqueued %d orphaned RUNNING tasks\n", count)
 	}
 }
 
@@ -543,7 +539,18 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		uploadPath = targetPath + ".tmp"
 	}
 
-	downloadStream, err := sourceClient.StreamDownload(ctx, task.ResourceType, task.FilePath)
+	// Apply a dynamic per-request timeout scaled by file size (same policy as uploads)
+	downloadTimeout := 5 * time.Minute
+	if task.FileSize > 0 {
+		downloadTimeout += time.Duration(task.FileSize/(50*1024*1024)) * time.Minute
+	}
+	if downloadTimeout > 12*time.Hour {
+		downloadTimeout = 12 * time.Hour
+	}
+	downloadCtx, downloadCancel := context.WithTimeout(ctx, downloadTimeout)
+	defer downloadCancel()
+
+	downloadStream, err := sourceClient.StreamDownload(downloadCtx, task.ResourceType, task.FilePath)
 	if err != nil {
 		return fmt.Errorf("failed to download from source: %w", err)
 	}
@@ -610,6 +617,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 
+		lastHeartbeat := time.Now()
+		var bytesSinceLastHeartbeat int64
+
 		for {
 			select {
 			case bytes, ok := <-progressChan:
@@ -621,10 +631,20 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 					return
 				}
 				bufferedBytes += bytes
+				bytesSinceLastHeartbeat += bytes
 			case <-ticker.C:
 				if bufferedBytes > 0 {
 					_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, bufferedBytes, 0, 0)
 					bufferedBytes = 0
+				}
+				// Heartbeat updated_at for this task to avoid triggering orphan recovery
+				// Only heartbeat if progress was made (data was actively moving)
+				if time.Since(lastHeartbeat) >= 30*time.Second {
+					if bytesSinceLastHeartbeat > 0 {
+						_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING'", task.ID)
+						bytesSinceLastHeartbeat = 0
+					}
+					lastHeartbeat = time.Now()
 				}
 			}
 		}
@@ -634,9 +654,20 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 	hashingReader := io.TeeReader(downloadStream, activeWriter)
 
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
+	// Apply a dynamic per-request timeout scaled by file size (same policy as downloads)
+	uploadTimeout := 5 * time.Minute
+	if task.FileSize > 0 {
+		uploadTimeout += time.Duration(task.FileSize/(50*1024*1024)) * time.Minute
+	}
+	if uploadTimeout > 12*time.Hour {
+		uploadTimeout = 12 * time.Hour
+	}
+	uploadCtx, uploadCancel := context.WithTimeout(ctx, uploadTimeout)
+	defer uploadCancel()
+
 	// If size > 50MB, do chunked upload
 	if task.FileSize > 50*1024*1024 {
-		err = targetClient.StreamUploadChunked(ctx, task.ResourceType, uploadPath, hashingReader, task.FileSize, progressChan)
+		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, hashingReader, task.FileSize, progressChan)
 	} else {
 		// Simple upload
 		// Wrap with a progress reporting reader
@@ -644,7 +675,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) err
 			Reader:       hashingReader,
 			ProgressChan: progressChan,
 		}
-		err = targetClient.StreamUpload(ctx, task.ResourceType, uploadPath, progressReader, task.FileSize)
+		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, progressReader, task.FileSize)
 	}
 
 	if err != nil {

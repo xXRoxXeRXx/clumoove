@@ -90,10 +90,18 @@ type DropboxProvider struct {
 }
 
 func NewDropboxProvider(token string) (*DropboxProvider, error) {
+	tr := &http.Transport{
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
+	}
 	return &DropboxProvider{
 		AccessToken: token,
 		HTTPClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Transport: tr,
+			Timeout:   0,
 		},
 	}, nil
 }
@@ -138,6 +146,8 @@ func (p *DropboxProvider) newRequest(method, urlStr string, body io.Reader) (*ht
 }
 
 func (p *DropboxProvider) Connect(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	req, err := p.newRequest("POST", "https://api.dropboxapi.com/2/users/get_current_account", bytes.NewReader([]byte("null")))
 	if err != nil {
 		return false, err
@@ -177,6 +187,8 @@ type dbxListFolderResponse struct {
 }
 
 func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return nil, nil // Dropbox only supports files
 	}
@@ -298,6 +310,8 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 }
 
 func (p *DropboxProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return CloudResource{}, fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
 	}
@@ -636,6 +650,8 @@ func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID str
 }
 
 func (p *DropboxProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return false, 0, nil
 	}
@@ -692,6 +708,8 @@ func (p *DropboxProvider) FileExists(ctx context.Context, resourceType, filePath
 }
 
 func (p *DropboxProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
 	}
@@ -739,6 +757,8 @@ func (p *DropboxProvider) DeleteFile(ctx context.Context, resourceType, filePath
 }
 
 func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
 	}
@@ -775,6 +795,8 @@ func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 }
 
 func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return "", fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
 	}
@@ -790,6 +812,8 @@ func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePat
 }
 
 func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	dir := path.Dir(filePath)
 	if dir == "." || dir == "/" || dir == "" {
 		return nil
@@ -844,6 +868,8 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 // CreateDirectory creates the given directory path in Dropbox (including all intermediate
 // parents). Dropbox's create_folder_v2 endpoint handles nested paths natively.
 func (p *DropboxProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	// CreateParentDirectories already calls create_folder_v2 with the full dir path.
 	// Pass a synthetic child so the parent-extraction yields dirPath itself.
 	return p.CreateParentDirectories(ctx, resourceType, path.Join(dirPath, "_placeholder"))

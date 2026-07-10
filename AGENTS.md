@@ -18,7 +18,7 @@
   - `RunWorkerLiveness` — heartbeat every 10 s, detects dead workers and reclaims their tasks
   - `RunRetryScheduler` — re-enqueues tasks whose `next_retry_at <= NOW()` every 10 s
   - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s
-  - `RunOrphanedPendingTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
+  - `RunOrphanedRunningTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
 - **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google refresh tokens before expiry.
 - **WebSocket auth**: The `/api/migration/{id}/ws` endpoint is **not** behind `AuthMiddleware`. It authenticates via a `?token=<jwt>` query parameter and performs ownership validation manually inside the handler.
 

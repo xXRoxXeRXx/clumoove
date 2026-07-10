@@ -59,6 +59,8 @@ func (p *GoogleProvider) Close() error {
 }
 
 func (p *GoogleProvider) Connect(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	// Verify Drive access
 	if _, err := p.driveService.About.Get().Fields("user").Context(ctx).Do(); err != nil {
 		return false, fmt.Errorf("google drive not accessible: %w", err)
@@ -75,6 +77,8 @@ func (p *GoogleProvider) Connect(ctx context.Context) (bool, error) {
 }
 
 func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	var resources []CloudResource
 	switch resourceType {
 	case "files":
@@ -335,6 +339,8 @@ func googleDocsExtension(mimeType string) (exportMIME, extension string) {
 }
 
 func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	switch resourceType {
 	case "files":
 		id, err := p.resolveDriveFileID(ctx, path)
@@ -491,6 +497,8 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 }
 
 func (p *GoogleProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType == "files" {
 		res, err := p.InspectResource(ctx, resourceType, filePath)
 		if err != nil {
@@ -505,6 +513,8 @@ func (p *GoogleProvider) FileExists(ctx context.Context, resourceType, filePath 
 }
 
 func (p *GoogleProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	switch resourceType {
 	case "files":
 		id, err := p.resolveDriveFileID(ctx, filePath)
@@ -518,6 +528,8 @@ func (p *GoogleProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 }
 
 func (p *GoogleProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return fmt.Errorf("RenameFile not implemented for %s", resourceType)
 	}
@@ -536,6 +548,8 @@ func (p *GoogleProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 }
 
 func (p *GoogleProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType == "files" {
 		res, err := p.InspectResource(ctx, resourceType, filePath)
 		if err != nil {
@@ -547,6 +561,8 @@ func (p *GoogleProvider) GetFileHash(ctx context.Context, resourceType, filePath
 }
 
 func (p *GoogleProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return nil
 	}
@@ -559,6 +575,8 @@ func (p *GoogleProvider) CreateParentDirectories(ctx context.Context, resourceTy
 }
 
 func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if resourceType != "files" {
 		return fmt.Errorf("CreateDirectory not implemented for %s", resourceType)
 	}
