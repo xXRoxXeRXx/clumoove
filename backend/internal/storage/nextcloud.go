@@ -625,18 +625,7 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 			req, err = p.newRequest("MKCALENDAR", u, nil)
 		} else if resourceType == "contacts" && i == 0 {
 			// Create addressbook folder using CardDAV MKCOL XML body
-			body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
-				<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
-					<D:set>
-						<D:prop>
-							<D:resourcetype>
-								<D:collection/>
-								<C:addressbook/>
-							</D:resourcetype>
-						</D:prop>
-					</D:set>
-				</D:mkcol>`)
-			req, err = p.newRequest("MKCOL", u, bytes.NewBuffer(body))
+			req, err = p.newRequest("MKCOL", u, bytes.NewBuffer(cardDAVMkcolBody()))
 			if err == nil {
 				req.Header.Set("Content-Type", "text/xml; charset=utf-8")
 			}
@@ -654,6 +643,7 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 		if err != nil {
 			return err
 		}
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusUnauthorized {
@@ -666,13 +656,75 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 	return nil
 }
 
+// cardDAVMkcolBody returns the XML body for creating a CardDAV addressbook collection.
+// Centralised here so the XML stays in one place and won't drift between callers.
+func cardDAVMkcolBody() []byte {
+	return []byte(`<?xml version="1.0" encoding="utf-8" ?>
+		<D:mkcol xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
+			<D:set>
+				<D:prop>
+					<D:resourcetype>
+						<D:collection/>
+						<C:addressbook/>
+					</D:resourcetype>
+				</D:prop>
+			</D:set>
+		</D:mkcol>`)
+}
+
+// mkcolRequest builds the correct MKCOL/MKCALENDAR request for dirPath based on resourceType.
+// For calendars the first (and only) segment uses MKCALENDAR; for contacts it uses a
+// CardDAV-typed MKCOL body; everything else uses a plain MKCOL.
+func (p *NextcloudProvider) mkcolRequest(ctx context.Context, resourceType, dirPath string) (*http.Request, error) {
+	u := p.buildResourceURL(resourceType, dirPath)
+	var req *http.Request
+	var err error
+	switch resourceType {
+	case "calendars":
+		req, err = p.newRequest("MKCALENDAR", u, nil)
+	case "contacts":
+		req, err = p.newRequest("MKCOL", u, bytes.NewBuffer(cardDAVMkcolBody()))
+		if err == nil {
+			req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+		}
+	default:
+		req, err = p.newRequest("MKCOL", u, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return req.WithContext(ctx), nil
+}
+
 // CreateDirectory creates the given directory path and all intermediate parent directories.
-// Uses MKCOL for normal file directories; CalDAV/CardDAV resource types fall back to
-// CreateParentDirectories which already handles collection-level creation.
+// Uses the correct method per resource type (MKCALENDAR, CardDAV MKCOL, or plain MKCOL).
+// 405 Method Not Allowed (already exists) is treated as success.
 func (p *NextcloudProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
-	// Reuse CreateParentDirectories by passing a synthetic leaf path so that
-	// CreateParentDirectories walks every component of dirPath.
-	return p.CreateParentDirectories(ctx, resourceType, path.Join(dirPath, "_placeholder"))
+	// Ensure all ancestor directories exist first.
+	if err := p.CreateParentDirectories(ctx, resourceType, dirPath); err != nil {
+		return err
+	}
+
+	// Create the target directory itself with the correct method.
+	req, err := p.mkcolRequest(ctx, resourceType, dirPath)
+	if err != nil {
+		return err
+	}
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("nextcloud mkdir: %w", ErrAuth)
+	}
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+		return fmt.Errorf("failed to create directory %s, status: %d", dirPath, resp.StatusCode)
+	}
+	return nil
 }
 
 func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

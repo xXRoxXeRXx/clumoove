@@ -502,6 +502,7 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 		if err != nil {
 			return err
 		}
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusUnauthorized {
@@ -518,7 +519,33 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 // the WebDAV server using MKCOL requests. It is idempotent — 405 Method Not Allowed
 // (already exists) is treated as success.
 func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
-	return p.CreateParentDirectories(ctx, resourceType, path.Join(dirPath, "_placeholder"))
+	// Ensure all ancestor directories exist first.
+	if err := p.CreateParentDirectories(ctx, resourceType, dirPath); err != nil {
+		return err
+	}
+
+	// MKCOL the target directory itself.
+	u := p.buildResourceURL(resourceType, dirPath)
+	req, err := p.newRequest("MKCOL", u, nil)
+	if err != nil {
+		return err
+	}
+	req = req.WithContext(ctx)
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("webdav mkdir: %w", ErrAuth)
+	}
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+		return fmt.Errorf("failed to create directory %s, status: %d", dirPath, resp.StatusCode)
+	}
+	return nil
 }
 
 func cleanETag(etag string) string {
