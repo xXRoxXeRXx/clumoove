@@ -263,8 +263,9 @@ func (p *Processor) requeueOrphanedPendingTasks(ctx context.Context) {
 		if err := rows.Scan(&taskID, &migrationID); err != nil {
 			continue
 		}
-		if err := p.queue.Enqueue(ctx, migrationID, taskID); err != nil {
-			fmt.Printf("[OrphanedTaskRecovery] Error enqueuing task %s: %v\n", taskID, err)
+		_, err := p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL, updated_at=NOW() WHERE id=$1 AND status='PENDING'", taskID)
+		if err != nil {
+			fmt.Printf("[OrphanedTaskRecovery] Error resetting task %s: %v\n", taskID, err)
 		} else {
 			count++
 		}
