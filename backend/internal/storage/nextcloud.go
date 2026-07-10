@@ -133,7 +133,7 @@ func (p *NextcloudProvider) Connect(ctx context.Context) (bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return false, fmt.Errorf("authentication failed: unauthorized (401)")
+		return false, fmt.Errorf("nextcloud connect: %w", ErrAuth)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, fmt.Errorf("connection failed with status code: %d", resp.StatusCode)
@@ -169,6 +169,9 @@ func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, r
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return CloudResource{}, fmt.Errorf("nextcloud inspect: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return CloudResource{}, fmt.Errorf("inspect failed with status: %d", resp.StatusCode)
 	}
@@ -248,6 +251,9 @@ func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceTyp
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("nextcloud listing: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("PROPFIND failed with status: %d", resp.StatusCode)
 	}
@@ -353,6 +359,10 @@ func (p *NextcloudProvider) StreamDownload(ctx context.Context, resourceType, fi
 		return nil, err
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, fmt.Errorf("nextcloud download: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
 		return nil, fmt.Errorf("download failed with status: %d", resp.StatusCode)
@@ -416,6 +426,9 @@ func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, file
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("nextcloud upload: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		respBody := string(bodyBytes)
@@ -449,6 +462,9 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		return err
 	}
 	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("nextcloud mkdir (chunked upload): %w", ErrAuth)
+	}
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
 		return fmt.Errorf("failed to create upload directory, status: %d", resp.StatusCode)
 	}
@@ -538,6 +554,9 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 		}
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("nextcloud chunked upload commit: %w", ErrAuth)
+	}
 	return fmt.Errorf("failed to commit chunked upload, status: %d", resp.StatusCode)
 }
 
@@ -564,6 +583,9 @@ func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL s
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return nil
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("nextcloud upload chunk: %w", ErrAuth)
 		}
 		lastErr = fmt.Errorf("status code %d", resp.StatusCode)
 		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
@@ -629,6 +651,9 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 		}
 		resp.Body.Close()
 
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("nextcloud mkdir: %w", ErrAuth)
+		}
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
@@ -669,6 +694,9 @@ func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, fileP
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("PROPFIND for hash failed: status %d", resp.StatusCode)
 	}
@@ -737,6 +765,9 @@ func (p *NextcloudProvider) FileExists(ctx context.Context, resourceType, filePa
 	if resp.StatusCode == http.StatusNotFound {
 		return false, 0, nil
 	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, 0, fmt.Errorf("nextcloud file-exists: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, 0, fmt.Errorf("PROPFIND check failed with status: %d", resp.StatusCode)
 	}
@@ -781,6 +812,9 @@ func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePa
 	}
 	resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("nextcloud delete: %w", ErrAuth)
+	}
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		return fmt.Errorf("delete failed with status: %d", resp.StatusCode)
 	}
@@ -804,6 +838,9 @@ func (p *NextcloudProvider) RenameFile(ctx context.Context, resourceType, oldPat
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("nextcloud move: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("move failed with status: %d", resp.StatusCode)
 	}

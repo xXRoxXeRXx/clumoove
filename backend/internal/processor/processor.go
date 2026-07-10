@@ -762,19 +762,20 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		isPermanent = true
 	}
 
-	// Detect OAuth 401 authentication errors.
-	// These mean the stored access token is invalid and no refresh token is available
-	// (or the refresh failed). Retrying the same task will never help — we must stop
-	// the entire migration immediately so the user can re-authenticate.
-	isAuthError := strings.Contains(errStr, "401") ||
+	// Detect authentication errors that mean the stored credentials are invalid.
+	// All provider methods (Connect and every transfer method) wrap HTTP 401
+	// responses with storage.ErrAuth so errors.Is detects them via the error chain.
+	// For Google (OAuth), the Google API client returns *googleapi.Error whose
+	// message contains these distinctive strings — they do not appear in other paths.
+	isAuthError := errors.Is(procErr, storage.ErrAuth) ||
 		strings.Contains(errStr, "authError") ||
 		strings.Contains(errStr, "Invalid Credentials") ||
 		strings.Contains(errStr, "invalid authentication credentials")
 
 	if isAuthError {
-		fmt.Printf("[Worker %s] OAuth 401 detected for task %s (migration %s) — stopping migration immediately\n",
+		fmt.Printf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n",
 			p.workerID, payload.TaskID, payload.MigrationID)
-		authErrMsg := fmt.Sprintf("OAuth authentication failed: %v — please reconnect your account and start a new migration", procErr)
+		authErrMsg := fmt.Sprintf("Authentication failed — please check your credentials and start a new migration")
 		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "FAILED", &authErrMsg)
 		// Mark this individual task failed too so progress counters stay accurate
 		task.Status = "FAILED"

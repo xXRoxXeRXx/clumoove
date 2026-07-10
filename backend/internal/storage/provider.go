@@ -9,6 +9,10 @@ import (
 
 var ErrDuplicateUID = errors.New("sabredav: duplicate UID index violation")
 
+// ErrAuth is returned by any provider when the server rejects credentials (HTTP 401).
+// Use errors.Is to detect it rather than substring-matching error strings.
+var ErrAuth = errors.New("authentication failed: invalid credentials")
+
 
 type CloudResource struct {
 	Path         string    `json:"path"`

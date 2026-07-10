@@ -97,7 +97,7 @@ func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return false, fmt.Errorf("authentication failed: unauthorized (401)")
+		return false, fmt.Errorf("webdav connect: %w", ErrAuth)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, fmt.Errorf("connection failed with status code: %d", resp.StatusCode)
@@ -133,6 +133,9 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return CloudResource{}, fmt.Errorf("webdav inspect: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return CloudResource{}, fmt.Errorf("inspect failed with status: %d", resp.StatusCode)
 	}
@@ -201,6 +204,9 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("webdav listing: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("PROPFIND failed with status: %d", resp.StatusCode)
 	}
@@ -288,6 +294,10 @@ func (p *WebDAVProvider) StreamDownload(ctx context.Context, resourceType, fileP
 		return nil, err
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, fmt.Errorf("webdav download: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
 		return nil, fmt.Errorf("download failed with status: %d", resp.StatusCode)
@@ -333,6 +343,9 @@ func (p *WebDAVProvider) StreamUpload(ctx context.Context, resourceType, filePat
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("webdav upload: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("upload failed with status: %d", resp.StatusCode)
 	}
@@ -374,6 +387,9 @@ func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath 
 
 	if resp.StatusCode == http.StatusNotFound {
 		return false, 0, nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, 0, fmt.Errorf("webdav file-exists: %w", ErrAuth)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, 0, fmt.Errorf("PROPFIND check failed with status: %d", resp.StatusCode)
@@ -419,6 +435,9 @@ func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 	}
 	resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("webdav delete: %w", ErrAuth)
+	}
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
 		return fmt.Errorf("delete failed with status: %d", resp.StatusCode)
 	}
@@ -442,6 +461,9 @@ func (p *WebDAVProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("webdav move: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("move failed with status: %d", resp.StatusCode)
 	}
@@ -477,6 +499,9 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 		}
 		resp.Body.Close()
 
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("webdav mkdir: %w", ErrAuth)
+		}
 		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}

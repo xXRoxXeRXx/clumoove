@@ -150,7 +150,7 @@ func (p *DropboxProvider) Connect(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		return false, fmt.Errorf("authentication failed: unauthorized (401)")
+		return false, fmt.Errorf("dropbox connect: %w", ErrAuth)
 	}
 
 	return false, fmt.Errorf("connection failed with status code: %d", resp.StatusCode)
@@ -201,6 +201,9 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("dropbox listing: %w", ErrAuth)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("failed to list folder, status: %d", resp.StatusCode)
 	}
@@ -250,6 +253,10 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 			return nil, err
 		}
 
+		if contResp.StatusCode == http.StatusUnauthorized {
+			contResp.Body.Close()
+			return nil, fmt.Errorf("dropbox listing continue: %w", ErrAuth)
+		}
 		if contResp.StatusCode != http.StatusOK {
 			contResp.Body.Close()
 			return nil, fmt.Errorf("failed to continue folder listing, status: %d", contResp.StatusCode)
@@ -320,6 +327,9 @@ func (p *DropboxProvider) InspectResource(ctx context.Context, resourceType, res
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return CloudResource{}, fmt.Errorf("dropbox inspect: %w", ErrAuth)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return CloudResource{}, fmt.Errorf("inspect resource failed, status: %d", resp.StatusCode)
 	}
@@ -368,6 +378,10 @@ func (p *DropboxProvider) StreamDownload(ctx context.Context, resourceType, file
 		return nil, err
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, fmt.Errorf("dropbox download: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
 		return nil, fmt.Errorf("download failed with status: %d", resp.StatusCode)
@@ -413,6 +427,9 @@ func (p *DropboxProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("dropbox upload: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("upload failed with status: %d", resp.StatusCode)
 	}
@@ -507,6 +524,9 @@ func (p *DropboxProvider) startUploadSession(ctx context.Context, chunk []byte) 
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("dropbox upload session start: %w", ErrAuth)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to start upload session, status: %d", resp.StatusCode)
 	}
@@ -554,6 +574,9 @@ func (p *DropboxProvider) appendUploadSessionWithRetry(ctx context.Context, sess
 		if resp.StatusCode == http.StatusOK {
 			return nil
 		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("dropbox upload session append: %w", ErrAuth)
+		}
 		lastErr = fmt.Errorf("append session failed, status: %d", resp.StatusCode)
 		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
 	}
@@ -597,6 +620,9 @@ func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID str
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("dropbox upload session finish: %w", ErrAuth)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to finish upload session, status: %d", resp.StatusCode)
 	}
@@ -654,6 +680,9 @@ func (p *DropboxProvider) FileExists(ctx context.Context, resourceType, filePath
 		return false, 0, nil
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return false, 0, fmt.Errorf("dropbox file-exists: %w", ErrAuth)
+	}
 	return false, 0, fmt.Errorf("failed to check file existence, status: %d", resp.StatusCode)
 }
 
@@ -698,6 +727,9 @@ func (p *DropboxProvider) DeleteFile(ctx context.Context, resourceType, filePath
 		}
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("dropbox delete: %w", ErrAuth)
+	}
 	return fmt.Errorf("delete failed with status: %d", resp.StatusCode)
 }
 
@@ -728,6 +760,9 @@ func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("dropbox move: %w", ErrAuth)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("dropbox move failed with status: %d", resp.StatusCode)
 	}
@@ -795,6 +830,9 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 		}
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("dropbox mkdir: %w", ErrAuth)
+	}
 	return fmt.Errorf("failed to create directory, status: %d", resp.StatusCode)
 }
 
