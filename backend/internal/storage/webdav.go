@@ -298,17 +298,30 @@ func (p *WebDAVProvider) StreamDownload(ctx context.Context, resourceType, fileP
 
 func (p *WebDAVProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	u := p.buildResourceURL(resourceType, filePath)
-	
+
 	err := p.CreateParentDirectories(ctx, resourceType, filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
+	// Apply a dynamic per-request timeout scaled by file size (same policy as
+	// NextcloudProvider.StreamUpload) so a stalled WebDAV server cannot block a
+	// worker thread for the full 10-minute http.Client deadline.
+	baseTimeout := 5 * time.Minute
+	if size > 0 {
+		baseTimeout += time.Duration(size/(50*1024*1024)) * time.Minute
+	}
+	if baseTimeout > 30*time.Minute {
+		baseTimeout = 30 * time.Minute
+	}
+	uploadCtx, cancel := context.WithTimeout(ctx, baseTimeout)
+	defer cancel()
+
 	req, err := p.newRequest("PUT", u, stream)
 	if err != nil {
 		return err
 	}
-	req = req.WithContext(ctx)
+	req = req.WithContext(uploadCtx)
 	if size > 0 {
 		req.ContentLength = size
 	}
