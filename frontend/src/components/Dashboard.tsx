@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Terminal, Link, Copy, Check, Pause, Play, XCircle, Loader2 } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Link, Copy, Check, Pause, Play, XCircle, Loader2 } from 'lucide-react';
 
 // formatSize is defined at module level so it is not recreated on every render.
 const formatSize = (bytes: number): string => {
@@ -8,6 +8,17 @@ const formatSize = (bytes: number): string => {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+};
+
+const formatDuration = (seconds: number): string => {
+  if (seconds === Infinity || isNaN(seconds)) return 'Berechnung...';
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hrs}h ${remMins}m`;
 };
 
 interface DashboardProps {
@@ -79,10 +90,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [controlLoading, setControlLoading] = useState<string | null>(null);
   const [speed, setSpeed] = useState<number>(0); // Bytes per second
   const [eta, setEta] = useState<string>('Berechnung...');
-  const [logs, setLogs] = useState<string[]>([
-    '🔌 Verbindung zum Migrations-Server aufgebaut...',
-    '📡 Empfange Echtzeit-Datenstrom...'
-  ]);
   const [copied, setCopied] = useState<boolean>(false);
   const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
 
@@ -154,22 +161,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const lastActiveSpeed = useRef<number>(0);
   const lastActiveTime = useRef<number>(0);
 
-  // Log tracking refs
-  const prevActiveFileRef = useRef<string>('');
-  const prevActiveFilesRef = useRef<string[]>([]);
   const prevStatusRef = useRef<string>('');
-  const prevProcessedFilesRef = useRef<number>(0);
-  const logsContainerRef = useRef<HTMLDivElement | null>(null);
 
 
   useEffect(() => {
     progressHistory.current = [];
     lastActiveSpeed.current = 0;
     lastActiveTime.current = 0;
-    prevActiveFileRef.current = '';
-    prevActiveFilesRef.current = [];
     prevStatusRef.current = '';
-    prevProcessedFilesRef.current = 0;
 
     // Construct WebSocket URL
     const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -193,80 +192,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
       setData(payload);
 
-      // Add friendly logs dynamically based on state changes
-      const newLogs: string[] = [];
 
-      if (payload.status === 'INDEXING' && prevStatusRef.current !== 'INDEXING') {
-        newLogs.push('🔍 Starte Datei- und Ordnerindexierung auf der Quell-Instanz...');
-      }
-
-      if (payload.status === 'RUNNING' && prevStatusRef.current !== 'RUNNING') {
-        newLogs.push('⚡ Datenstrom gestartet. Kopiere Dateien direkt durch den RAM...');
-      }
-
-      if (payload.active_files && payload.active_files.length > 0) {
-        payload.active_files.forEach((file) => {
-          if (!prevActiveFilesRef.current.includes(file)) {
-            const fileName = file.split('/').pop() || file;
-            newLogs.push(`🚀 Kopiere: ${fileName}`);
-          }
-        });
-        prevActiveFilesRef.current = payload.active_files;
-      } else if (payload.active_file && payload.active_file !== prevActiveFileRef.current) {
-        const fileName = payload.active_file.split('/').pop() || payload.active_file;
-        newLogs.push(`🚀 Kopiere: ${fileName}`);
-        prevActiveFileRef.current = payload.active_file;
-      }
-
-      if (payload.processed_files > prevProcessedFilesRef.current) {
-        if (payload.status === 'RUNNING') {
-          let resourceNoun = 'Elemente';
-          if (payload.resource_stats) {
-            const hasFiles = (payload.resource_stats.files?.total ?? 0) > 0;
-            const hasCalendars = (payload.resource_stats.calendars?.total ?? 0) > 0;
-            const hasContacts = (payload.resource_stats.contacts?.total ?? 0) > 0;
-            if (hasFiles && !hasCalendars && !hasContacts) {
-              resourceNoun = 'Dateien';
-            } else if (!hasFiles && hasCalendars && !hasContacts) {
-              resourceNoun = 'Kalendereinträge';
-            } else if (!hasFiles && !hasCalendars && hasContacts) {
-              resourceNoun = 'Kontakte';
-            }
-          }
-          newLogs.push(`✔ ${payload.processed_files} von ${payload.total_files} ${resourceNoun} übertragen.`);
-        }
-        prevProcessedFilesRef.current = payload.processed_files;
-      }
-
-      if (payload.status === 'COMPLETED' && prevStatusRef.current !== 'COMPLETED') {
-        let resourceNoun = 'Elemente';
-        if (payload.resource_stats) {
-          const hasFiles = (payload.resource_stats.files?.total ?? 0) > 0;
-          const hasCalendars = (payload.resource_stats.calendars?.total ?? 0) > 0;
-          const hasContacts = (payload.resource_stats.contacts?.total ?? 0) > 0;
-          if (hasFiles && !hasCalendars && !hasContacts) {
-            resourceNoun = 'Dateien';
-          } else if (!hasFiles && hasCalendars && !hasContacts) {
-            resourceNoun = 'Kalendereinträge';
-          } else if (!hasFiles && !hasCalendars && hasContacts) {
-            resourceNoun = 'Kontakte';
-          }
-        }
-        newLogs.push(`🎉 Fertig! Alle ${resourceNoun} wurden erfolgreich übertragen.`);
-        newLogs.push('🔒 Verschlüsselte Session-RAM-Puffer wurden bereinigt.');
-      }
-
-      if (payload.status === 'FAILED' && prevStatusRef.current !== 'FAILED') {
-        newLogs.push(`❌ Migration fehlgeschlagen: ${payload.error_message || 'Unbekannter Verbindungsfehler.'}`);
-      }
-
-      if (payload.status === 'PAUSED_CONNECTION_LOSS' && prevStatusRef.current !== 'PAUSED_CONNECTION_LOSS') {
-        newLogs.push('⚠️ Verbindung zu einer Instanz verloren. Pausiere Transfer und versuche erneuten Handshake...');
-      }
-
-      if (newLogs.length > 0) {
-        setLogs((prev) => [...prev, ...newLogs]);
-      }
 
       // Reset progress history if status changes to avoid calculations across states
       if (payload.status !== prevStatusRef.current) {
@@ -310,7 +236,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           if (timeDiffSec > 0.5) {
             const bytesDiff = newest.bytes - oldest.bytes;
             
-            let calculatedSpeed = 0;
+            let calculatedSpeed: number;
 
             if (bytesDiff > 0) {
               calculatedSpeed = bytesDiff / timeDiffSec;
@@ -349,7 +275,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     ws.onerror = (err) => {
       if (!isMounted) return;
       console.error('WS Error:', err);
-      setLogs((prev) => [...prev, '⚠️ Websocket-Verbindungsfehler. Versuche automatischen Reconnect...']);
     };
 
     // Reconnect with exponential backoff (cap 30 s). If the migration ID came from
@@ -392,28 +317,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       ws.close();
     };
   }, [migrationId, apiUrl, token]);
-
-  // Auto-scroll logs container without moving the whole page window
-  useEffect(() => {
-    const container = logsContainerRef.current;
-    if (container) {
-      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 100;
-      if (isAtBottom || logs.length <= 3) {
-        container.scrollTop = container.scrollHeight;
-      }
-    }
-  }, [logs]);
-
-  const formatDuration = (seconds: number) => {
-    if (seconds === Infinity || isNaN(seconds)) return 'Berechnung...';
-    if (seconds < 60) return `${Math.round(seconds)}s`;
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    if (mins < 60) return `${mins}m ${secs}s`;
-    const hrs = Math.floor(mins / 60);
-    const remMins = mins % 60;
-    return `${hrs}h ${remMins}m`;
-  };
 
   if (serverUnreachable) {
     return (
@@ -567,37 +470,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             </div>
           )}
 
-          {/* Typewriter-Style Live Protocol Feed */}
-          <div className="border border-portal-border bg-white shadow-portal rounded-lg p-5 flex flex-col h-[280px]">
-            <div className="flex items-center gap-2 mb-3 pb-3 border-b border-portal-border">
-              <Terminal className="w-4.5 h-4.5 text-portal-orange" />
-              <h4 className="font-display font-bold text-slate-450 text-[10px] uppercase tracking-wider">Live-Protokoll</h4>
-            </div>
-            
-            <div 
-              ref={logsContainerRef}
-              className="flex-grow overflow-y-auto scrollbar-portal space-y-2 pr-1 font-mono text-[11px]"
-            >
-              {logs.map((log, index) => (
-                <div 
-                  key={index} 
-                  className={`py-1.5 px-3 border border-slate-100 rounded-lg leading-relaxed break-all ${
-                    log.startsWith('✔') 
-                      ? 'bg-emerald-50 text-emerald-700 font-semibold border-emerald-100' 
-                      : log.startsWith('🚀') || log.startsWith('⚡')
-                      ? 'bg-slate-50 text-slate-700 font-semibold border-slate-150'
-                      : log.startsWith('❌')
-                      ? 'bg-rose-50 text-rose-700 font-semibold border-rose-100'
-                      : log.startsWith('⚠️')
-                      ? 'bg-amber-50 text-amber-700 font-semibold border-amber-100'
-                      : 'bg-slate-50 text-slate-500 border-slate-100'
-                  }`}
-                >
-                  {log}
-                </div>
-              ))}
-            </div>
-          </div>
+
         </div>
 
         {/* Status card & Sidebar Column */}
