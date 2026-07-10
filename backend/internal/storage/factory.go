@@ -33,6 +33,8 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	case "google":
 		// The OAuth token is passed in the password field for OAuth providers
 		return NewGoogleProvider(ctx, password)
+	case "smb":
+		return NewSMBProvider(urlStr, username, password)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", providerType)
 	}

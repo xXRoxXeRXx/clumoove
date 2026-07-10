@@ -717,6 +717,15 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		return fmt.Errorf("upload to target failed: %w", err)
 	}
 
+	// Date preservation (F-05, SHOULD)
+	if preserver, ok := targetClient.(interface {
+		SetModTime(ctx context.Context, resourceType, filePath string, modTime time.Time) error
+	}); ok {
+		if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil {
+			_ = preserver.SetModTime(ctx, task.ResourceType, uploadPath, srcInfo.LastModified)
+		}
+	}
+
 	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
 	if deleteAfterUpload {
 		// Attempt to delete original. Ignore not found error if it's already gone.

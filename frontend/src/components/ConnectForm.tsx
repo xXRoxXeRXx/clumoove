@@ -21,8 +21,8 @@ interface MigrationConfig {
   target_password: string;
   target_refresh_token: string;
   target_token_expires_in: number;
-  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
-  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google';
+  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
+  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
 }
 
 interface ConnectFormProps {
@@ -43,10 +43,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetPass, setTargetPass] = useState('');
   const [targetRefreshToken, setTargetRefreshToken] = useState('');
   const [targetTokenExpiresIn, setTargetTokenExpiresIn] = useState(0);
-  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google'>('nextcloud');
-  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google'>('nextcloud');
+  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb'>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb'>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
+
+  const [sourceSmbHost, setSourceSmbHost] = useState('');
+  const [sourceSmbPort, setSourceSmbPort] = useState('445');
+  const [sourceSmbShare, setSourceSmbShare] = useState('');
+  const [sourceSmbDomain, setSourceSmbDomain] = useState('');
+
+  const [targetSmbHost, setTargetSmbHost] = useState('');
+  const [targetSmbPort, setTargetSmbPort] = useState('445');
+  const [targetSmbShare, setTargetSmbShare] = useState('');
+  const [targetSmbDomain, setTargetSmbDomain] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,10 +123,27 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalSourceUrl = (sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl;
+    const finalSourceUrl = sourceProvider === 'smb'
+      ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
+      : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl);
     const finalSourceUser = (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser;
-    const finalTargetUrl = (targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl;
+    const finalTargetUrl = targetProvider === 'smb'
+      ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
+      : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl);
     const finalTargetUser = (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser;
+
+    if (sourceProvider === 'smb') {
+      if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
+        setError('Bitte gib einen Server Host und einen Freigabe-Namen für die Quelle an.');
+        return;
+      }
+    }
+    if (targetProvider === 'smb') {
+      if (!targetSmbHost.trim() || !targetSmbShare.trim()) {
+        setError('Bitte gib einen Server Host und einen Freigabe-Namen für das Ziel an.');
+        return;
+      }
+    }
 
     if (!finalSourceUrl || !finalSourceUser || !sourcePass || !finalTargetUrl || !finalTargetUser || !targetPass) {
       setError('Bitte fülle alle Eingabefelder aus bzw. autorisiere die Anbieter.');
@@ -207,13 +234,21 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={sourceProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
                     setSourceProvider(val);
                     if (val === 'dropbox' || val === 'google') {
                       setSourceUrl(`https://api.${val}.com`);
                       setSourceUser(val);
                       setSourcePass('');
                       setSourceOAuthUser('');
+                    } else if (val === 'smb') {
+                      setSourceUrl('');
+                      setSourceUser('');
+                      setSourcePass('');
+                      setSourceSmbHost('');
+                      setSourceSmbPort('445');
+                      setSourceSmbShare('');
+                      setSourceSmbDomain('');
                     } else {
                       setSourceUrl('');
                       setSourceUser('');
@@ -224,12 +259,88 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 >
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
                   <option value="webdav">Generischer WebDAV-Server</option>
+                  <option value="smb">SMB/CIFS Freigabe</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
                   <option value="google">Google (OAuth2)</option>
                 </select>
               </div>
 
-              {sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
+              {sourceProvider === 'smb' ? (
+                <>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="col-span-2">
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Server Host / IP</label>
+                      <input
+                        type="text"
+                        placeholder="192.168.1.10"
+                        value={sourceSmbHost}
+                        onChange={(e) => setSourceSmbHost(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Port</label>
+                      <input
+                        type="text"
+                        placeholder="445"
+                        value={sourceSmbPort}
+                        onChange={(e) => setSourceSmbPort(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Freigabe-Name (Share)</label>
+                      <input
+                        type="text"
+                        placeholder="projekte"
+                        value={sourceSmbShare}
+                        onChange={(e) => setSourceSmbShare(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Domain (Optional)</label>
+                      <input
+                        type="text"
+                        placeholder="WORKGROUP"
+                        value={sourceSmbDomain}
+                        onChange={(e) => setSourceSmbDomain(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                    <input
+                      type="text"
+                      placeholder="benutzername"
+                      value={sourceUser}
+                      onChange={(e) => setSourceUser(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Kennwort / Passwort</label>
+                    <input
+                      type="password"
+                      placeholder="passwort"
+                      value={sourcePass}
+                      onChange={(e) => setSourcePass(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+                </>
+              ) : sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
                 <>
                   <div>
                     <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">
@@ -332,13 +443,21 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <select
                   value={targetProvider}
                   onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google';
+                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb';
                     setTargetProvider(val);
                     if (val === 'dropbox' || val === 'google') {
                       setTargetUrl(`https://api.${val}.com`);
                       setTargetUser(val);
                       setTargetPass('');
                       setTargetOAuthUser('');
+                    } else if (val === 'smb') {
+                      setTargetUrl('');
+                      setTargetUser('');
+                      setTargetPass('');
+                      setTargetSmbHost('');
+                      setTargetSmbPort('445');
+                      setTargetSmbShare('');
+                      setTargetSmbDomain('');
                     } else {
                       setTargetUrl('');
                       setTargetUser('');
@@ -349,12 +468,88 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 >
                   <option value="nextcloud">Nextcloud (WebDAV)</option>
                   <option value="webdav">Generischer WebDAV-Server</option>
+                  <option value="smb">SMB/CIFS Freigabe</option>
                   <option value="dropbox">Dropbox (OAuth2)</option>
                   <option value="google">Google (OAuth2)</option>
                 </select>
               </div>
 
-              {targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
+              {targetProvider === 'smb' ? (
+                <>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="col-span-2">
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Server Host / IP</label>
+                      <input
+                        type="text"
+                        placeholder="192.168.1.10"
+                        value={targetSmbHost}
+                        onChange={(e) => setTargetSmbHost(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Port</label>
+                      <input
+                        type="text"
+                        placeholder="445"
+                        value={targetSmbPort}
+                        onChange={(e) => setTargetSmbPort(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Freigabe-Name (Share)</label>
+                      <input
+                        type="text"
+                        placeholder="projekte"
+                        value={targetSmbShare}
+                        onChange={(e) => setTargetSmbShare(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Domain (Optional)</label>
+                      <input
+                        type="text"
+                        placeholder="WORKGROUP"
+                        value={targetSmbDomain}
+                        onChange={(e) => setTargetSmbDomain(e.target.value)}
+                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                    <input
+                      type="text"
+                      placeholder="benutzername"
+                      value={targetUser}
+                      onChange={(e) => setTargetUser(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Kennwort / Passwort</label>
+                    <input
+                      type="password"
+                      placeholder="passwort"
+                      value={targetPass}
+                      onChange={(e) => setTargetPass(e.target.value)}
+                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      required
+                    />
+                  </div>
+                </>
+              ) : targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
                 <>
                   <div>
                     <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">
