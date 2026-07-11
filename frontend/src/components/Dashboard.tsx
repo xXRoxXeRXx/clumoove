@@ -386,49 +386,51 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const successFiles = Math.max(0, data.processed_files - data.failed_files - data.skipped_files);
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-2">
+    <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in text-left">
       
       {/* Privacy-First Bookmarkable Direct Link Card */}
-      <div className="mb-6 p-4 bg-white border border-portal-border rounded-lg shadow-portal flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start sm:items-center gap-3">
-          <Link className="w-5 h-5 text-portal-orange shrink-0 mt-0.5 sm:mt-0" />
-          <div className="flex flex-col gap-0.5">
-            <span className="text-xs font-bold text-portal-navy uppercase tracking-wider">Direktlink zu dieser Migration</span>
-            <span className="text-[11px] text-slate-500">Speichere diesen Link als Lesezeichen, um den Fortschritt später wieder aufzurufen.</span>
+      <div className="mb-6 p-5 glass-panel border border-white/50 rounded-3xl shadow-portal flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-start md:items-center gap-3.5">
+          <div className="p-2.5 bg-orange-50 text-portal-orange rounded-xl shrink-0">
+            <Link className="w-4 h-4" />
+          </div>
+          <div className="flex flex-col text-left">
+            <span className="text-[10px] font-bold text-portal-navy uppercase tracking-widest font-mono">Direktlink zu dieser Migration</span>
+            <span className="text-[11px] text-slate-450 mt-0.5">Speichere diesen Link als Lesezeichen, um den Fortschritt später wieder aufzurufen.</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 bg-slate-50 border border-portal-border rounded-md px-3 py-1.5 shrink-0 max-w-full overflow-hidden">
-          <span className="font-mono text-xs text-slate-650 truncate select-all" title={directLink}>
+        <div className="flex items-center gap-2 bg-slate-100/80 border border-slate-200/40 rounded-2xl px-3 py-2 shrink-0 max-w-full overflow-hidden shadow-inner">
+          <span className="font-mono text-[10.5px] text-slate-650 truncate select-all pr-1" title={directLink}>
             {directLink}
           </span>
           <button
             onClick={handleCopyLink}
-            className="p-1.5 hover:bg-slate-200 rounded text-slate-500 hover:text-slate-800 transition-colors shrink-0 cursor-pointer"
+            className="p-1.5 bg-white hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 border border-slate-200 transition-colors shrink-0 cursor-pointer"
             title="Link kopieren"
           >
             {copied ? (
-              <Check className="w-4 h-4 text-emerald-600 animate-pulse" />
+              <Check className="w-3.5 h-3.5 text-emerald-650 animate-pulse" />
             ) : (
-              <Copy className="w-4 h-4" />
+              <Copy className="w-3.5 h-3.5" />
             )}
           </button>
         </div>
       </div>
 
       {/* Background Mode Guarantee Stamp (Grab a coffee) */}
-      <div className="mb-6 p-4 bg-[#f0f4f8] border border-[#d2d9e0] rounded-lg flex items-center justify-between text-xs text-[#002f6c] font-semibold">
+      <div className="mb-6 p-4.5 bg-gradient-to-r from-portal-navy to-portal-navy-light text-white border border-white/10 rounded-2xl shadow-md flex items-center justify-between text-xs">
         <div className="flex items-center gap-3">
-          <Coffee className="w-4 h-4 text-portal-orange shrink-0" />
-          <span>Der Migrationstransfer läuft serverseitig. Du kannst diesen Tab bedenkenlos schließen.</span>
+          <Coffee className="w-4 h-4 text-portal-orange shrink-0 animate-bounce" />
+          <span className="leading-snug">Der Migrationstransfer läuft serverseitig. Du kannst diese Seite bedenkenlos schließen.</span>
         </div>
       </div>
 
       {/* PAUSED CONNECTION LOSS WARNING */}
       {data.status === 'PAUSED_CONNECTION_LOSS' && (
-        <div className="mb-6 p-5 border border-amber-200 bg-amber-50 rounded-lg flex items-start gap-4">
-          <AlertTriangle className="w-6 h-6 shrink-0 text-amber-600 animate-bounce" />
-          <div className="text-xs leading-relaxed text-slate-700">
-            <h4 className="font-display font-bold text-amber-900 uppercase tracking-wide">Verbindungsabbruch zur Instanz</h4>
+        <div className="mb-6 p-5 border border-amber-250 bg-amber-50/70 backdrop-blur-md rounded-2xl flex items-start gap-4 animate-pulse-glow">
+          <AlertTriangle className="w-6 h-6 shrink-0 text-amber-600 mt-0.5" />
+          <div className="text-xs leading-relaxed text-slate-700 text-left">
+            <h4 className="font-display font-extrabold text-amber-900 uppercase tracking-wide">Verbindungsabbruch zur Instanz</h4>
             <p className="text-slate-600 mt-1.5 leading-relaxed">
               Eine Instanz antwortet nicht. Das System pausiert temporär und prüft die Erreichbarkeit selbstständig alle 60 Sekunden. Sobald die Server wieder antworten, wird der Transfer exakt am Abbruchpunkt fortgesetzt.
             </p>
@@ -443,48 +445,52 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         <div className="md:col-span-2 space-y-8">
           
           {/* Main metric card */}
-          <div className="border border-portal-border bg-white p-6 shadow-portal rounded-lg relative overflow-hidden">
-            <div className="flex items-end justify-between mb-5 border-b border-portal-border pb-4">
+          <div className="glass-panel border border-white/50 p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+            
+            <div className="flex items-end justify-between mb-6 border-b border-slate-100 pb-4.5">
               <div>
-                <span className="font-display font-bold text-[10px] text-slate-450 uppercase tracking-wider">Fortschritt</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">Fortschritt</span>
                 <h3 className="font-display font-extrabold text-5xl text-portal-navy mt-1.5 leading-none">
                   {byteProgressPercent}%
                 </h3>
               </div>
-              <div className="text-right font-sans">
-                <span className="font-display font-bold text-[10px] text-slate-450 uppercase tracking-wider">Übertragungs-Rate</span>
-                <p className="text-sm font-bold text-emerald-600 mt-1.5 font-mono">
+              <div className="text-right flex flex-col items-end">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">Übertragungsrate</span>
+                <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
                   {formatSize(speed)}/s
                 </p>
               </div>
             </div>
 
-            {/* Rounded Progress Bar */}
-            <div className="w-full bg-slate-100 border border-portal-border h-5 p-0.5 mb-5 rounded-full">
+            {/* Glowing Rounded Progress Bar */}
+            <div className="w-full bg-slate-100 border border-slate-200/50 h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
               <div
-                className="bg-portal-orange h-full rounded-full transition-all duration-300 ease-out"
+                className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
                 style={{ width: `${byteProgressPercent}%` }}
-              ></div>
+              >
+                <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 text-[10.5px] font-semibold text-slate-500 uppercase tracking-wider">
+            <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-slate-450 uppercase tracking-wider">
               <div className="flex items-center gap-2">
                 <HardDrive className="w-4 h-4 text-portal-navy" />
-                <span>Übertragen: <strong className="text-slate-800 font-mono">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
+                <span>Übertragen: <strong className="text-slate-800">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
               </div>
               <div className="flex items-center gap-2 justify-end">
                 <Clock className="w-4 h-4 text-portal-navy" />
-                <span>Restlaufzeit: <strong className="text-slate-800">{eta}</strong></span>
+                <span>Restzeit: <strong className="text-slate-850">{eta}</strong></span>
               </div>
             </div>
           </div>
 
           {/* Active Transfers Card */}
           {data.status === 'RUNNING' && data.active_files && data.active_files.length > 0 && (
-            <div className="border border-portal-border bg-white p-5 shadow-portal rounded-lg">
-              <div className="flex items-center gap-2 mb-3 pb-3 border-b border-portal-border">
-                <RefreshCw className="w-4.5 h-4.5 text-portal-orange animate-spin" />
-                <h4 className="font-display font-bold text-slate-450 text-[10px] uppercase tracking-wider">
+            <div className="glass-panel border border-white/50 p-5 shadow-portal rounded-3xl flex flex-col">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-100">
+                <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
+                <h4 className="font-mono font-bold text-slate-450 text-[10px] uppercase tracking-widest text-left">
                   Aktive Übertragungen ({data.active_files.length} von {data.threads || 4} Threads)
                 </h4>
               </div>
@@ -492,54 +498,52 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 {data.active_files.map((file, i) => {
                   const fileName = file.split('/').pop() || file;
                   return (
-                    <div key={i} className="flex items-center justify-between text-xs py-2 px-3.5 bg-slate-50 border border-slate-100 rounded-lg font-mono text-slate-650 min-w-0">
+                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-slate-50 border border-slate-200/50 rounded-xl font-mono text-slate-650 min-w-0">
                       <span className="truncate pr-4" title={file}>{fileName}</span>
-                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0">Läuft...</span>
+                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">Läuft...</span>
                     </div>
                   );
                 })}
               </div>
             </div>
           )}
-
-
         </div>
 
         {/* Status card & Sidebar Column */}
         <div className="space-y-6">
-          <div className="border border-portal-border bg-white p-6 shadow-portal rounded-lg flex flex-col items-center text-center">
-            <span className="font-display font-bold text-[10px] text-slate-450 uppercase tracking-widest mb-4">STATUS</span>
+          <div className="glass-panel border border-white/50 p-6 shadow-portal rounded-3xl flex flex-col items-center text-center">
+            <span className="text-[10px] font-bold text-slate-450 uppercase tracking-widest font-mono mb-4">STATUS</span>
             
-            {/* Stamp status badge */}
+            {/* Status Stamp capsule */}
             {data.status === 'COMPLETED' ? (
-              <div className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5">
-                ERFOLGREICH BEENDET
+              <div className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
+                ABGESCHLOSSEN
               </div>
             ) : data.status === 'FAILED' ? (
-              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5">
+              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
                 FEHLGESCHLAGEN
               </div>
             ) : data.status === 'PAUSED_CONNECTION_LOSS' || data.status === 'PAUSED' ? (
-              <div className="bg-amber-50 text-amber-700 border border-amber-250 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5 animate-pulse">
-                VORÜBERGEHEND PAUSIERT
+              <div className="bg-amber-50 text-amber-750 border border-amber-250 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
+                PAUSIERT
               </div>
             ) : data.status === 'CANCELLED' ? (
-              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5">
+              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
                 ABGEBROCHEN
               </div>
             ) : (
-              <div className="bg-slate-50 text-portal-navy border border-portal-navy/20 px-5 py-2 font-display font-bold text-sm rounded-full shadow-sm mb-5 animate-pulse">
-                DATEI-TRANSFER
+              <div className="bg-blue-50 text-portal-navy border border-blue-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
+                ÜBERTRAGUNG
               </div>
             )}
 
-            <h4 className="font-display font-bold text-slate-700 text-xs tracking-wider uppercase mt-1">
-              Migration: {data.status}
+            <h4 className="font-mono font-bold text-slate-500 text-[10px] tracking-wider uppercase mt-1">
+              Job: {data.status}
             </h4>
 
             {data.error_message && (
-              <p className="font-sans text-[11px] text-rose-600 mt-3 bg-rose-50 border border-rose-200 p-2.5 rounded-lg leading-normal uppercase">
-                Fehlermeldung: {data.error_message}
+              <p className="font-mono text-[10px] text-rose-700 mt-4 bg-rose-50/80 border border-rose-250 p-3 rounded-2xl leading-normal text-left max-w-full overflow-hidden">
+                FEHLER: {data.error_message}
               </p>
             )}
 
@@ -552,21 +556,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 </>
               ) : (
                 <>
-                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
                     <span>Dateien gesamt:</span>
                     <span className="font-bold text-slate-800 font-mono">{data.total_files}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
                     <span>Übertragen:</span>
                     <span className="font-bold text-emerald-600 font-mono">{successFiles}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1 border-b border-slate-100">
+                  <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
                     <span>Übersprungen:</span>
                     <span className="font-bold text-slate-800 font-mono">{data.skipped_files}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1">
+                  <div className="flex justify-between items-center py-1.5">
                     <span>Fehlgeschlagen:</span>
-                    <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-slate-600'}`}>
+                    <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
                       {data.failed_files}
                     </span>
                   </div>
@@ -576,15 +580,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           {/* Action buttons */}
-          <div className="space-y-4">
+          <div className="space-y-3">
             {/* Report Download */}
             {data.failed_files > 0 && (
               <button
                 onClick={handleDownloadReport}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-portal-border rounded-lg shadow-sm text-slate-700 hover:bg-slate-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-white border border-slate-200 rounded-2xl shadow-xs text-slate-700 hover:bg-slate-50 hover:border-slate-350 transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer"
               >
                 <Download className="w-4 h-4 text-portal-orange" />
-                Fehlerbericht (.CSV)
+                <span>Fehlerbericht (.CSV)</span>
               </button>
             )}
 
@@ -593,14 +597,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={handleRetryFailed}
                 disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-portal-orange text-white rounded-lg font-display text-sm font-bold shadow-sm hover:bg-portal-orange-hover hover:scale-101 active:scale-99 transition-all duration-200 cursor-pointer disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-portal-orange to-orange-500 text-white rounded-2xl font-mono text-[11px] font-bold uppercase tracking-wider shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-99 transition-all cursor-pointer disabled:opacity-50"
               >
                 {controlLoading === 'retry' ? (
                   <Loader2 className="w-4 h-4 animate-spin text-white" />
                 ) : (
                   <RefreshCw className="w-4 h-4 text-white" />
                 )}
-                Fehlgeschlagene erneut versuchen
+                <span>Fehlerhafte wiederholen</span>
               </button>
             )}
 
@@ -609,10 +613,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('pause')}
                 disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-portal-border rounded-lg shadow-sm text-slate-700 hover:bg-slate-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-white border border-slate-250 rounded-2xl shadow-xs text-slate-750 hover:bg-slate-50 hover:border-slate-350 transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
               >
                 {controlLoading === 'pause' ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" /> : <Pause className="w-4 h-4 text-amber-500" />}
-                Pausieren
+                <span>Pausieren</span>
               </button>
             )}
 
@@ -620,10 +624,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('resume')}
                 disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-emerald-50 border border-emerald-200 rounded-lg shadow-sm text-emerald-700 hover:bg-emerald-100 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-emerald-50 border border-emerald-250 rounded-2xl shadow-xs text-emerald-750 hover:bg-emerald-100 hover:border-emerald-350 transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
               >
-                {controlLoading === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                Fortsetzen
+                {controlLoading === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 text-emerald-600" />}
+                <span>Fortsetzen</span>
               </button>
             )}
 
@@ -631,10 +635,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('cancel')}
                 disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-white border border-rose-200 rounded-lg shadow-sm text-rose-600 hover:bg-rose-50 transition-colors font-display text-xs font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50 mt-4"
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-white border border-rose-200 rounded-2xl shadow-xs text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50 mt-2"
               >
                 {controlLoading === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                Abbrechen
+                <span>Abbrechen</span>
               </button>
             )}
 
@@ -642,9 +646,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             {(data.status === 'COMPLETED' || data.status === 'FAILED' || data.status === 'CANCELLED') && (
               <button
                 onClick={onReset}
-                className="w-full flex items-center justify-center gap-2 py-4 bg-portal-orange text-white rounded-lg font-display text-sm font-bold shadow-sm hover:bg-portal-orange-hover hover:scale-101 active:scale-99 transition-all duration-200 cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-portal-orange to-orange-500 text-white rounded-2xl font-mono text-[11px] font-bold uppercase tracking-wider shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-99 transition-all cursor-pointer"
               >
-                Neue Migration starten
+                <span>Neue Migration starten</span>
               </button>
             )}
           </div>

@@ -509,25 +509,24 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       </div>
     );
   };
-
   return (
-    <div className="w-full max-w-4xl mx-auto py-2">
+    <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in text-left">
       
       {/* Header */}
       <div className="flex items-center gap-4 mb-6">
         <button
           onClick={onBack}
-          className="px-4 py-2 border border-portal-border bg-white text-slate-700 text-xs font-semibold rounded-lg shadow-sm hover:bg-slate-50 hover:border-slate-350 hover:text-slate-900 transition-all flex items-center gap-1.5 cursor-pointer"
+          className="px-4 py-2 bg-white border border-slate-200 rounded-full hover:border-slate-350 hover:bg-slate-50 transition-all font-mono font-bold text-[11px] cursor-pointer text-slate-650 hover:text-portal-navy shadow-xs hover:shadow-sm"
         >
-          <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
+          <ArrowLeft className="w-3.5 h-3.5 stroke-[2.5] inline-block mr-1.5 align-text-bottom" />
           <span>Zurück</span>
         </button>
         <div>
           <h1 className="font-display font-extrabold text-2xl md:text-3xl text-portal-navy tracking-tight">
             Dateien auswählen
           </h1>
-          <p className="text-xs font-semibold text-slate-450 mt-1">
-            Wähle die Dateibestände für den Übertragungslauf aus.
+          <p className="text-[10px] font-mono text-slate-400 mt-1 uppercase tracking-wider">
+            // WÄHLE DIE DATEIBESTÄNDE FÜR DEN ÜBERTRAGUNGSLAUF AUS
           </p>
         </div>
       </div>
@@ -535,16 +534,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       <div className="grid md:grid-cols-3 gap-8">
         
         {/* Ledger Browser Tree Card */}
-        <div className="md:col-span-2 border border-portal-border bg-white shadow-portal rounded-lg min-h-[400px] max-h-[600px] overflow-y-auto scrollbar-portal p-0">
+        <div className="md:col-span-2 glass-panel border border-white/50 shadow-portal rounded-3xl min-h-[450px] max-h-[600px] overflow-y-auto scrollbar-portal flex flex-col p-5">
           {/* Tab Switcher */}
-          <div className="flex items-center justify-between border-b border-portal-border bg-slate-50 rounded-t-lg pr-3">
-            <div className="flex flex-1">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4 gap-4">
+            <div className="flex bg-slate-100/80 border border-slate-200/20 p-1 rounded-2xl flex-grow max-w-md">
               <button
                 onClick={() => handleTabChange('files')}
-                className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                   activeTab === 'files'
-                    ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
-                    : 'text-slate-500 hover:bg-slate-100'
+                    ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-white shadow-xs'
+                    : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
                 Dateien
@@ -553,20 +552,20 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <>
                   <button
                     onClick={() => handleTabChange('calendars')}
-                    className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                    className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                       activeTab === 'calendars'
-                        ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
-                        : 'text-slate-500 hover:bg-slate-100'
+                        ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-white shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     Kalender ({Object.values(selectedCalendars).filter(Boolean).length})
                   </button>
                   <button
                     onClick={() => handleTabChange('contacts')}
-                    className={`flex-1 py-3.5 text-center font-display text-xs font-bold uppercase tracking-wider transition-colors border-r border-portal-border cursor-pointer focus:outline-none ${
+                    className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                       activeTab === 'contacts'
-                        ? 'bg-white text-portal-navy border-b-2 border-b-portal-orange font-bold'
-                        : 'text-slate-500 hover:bg-slate-100'
+                        ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-white shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
                     }`}
                   >
                     Kontakte ({Object.values(selectedContacts).filter(Boolean).length})
@@ -579,7 +578,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               <button
                 onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
                 disabled={loadingCalendars || loadingContacts}
-                className="p-2 text-slate-500 hover:text-portal-navy hover:bg-slate-100 rounded-full transition-colors duration-150 cursor-pointer disabled:opacity-50"
+                className="p-2.5 text-slate-500 hover:text-portal-navy hover:bg-slate-100 rounded-xl transition-all cursor-pointer border border-slate-200 disabled:opacity-50"
                 title="Aktualisieren"
               >
                 <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
@@ -587,86 +586,94 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             )}
           </div>
 
-          <div className="p-1">
+          <div className="flex-grow overflow-y-auto scrollbar-portal">
             {activeTab === 'files' && (
               directoryContents['/']?.length > 0 ? (
                 directoryContents['/'].map((file) => renderNode(file, 0))
               ) : (
-                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
-                  <Folder className="w-10 h-10 text-slate-300" />
-                  <p className="font-sans text-xs italic text-slate-400">Keine Dateien im Stammverzeichnis gefunden.</p>
+                <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-2">
+                  <Folder className="w-10 h-10 text-slate-350 animate-float" />
+                  <p className="font-mono text-[10px] italic text-slate-400">// KEINE DATEIEN GEFUNDEN</p>
                 </div>
               )
             )}
 
             {activeTab === 'calendars' && (
               loadingCalendars ? (
-                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3">
-                  <RefreshCw className="w-8 h-8 text-portal-navy animate-spin" />
-                  <p className="font-sans text-xs italic">Lade Kalender...</p>
+                <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-3">
+                  <RefreshCw className="w-8 h-8 text-portal-orange animate-spin" />
+                  <p className="font-mono text-[10px] italic">// LADE KALENDER...</p>
                 </div>
               ) : calendars.length > 0 ? (
-                calendars.map((cal) => (
-                  <div
-                    key={cal.path}
-                    className={`flex items-center gap-3 py-3.5 px-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 ${
-                      selectedCalendars[cal.path] ? 'bg-slate-50 font-semibold' : ''
-                    }`}
-                    onClick={() => setSelectedCalendars(prev => ({ ...prev, [cal.path]: !prev[cal.path] }))}
-                  >
-                    <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
-                      <div className={`w-5.5 h-5.5 border rounded flex items-center justify-center transition-all duration-200 ${
+                <div className="space-y-2">
+                  {calendars.map((cal) => (
+                    <div
+                      key={cal.path}
+                      className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
                         selectedCalendars[cal.path] 
-                          ? 'bg-portal-orange text-white border-transparent' 
-                          : 'bg-white border-slate-300'
-                      }`}>
-                        {selectedCalendars[cal.path] && <Check className="w-3.5 h-3.5 text-white stroke-[3.5]" />}
-                      </div>
-                    </button>
-                    <Calendar className="w-5 h-5 text-portal-navy" />
-                    <span className="text-[12px] text-slate-850 flex-grow">{cal.name}</span>
-                  </div>
-                ))
+                          ? 'bg-slate-50 border-portal-navy shadow-xs font-semibold' 
+                          : 'bg-white/50 border-slate-200 hover:bg-slate-50/50 hover:border-slate-300'
+                      }`}
+                      onClick={() => setSelectedCalendars(prev => ({ ...prev, [cal.path]: !prev[cal.path] }))}
+                    >
+                      <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
+                        <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
+                          selectedCalendars[cal.path] 
+                            ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-white border-transparent' 
+                            : 'bg-white border-slate-300'
+                        }`}>
+                          {selectedCalendars[cal.path] && <Check className="w-3.5 h-3.5 text-white stroke-[3.5]" />}
+                        </div>
+                      </button>
+                      <Calendar className="w-5 h-5 text-portal-navy" />
+                      <span className="text-[12px] text-slate-750 flex-grow text-left">{cal.name}</span>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
-                  <Calendar className="w-10 h-10 text-slate-300" />
-                  <p className="font-sans text-xs italic">Keine Kalender gefunden.</p>
+                <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-2">
+                  <Calendar className="w-10 h-10 text-slate-350 animate-float" />
+                  <p className="font-mono text-[10px] italic">// KEINE KALENDER GEFUNDEN</p>
                 </div>
               )
             )}
 
             {activeTab === 'contacts' && (
               loadingContacts ? (
-                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3">
-                  <RefreshCw className="w-8 h-8 text-portal-navy animate-spin" />
-                  <p className="font-sans text-xs italic">Lade Adressbücher...</p>
+                <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-3">
+                  <RefreshCw className="w-8 h-8 text-portal-orange animate-spin" />
+                  <p className="font-mono text-[10px] italic">// LADE ADRESSBÜCHER...</p>
                 </div>
               ) : contacts.length > 0 ? (
-                contacts.map((addr) => (
-                  <div
-                    key={addr.path}
-                    className={`flex items-center gap-3 py-3.5 px-4 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 ${
-                      selectedContacts[addr.path] ? 'bg-slate-50 font-semibold' : ''
-                    }`}
-                    onClick={() => setSelectedContacts(prev => ({ ...prev, [addr.path]: !prev[addr.path] }))}
-                  >
-                    <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
-                      <div className={`w-5.5 h-5.5 border rounded flex items-center justify-center transition-all duration-200 ${
+                <div className="space-y-2">
+                  {contacts.map((addr) => (
+                    <div
+                      key={addr.path}
+                      className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
                         selectedContacts[addr.path] 
-                          ? 'bg-portal-orange text-white border-transparent' 
-                          : 'bg-white border-slate-300'
-                      }`}>
-                        {selectedContacts[addr.path] && <Check className="w-3.5 h-3.5 text-white stroke-[3.5]" />}
-                      </div>
-                    </button>
-                    <BookOpen className="w-5 h-5 text-portal-navy" />
-                    <span className="text-[12px] text-slate-850 flex-grow">{addr.name}</span>
-                  </div>
-                ))
+                          ? 'bg-slate-50 border-portal-navy shadow-xs font-semibold' 
+                          : 'bg-white/50 border-slate-200 hover:bg-slate-50/50 hover:border-slate-300'
+                      }`}
+                      onClick={() => setSelectedContacts(prev => ({ ...prev, [addr.path]: !prev[addr.path] }))}
+                    >
+                      <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
+                        <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
+                          selectedContacts[addr.path] 
+                            ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-white border-transparent' 
+                            : 'bg-white border-slate-300'
+                        }`}>
+                          {selectedContacts[addr.path] && <Check className="w-3.5 h-3.5 text-white stroke-[3.5]" />}
+                        </div>
+                      </button>
+                      <BookOpen className="w-5 h-5 text-portal-navy" />
+                      <span className="text-[12px] text-slate-750 flex-grow text-left">{addr.name}</span>
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
-                  <BookOpen className="w-10 h-10 text-slate-300" />
-                  <p className="font-sans text-xs italic">Keine Adressbücher gefunden.</p>
+                <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-2">
+                  <BookOpen className="w-10 h-10 text-slate-350 animate-float" />
+                  <p className="font-mono text-[10px] italic">// KEINE ADRESSBÜCHER GEFUNDEN</p>
                 </div>
               )
             )}
@@ -674,58 +681,56 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
 
         {/* Configurations Sidebar */}
-        <div className="space-y-6">
-          <div className="bg-white border border-portal-border p-6 shadow-portal rounded-lg space-y-6">
+        <div className="space-y-6 flex flex-col">
+          <div className="glass-panel border border-white/50 rounded-3xl p-6 shadow-portal space-y-6 flex-grow text-left">
             
-            <div className="flex items-center gap-2 border-b border-portal-border pb-3 mb-1">
-              <h3 className="font-display font-bold text-lg text-portal-navy tracking-tight">Konfiguration</h3>
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-3 mb-1">
+              <h3 className="font-display font-extrabold text-lg text-portal-navy tracking-tight">Konfiguration</h3>
             </div>
 
             {/* Target Path */}
             <div className="space-y-2 text-xs">
-              <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">Ziel-Stammverzeichnis</label>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Ziel-Stammverzeichnis</label>
               <div className="flex gap-2">
-                <div className="relative flex-grow">
-                  <input
-                    type="text"
-                    value={targetDir}
-                    className="w-full bg-slate-50 border border-portal-border rounded-lg py-2.5 px-3.5 text-slate-750 font-mono text-xs cursor-default"
-                    readOnly
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={targetDir}
+                  className="flex-grow bg-slate-100 border border-slate-200 rounded-xl py-2.5 px-3.5 text-slate-750 font-mono text-[11px] cursor-default focus:outline-none"
+                  readOnly
+                />
                 <button
                   type="button"
                   onClick={openTargetBrowser}
-                  className="px-3 py-2 bg-portal-navy text-white text-xs font-semibold rounded-lg shadow-sm hover:bg-portal-navy/90 transition-all flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-2.5 bg-portal-navy hover:bg-portal-navy-light text-white text-[11px] font-bold font-mono uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
                 >
                   <FolderOpen className="w-4 h-4" />
-                  <span>Durchsuchen</span>
+                  <span>Ordner</span>
                 </button>
               </div>
-              <p className="text-[10px] text-slate-550 leading-relaxed">
+              <p className="text-[10px] text-slate-450 leading-relaxed font-sans">
                 Kopiert Bestände in den ausgewählten Ordner auf der Zielinstanz.
               </p>
             </div>
 
             {/* Conflict Strategy block selector */}
             <div className="space-y-3 text-xs">
-              <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">Kollisions-Behandlung</label>
-              <div className="space-y-2.5">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Kollisions-Behandlung</label>
+              <div className="space-y-2">
                 {/* SKIP card */}
                 <button
                   type="button"
                   onClick={() => setConflictStrategy('SKIP')}
-                  className={`w-full text-left p-3.5 rounded-lg border transition-all duration-150 cursor-pointer ${
+                  className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
                     conflictStrategy === 'SKIP'
-                      ? 'bg-slate-50 border-portal-navy text-portal-navy font-bold'
-                      : 'bg-white text-slate-700 border-portal-border hover:bg-slate-50'
+                      ? 'bg-slate-50/50 border-portal-navy text-portal-navy font-bold shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50/30'
                   }`}
                 >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-display font-bold">Überspringen</span>
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="font-display">Überspringen</span>
                     {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-portal-orange stroke-[3]" />}
                   </div>
-                  <p className={`text-[10.5px] mt-1.5 leading-normal ${conflictStrategy === 'SKIP' ? 'text-slate-600' : 'text-slate-450'}`}>
+                  <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'SKIP' ? 'text-slate-600' : 'text-slate-450'}`}>
                     Bereits existierende Dateien werden im Ziel nicht überschrieben.
                   </p>
                 </button>
@@ -734,17 +739,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={() => setConflictStrategy('OVERWRITE')}
-                  className={`w-full text-left p-3.5 rounded-lg border transition-all duration-150 cursor-pointer ${
+                  className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
                     conflictStrategy === 'OVERWRITE'
-                      ? 'bg-slate-50 border-portal-navy text-portal-navy font-bold'
-                      : 'bg-white text-slate-700 border-portal-border hover:bg-slate-50'
+                      ? 'bg-slate-50/50 border-portal-navy text-portal-navy font-bold shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50/30'
                   }`}
                 >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-display font-bold">Überschreiben</span>
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="font-display">Überschreiben</span>
                     {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-portal-orange stroke-[3]" />}
                   </div>
-                  <p className={`text-[10.5px] mt-1.5 leading-normal ${conflictStrategy === 'OVERWRITE' ? 'text-slate-600' : 'text-slate-450'}`}>
+                  <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'OVERWRITE' ? 'text-slate-600' : 'text-slate-450'}`}>
                     Ersetzt doppelte Dateinamen im Ziel bedingungslos.
                   </p>
                 </button>
@@ -753,17 +758,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={() => setConflictStrategy('RENAME')}
-                  className={`w-full text-left p-3.5 rounded-lg border transition-all duration-150 cursor-pointer ${
+                  className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
                     conflictStrategy === 'RENAME'
-                      ? 'bg-slate-50 border-portal-navy text-portal-navy font-bold'
-                      : 'bg-white text-slate-700 border-portal-border hover:bg-slate-50'
+                      ? 'bg-slate-50/50 border-portal-navy text-portal-navy font-bold shadow-xs'
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50/30'
                   }`}
                 >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-display font-bold">Automatisch umbenennen</span>
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="font-display">Automatisch umbenennen</span>
                     {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-portal-orange stroke-[3]" />}
                   </div>
-                  <p className={`text-[10.5px] mt-1.5 leading-normal ${conflictStrategy === 'RENAME' ? 'text-slate-600' : 'text-slate-450'}`}>
+                  <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'RENAME' ? 'text-slate-600' : 'text-slate-450'}`}>
                     Fügt Suffixe hinzu (z. B. datei(1).pdf).
                   </p>
                 </button>
@@ -771,8 +776,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             </div>
 
             {/* Thread count selector */}
-            <div className="space-y-3 text-xs pt-4 border-t border-portal-border">
-              <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">Parallele Übertragungen (Threads)</label>
+            <div className="space-y-3 text-xs pt-4 border-t border-slate-100">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Parallele Threads</label>
               <div className="flex items-center gap-4">
                 <input
                   type="range"
@@ -782,19 +787,25 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   onChange={(e) => setThreads(parseInt(e.target.value, 10))}
                   className="flex-grow accent-portal-navy cursor-pointer"
                 />
-                <span className="font-mono text-sm font-bold text-portal-navy bg-slate-100 px-2.5 py-1 rounded-md min-w-[32px] text-center">
+                <span className={`font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[32px] text-center transition-colors ${
+                  threads > 8 ? 'bg-orange-50 text-portal-orange' : 'bg-slate-100 text-portal-navy'
+                }`}>
                   {threads}
                 </span>
               </div>
-              <p className="text-[10px] text-slate-550 leading-relaxed">
-                Höhere Werte beschleunigen die Migration, belasten aber Quell- und Zielserver.
+              <p className="text-[9.5px] text-slate-450 leading-relaxed font-sans">
+                {threads > 8 ? (
+                  <span className="text-orange-500 font-semibold">⚠️ Hohe Thread-Zahl erhöht die Übertragungsrate, kann aber Serverdrosselung verursachen.</span>
+                ) : (
+                  'Höhere Werte beschleunigen die Migration, belasten aber Quell- und Zielserver.'
+                )}
               </p>
             </div>
           </div>
 
           {error && (
-            <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-xs font-semibold text-rose-700 leading-normal flex gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+            <div className="p-4 bg-rose-50 border border-rose-250 rounded-2xl text-[11px] font-semibold text-rose-800 leading-normal flex gap-2 text-left mt-4">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
               <span>{error}</span>
             </div>
           )}
@@ -803,16 +814,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <button
             onClick={handleStartMigration}
             disabled={starting}
-            className="w-full flex items-center justify-center gap-2 py-4 bg-portal-orange text-white rounded-lg font-display text-base font-bold shadow-sm hover:bg-portal-orange-hover hover:scale-101 transition-all duration-200 cursor-pointer disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2.5 py-4 bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed mt-4 shrink-0"
           >
             {starting ? (
               <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
+                <RefreshCw className="w-4 h-4 animate-spin" />
                 <span>Indexierung läuft...</span>
               </>
             ) : (
               <>
-                <Play className="w-5 h-5 fill-current stroke-[2.5]" />
+                <Play className="w-4 h-4 fill-current stroke-[2.5]" />
                 <span>Transfer starten</span>
               </>
             )}
@@ -822,16 +833,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       {/* Target Directory Browser Modal */}
       {isTargetBrowserOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white border border-portal-border rounded-xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white/95 border border-white/50 rounded-3xl shadow-2xl max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden animate-slide-up text-left">
+            
             {/* Modal Header */}
-            <div className="p-5 border-b border-portal-border flex items-center justify-between bg-slate-50">
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
               <div>
-                <h3 className="font-display font-bold text-lg text-portal-navy tracking-tight">
+                <h3 className="font-display font-extrabold text-lg text-portal-navy tracking-tight">
                   Ziel-Verzeichnis auswählen
                 </h3>
-                <p className="text-[11px] text-slate-500 mt-0.5">
-                  Wähle ein Verzeichnis auf der Zielinstanz aus.
+                <p className="text-[10px] text-slate-400 mt-0.5 uppercase tracking-wider font-mono">
+                  // WÄHLE EIN VERZEICHNIS AUF DER ZIELINSTANZ
                 </p>
               </div>
               <button
@@ -841,32 +853,32 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   setIsCreatingFolder(false);
                   setNewFolderName('');
                 }}
-                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200/50 rounded-xl transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Modal Content - Directory Tree */}
-            <div className="p-4 flex-grow overflow-y-auto min-h-[300px]">
+            <div className="p-5 flex-grow overflow-y-auto min-h-[300px] scrollbar-portal">
               {targetError && (
-                <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700 flex gap-2">
+                <div className="mb-4 p-3 bg-rose-50 border border-rose-250 rounded-2xl text-xs text-rose-800 flex gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
                   <span>{targetError}</span>
                 </div>
               )}
 
-              <div className="border border-portal-border rounded-lg bg-slate-50/50 p-2 overflow-x-auto max-h-[400px]">
+              <div className="border border-slate-200/60 rounded-2xl bg-slate-50/30 p-2 overflow-x-auto max-h-[350px] scrollbar-portal">
                 {/* Root Directory Node */}
                 <div className="select-none font-sans text-xs">
                   <div
-                    className={`flex items-center gap-2.5 py-2 px-3 border-b border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors duration-150 rounded-md ${
-                      targetDir === '/' ? 'bg-white font-bold border border-portal-border text-portal-navy shadow-sm' : ''
+                    className={`flex items-center gap-2.5 py-2 px-3 border border-transparent hover:bg-slate-100/50 cursor-pointer transition-colors duration-150 rounded-xl ${
+                      targetDir === '/' ? 'bg-white font-bold border-slate-200 text-portal-navy shadow-xs' : ''
                     }`}
                     onClick={() => setTargetDir('/')}
                   >
                     <span
-                      className="w-4 h-4 flex items-center justify-center text-slate-500 hover:text-portal-navy transition-colors cursor-pointer"
+                      className="w-4 h-4 flex items-center justify-center text-slate-400 hover:text-portal-navy transition-colors cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation();
                         const isExpanded = !!targetExpandedPaths['/'];
@@ -889,7 +901,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                         <Folder className="w-4 h-4 text-portal-navy/80" />
                       )}
                     </span>
-                    <span className={`text-[11.5px] truncate flex-grow ${
+                    <span className={`text-[11.5px] truncate flex-grow text-left ${
                       targetDir === '/' ? 'text-portal-navy' : 'text-slate-700'
                     }`}>
                       Hauptverzeichnis (/)
@@ -908,7 +920,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       {targetDirectoryContents['/'] && targetDirectoryContents['/'].length > 0 ? (
                         targetDirectoryContents['/'].map((child) => renderTargetNode(child, 1))
                       ) : targetLoadingPaths['/'] ? null : (
-                        <div className="text-[10px] text-slate-400 italic py-2 pl-[42px]">
+                        <div className="text-[10px] text-slate-400 italic py-2 pl-[42px] text-left">
                           Keine Unterverzeichnisse
                         </div>
                       )}
@@ -925,10 +937,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   e.preventDefault();
                   handleCreateTargetFolder(targetDir);
                 }}
-                className="p-4 border-t border-portal-border bg-slate-50 flex items-center gap-3"
+                className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center gap-3 text-left animate-slide-up"
               >
-                <div className="flex-grow">
-                  <label className="block text-[9.5px] text-slate-500 uppercase font-bold tracking-wider mb-1">
+                <div className="flex-grow space-y-1">
+                  <label className="block text-[9px] font-bold font-mono text-slate-500 uppercase tracking-widest">
                     Neuer Ordnername in {targetDir}
                   </label>
                   <input
@@ -936,7 +948,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     value={newFolderName}
                     onChange={(e) => setNewFolderName(e.target.value)}
                     placeholder="z.B. Archiv"
-                    className="w-full bg-white border border-portal-border rounded-lg py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-portal-navy"
+                    className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-800 focus:outline-none focus:border-portal-navy"
                     autoFocus
                   />
                 </div>
@@ -944,7 +956,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   <button
                     type="submit"
                     disabled={!newFolderName.trim()}
-                    className="px-3.5 py-2 bg-portal-orange text-white text-xs font-semibold rounded-lg shadow-sm hover:bg-portal-orange-hover hover:scale-101 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    className="px-3.5 py-2 bg-gradient-to-r from-portal-orange to-orange-500 text-white text-xs font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     Erstellen
                   </button>
@@ -954,7 +966,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       setIsCreatingFolder(false);
                       setNewFolderName('');
                     }}
-                    className="px-3.5 py-2 border border-portal-border bg-white text-slate-700 text-xs font-semibold rounded-lg shadow-sm hover:bg-slate-50 transition-all cursor-pointer"
+                    className="px-3.5 py-2 border border-slate-200 bg-white text-slate-700 text-xs font-mono font-bold uppercase rounded-xl hover:bg-slate-50 transition-all cursor-pointer"
                   >
                     Abbrechen
                   </button>
@@ -963,16 +975,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             )}
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-portal-border flex items-center justify-between bg-slate-50">
-              <div className="text-left max-w-[200px] md:max-w-[240px]">
-                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Auswahl:</p>
+            <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="text-left max-w-[200px] md:max-w-[240px] space-y-0.5">
+                <p className="text-[9px] text-slate-400 font-bold font-mono uppercase tracking-wider">Auswahl:</p>
                 <p className="font-mono text-[11px] text-slate-800 truncate font-semibold">{targetDir}</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setIsCreatingFolder(true)}
-                  className="px-3 py-2 border border-portal-border bg-white text-slate-700 text-xs font-semibold rounded-lg shadow-sm hover:bg-slate-50 hover:text-portal-navy transition-all flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-2 bg-white border border-slate-200 text-slate-700 text-[11px] font-mono font-bold uppercase rounded-xl shadow-xs hover:bg-slate-50 hover:text-portal-navy transition-all flex items-center gap-1.5 cursor-pointer"
                   title="Neuen Ordner in diesem Verzeichnis erstellen"
                 >
                   <FolderPlus className="w-4 h-4 text-portal-navy" />
@@ -985,7 +997,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     setIsCreatingFolder(false);
                     setNewFolderName('');
                   }}
-                  className="px-4 py-2 bg-portal-orange text-white text-xs font-bold rounded-lg shadow-sm hover:bg-portal-orange-hover hover:scale-101 transition-all cursor-pointer"
+                  className="px-4 py-2 bg-gradient-to-r from-portal-orange to-orange-500 text-white text-[11px] font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all cursor-pointer"
                 >
                   Auswählen
                 </button>

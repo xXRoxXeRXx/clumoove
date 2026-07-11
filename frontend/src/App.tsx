@@ -236,56 +236,63 @@ function App() {
 
   if (isValidating) {
     return (
-      <div className="min-h-screen bg-portal-bg text-slate-800 flex flex-col items-center justify-center font-sans selection:bg-portal-orange selection:text-white">
-        <div className="flex flex-col items-center justify-center gap-4">
-          <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-portal-orange"></div>
-          <p className="text-xs italic text-slate-500 font-mono tracking-wider">// INITIALISIERE PORTAL...</p>
+      <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col items-center justify-center font-sans selection:bg-portal-orange selection:text-white">
+        <div className="flex flex-col items-center justify-center gap-6 p-8 glass-panel rounded-2xl shadow-portal border border-white/50 max-w-sm w-full mx-4 text-center animate-fade-in">
+          <div className="relative">
+            <div className="absolute inset-0 bg-portal-orange/20 blur-xl rounded-full animate-pulse-glow" />
+            <div className="relative p-4 bg-gradient-to-tr from-portal-navy to-portal-navy-light rounded-2xl text-white shadow-md animate-bounce">
+              <CloudLightning className="w-8 h-8 stroke-[2.5]" />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <h3 className="font-display font-extrabold text-lg text-portal-navy">Clumove Portal</h3>
+            <div className="flex items-center justify-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.3s]" />
+              <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.15s]" />
+              <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce" />
+            </div>
+            <p className="text-[10px] font-mono tracking-wider text-slate-400 uppercase mt-2">// INITIALISIERE PORTAL...</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-portal-bg text-slate-800 flex flex-col font-sans selection:bg-portal-orange selection:text-white relative pb-8">
+    <div className="min-h-screen bg-slate-50/50 text-slate-800 flex flex-col font-sans selection:bg-portal-orange selection:text-white relative pb-8">
       
-      {/* Deep-Navy Portal Header */}
-      <header className="bg-portal-navy text-white sticky top-0 z-50 shadow-md">
+      {/* Floating Glassmorphism Header */}
+      <header className="sticky top-0 z-50 glass-panel border-b border-slate-200/50 backdrop-blur-lg bg-white/75 shadow-sm transition-all duration-300">
         <div className="max-w-6xl mx-auto px-6 h-18 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {/* Clean logo badge with 8px rounded corners */}
             <div 
               onClick={() => step !== 'login' && setStep('history')}
-              className="p-2.5 bg-portal-orange rounded-lg text-white shadow-sm hover:bg-portal-orange-hover transition-colors cursor-pointer"
+              className="group w-10 h-10 flex items-center justify-center bg-gradient-to-tr from-portal-orange to-orange-500 rounded-xl text-white shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer hover:-translate-y-0.5"
             >
-              <CloudLightning className="w-5 h-5 stroke-[2.5]" />
+              <CloudLightning className="w-5 h-5 stroke-[2.5] group-hover:rotate-12 transition-transform duration-300" />
             </div>
             
-            <div className="flex flex-col">
-              <span className="font-display font-extrabold text-xl tracking-tight leading-none">
-                Clumove
-              </span>
-              <span className="text-[9px] font-mono tracking-wider text-slate-350 uppercase mt-1">
-                Migrations-Portal
-              </span>
-            </div>
+            <span className="font-display font-extrabold text-xl tracking-tight leading-none text-portal-navy select-none">
+              Clumove
+            </span>
           </div>
 
           {/* User Section in Header */}
           {user && (
-            <div className="flex items-center gap-4 text-xs font-mono">
-              <div className="flex items-center gap-2 border-r border-slate-700 pr-4 py-1">
-                <div className="w-6.5 h-6.5 bg-portal-orange/20 border border-portal-orange text-portal-orange rounded-full flex items-center justify-center font-bold">
-                  <UserIcon className="w-3.5 h-3.5" />
+            <div className="flex items-center gap-3.5 text-xs">
+              <div className="flex items-center gap-2.5 bg-slate-100/80 border border-slate-200/40 pl-2.5 pr-4 py-1.5 rounded-full shadow-xs">
+                <div className="w-7 h-7 bg-portal-navy text-white rounded-full flex items-center justify-center shadow-xs">
+                  <UserIcon className="w-4 h-4" />
                 </div>
-                <div className="flex flex-col text-left font-sans">
-                  <span className="font-bold text-white leading-tight">{user.display_name}</span>
-                  <span className="text-[9px] text-slate-400 leading-none mt-0.5">{user.email}</span>
+                <div className="flex flex-col text-left">
+                  <span className="font-bold text-slate-800 leading-tight">{user.display_name}</span>
+                  <span className="text-[9px] text-slate-500 font-mono leading-none mt-0.5">{user.email}</span>
                 </div>
               </div>
               
               <button
                 onClick={handleLogout}
-                className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-700 hover:border-slate-550 rounded-lg hover:bg-slate-800 transition-all font-semibold cursor-pointer text-slate-300 hover:text-white"
+                className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-full hover:border-slate-350 hover:bg-slate-50 transition-all font-mono font-bold text-[11px] cursor-pointer text-slate-650 hover:text-portal-navy shadow-xs hover:shadow-sm"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 <span>Abmelden</span>
@@ -296,7 +303,7 @@ function App() {
       </header>
 
       {/* Main Structural Body */}
-      <main className="flex-grow flex flex-col justify-center px-6 py-10 max-w-5xl w-full mx-auto relative z-10">
+      <main className="flex-grow flex flex-col justify-center px-6 py-8 max-w-5xl w-full mx-auto relative z-10 animate-slide-up">
         <div className="w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />
@@ -347,15 +354,15 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-portal-border py-8 mt-12 bg-white">
-        <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 text-[11px] leading-relaxed text-slate-500">
+      <footer className="border-t border-slate-200/50 py-8 mt-12 bg-white/70 backdrop-blur-md">
+        <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 text-[11px] leading-relaxed text-slate-400">
           <div>
-            <p className="font-bold text-portal-navy uppercase mb-1.5">// Clumove Migrations-Plattform</p>
-            <p>© 2026 Alle Rechte vorbehalten. Schnelle und sichere Transfers für Cloud-Infrastrukturen.</p>
+            <p className="font-bold text-portal-navy font-display uppercase tracking-wider mb-1.5">// Clumove Migrations-Plattform</p>
+            <p className="text-slate-500">© 2026 Alle Rechte vorbehalten. Schnelle und sichere Transfers für Cloud-Infrastrukturen.</p>
           </div>
           <div>
-            <p className="font-bold text-portal-navy uppercase mb-1.5">// Zero-Data-Retention-Puffer</p>
-            <p>Die Datenübertragung erfolgt verschlüsselt und flüchtig direkt über den Arbeitsspeicher des Gateways. Es findet keine dauerhafte Speicherung der Transferdaten statt.</p>
+            <p className="font-bold text-portal-navy font-display uppercase tracking-wider mb-1.5">// Zero-Data-Retention-Puffer</p>
+            <p className="text-slate-500">Die Datenübertragung erfolgt verschlüsselt und flüchtig direkt über den Arbeitsspeicher des Gateways. Es findet keine dauerhafte Speicherung der Transferdaten statt.</p>
           </div>
         </div>
       </footer>

@@ -234,143 +234,189 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setLoading(false);
     }
   };
+  const handleSourceProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3') => {
+    setSourceProvider(val);
+    if (val === 'dropbox' || val === 'google') {
+      setSourceUrl(`https://api.${val}.com`);
+      setSourceUser(val);
+      setSourcePass('');
+      setSourceOAuthUser('');
+    } else if (val === 'smb') {
+      setSourceUrl('');
+      setSourceUser('');
+      setSourcePass('');
+      setSourceSmbHost('');
+      setSourceSmbPort('445');
+      setSourceSmbShare('');
+      setSourceSmbDomain('');
+    } else if (val === 's3') {
+      setSourceUrl('');
+      setSourceUser('');
+      setSourcePass('');
+      setSourceS3Endpoint('');
+      setSourceS3Region('us-east-1');
+      setSourceS3Bucket('');
+      setSourceS3Insecure(false);
+    } else {
+      setSourceUrl('');
+      setSourceUser('');
+      setSourcePass('');
+    }
+  };
+
+  const handleTargetProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3') => {
+    setTargetProvider(val);
+    if (val === 'dropbox' || val === 'google') {
+      setTargetUrl(`https://api.${val}.com`);
+      setTargetUser(val);
+      setTargetPass('');
+      setTargetOAuthUser('');
+    } else if (val === 'smb') {
+      setTargetUrl('');
+      setTargetUser('');
+      setTargetPass('');
+      setTargetSmbHost('');
+      setTargetSmbPort('445');
+      setTargetSmbShare('');
+      setTargetSmbDomain('');
+    } else if (val === 's3') {
+      setTargetUrl('');
+      setTargetUser('');
+      setTargetPass('');
+      setTargetS3Endpoint('');
+      setTargetS3Region('us-east-1');
+      setTargetS3Bucket('');
+      setTargetS3Insecure(false);
+    } else {
+      setTargetUrl('');
+      setTargetUser('');
+      setTargetPass('');
+    }
+  };
+
+  const providerOptions: { id: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3'; name: string }[] = [
+    { id: 'nextcloud', name: 'Nextcloud' },
+    { id: 'webdav', name: 'WebDAV' },
+    { id: 'smb', name: 'SMB/CIFS' },
+    { id: 's3', name: 'S3' },
+    { id: 'dropbox', name: 'Dropbox' },
+    { id: 'google', name: 'Google' }
+  ];
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-2">
+    <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in">
       
-
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid md:grid-cols-2 gap-8">
           
-          {/* Source Host Card (White with Indigo Border indicator) */}
-          <div className="bg-white border border-portal-border hover:border-portal-navy/40 rounded-lg p-6 shadow-portal transition-all duration-200 group">
-            <div className="flex items-center gap-3 mb-6 border-b border-portal-border pb-4">
-              <div className="p-2.5 bg-slate-50 border border-portal-border text-portal-navy rounded-lg group-hover:bg-portal-navy/5 transition-colors">
+          {/* Source Host Card */}
+          <div className="glass-panel border border-white/50 rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+            
+            <div className="flex items-center gap-3.5 mb-6 border-b border-slate-100 pb-4.5">
+              <div className="p-2.5 bg-slate-100 text-portal-navy rounded-xl group-hover:bg-portal-orange/10 group-hover:text-portal-orange transition-colors duration-300">
                 <Server className="w-5 h-5" />
               </div>
-              <div>
-                <h2 className="font-display font-bold text-lg text-portal-navy">Quelle (Source)</h2>
-                <p className="text-xs text-slate-450">Verzeichnis mit den Quelldaten</p>
+              <div className="text-left">
+                <h2 className="font-display font-extrabold text-lg text-portal-navy leading-none">Quelle (Source)</h2>
+                <p className="text-[10px] font-mono text-slate-400 mt-1 uppercase tracking-wider">// VERZEICHNIS DER QUELLEDATEN</p>
               </div>
             </div>
 
-            <div className="space-y-4 text-xs">
+            <div className="space-y-5 text-xs text-left">
               <div>
-                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Anbieter (Provider)</label>
-                <select
-                  value={sourceProvider}
-                  onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
-                    setSourceProvider(val);
-                    if (val === 'dropbox' || val === 'google') {
-                      setSourceUrl(`https://api.${val}.com`);
-                      setSourceUser(val);
-                      setSourcePass('');
-                      setSourceOAuthUser('');
-                    } else if (val === 'smb') {
-                      setSourceUrl('');
-                      setSourceUser('');
-                      setSourcePass('');
-                      setSourceSmbHost('');
-                      setSourceSmbPort('445');
-                      setSourceSmbShare('');
-                      setSourceSmbDomain('');
-                    } else if (val === 's3') {
-                      setSourceUrl('');
-                      setSourceUser('');
-                      setSourcePass('');
-                      setSourceS3Endpoint('');
-                      setSourceS3Region('us-east-1');
-                      setSourceS3Bucket('');
-                      setSourceS3Insecure(false);
-                    } else {
-                      setSourceUrl('');
-                      setSourceUser('');
-                      setSourcePass('');
-                    }
-                  }}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                >
-                  <option value="nextcloud">Nextcloud (WebDAV)</option>
-                  <option value="webdav">Generischer WebDAV-Server</option>
-                  <option value="smb">SMB/CIFS Freigabe</option>
-                  <option value="s3">S3-kompatibler Speicher</option>
-                  <option value="dropbox">Dropbox (OAuth2)</option>
-                  <option value="google">Google (OAuth2)</option>
-                </select>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono mb-2">Anbieter (Provider)</label>
+                
+                {/* Visual Provider Pills */}
+                <div className="grid grid-cols-3 gap-2">
+                  {providerOptions.map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => handleSourceProviderSelect(opt.id)}
+                      className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                        sourceProvider === opt.id
+                          ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light border-portal-navy text-white shadow-xs'
+                          : 'bg-slate-50/50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`}
+                    >
+                      {opt.name}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {sourceProvider === 'smb' ? (
                 <>
                   <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2">
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Server Host / IP</label>
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Server Host / IP</label>
                       <input
                         type="text"
                         placeholder="192.168.1.10"
                         value={sourceSmbHost}
                         onChange={(e) => setSourceSmbHost(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Port</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Port</label>
                       <input
                         type="text"
                         placeholder="445"
                         value={sourceSmbPort}
                         onChange={(e) => setSourceSmbPort(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Freigabe-Name (Share)</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Freigabe-Name (Share)</label>
                       <input
                         type="text"
                         placeholder="projekte"
                         value={sourceSmbShare}
                         onChange={(e) => setSourceSmbShare(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Domain (Optional)</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Domain (Optional)</label>
                       <input
                         type="text"
                         placeholder="WORKGROUP"
                         value={sourceSmbDomain}
                         onChange={(e) => setSourceSmbDomain(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Benutzername</label>
                     <input
                       type="text"
                       placeholder="benutzername"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Kennwort / Passwort</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Kennwort / Passwort</label>
                     <input
                       type="password"
                       placeholder="passwort"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
                       required
                     />
                   </div>
@@ -378,61 +424,61 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : sourceProvider === 's3' ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Bucket Name</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Bucket Name</label>
                       <input
                         type="text"
                         placeholder="mein-bucket"
                         value={sourceS3Bucket}
                         onChange={(e) => setSourceS3Bucket(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Region</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Region</label>
                       <input
                         type="text"
                         placeholder="us-east-1"
                         value={sourceS3Region}
                         onChange={(e) => setSourceS3Region(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Custom Endpoint URL (Optional)</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Custom Endpoint URL (Optional)</label>
                     <input
                       type="url"
-                      placeholder="https://s3.eu-central-1.wasabisys.com oder http://127.0.0.1:9000 (HTTP erfordert lokale IP/localhost)"
+                      placeholder="https://s3.wasabisys.com oder http://localhost:9000"
                       value={sourceS3Endpoint}
                       onChange={(e) => setSourceS3Endpoint(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Access Key</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Access Key</label>
                     <input
                       type="text"
                       placeholder="AKIAIOSFODNN7EXAMPLE"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Secret Key</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Secret Key</label>
                     <input
                       type="password"
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
                       required
                     />
                   </div>
@@ -443,7 +489,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       id="sourceS3Insecure"
                       checked={sourceS3Insecure}
                       onChange={(e) => setSourceS3Insecure(e.target.checked)}
-                      className="rounded border-portal-border text-portal-orange focus:ring-portal-orange"
+                      className="rounded border-slate-350 text-portal-orange focus:ring-portal-orange"
                     />
                     <label htmlFor="sourceS3Insecure" className="text-slate-650 cursor-pointer font-sans select-none">
                       HTTP erlauben (nur für lokale/MinIO Entwicklungsendpunkte)
@@ -452,8 +498,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
                 <>
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
                       {sourceProvider === 'nextcloud' ? 'Nextcloud WebDAV-URL' : 'WebDAV-URL'}
                     </label>
                     <input
@@ -461,30 +507,30 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={sourceProvider === 'nextcloud' ? 'https://nextcloud.source-domain.de' : 'https://webdav.domain.de/dav'}
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Benutzername</label>
                     <input
                       type="text"
                       placeholder="benutzername"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
+                  <div className="space-y-1">
                     <div className="flex justify-between items-center mb-1.5">
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">App-Passwort</label>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">App-Passwort</label>
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
-                        className="text-[10.5px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                        className="text-[10px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
                       >
                         <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
                       </button>
@@ -494,20 +540,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="•••• •••• •••• ••••"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
                 </>
               ) : (
-                <div className="py-2">
-                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <div className="py-2 space-y-1">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono mb-2">
                     {sourceProvider === 'google' ? 'Google Verbindung' : 'Dropbox Verbindung'}
                   </label>
                   {sourcePass ? (
-                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-4 flex items-center justify-between shadow-sm">
+                    <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
-                        <p className="font-bold text-[10.5px] uppercase tracking-wider text-emerald-650">Verbunden als</p>
+                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">Verbunden als</p>
                         <p className="text-xs font-bold text-slate-700 truncate">{sourceOAuthUser || (sourceProvider === 'google' ? 'Google Account' : 'Dropbox Account')}</p>
                       </div>
                       <button
@@ -516,7 +562,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                           setSourcePass('');
                           setSourceOAuthUser('');
                         }}
-                        className="px-3.5 py-1.5 bg-white border border-emerald-250 text-emerald-700 text-xs font-bold rounded shadow-sm hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
+                        className="px-3 py-1.5 bg-white border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
                       >
                         Trennen
                       </button>
@@ -525,7 +571,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <button
                       type="button"
                       onClick={() => openOAuthPopup(sourceProvider, 'source')}
-                      className="w-full py-3.5 px-4 bg-portal-navy text-white font-display font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm hover:bg-portal-navy/90 hover:scale-101 active:scale-99 transition-all cursor-pointer flex items-center justify-center gap-2"
+                      className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
                       <RefreshCw className="w-4 h-4" /> Mit {sourceProvider === 'google' ? 'Google' : 'Dropbox'} verbinden
                     </button>
@@ -536,134 +582,113 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           </div>
 
           {/* Target Host Card */}
-          <div className="bg-white border border-portal-border hover:border-portal-navy/40 rounded-lg p-6 shadow-portal transition-all duration-200 group">
-            <div className="flex items-center gap-3 mb-6 border-b border-portal-border pb-4">
-              <div className="p-2.5 bg-slate-50 border border-portal-border text-portal-navy rounded-lg group-hover:bg-portal-navy/5 transition-colors">
+          <div className="glass-panel border border-white/50 rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-navy to-portal-navy-light" />
+            
+            <div className="flex items-center gap-3.5 mb-6 border-b border-slate-100 pb-4.5">
+              <div className="p-2.5 bg-slate-100 text-portal-navy rounded-xl group-hover:bg-portal-navy/10 group-hover:text-portal-navy-light transition-colors duration-300">
                 <Server className="w-5 h-5" />
               </div>
-              <div>
-                <h2 className="font-display font-bold text-lg text-portal-navy">Ziel (Target)</h2>
-                <p className="text-xs text-slate-455">Zielverzeichnis für die Migration</p>
+              <div className="text-left">
+                <h2 className="font-display font-extrabold text-lg text-portal-navy leading-none">Ziel (Target)</h2>
+                <p className="text-[10px] font-mono text-slate-400 mt-1 uppercase tracking-wider">// ZIELVERZEICHNIS FÜR DIE MIGRATION</p>
               </div>
             </div>
 
-            <div className="space-y-4 text-xs">
+            <div className="space-y-5 text-xs text-left">
               <div>
-                <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Anbieter (Provider)</label>
-                <select
-                  value={targetProvider}
-                  onChange={(e) => {
-                    const val = e.target.value as 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
-                    setTargetProvider(val);
-                    if (val === 'dropbox' || val === 'google') {
-                      setTargetUrl(`https://api.${val}.com`);
-                      setTargetUser(val);
-                      setTargetPass('');
-                      setTargetOAuthUser('');
-                    } else if (val === 'smb') {
-                      setTargetUrl('');
-                      setTargetUser('');
-                      setTargetPass('');
-                      setTargetSmbHost('');
-                      setTargetSmbPort('445');
-                      setTargetSmbShare('');
-                      setTargetSmbDomain('');
-                    } else if (val === 's3') {
-                      setTargetUrl('');
-                      setTargetUser('');
-                      setTargetPass('');
-                      setTargetS3Endpoint('');
-                      setTargetS3Region('us-east-1');
-                      setTargetS3Bucket('');
-                      setTargetS3Insecure(false);
-                    } else {
-                      setTargetUrl('');
-                      setTargetUser('');
-                      setTargetPass('');
-                    }
-                  }}
-                  className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
-                >
-                  <option value="nextcloud">Nextcloud (WebDAV)</option>
-                  <option value="webdav">Generischer WebDAV-Server</option>
-                  <option value="smb">SMB/CIFS Freigabe</option>
-                  <option value="s3">S3-kompatibler Speicher</option>
-                  <option value="dropbox">Dropbox (OAuth2)</option>
-                  <option value="google">Google (OAuth2)</option>
-                </select>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono mb-2">Anbieter (Provider)</label>
+                
+                {/* Visual Provider Pills */}
+                <div className="grid grid-cols-3 gap-2">
+                  {providerOptions.map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => handleTargetProviderSelect(opt.id)}
+                      className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                        targetProvider === opt.id
+                          ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light border-portal-navy text-white shadow-xs'
+                          : 'bg-slate-50/50 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                      }`}
+                    >
+                      {opt.name}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {targetProvider === 'smb' ? (
                 <>
                   <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2">
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Server Host / IP</label>
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Server Host / IP</label>
                       <input
                         type="text"
                         placeholder="192.168.1.10"
                         value={targetSmbHost}
                         onChange={(e) => setTargetSmbHost(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Port</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Port</label>
                       <input
                         type="text"
                         placeholder="445"
                         value={targetSmbPort}
                         onChange={(e) => setTargetSmbPort(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Freigabe-Name (Share)</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Freigabe-Name (Share)</label>
                       <input
                         type="text"
                         placeholder="projekte"
                         value={targetSmbShare}
                         onChange={(e) => setTargetSmbShare(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Domain (Optional)</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Domain (Optional)</label>
                       <input
                         type="text"
                         placeholder="WORKGROUP"
                         value={targetSmbDomain}
                         onChange={(e) => setTargetSmbDomain(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Benutzername</label>
                     <input
                       type="text"
                       placeholder="benutzername"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Kennwort / Passwort</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Kennwort / Passwort</label>
                     <input
                       type="password"
                       placeholder="passwort"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
                       required
                     />
                   </div>
@@ -671,61 +696,61 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : targetProvider === 's3' ? (
                 <>
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Bucket Name</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Bucket Name</label>
                       <input
                         type="text"
                         placeholder="mein-bucket"
                         value={targetS3Bucket}
                         onChange={(e) => setTargetS3Bucket(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
-                    <div>
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Region</label>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Region</label>
                       <input
                         type="text"
                         placeholder="us-east-1"
                         value={targetS3Region}
                         onChange={(e) => setTargetS3Region(e.target.value)}
-                        className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                         required
                       />
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Custom Endpoint URL (Optional)</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Custom Endpoint URL (Optional)</label>
                     <input
                       type="url"
-                      placeholder="https://s3.eu-central-1.wasabisys.com oder http://127.0.0.1:9000 (HTTP erfordert lokale IP/localhost)"
+                      placeholder="https://s3.wasabisys.com oder http://localhost:9000"
                       value={targetS3Endpoint}
                       onChange={(e) => setTargetS3Endpoint(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Access Key</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Access Key</label>
                     <input
                       type="text"
                       placeholder="AKIAIOSFODNN7EXAMPLE"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Secret Key</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Secret Key</label>
                     <input
                       type="password"
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
                       required
                     />
                   </div>
@@ -736,7 +761,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       id="targetS3Insecure"
                       checked={targetS3Insecure}
                       onChange={(e) => setTargetS3Insecure(e.target.checked)}
-                      className="rounded border-portal-border text-portal-orange focus:ring-portal-orange"
+                      className="rounded border-slate-350 text-portal-orange focus:ring-portal-orange"
                     />
                     <label htmlFor="targetS3Insecure" className="text-slate-650 cursor-pointer font-sans select-none">
                       HTTP erlauben (nur für lokale/MinIO Entwicklungsendpunkte)
@@ -745,8 +770,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
                 <>
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
                       {targetProvider === 'nextcloud' ? 'Nextcloud WebDAV-URL' : 'WebDAV-URL'}
                     </label>
                     <input
@@ -754,30 +779,30 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={targetProvider === 'nextcloud' ? 'https://nextcloud.target-domain.de' : 'https://webdav.domain.de/dav'}
                       value={targetUrl}
                       onChange={(e) => setTargetUrl(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
-                    <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-1.5">Benutzername</label>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Benutzername</label>
                     <input
                       type="text"
                       placeholder="benutzername"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
 
-                  <div>
+                  <div className="space-y-1">
                     <div className="flex justify-between items-center mb-1.5">
-                      <label className="block font-display font-bold text-slate-500 uppercase tracking-wider">App-Passwort</label>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">App-Passwort</label>
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
-                        className="text-[10.5px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer"
+                        className="text-[10px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
                       >
                         <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
                       </button>
@@ -787,20 +812,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="•••• •••• •••• ••••"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-white border border-portal-border rounded-lg py-3 px-4 text-slate-800 placeholder-slate-400 focus:outline-none focus:border-portal-orange/60 focus:ring-4 focus:ring-portal-orange/10 transition-all font-sans"
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                       required
                     />
                   </div>
                 </>
               ) : (
-                <div className="py-2">
-                  <label className="block font-display font-bold text-slate-500 uppercase tracking-wider mb-2">
+                <div className="py-2 space-y-1">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono mb-2">
                     {targetProvider === 'google' ? 'Google Verbindung' : 'Dropbox Verbindung'}
                   </label>
                   {targetPass ? (
-                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-4 flex items-center justify-between shadow-sm">
+                    <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
-                        <p className="font-bold text-[10.5px] uppercase tracking-wider text-emerald-650">Verbunden als</p>
+                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">Verbunden als</p>
                         <p className="text-xs font-bold text-slate-700 truncate">{targetOAuthUser || (targetProvider === 'google' ? 'Google Account' : 'Dropbox Account')}</p>
                       </div>
                       <button
@@ -809,7 +834,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                           setTargetPass('');
                           setTargetOAuthUser('');
                         }}
-                        className="px-3.5 py-1.5 bg-white border border-emerald-250 text-emerald-700 text-xs font-bold rounded shadow-sm hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
+                        className="px-3 py-1.5 bg-white border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
                       >
                         Trennen
                       </button>
@@ -818,7 +843,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <button
                       type="button"
                       onClick={() => openOAuthPopup(targetProvider, 'target')}
-                      className="w-full py-3.5 px-4 bg-portal-navy text-white font-display font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm hover:bg-portal-navy/90 hover:scale-101 active:scale-99 transition-all cursor-pointer flex items-center justify-center gap-2"
+                      className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
                       <RefreshCw className="w-4 h-4" /> Mit {targetProvider === 'google' ? 'Google' : 'Dropbox'} verbinden
                     </button>
@@ -831,25 +856,26 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
         {/* Helpful Info Guide Box */}
         {showHelp && (
-          <div className="bg-slate-50 border border-portal-border p-6 rounded-lg max-w-2xl mx-auto shadow-sm animate-pulse text-xs leading-relaxed text-slate-650">
-            <h4 className="font-display font-bold text-sm text-portal-navy mb-3">
-              💡 Anleitung zur App-Passwort-Erstellung in deiner Nextcloud:
+          <div className="bg-slate-100/50 border border-slate-200 p-6 rounded-2xl max-w-2xl mx-auto shadow-xs text-xs leading-relaxed text-slate-650 text-left animate-slide-up">
+            <h4 className="font-display font-extrabold text-sm text-portal-navy mb-3 flex items-center gap-1.5">
+              <HelpCircle className="w-4 h-4 text-portal-orange shrink-0" />
+              <span>Anleitung zur App-Passwort-Erstellung (Nextcloud / WebDAV)</span>
             </h4>
             <ol className="list-decimal list-inside space-y-2 text-slate-600 pl-1">
               <li>Melde dich in deiner Nextcloud über den Webbrowser an.</li>
               <li>Klicke oben rechts auf dein Profilbild und wähle <strong className="text-slate-800">Einstellungen</strong>.</li>
               <li>Klicke im linken Menü auf <strong className="text-slate-800">Sicherheit</strong>.</li>
               <li>Scrolle ganz nach unten zu <strong className="text-slate-800">Geräte & Clients</strong>.</li>
-              <li>Gib links einen App-Namen ein (z. B. <code className="bg-slate-200/50 border border-slate-300 px-1.5 py-0.5 rounded font-mono text-[10px] font-bold">Clumove</code>) und klicke auf <strong className="text-slate-800">Neues App-Passwort erstellen</strong>.</li>
+              <li>Gib links einen App-Namen ein (z. B. <code className="bg-slate-250 border border-slate-300 px-1.5 py-0.5 rounded font-mono text-[10px] font-bold">Clumove</code>) und klicke auf <strong className="text-slate-800">Neues App-Passwort erstellen</strong>.</li>
               <li>Kopiere das generierte Passwort und füge es oben ein (dein Hauptpasswort funktioniert oft nicht!).</li>
             </ol>
           </div>
         )}
 
         {error && (
-          <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg flex items-start gap-3 max-w-xl mx-auto">
+          <div className="p-4 bg-rose-50/85 border border-rose-250 rounded-2xl flex items-start gap-3 max-w-xl mx-auto text-left animate-fade-in">
             <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-            <div className="text-xs font-semibold text-rose-700 leading-normal">{error}</div>
+            <div className="text-xs font-semibold text-rose-800 leading-normal">{error}</div>
           </div>
         )}
 
@@ -858,17 +884,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           <button
             type="submit"
             disabled={loading}
-            className="flex items-center gap-2.5 px-10 py-4 bg-portal-orange text-white font-display text-base font-bold rounded-lg shadow-sm hover:bg-portal-orange-hover hover:scale-101 active:scale-99 transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? (
               <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
+                <RefreshCw className="w-4 h-4 animate-spin" />
                 <span>Verbindung wird geprüft...</span>
               </>
             ) : (
               <>
                 <span>Instanzen verbinden</span>
-                <ArrowRight className="w-5 h-5 stroke-[2.5]" />
+                <ArrowRight className="w-4 h-4 stroke-[2.5]" />
               </>
             )}
           </button>

@@ -64,28 +64,33 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   };
 
   return (
-    <div className="max-w-md w-full mx-auto my-10 px-4">
-      {/* Container Card with Premium Glassmorphism and Drop Navy Border */}
-      <div className="bg-white/80 backdrop-blur-md rounded-2xl border border-portal-border p-8 shadow-portal hover:shadow-portal-hover transition-all duration-300">
+    <div className="max-w-md w-full mx-auto my-8 px-4 relative">
+      {/* Ambient background glow */}
+      <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Container Card with Premium Glassmorphism */}
+      <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-white/50 transition-all duration-500 overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
         
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
-          <div className="p-3 bg-portal-orange rounded-xl text-white shadow-sm mb-4">
-            <CloudLightning className="w-6 h-6 stroke-[2.5] animate-pulse" />
+          <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
+            <CloudLightning className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h2 className="font-display font-extrabold text-2xl text-portal-navy tracking-tight">
             {isLogin ? 'Willkommen zurück' : 'Account erstellen'}
           </h2>
-          <p className="text-xs text-slate-500 font-mono tracking-wider uppercase mt-1">
-            {isLogin ? '// CLUMOVE SAAS PORTAL' : '// REGISTRIERUNG'}
+          <p className="text-[9px] text-slate-400 font-mono tracking-widest uppercase mt-1">
+            {isLogin ? '// CLUMOVE SAAS PORTAL' : '// ACCOUNT REGISTRIERUNG'}
           </p>
         </div>
 
         {error && (
-          <div className={`p-3.5 rounded-lg border text-xs mb-6 text-center font-mono leading-relaxed ${
+          <div className={`p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in ${
             error.includes('erfolgreich')
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-              : 'bg-rose-50 border-rose-150 text-rose-800'
+              ? 'bg-emerald-50/80 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50/80 border-rose-250 text-rose-800'
           }`}>
             {error}
           </div>
@@ -94,12 +99,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* Display Name - only for registration */}
           {!isLogin && (
-            <div>
-              <label className="block text-xs font-bold text-portal-navy uppercase tracking-wider mb-2 font-mono">
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
                 Name
               </label>
-              <div className="relative">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400">
+              <div className="relative group">
+                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 group-focus-within:text-portal-orange transition-colors">
                   <User className="w-4 h-4" />
                 </span>
                 <input
@@ -108,19 +113,19 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   placeholder="Max Mustermann"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50/50 border border-portal-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange focus:bg-white transition-all font-sans"
+                  className="w-full pl-10 pr-4 py-2.5 bg-white/50 border border-slate-200/80 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
                 />
               </div>
             </div>
           )}
 
           {/* Email input */}
-          <div>
-            <label className="block text-xs font-bold text-portal-navy uppercase tracking-wider mb-2 font-mono">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
               E-Mail Adresse
             </label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400">
+            <div className="relative group">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 group-focus-within:text-portal-orange transition-colors">
                 <Mail className="w-4 h-4" />
               </span>
               <input
@@ -130,18 +135,18 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder="name@beispiel.de"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-slate-50/50 border border-portal-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange focus:bg-white transition-all font-sans"
+                className="w-full pl-10 pr-4 py-2.5 bg-white/50 border border-slate-200/80 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
               />
             </div>
           </div>
 
           {/* Password input */}
-          <div>
-            <label className="block text-xs font-bold text-portal-navy uppercase tracking-wider mb-2 font-mono">
+          <div className="space-y-1.5">
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
               Passwort
             </label>
-            <div className="relative">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400">
+            <div className="relative group">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 group-focus-within:text-portal-orange transition-colors">
                 <Lock className="w-4 h-4" />
               </span>
               <input
@@ -151,12 +156,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-10 py-2.5 bg-slate-50/50 border border-portal-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange focus:bg-white transition-all font-sans font-mono"
+                className="w-full pl-10 pr-10 py-2.5 bg-white/50 border border-slate-200/80 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 transition-colors"
+                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-450 hover:text-slate-600 transition-colors"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -167,7 +172,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-portal-orange text-white hover:bg-portal-orange-hover py-3 px-4 rounded-xl text-sm font-bold shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono"
+            className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
@@ -183,7 +188,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         </form>
 
         {/* Toggle between login and registration */}
-        <div className="mt-6 text-center text-xs font-mono text-slate-500 border-t border-portal-border/60 pt-5">
+        <div className="mt-6 text-center text-xs font-mono text-slate-450 border-t border-slate-200/40 pt-5">
           {isLogin ? (
             <p>
               Noch keinen Account?{' '}
@@ -193,7 +198,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   setIsLogin(false);
                   setError('');
                 }}
-                className="text-portal-orange font-bold hover:underline transition-all"
+                className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
               >
                 Registrieren
               </button>
@@ -207,7 +212,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   setIsLogin(true);
                   setError('');
                 }}
-                className="text-portal-orange font-bold hover:underline transition-all"
+                className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
               >
                 Anmelden
               </button>
