@@ -61,23 +61,23 @@ const renderResourceSection = (title: string, stats: ResourceStats | undefined) 
   if (!stats || stats.total === 0) return null;
   const success = Math.max(0, stats.processed - stats.failed - stats.skipped);
   return (
-    <div className="w-full mt-4 first:mt-0 first:border-t-0 first:pt-0 border-t border-slate-100 pt-4 text-slate-500 text-left">
-      <h5 className="font-bold text-slate-700 mb-2 uppercase tracking-wider text-[10px]">{title}</h5>
-      <div className="flex justify-between items-center py-1 border-b border-slate-100">
+    <div className="w-full mt-4 first:mt-0 first:border-t-0 first:pt-0 border-t border-[var(--color-border-light)] pt-4 text-[var(--color-text-muted)] text-left">
+      <h5 className="font-bold text-[var(--color-text-secondary)] mb-2 uppercase tracking-wider text-[10px]">{title}</h5>
+      <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
         <span>Gesamt:</span>
-        <span className="font-bold text-slate-800 font-mono">{stats.total}</span>
+        <span className="font-bold text-[var(--color-text-primary)] font-mono">{stats.total}</span>
       </div>
-      <div className="flex justify-between items-center py-1 border-b border-slate-100">
+      <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
         <span>Übertragen:</span>
         <span className="font-bold text-emerald-600 font-mono">{success}</span>
       </div>
-      <div className="flex justify-between items-center py-1 border-b border-slate-100">
+      <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
         <span>Übersprungen:</span>
-        <span className="font-bold text-slate-800 font-mono">{stats.skipped}</span>
+        <span className="font-bold text-[var(--color-text-primary)] font-mono">{stats.skipped}</span>
       </div>
       <div className="flex justify-between items-center py-1">
         <span>Fehlgeschlagen:</span>
-        <span className={`font-bold font-mono ${stats.failed > 0 ? 'text-rose-600' : 'text-slate-650'}`}>
+        <span className={`font-bold font-mono ${stats.failed > 0 ? 'text-rose-600' : 'text-[var(--color-text-secondary)]'}`}>
           {stats.failed}
         </span>
       </div>
@@ -354,8 +354,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
         <AlertTriangle className="w-10 h-10 text-amber-500" />
-        <p className="font-sans text-sm font-semibold text-slate-700">Server nicht erreichbar</p>
-        <p className="font-sans text-xs text-slate-500 text-center max-w-sm">
+        <p className="font-sans text-sm font-semibold text-[var(--color-text-secondary)]">Server nicht erreichbar</p>
+        <p className="font-sans text-xs text-[var(--color-text-muted)] text-center max-w-sm">
           Die Verbindung zum Migrations-Server konnte nicht hergestellt werden.
           Bitte stelle sicher, dass der Server läuft, und lade die Seite neu.
         </p>
@@ -372,8 +372,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   if (!data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <RefreshCw className="w-10 h-10 text-portal-navy animate-spin" />
-        <p className="font-sans text-xs italic text-slate-500">// INITIALISIERE PROZESS-MONITOR</p>
+        <RefreshCw className="w-10 h-10 text-[var(--color-portal-navy-themed)] animate-spin" />
+        <p className="font-sans text-xs italic text-[var(--color-text-muted)]">// INITIALISIERE PROZESS-MONITOR</p>
       </div>
     );
   }
@@ -389,23 +389,23 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in text-left">
       
       {/* Privacy-First Bookmarkable Direct Link Card */}
-      <div className="mb-6 p-5 glass-panel border border-white/50 rounded-3xl shadow-portal flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="mb-6 p-5 glass-panel border border-[var(--color-glass-border)] rounded-3xl shadow-portal flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-start md:items-center gap-3.5">
           <div className="p-2.5 bg-orange-50 text-portal-orange rounded-xl shrink-0">
             <Link className="w-4 h-4" />
           </div>
           <div className="flex flex-col text-left">
-            <span className="text-[10px] font-bold text-portal-navy uppercase tracking-widest font-mono">Direktlink zu dieser Migration</span>
-            <span className="text-[11px] text-slate-450 mt-0.5">Speichere diesen Link als Lesezeichen, um den Fortschritt später wieder aufzurufen.</span>
+            <span className="text-[10px] font-bold text-[var(--color-portal-navy-themed)] uppercase tracking-widest font-mono">Direktlink zu dieser Migration</span>
+            <span className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Speichere diesen Link als Lesezeichen, um den Fortschritt später wieder aufzurufen.</span>
           </div>
         </div>
-        <div className="flex items-center gap-2 bg-slate-100/80 border border-slate-200/40 rounded-2xl px-3 py-2 shrink-0 max-w-full overflow-hidden shadow-inner">
-          <span className="font-mono text-[10.5px] text-slate-650 truncate select-all pr-1" title={directLink}>
+        <div className="flex items-center gap-2 bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)] rounded-2xl px-3 py-2 shrink-0 max-w-full overflow-hidden shadow-inner">
+          <span className="font-mono text-[10.5px] text-[var(--color-text-secondary)] truncate select-all pr-1" title={directLink}>
             {directLink}
           </span>
           <button
             onClick={handleCopyLink}
-            className="p-1.5 bg-white hover:bg-slate-200 rounded-lg text-slate-500 hover:text-slate-800 border border-slate-200 transition-colors shrink-0 cursor-pointer"
+            className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-border)] rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] border border-[var(--color-border)] transition-colors shrink-0 cursor-pointer"
             title="Link kopieren"
           >
             {copied ? (
@@ -429,9 +429,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       {data.status === 'PAUSED_CONNECTION_LOSS' && (
         <div className="mb-6 p-5 border border-amber-250 bg-amber-50/70 backdrop-blur-md rounded-2xl flex items-start gap-4 animate-pulse-glow">
           <AlertTriangle className="w-6 h-6 shrink-0 text-amber-600 mt-0.5" />
-          <div className="text-xs leading-relaxed text-slate-700 text-left">
+          <div className="text-xs leading-relaxed text-[var(--color-text-secondary)] text-left">
             <h4 className="font-display font-extrabold text-amber-900 uppercase tracking-wide">Verbindungsabbruch zur Instanz</h4>
-            <p className="text-slate-600 mt-1.5 leading-relaxed">
+            <p className="text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
               Eine Instanz antwortet nicht. Das System pausiert temporär und prüft die Erreichbarkeit selbstständig alle 60 Sekunden. Sobald die Server wieder antworten, wird der Transfer exakt am Abbruchpunkt fortgesetzt.
             </p>
           </div>
@@ -445,18 +445,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         <div className="md:col-span-2 space-y-8">
           
           {/* Main metric card */}
-          <div className="glass-panel border border-white/50 p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
+          <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
             
-            <div className="flex items-end justify-between mb-6 border-b border-slate-100 pb-4.5">
+            <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div>
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">Fortschritt</span>
-                <h3 className="font-display font-extrabold text-5xl text-portal-navy mt-1.5 leading-none">
+                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Fortschritt</span>
+                <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
                   {byteProgressPercent}%
                 </h3>
               </div>
               <div className="text-right flex flex-col items-end">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-mono">Übertragungsrate</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Übertragungsrate</span>
                 <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
                   {formatSize(speed)}/s
                 </p>
@@ -464,7 +464,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             </div>
 
             {/* Glowing Rounded Progress Bar */}
-            <div className="w-full bg-slate-100 border border-slate-200/50 h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
+            <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
               <div
                 className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
                 style={{ width: `${byteProgressPercent}%` }}
@@ -473,24 +473,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-slate-450 uppercase tracking-wider">
+            <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
               <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-portal-navy" />
-                <span>Übertragen: <strong className="text-slate-800">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
+                <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                <span>Übertragen: <strong className="text-[var(--color-text-primary)]">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
               </div>
               <div className="flex items-center gap-2 justify-end">
-                <Clock className="w-4 h-4 text-portal-navy" />
-                <span>Restzeit: <strong className="text-slate-850">{eta}</strong></span>
+                <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                <span>Restzeit: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
               </div>
             </div>
           </div>
 
           {/* Active Transfers Card */}
           {data.status === 'RUNNING' && data.active_files && data.active_files.length > 0 && (
-            <div className="glass-panel border border-white/50 p-5 shadow-portal rounded-3xl flex flex-col">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-100">
+            <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
+              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
                 <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
-                <h4 className="font-mono font-bold text-slate-450 text-[10px] uppercase tracking-widest text-left">
+                <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
                   Aktive Übertragungen ({data.active_files.length} von {data.threads || 4} Threads)
                 </h4>
               </div>
@@ -498,7 +498,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 {data.active_files.map((file, i) => {
                   const fileName = file.split('/').pop() || file;
                   return (
-                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-slate-50 border border-slate-200/50 rounded-xl font-mono text-slate-650 min-w-0">
+                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
                       <span className="truncate pr-4" title={file}>{fileName}</span>
                       <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">Läuft...</span>
                     </div>
@@ -511,8 +511,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
         {/* Status card & Sidebar Column */}
         <div className="space-y-6">
-          <div className="glass-panel border border-white/50 p-6 shadow-portal rounded-3xl flex flex-col items-center text-center">
-            <span className="text-[10px] font-bold text-slate-450 uppercase tracking-widest font-mono mb-4">STATUS</span>
+          <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl flex flex-col items-center text-center">
+            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-4">STATUS</span>
             
             {/* Status Stamp capsule */}
             {data.status === 'COMPLETED' ? (
@@ -532,12 +532,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 ABGEBROCHEN
               </div>
             ) : (
-              <div className="bg-blue-50 text-portal-navy border border-blue-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
+              <div className="bg-blue-50 text-[var(--color-portal-navy-themed)] border border-blue-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
                 ÜBERTRAGUNG
               </div>
             )}
 
-            <h4 className="font-mono font-bold text-slate-500 text-[10px] tracking-wider uppercase mt-1">
+            <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] tracking-wider uppercase mt-1">
               Job: {data.status}
             </h4>
 
@@ -547,7 +547,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </p>
             )}
 
-            <div className="w-full mt-6 space-y-2 font-sans text-xs border-t border-slate-100 pt-5 text-slate-500">
+            <div className="w-full mt-6 space-y-2 font-sans text-xs border-t border-[var(--color-border-light)] pt-5 text-[var(--color-text-muted)]">
               {data.resource_stats ? (
                 <>
                   {renderResourceSection("Dateien", data.resource_stats.files)}
@@ -556,21 +556,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 </>
               ) : (
                 <>
-                  <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                  <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
                     <span>Dateien gesamt:</span>
-                    <span className="font-bold text-slate-800 font-mono">{data.total_files}</span>
+                    <span className="font-bold text-[var(--color-text-primary)] font-mono">{data.total_files}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                  <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
                     <span>Übertragen:</span>
                     <span className="font-bold text-emerald-600 font-mono">{successFiles}</span>
                   </div>
-                  <div className="flex justify-between items-center py-1.5 border-b border-slate-100">
+                  <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
                     <span>Übersprungen:</span>
-                    <span className="font-bold text-slate-800 font-mono">{data.skipped_files}</span>
+                    <span className="font-bold text-[var(--color-text-primary)] font-mono">{data.skipped_files}</span>
                   </div>
                   <div className="flex justify-between items-center py-1.5">
                     <span>Fehlgeschlagen:</span>
-                    <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-slate-500'}`}>
+                    <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-[var(--color-text-muted)]'}`}>
                       {data.failed_files}
                     </span>
                   </div>
@@ -585,7 +585,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             {data.failed_files > 0 && (
               <button
                 onClick={handleDownloadReport}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-white border border-slate-200 rounded-2xl shadow-xs text-slate-700 hover:bg-slate-50 hover:border-slate-350 transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer"
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl shadow-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:border-[var(--color-border)] transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer"
               >
                 <Download className="w-4 h-4 text-portal-orange" />
                 <span>Fehlerbericht (.CSV)</span>
@@ -613,7 +613,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('pause')}
                 disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-white border border-slate-250 rounded-2xl shadow-xs text-slate-750 hover:bg-slate-50 hover:border-slate-350 transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
+                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl shadow-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:border-[var(--color-border)] transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
               >
                 {controlLoading === 'pause' ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" /> : <Pause className="w-4 h-4 text-amber-500" />}
                 <span>Pausieren</span>
@@ -635,7 +635,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('cancel')}
                 disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-white border border-rose-200 rounded-2xl shadow-xs text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50 mt-2"
+                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[var(--color-bg-secondary)] border border-rose-200 rounded-2xl shadow-xs text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50 mt-2"
               >
                 {controlLoading === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
                 <span>Abbrechen</span>

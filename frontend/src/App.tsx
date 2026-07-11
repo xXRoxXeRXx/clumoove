@@ -6,6 +6,7 @@ import { AuthForm } from './components/AuthForm';
 import { MigrationsDashboard } from './components/MigrationsDashboard';
 import { SettingsPage } from './components/SettingsPage';
 import { CloudLightning, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
+import { ThemeProvider } from './contexts/ThemeContext';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings';
 
@@ -254,8 +255,8 @@ function App() {
 
   if (isValidating) {
     return (
-      <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col items-center justify-center font-sans selection:bg-portal-orange selection:text-white">
-        <div className="flex flex-col items-center justify-center gap-6 p-8 glass-panel rounded-2xl shadow-portal border border-white/50 max-w-sm w-full mx-4 text-center animate-fade-in">
+      <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col items-center justify-center font-sans selection:bg-portal-orange selection:text-white">
+        <div className="flex flex-col items-center justify-center gap-6 p-8 glass-panel rounded-2xl shadow-portal border border-[var(--color-glass-border)] max-w-sm w-full mx-4 text-center animate-fade-in">
           <div className="relative">
             <div className="absolute inset-0 bg-portal-orange/20 blur-xl rounded-full animate-pulse-glow" />
             <div className="relative p-4 bg-gradient-to-tr from-portal-navy to-portal-navy-light rounded-2xl text-white shadow-md animate-bounce">
@@ -263,13 +264,13 @@ function App() {
             </div>
           </div>
           <div className="space-y-2">
-            <h3 className="font-display font-extrabold text-lg text-portal-navy">Clumove Portal</h3>
+            <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)]">Clumove Portal</h3>
             <div className="flex items-center justify-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.3s]" />
               <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.15s]" />
               <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce" />
             </div>
-            <p className="text-[10px] font-mono tracking-wider text-slate-400 uppercase mt-2">// INITIALISIERE PORTAL...</p>
+            <p className="text-[10px] font-mono tracking-wider text-[var(--color-text-muted)] uppercase mt-2">// INITIALISIERE PORTAL...</p>
           </div>
         </div>
       </div>
@@ -277,10 +278,10 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/50 text-slate-800 flex flex-col font-sans selection:bg-portal-orange selection:text-white relative pb-8">
+    <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans selection:bg-portal-orange selection:text-white relative pb-8">
       
       {/* Floating Glassmorphism Header */}
-      <header className="sticky top-0 z-50 glass-panel border-b border-slate-200/50 backdrop-blur-lg bg-white/75 shadow-sm transition-all duration-300">
+      <header className="sticky top-0 z-50 glass-panel border-b border-[var(--color-border)] backdrop-blur-lg shadow-sm transition-all duration-300">
         <div className="max-w-6xl mx-auto px-6 h-18 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div 
@@ -290,7 +291,7 @@ function App() {
               <CloudLightning className="w-5 h-5 stroke-[2.5] group-hover:rotate-12 transition-transform duration-300" />
             </div>
             
-            <span className="font-display font-extrabold text-xl tracking-tight leading-none text-portal-navy select-none">
+            <span className="font-display font-extrabold text-xl tracking-tight leading-none text-[var(--color-portal-navy-themed)] select-none">
               Clumove
             </span>
           </div>
@@ -300,12 +301,12 @@ function App() {
             <div className="relative" ref={userMenuRef}>
               <div 
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2.5 bg-slate-100/80 hover:bg-slate-200/50 border border-slate-200/40 pl-2.5 pr-4 py-1.5 rounded-full shadow-xs cursor-pointer select-none transition-colors"
+                className="flex items-center gap-2.5 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] border border-[var(--color-border)] pl-2.5 pr-4 py-1.5 rounded-full shadow-xs cursor-pointer select-none transition-colors"
               >
                 {user.avatar ? (
                   <img 
                     src={user.avatar} 
-                    className="w-7 h-7 rounded-full object-cover shadow-xs border border-slate-200" 
+                    className="w-7 h-7 rounded-full object-cover shadow-xs border border-[var(--color-border)]" 
                     alt={user.display_name}
                   />
                 ) : (
@@ -314,14 +315,14 @@ function App() {
                   </div>
                 )}
                 <div className="flex flex-col text-left">
-                  <span className="font-bold text-slate-800 leading-tight">{user.display_name}</span>
-                  <span className="text-[9px] text-slate-500 font-mono leading-none mt-0.5">{user.email}</span>
+                  <span className="font-bold text-[var(--color-text-primary)] leading-tight">{user.display_name}</span>
+                  <span className="text-[9px] text-[var(--color-text-muted)] font-mono leading-none mt-0.5">{user.email}</span>
                 </div>
               </div>
 
               {showUserMenu && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-md border border-slate-200/60 rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in">
-                  <div className="px-3.5 py-2 text-[10px] text-slate-450 font-mono border-b border-slate-100 mb-1 select-none">
+                <div className="absolute right-0 top-full mt-2 w-48 bg-[var(--color-bg-elevated)] backdrop-blur-md border border-[var(--color-border)] rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in">
+                  <div className="px-3.5 py-2 text-[10px] text-[var(--color-text-muted)] font-mono border-b border-[var(--color-border-light)] mb-1 select-none">
                     // BENUTZER-SYSTEM
                   </div>
                   <button
@@ -329,9 +330,9 @@ function App() {
                       setStep('settings');
                       setShowUserMenu(false);
                     }}
-                    className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-portal-navy transition-colors cursor-pointer text-left font-sans"
+                    className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
                   >
-                    <SettingsIcon className="w-4 h-4 text-slate-450" />
+                    <SettingsIcon className="w-4 h-4 text-[var(--color-text-muted)]" />
                     Einstellungen
                   </button>
                   <button
@@ -413,15 +414,15 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-200/50 py-8 mt-12 bg-white/70 backdrop-blur-md">
-        <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 text-[11px] leading-relaxed text-slate-400">
+      <footer className="border-t border-[var(--color-border)] py-8 mt-12 bg-[var(--color-glass-bg)] backdrop-blur-md">
+        <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
           <div>
-            <p className="font-bold text-portal-navy font-display uppercase tracking-wider mb-1.5">// Clumove Migrations-Plattform</p>
-            <p className="text-slate-500">© 2026 Alle Rechte vorbehalten. Schnelle und sichere Transfers für Cloud-Infrastrukturen.</p>
+            <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">// Clumove Migrations-Plattform</p>
+            <p className="text-[var(--color-text-muted)]">© 2026 Alle Rechte vorbehalten. Schnelle und sichere Transfers für Cloud-Infrastrukturen.</p>
           </div>
           <div>
-            <p className="font-bold text-portal-navy font-display uppercase tracking-wider mb-1.5">// Zero-Data-Retention-Puffer</p>
-            <p className="text-slate-500">Die Datenübertragung erfolgt verschlüsselt und flüchtig direkt über den Arbeitsspeicher des Gateways. Es findet keine dauerhafte Speicherung der Transferdaten statt.</p>
+            <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">// Zero-Data-Retention-Puffer</p>
+            <p className="text-[var(--color-text-muted)]">Die Datenübertragung erfolgt verschlüsselt und flüchtig direkt über den Arbeitsspeicher des Gateways. Es findet keine dauerhafte Speicherung der Transferdaten statt.</p>
           </div>
         </div>
       </footer>
@@ -429,4 +430,13 @@ function App() {
   );
 }
 
-export default App;
+// Wrap App with ThemeProvider
+function AppWithTheme() {
+  return (
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
+  );
+}
+
+export default AppWithTheme;

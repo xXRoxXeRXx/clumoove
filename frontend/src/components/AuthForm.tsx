@@ -84,7 +84,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
 
       {/* Container Card with Premium Glassmorphism */}
-      <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-white/50 transition-all duration-500 overflow-hidden">
+      <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
         
         {/* Brand header */}
@@ -92,10 +92,10 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
             <CloudLightning className="w-6 h-6 stroke-[2.5]" />
           </div>
-          <h2 className="font-display font-extrabold text-2xl text-portal-navy tracking-tight">
+          <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
             {isLogin ? 'Willkommen zurück' : 'Account erstellen'}
           </h2>
-          <p className="text-[9px] text-slate-400 font-mono tracking-widest uppercase mt-1">
+          <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
             {isLogin ? '// CLUMOVE SAAS PORTAL' : '// ACCOUNT REGISTRIERUNG'}
           </p>
         </div>
@@ -114,11 +114,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {/* Display Name - only for registration */}
           {!isLogin && (
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 Name
               </label>
               <div className="relative group">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 group-focus-within:text-portal-orange transition-colors">
+                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
                   <User className="w-4 h-4" />
                 </span>
                 <input
@@ -127,7 +127,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   placeholder="Max Mustermann"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-white/50 border border-slate-200/80 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                  className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
                 />
               </div>
             </div>
@@ -135,11 +135,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
           {/* Email input */}
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
               E-Mail Adresse
             </label>
             <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 group-focus-within:text-portal-orange transition-colors">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
                 <Mail className="w-4 h-4" />
               </span>
               <input
@@ -149,18 +149,18 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder="name@beispiel.de"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-white/50 border border-slate-200/80 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
               />
             </div>
           </div>
 
           {/* Password input */}
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
               Passwort
             </label>
             <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-slate-400 group-focus-within:text-portal-orange transition-colors">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
                 <Lock className="w-4 h-4" />
               </span>
               <input
@@ -170,12 +170,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-10 py-2.5 bg-white/50 border border-slate-200/80 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
+                className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-450 hover:text-slate-600 transition-colors"
+                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -202,7 +202,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         </form>
 
         {/* Toggle between login and registration */}
-        <div className="mt-6 text-center text-xs font-mono text-slate-450 border-t border-slate-200/40 pt-5">
+        <div className="mt-6 text-center text-xs font-mono text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-5">
           {isLogin ? (
             registrationsEnabled ? (
               <p>
@@ -219,7 +219,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 </button>
               </p>
             ) : (
-              <p className="text-slate-400">
+              <p className="text-[var(--color-text-muted)]">
                 Registrierungen sind derzeit deaktiviert.
               </p>
             )

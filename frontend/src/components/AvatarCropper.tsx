@@ -159,13 +159,13 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="glass-panel max-w-sm w-full rounded-3xl p-6 border border-white/40 shadow-2xl flex flex-col items-center bg-white/95">
-        <h3 className="font-display font-extrabold text-lg text-portal-navy mb-1">Bild anpassen</h3>
-        <p className="text-[10px] text-slate-400 font-mono tracking-wider mb-5 uppercase">// CANVAS CROPPER TOOL</p>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--color-bg-inverse)]/60 backdrop-blur-sm p-4 animate-fade-in">
+      <div className="glass-panel max-w-sm w-full rounded-3xl p-6 border border-[var(--color-glass-border)]/40 shadow-2xl flex flex-col items-center bg-[var(--color-bg-secondary)]/95">
+        <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">Bild anpassen</h3>
+        <p className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">// CANVAS CROPPER TOOL</p>
 
         {/* Canvas Area */}
-        <div className="relative border border-slate-200 rounded-2xl overflow-hidden bg-slate-900 shadow-inner group">
+        <div className="relative border border-[var(--color-border)] rounded-2xl overflow-hidden bg-[var(--color-bg-inverse)] shadow-inner group">
           <canvas
             ref={canvasRef}
             width={300}
@@ -176,14 +176,14 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             onWheel={handleWheel}
             className="cursor-move block touch-none"
           />
-          <div className="absolute bottom-2 left-2 right-2 text-center text-[9px] font-mono text-white/50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="absolute bottom-2 left-2 right-2 text-center text-[9px] font-mono text-[var(--color-text-inverse)]/50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
             Ziehen zum Bewegen | Mausrad zum Zoomen
           </div>
         </div>
 
         {/* Zoom Slider Control */}
         <div className="w-full flex items-center gap-3 mt-5 px-1">
-          <ZoomOut className="w-4 h-4 text-slate-450" />
+          <ZoomOut className="w-4 h-4 text-[var(--color-text-muted)]" />
           <input
             type="range"
             min="1.0"
@@ -191,9 +191,9 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             step="0.01"
             value={zoom}
             onChange={(e) => setZoom(parseFloat(e.target.value))}
-            className="flex-grow accent-portal-orange h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+            className="flex-grow accent-portal-orange h-1 bg-[var(--color-border)] rounded-lg appearance-none cursor-pointer"
           />
-          <ZoomIn className="w-4 h-4 text-slate-450" />
+          <ZoomIn className="w-4 h-4 text-[var(--color-text-muted)]" />
         </div>
 
         {/* Actions Button Grid */}
@@ -201,7 +201,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
           <button
             type="button"
             onClick={onCancel}
-            className="flex items-center justify-center gap-1.5 py-2.5 border border-slate-200 hover:border-slate-350 hover:bg-slate-50 text-slate-650 hover:text-slate-900 rounded-xl text-xs font-bold font-mono transition-all cursor-pointer shadow-xs"
+            className="flex items-center justify-center gap-1.5 py-2.5 border border-[var(--color-border)] hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer shadow-xs"
           >
             <X className="w-4 h-4" />
             Abbrechen
@@ -209,7 +209,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
           <button
             type="button"
             onClick={handleSave}
-            className="flex items-center justify-center gap-1.5 py-2.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:shadow-md text-white rounded-xl text-xs font-bold font-mono transition-all cursor-pointer"
+            className="flex items-center justify-center gap-1.5 py-2.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:shadow-md text-[var(--color-text-inverse)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer"
           >
             <Check className="w-4 h-4" />
             Anwenden

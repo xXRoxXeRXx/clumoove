@@ -38,3 +38,6 @@ frontend/*.local
 # Logs
 *.log
 logs/
+
+# Local planning documents
+plans/

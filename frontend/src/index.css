@@ -55,12 +55,90 @@
   }
 }
 
-/* Glassmorphism Panel styles */
+/* Theme Variables - Light Mode (Default) */
+:root {
+  --color-bg-primary: #f8fafc;
+  --color-bg-secondary: #ffffff;
+  --color-bg-tertiary: #f1f5f9;
+  --color-bg-elevated: #ffffff;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --color-text-inverse: #ffffff;
+  --color-border: #e2e8f0;
+  --color-border-light: #f1f5f9;
+  --color-shadow: rgba(0, 47, 108, 0.04);
+  --color-shadow-dark: rgba(0, 0, 0, 0.02);
+  --color-portal-orange-themed: #ff6600;
+  --color-portal-navy-themed: #002f6c;
+  --color-glass-bg: rgba(255, 255, 255, 0.75);
+  --color-glass-border: rgba(255, 255, 255, 0.4);
+  --color-error-bg: #fef2f2;
+  --color-error-border: #fecdd3;
+  --color-error-text: #9f1239;
+  --color-warning-bg: #fff7ed;
+  --color-warning-border: #fed7aa;
+  --color-success-bg: #f0fdf4;
+  --color-success-border: #bbf7d0;
+  --color-success-text: #166534;
+  --color-info-bg: #eff6ff;
+  --color-info-border: #bfdbfe;
+  --color-info-text: #1e40af;
+  --color-bg-inverse: #0f172a;
+}
+
+/* Theme Variables - Dark Mode */
+[data-theme="dark"] {
+  --color-bg-primary: #0f172a;
+  --color-bg-secondary: #1e293b;
+  --color-bg-tertiary: #334155;
+  --color-bg-elevated: #1e293b;
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted: #64748b;
+  --color-text-inverse: #ffffff;
+  --color-border: #334155;
+  --color-border-light: #1e293b;
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  --color-shadow-dark: rgba(0, 0, 0, 0.5);
+  --color-portal-orange-themed: #ff8533;
+  --color-portal-navy-themed: #4a90d9;
+  --color-glass-bg: rgba(15, 23, 42, 0.8);
+  --color-glass-border: rgba(255, 255, 255, 0.05);
+  --color-error-bg: #450a0a;
+  --color-error-border: #7f1d1d;
+  --color-error-text: #fecaca;
+  --color-warning-bg: #431407;
+  --color-warning-border: #7c2d12;
+  --color-success-bg: #052e16;
+  --color-success-border: #14532d;
+  --color-success-text: #bbf7d0;
+  --color-info-bg: #172554;
+  --color-info-border: #1e3a8a;
+  --color-info-text: #bfdbfe;
+  --color-bg-inverse: #000000;
+}
+
+/* Theme Transition - scoped to avoid interfering with animations */
+@media (prefers-reduced-motion: no-preference) {
+  body,
+  .glass-panel,
+  header,
+  footer,
+  main,
+  [class*="bg-"],
+  [class*="text-"],
+  [class*="border-"] {
+    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+  }
+}
+
+/* Glassmorphism Panel styles - Theme-aware */
 @utility glass-panel {
-  background-color: rgba(255, 255, 255, 0.75);
+  background-color: var(--color-glass-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  border: 1px solid var(--color-glass-border);
 }
 
 @utility glass-panel-dark {
@@ -71,11 +149,11 @@
 }
 
 @utility shadow-portal {
-  box-shadow: 0 4px 20px -2px rgba(0, 47, 108, 0.04), 0 2px 6px -1px rgba(0, 0, 0, 0.02);
+  box-shadow: 0 4px 20px -2px var(--color-shadow), 0 2px 6px -1px var(--color-shadow-dark);
 }
 
 @utility shadow-portal-hover {
-  box-shadow: 0 16px 32px -4px rgba(0, 47, 108, 0.08), 0 6px 12px -2px rgba(0, 0, 0, 0.03);
+  box-shadow: 0 16px 32px -4px var(--color-shadow), 0 6px 12px -2px var(--color-shadow-dark);
 }
 
 @utility scrollbar-portal {
@@ -84,45 +162,45 @@
     height: 6px;
   }
   &::-webkit-scrollbar-track {
-    background: #f1f5f9;
+    background: var(--color-bg-tertiary);
   }
   &::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: var(--color-text-muted);
     border-radius: 9999px;
     &:hover {
-      background: #94a3b8;
+      background: var(--color-text-secondary);
     }
   }
 }
 
-/* Custom global styles */
+/* Custom global styles - Theme-aware */
 body {
-  background-color: #f8fafc;
-  color: #0f172a;
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
   font-family: var(--font-sans);
   overflow-x: hidden;
   position: relative;
   min-height: 100vh;
 }
 
-/* Custom scrollbars for main window */
+/* Custom scrollbars for main window - Theme-aware */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f8fafc;
+  background: var(--color-bg-primary);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--color-text-muted);
   border-radius: 9999px;
-  border: 2px solid #f8fafc;
+  border: 2px solid var(--color-bg-primary);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--color-text-secondary);
 }
 
 /* Selection overlay */

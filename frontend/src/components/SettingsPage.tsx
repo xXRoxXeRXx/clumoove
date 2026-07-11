@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudLightning, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudLightning, Eye, EyeOff, Palette, Sun, Moon, Monitor } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
+import { useThemeContext } from '../contexts/ThemeContext';
 
 interface SettingsUser {
   id?: string;
@@ -19,6 +20,9 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: SettingsPageProps) {
+  // Theme context
+  const { preference, setPreference, systemTheme } = useThemeContext();
+
   // Display name state
   const [displayName, setDisplayName] = useState<string>(user?.display_name || '');
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
@@ -240,17 +244,17 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
   return (
     <div className="max-w-4xl w-full mx-auto my-4 space-y-6">
       {/* Back Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-200/50">
+      <div className="flex items-center justify-between pb-4 border-b border-[var(--color-border)]/50">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-full hover:border-slate-350 hover:bg-slate-50 transition-all font-mono font-bold text-xs cursor-pointer text-slate-650 hover:text-portal-navy shadow-xs"
+          className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
         >
           <ArrowLeft className="w-4 h-4" />
           Zurück
         </button>
         <div className="flex items-center gap-2">
-          <Settings className="w-5 h-5 text-portal-navy" />
-          <h2 className="font-display font-extrabold text-xl text-portal-navy leading-none">Einstellungen</h2>
+          <Settings className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
+          <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] leading-none">Einstellungen</h2>
         </div>
       </div>
 
@@ -261,15 +265,15 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
         <div className="space-y-6">
           
           {/* Section 1: Profil */}
-          <div className="glass-panel rounded-2xl p-6 border border-white/50 shadow-portal space-y-5">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <User className="w-4 h-4 text-portal-orange" />
-              <h3 className="font-display font-bold text-sm text-portal-navy">Profil-Details</h3>
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Profil-Details</h3>
             </div>
 
             {profileMessage && (
               <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                profileMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-250 text-rose-800'
+                profileMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
               }`}>
                 {profileMessage.text}
               </div>
@@ -277,19 +281,19 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                   E-Mail Adresse (Nicht änderbar)
                 </label>
                 <input
                   type="text"
                   disabled
                   value={user?.email || ''}
-                  className="w-full px-4 py-2.5 bg-slate-100 border border-slate-200/85 rounded-xl text-sm text-slate-500 cursor-not-allowed font-sans"
+                  className="w-full px-4 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]/85 rounded-xl text-sm text-[var(--color-text-muted)] cursor-not-allowed font-sans"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                   Anzeigename
                 </label>
                 <input
@@ -298,14 +302,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="Max Mustermann"
-                  className="w-full px-4 py-2.5 bg-white/55 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={profileLoading || displayName.trim() === '' || displayName.trim() === user?.display_name}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
               >
                 {profileLoading ? 'Wird gespeichert...' : 'Änderungen speichern'}
               </button>
@@ -313,46 +317,46 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
           </div>
 
           {/* Section 2: Profilbild */}
-          <div className="glass-panel rounded-2xl p-6 border border-white/50 shadow-portal space-y-5">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <ImageIcon className="w-4 h-4 text-portal-orange" />
-              <h3 className="font-display font-bold text-sm text-portal-navy">Profilbild</h3>
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <ImageIcon className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Profilbild</h3>
             </div>
 
             {avatarMessage && (
               <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                avatarMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-250 text-rose-800'
+                avatarMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
               }`}>
                 {avatarMessage.text}
               </div>
             )}
 
-            <div className="flex flex-col items-center sm:flex-row gap-5 p-2 bg-slate-50/50 rounded-2xl border border-slate-200/50">
+            <div className="flex flex-col items-center sm:flex-row gap-5 p-2 bg-[var(--color-bg-tertiary)]/50 rounded-2xl border border-[var(--color-border)]/50">
               <div className="relative">
                 {user?.avatar ? (
                   <img
                     src={user.avatar}
                     alt="User Avatar"
-                    className="w-20 h-20 rounded-full object-cover border border-slate-200 shadow-xs"
+                    className="w-20 h-20 rounded-full object-cover border border-[var(--color-border)] shadow-xs"
                   />
                 ) : (
-                  <div className="w-20 h-20 bg-portal-navy text-white rounded-full flex items-center justify-center border border-slate-200 shadow-xs">
+                  <div className="w-20 h-20 bg-portal-navy text-[var(--color-text-inverse)] rounded-full flex items-center justify-center border border-[var(--color-border)] shadow-xs">
                     <User className="w-10 h-10" />
                   </div>
                 )}
                 {avatarLoading && (
-                  <div className="absolute inset-0 bg-slate-900/40 rounded-full flex items-center justify-center">
-                    <span className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></span>
+                  <div className="absolute inset-0 bg-[var(--color-bg-inverse)]/40 rounded-full flex items-center justify-center">
+                    <span className="animate-spin rounded-full h-5 w-5 border-2 border-[var(--color-glass-border)] border-t-transparent"></span>
                   </div>
                 )}
               </div>
 
               <div className="flex-grow space-y-2.5">
-                <p className="text-[10px] text-slate-500 font-sans leading-relaxed">
+                <p className="text-[10px] text-[var(--color-text-muted)] font-sans leading-relaxed">
                   Lade ein neues Profilbild hoch. Unterstützt werden PNG, JPEG, WebP und GIF bis max. 2 MB.
                 </p>
                 <div className="flex flex-wrap gap-2.5">
-                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl hover:border-slate-350 hover:bg-slate-50 transition-all font-mono font-bold text-[10px] cursor-pointer text-slate-650 hover:text-portal-navy shadow-xs">
+                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs">
                     <Upload className="w-3.5 h-3.5" />
                     <span>Bild wählen</span>
                     <input
@@ -367,7 +371,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     <button
                       onClick={handleDeleteAvatar}
                       disabled={avatarLoading}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-rose-200 text-rose-600 rounded-xl hover:bg-rose-50/70 hover:border-rose-350 transition-all font-mono font-bold text-[10px] cursor-pointer shadow-xs"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl hover:bg-[var(--color-error-bg)]/70 hover:border-rose-350 transition-all font-mono font-bold text-[10px] cursor-pointer shadow-xs"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       Löschen
@@ -377,21 +381,86 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               </div>
             </div>
           </div>
+
+          {/* Section 3: Darstellung */}
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <Palette className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Darstellung</h3>
+            </div>
+
+            <p className="text-[10px] text-[var(--color-text-muted)] font-sans leading-relaxed">
+              Wähle das Erscheinungsbild der Anwendung. Automatisch folgt den Systemeinstellungen.
+            </p>
+
+            <div className="grid grid-cols-3 gap-3">
+              {/* Light Option */}
+              <button
+                onClick={() => setPreference('light')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                  preference === 'light'
+                    ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
+                    : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
+                }`}
+              >
+                <Sun className={`w-6 h-6 ${preference === 'light' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
+                <span className={`text-xs font-bold font-mono ${preference === 'light' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
+                  Hell
+                </span>
+              </button>
+
+              {/* Dark Option */}
+              <button
+                onClick={() => setPreference('dark')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                  preference === 'dark'
+                    ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
+                    : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
+                }`}
+              >
+                <Moon className={`w-6 h-6 ${preference === 'dark' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
+                <span className={`text-xs font-bold font-mono ${preference === 'dark' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
+                  Dunkel
+                </span>
+              </button>
+
+              {/* Auto Option */}
+              <button
+                onClick={() => setPreference('auto')}
+                className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                  preference === 'auto'
+                    ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
+                    : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
+                }`}
+              >
+                <Monitor className={`w-6 h-6 ${preference === 'auto' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
+                <span className={`text-xs font-bold font-mono ${preference === 'auto' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
+                  Auto
+                </span>
+              </button>
+            </div>
+
+            {preference === 'auto' && (
+              <p className="text-[10px] text-[var(--color-text-muted)] font-mono text-center mt-2">
+                Aktuell: {systemTheme === 'dark' ? 'Dunkel' : 'Hell'} (Systemeinstellung)
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Right Side: Password & Admin Settings */}
         <div className="space-y-6">
           
           {/* Section 3: Passwort */}
-          <div className="glass-panel rounded-2xl p-6 border border-white/50 shadow-portal space-y-5">
-            <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-              <Lock className="w-4 h-4 text-portal-orange" />
-              <h3 className="font-display font-bold text-sm text-portal-navy">Passwort ändern</h3>
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Passwort ändern</h3>
             </div>
 
             {passwordMessage && (
               <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                passwordMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-250 text-rose-800'
+                passwordMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
               }`}>
                 {passwordMessage.text}
               </div>
@@ -399,7 +468,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
             <form onSubmit={handleChangePassword} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                   Aktuelles Passwort
                 </label>
                 <div className="relative group">
@@ -409,12 +478,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-white/55 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
+                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
                   />
                   <button
                     type="button"
                     onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-650"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
                     {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -422,7 +491,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                   Neues Passwort
                 </label>
                 <div className="relative group">
@@ -432,12 +501,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-white/55 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
+                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
                   />
                   <button
                     type="button"
                     onClick={() => setShowNewPassword(!showNewPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-650"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
                     {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -445,7 +514,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                   Neues Passwort bestätigen
                 </label>
                 <div className="relative group">
@@ -455,12 +524,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-white/55 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
+                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
                   />
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-650"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
                     {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -470,7 +539,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               <button
                 type="submit"
                 disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
               >
                 {passwordLoading ? 'Wird geändert...' : 'Passwort ändern'}
               </button>
@@ -479,24 +548,24 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
           {/* Section 4: Registrierungen sperren (Only visible if user role === 'ADMIN') */}
           {user?.role === 'ADMIN' && (
-            <div className="glass-panel rounded-2xl p-6 border border-white/50 shadow-portal space-y-5">
-              <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
-                <CloudLightning className="w-4 h-4 text-portal-orange" />
-                <h3 className="font-display font-bold text-sm text-portal-navy">Systemsteuerung</h3>
+            <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+              <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+                <CloudLightning className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Systemsteuerung</h3>
               </div>
 
               {adminMessage && (
                 <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                  adminMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-250 text-rose-800'
+                  adminMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
                 }`}>
                   {adminMessage.text}
                 </div>
               )}
 
-              <div className="flex items-center justify-between p-3.5 bg-slate-50/50 border border-slate-200/50 rounded-2xl">
+              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
                 <div className="text-left space-y-1 pr-4">
-                  <h4 className="text-xs font-bold text-slate-800 font-display">Registrierungen erlauben</h4>
-                  <p className="text-[10px] text-slate-500 leading-normal">
+                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">Registrierungen erlauben</h4>
+                  <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
                     Schalte aus, um neue Benutzerregistrierungen systemweit zu sperren. Bestehende Logins bleiben aktiv.
                   </p>
                 </div>
@@ -509,7 +578,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     onChange={(e) => handleToggleRegistrations(e.target.checked)}
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-6 bg-slate-250 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
+                  <div className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
                 </label>
               </div>
             </div>
