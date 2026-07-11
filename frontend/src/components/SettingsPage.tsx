@@ -332,15 +332,15 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             )}
 
             <div className="flex flex-col items-center sm:flex-row gap-5 p-2 bg-[var(--color-bg-tertiary)]/50 rounded-2xl border border-[var(--color-border)]/50">
-              <div className="relative">
+              <div className="relative shrink-0">
                 {user?.avatar ? (
                   <img
                     src={user.avatar}
                     alt="User Avatar"
-                    className="w-20 h-20 rounded-full object-cover border border-[var(--color-border)] shadow-xs"
+                    className="w-20 h-20 shrink-0 rounded-full object-cover border border-[var(--color-border)] shadow-xs"
                   />
                 ) : (
-                  <div className="w-20 h-20 bg-portal-navy text-[var(--color-text-inverse)] rounded-full flex items-center justify-center border border-[var(--color-border)] shadow-xs">
+                  <div className="w-20 h-20 shrink-0 bg-portal-navy text-[var(--color-text-inverse)] rounded-full flex items-center justify-center border border-[var(--color-border)] shadow-xs">
                     <User className="w-10 h-10" />
                   </div>
                 )}
