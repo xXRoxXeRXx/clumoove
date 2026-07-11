@@ -3,6 +3,8 @@ package db
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +13,41 @@ import (
 
 	_ "github.com/lib/pq"
 )
+
+// StringArray is a []string that implements sql.Scanner and driver.Valuer
+// for seamless JSONB <-> Go string slice conversion with lib/pq.
+type StringArray []string
+
+// Value implements driver.Valuer, encoding the slice as a JSON byte slice
+// suitable for PostgreSQL JSONB columns.
+func (s StringArray) Value() (driver.Value, error) {
+	if s == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("StringArray.Value: %w", err)
+	}
+	return b, nil
+}
+
+// Scan implements sql.Scanner, decoding a JSONB column value into the string slice.
+func (s *StringArray) Scan(src interface{}) error {
+	if src == nil {
+		*s = nil
+		return nil
+	}
+	var b []byte
+	switch v := src.(type) {
+	case []byte:
+		b = v
+	case string:
+		b = []byte(v)
+	default:
+		return fmt.Errorf("StringArray.Scan: unsupported type %T", src)
+	}
+	return json.Unmarshal(b, s)
+}
 
 type ResourceStats struct {
 	Total     int `json:"total"`
@@ -60,8 +97,11 @@ type Migration struct {
 	SourceProvider              string                  `json:"source_provider"`
 	TargetProvider              string                  `json:"target_provider"`
 	TargetDir                   string                  `json:"target_dir"`
-	Status                      string                  `json:"status"`            // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+	Status                      string                  `json:"status"`            // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED, SCHEDULED
 	ConflictStrategy            string                  `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
+	SelectedPaths               StringArray             `json:"selected_paths,omitempty"`
+	SelectedCalendars           StringArray             `json:"selected_calendars,omitempty"`
+	SelectedContacts            StringArray             `json:"selected_contacts,omitempty"`
 	TotalFiles                  int                     `json:"total_files"`
 	TotalBytes                  int64                   `json:"total_bytes"`
 	ProcessedFiles              int                     `json:"processed_files"`
@@ -200,6 +240,20 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (target_token_expires_at): %v\n", err)
 			}
 
+			// Scheduler: persist selected paths/calendars/contacts for deferred re-indexing
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS selected_paths JSONB`)
+			if err != nil {
+				log.Printf("Failed schema migration (selected_paths): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS selected_calendars JSONB`)
+			if err != nil {
+				log.Printf("Failed schema migration (selected_calendars): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS selected_contacts JSONB`)
+			if err != nil {
+				log.Printf("Failed schema migration (selected_contacts): %v\n", err)
+			}
+
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id)`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_migrations_user_id): %v\n", err)
@@ -213,6 +267,40 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_tasks_retry): %v\n", err)
+			}
+
+			// Schedules table for Core Scheduler Engine
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS schedules (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					task_type TEXT NOT NULL CHECK (task_type IN ('migration', 'sync', 'backup')),
+					task_id UUID NOT NULL,
+					cron_expression TEXT,
+					run_at TIMESTAMP WITH TIME ZONE,
+					next_run_at TIMESTAMP WITH TIME ZONE,
+					is_active BOOLEAN NOT NULL DEFAULT TRUE,
+					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+					updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (create schedules table): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at) WHERE is_active = TRUE`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_schedules_next_run): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_schedules_user_id ON schedules(user_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_schedules_user_id): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_schedules_task ON schedules(task_type, task_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_schedules_task): %v\n", err)
 			}
 
 			// Set connection pool settings
@@ -245,8 +333,9 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 			source_refresh_token_encrypted, source_token_expires_at,
 			target_url, target_username, target_password_encrypted,
 			target_refresh_token_encrypted, target_token_expires_at,
-			source_provider, target_provider, status, conflict_strategy, target_dir, threads
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+			source_provider, target_provider, status, conflict_strategy, target_dir,
+			selected_paths, selected_calendars, selected_contacts, threads
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
@@ -255,7 +344,8 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 		m.SourceRefreshTokenEncrypted, m.SourceTokenExpiresAt,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted,
 		m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt,
-		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir, m.Threads,
+		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir,
+		m.SelectedPaths, m.SelectedCalendars, m.SelectedContacts, m.Threads,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err != nil {
@@ -273,7 +363,8 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		       target_refresh_token_encrypted, target_token_expires_at,
 		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
 		       processed_files, processed_bytes, skipped_files, failed_files,
-		       error_message, created_at, updated_at, target_dir, threads
+		       error_message, created_at, updated_at, target_dir, threads,
+		       selected_paths, selected_calendars, selected_contacts
 		FROM migrations WHERE id = $1
 	`
 	var m Migration
@@ -285,6 +376,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		&m.SourceProvider, &m.TargetProvider, &m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
 		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
 		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
+		&m.SelectedPaths, &m.SelectedCalendars, &m.SelectedContacts,
 	)
 	if err != nil {
 		return nil, err
@@ -314,12 +406,16 @@ func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string)
 	return err
 }
 
-// UpdateMigrationStatusIfIndexing updates the migration status to the new status only if it is currently 'INDEXING'.
+// UpdateMigrationStatusIfIndexing updates the migration status to the new status
+// only if it is currently 'INDEXING' or 'SCHEDULED'. This allows the shared
+// indexer to finalize both the immediate path (migration created as INDEXING)
+// and the deferred/scheduled path (migration created as SCHEDULED and triggered
+// by the scheduler) into RUNNING once tasks have been created.
 func UpdateMigrationStatusIfIndexing(db *sql.DB, id string, status string) error {
 	query := `
 		UPDATE migrations
 		SET status = $1
-		WHERE id = $2 AND status = 'INDEXING'
+		WHERE id = $2 AND status IN ('INDEXING', 'SCHEDULED')
 	`
 	_, err := db.Exec(query, status, id)
 	return err
@@ -851,7 +947,6 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 	return list, nil
 }
 
-
 // CancelPendingTasks marks all pending tasks of a migration as CANCELLED
 func CancelPendingTasks(db *sql.DB, migrationID string) error {
 	query := `
@@ -929,4 +1024,185 @@ func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
 	}
 
 	return count, nil
+}
+
+// ============================================================================
+// Core Scheduler Engine - Schedule Types and Functions
+// ============================================================================
+
+// Schedule represents a scheduled task (migration, sync, or backup)
+type Schedule struct {
+	ID             string         `json:"id"`
+	UserID         string         `json:"user_id"`
+	TaskType       string         `json:"task_type"` // migration, sync, backup
+	TaskID         string         `json:"task_id"`
+	CronExpression sql.NullString `json:"cron_expression"`
+	RunAt          sql.NullTime   `json:"run_at"`
+	NextRunAt      sql.NullTime   `json:"next_run_at"`
+	IsActive       bool           `json:"is_active"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+}
+
+// CreateSchedule inserts a new schedule and returns the UUID
+func CreateSchedule(db *sql.DB, s *Schedule) (string, error) {
+	query := `
+		INSERT INTO schedules (
+			user_id, task_type, task_id, cron_expression, run_at, next_run_at, is_active
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, created_at, updated_at
+	`
+	err := db.QueryRow(
+		query,
+		s.UserID, s.TaskType, s.TaskID, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive,
+	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
+
+	if err != nil {
+		return "", err
+	}
+	return s.ID, nil
+}
+
+// GetSchedule retrieves a schedule by ID
+func GetSchedule(db *sql.DB, id string) (*Schedule, error) {
+	query := `
+		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
+		       is_active, created_at, updated_at
+		FROM schedules WHERE id = $1
+	`
+	var s Schedule
+	err := db.QueryRow(query, id).Scan(
+		&s.ID, &s.UserID, &s.TaskType, &s.TaskID, &s.CronExpression, &s.RunAt, &s.NextRunAt,
+		&s.IsActive, &s.CreatedAt, &s.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// GetSchedulesForUser lists all schedules belonging to a specific user
+func GetSchedulesForUser(db *sql.DB, userID string) ([]Schedule, error) {
+	query := `
+		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
+		       is_active, created_at, updated_at
+		FROM schedules
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var schedules []Schedule
+	for rows.Next() {
+		var s Schedule
+		err := rows.Scan(
+			&s.ID, &s.UserID, &s.TaskType, &s.TaskID, &s.CronExpression, &s.RunAt, &s.NextRunAt,
+			&s.IsActive, &s.CreatedAt, &s.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		schedules = append(schedules, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return schedules, nil
+}
+
+// GetDueSchedules returns all active schedules where next_run_at <= NOW()
+func GetDueSchedules(db *sql.DB) ([]Schedule, error) {
+	query := `
+		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
+		       is_active, created_at, updated_at
+		FROM schedules
+		WHERE is_active = TRUE
+		  AND next_run_at <= NOW()
+		ORDER BY next_run_at ASC
+	`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var schedules []Schedule
+	for rows.Next() {
+		var s Schedule
+		err := rows.Scan(
+			&s.ID, &s.UserID, &s.TaskType, &s.TaskID, &s.CronExpression, &s.RunAt, &s.NextRunAt,
+			&s.IsActive, &s.CreatedAt, &s.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		schedules = append(schedules, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return schedules, nil
+}
+
+// UpdateNextRunAt updates the next_run_at timestamp for a schedule
+func UpdateNextRunAt(db *sql.DB, id string, nextRunAt time.Time) error {
+	query := `
+		UPDATE schedules
+		SET next_run_at = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+	_, err := db.Exec(query, nextRunAt, id)
+	return err
+}
+
+// DeactivateSchedule sets is_active = FALSE for a schedule
+func DeactivateSchedule(db *sql.DB, id string) error {
+	query := `
+		UPDATE schedules
+		SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`
+	_, err := db.Exec(query, id)
+	return err
+}
+
+// DeleteSchedule deletes a schedule by ID
+func DeleteSchedule(db *sql.DB, id string) error {
+	query := `DELETE FROM schedules WHERE id = $1`
+	_, err := db.Exec(query, id)
+	return err
+}
+
+// DeleteSchedulesForTask deletes all schedules for a specific task
+func DeleteSchedulesForTask(db *sql.DB, taskType string, taskID string) error {
+	query := `DELETE FROM schedules WHERE task_type = $1 AND task_id = $2`
+	_, err := db.Exec(query, taskType, taskID)
+	return err
+}
+
+// VerifyScheduleOwnership checks if a schedule belongs to a specific user
+func VerifyScheduleOwnership(db *sql.DB, scheduleID, userID string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM schedules WHERE id = $1 AND user_id = $2)`
+	var exists bool
+	err := db.QueryRow(query, scheduleID, userID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// UpdateSchedule updates a schedule's cron_expression, run_at, next_run_at, and is_active
+func UpdateSchedule(db *sql.DB, s *Schedule) error {
+	query := `
+		UPDATE schedules
+		SET cron_expression = $1, run_at = $2, next_run_at = $3, is_active = $4,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $5
+	`
+	_, err := db.Exec(query, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive, s.ID)
+	return err
 }

@@ -24,8 +24,10 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/indexer"
 	"backend/internal/oauth"
 	"backend/internal/queue"
+	"backend/internal/scheduler"
 	"backend/internal/storage"
 
 	"github.com/gorilla/websocket"
@@ -44,6 +46,7 @@ var upgrader = websocket.Upgrader{
 type APIServer struct {
 	db            *sql.DB
 	queue         *queue.Queue
+	indexer       *indexer.Indexer
 	encryptionKey string // AES key for credential encryption
 	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
 	ctx           context.Context
@@ -78,7 +81,6 @@ func main() {
 		log.Fatal("ENCRYPTION_SECRET_KEY and JWT_SECRET_KEY must be different to maintain cryptographic key segregation.")
 	}
 
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8000"
@@ -106,6 +108,7 @@ func main() {
 	server := &APIServer{
 		db:            database,
 		queue:         q,
+		indexer:       indexer.NewIndexer(database, encryptionKey),
 		encryptionKey: encryptionKey,
 		jwtSecret:     jwtSecret,
 		ctx:           ctx,
@@ -147,6 +150,11 @@ func main() {
 	mux.Handle("GET /api/migration/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadReport)))
 	mux.Handle("POST /api/migration/{id}/retry-failed", jwtMiddleware(http.HandlerFunc(server.handleRetryFailed)))
 
+	// Schedule Management Routes (Protected)
+	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
+	mux.Handle("GET /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSchedule)))
+	mux.Handle("DELETE /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSchedule)))
+
 	// WebSockets & OAuth Callbacks (Require custom/token-based verification inside handler)
 	mux.HandleFunc("GET /api/migration/{id}/ws", server.handleWebSocket)
 	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
@@ -169,6 +177,10 @@ func main() {
 
 	// Start the OAuth Token Rotation Daemon (PRD-12)
 	go server.RunOAuthRotationDaemon(ctx)
+
+	// Start the Core Scheduler Engine Daemon
+	sched := scheduler.NewScheduler(database, q, server.indexer)
+	go sched.Run(ctx)
 
 	go func() {
 		log.Printf("API Server listening on port %s\n", port)
@@ -659,6 +671,7 @@ type StartRequest struct {
 	Contacts         []string `json:"contacts"`          // List of selected contacts
 	TargetDir        string   `json:"target_dir"`        // Target directory to copy files to
 	Threads          int      `json:"threads"`
+	ScheduledTime    string   `json:"scheduled_time"` // ISO 8601 timestamp for scheduled start (optional)
 }
 
 func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
@@ -742,6 +755,23 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		threads = 16
 	}
 
+	// Determine initial status based on whether scheduling is requested
+	initialStatus := "INDEXING"
+	var scheduledAt time.Time
+	if req.ScheduledTime != "" {
+		var err error
+		scheduledAt, err = time.Parse(time.RFC3339, req.ScheduledTime)
+		if err != nil {
+			http.Error(w, "Invalid scheduled_time format. Use ISO 8601 (e.g., 2026-07-15T02:00:00Z)", http.StatusBadRequest)
+			return
+		}
+		if scheduledAt.Before(time.Now()) {
+			http.Error(w, "scheduled_time must be in the future", http.StatusBadRequest)
+			return
+		}
+		initialStatus = "SCHEDULED"
+	}
+
 	// Create Migration Record
 	m := &db.Migration{
 		UserID:                      sql.NullString{String: userID, Valid: userID != ""},
@@ -757,9 +787,12 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		TargetTokenExpiresAt:        targetTokenExpiresAt,
 		SourceProvider:              req.SourceProvider,
 		TargetProvider:              req.TargetProvider,
-		Status:                      "INDEXING",
+		Status:                      initialStatus,
 		ConflictStrategy:            req.ConflictStrategy,
 		TargetDir:                   targetDir,
+		SelectedPaths:               db.StringArray(req.Paths),
+		SelectedCalendars:           db.StringArray(req.Calendars),
+		SelectedContacts:            db.StringArray(req.Contacts),
 		Threads:                     threads,
 	}
 
@@ -770,193 +803,42 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Spawn Background Indexer
-	go s.startIndexing(s.ctx, migrationID, req.Paths, req.Calendars, req.Contacts)
+	// If scheduled, create a schedule entry instead of starting immediately
+	if req.ScheduledTime != "" {
+		schedule := &db.Schedule{
+			UserID:    userID,
+			TaskType:  "migration",
+			TaskID:    migrationID,
+			RunAt:     sql.NullTime{Time: scheduledAt, Valid: true},
+			NextRunAt: sql.NullTime{Time: scheduledAt, Valid: true},
+			IsActive:  true,
+		}
+
+		_, err = db.CreateSchedule(s.db, schedule)
+		if err != nil {
+			log.Printf("Failed to create schedule for migration %s: %v\n", migrationID, err)
+			http.Error(w, "Failed to create schedule", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("Migration %s scheduled for %s\n", migrationID, scheduledAt.Format(time.RFC3339))
+
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{
+			"success":        true,
+			"migration_id":   migrationID,
+			"scheduled":      true,
+			"scheduled_time": scheduledAt.Format(time.RFC3339),
+		})
+		return
+	}
+
+	// Spawn Background Indexer (immediate start) using shared indexer package
+	go s.indexer.Start(s.ctx, migrationID)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"success":      true,
 		"migration_id": migrationID,
 	})
-}
-
-func (s *APIServer) startIndexing(serverCtx context.Context, migID string, paths []string, calendars []string, contacts []string) {
-	ctx, cancel := context.WithTimeout(serverCtx, 20*time.Minute)
-	defer cancel()
-
-	// Load migration from DB
-	mig, err := db.GetMigration(s.db, migID)
-	if err != nil {
-		s.failMigration(migID, fmt.Sprintf("Failed to fetch migration: %v", err))
-		return
-	}
-
-	// Decrypt source credentials
-	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, s.encryptionKey)
-	if err != nil {
-		s.failMigration(migID, fmt.Sprintf("Failed to decrypt source password: %v", err))
-		return
-	}
-
-	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
-	if err != nil {
-		s.failMigration(migID, fmt.Sprintf("Failed to create storage provider: %v", err))
-		return
-	}
-	defer sourceClient.Close()
-
-	var totalFiles int
-	var totalBytes int64
-	var taskIDs []string
-	indexedPaths := make(map[string]bool)
-
-	// 1. Index files
-	for _, p := range paths {
-		res, err := sourceClient.InspectResource(ctx, "files", p)
-		if err != nil {
-			s.failMigration(migID, fmt.Sprintf("Failed to inspect path %s: %v", p, err))
-			return
-		}
-
-		if res.IsDir {
-			err = s.indexFolder(ctx, sourceClient, "files", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths)
-			if err != nil {
-				s.failMigration(migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
-				return
-			}
-		} else {
-			// Single file
-			key := fmt.Sprintf("files:%s", p)
-			if indexedPaths[key] {
-				continue
-			}
-			indexedPaths[key] = true
-			hashVal := res.Hash
-			task := &db.Task{
-				MigrationID:  migID,
-				ResourceType: "files",
-				FilePath:     p,
-				FileSize:     res.Size,
-				SourceHash:   sql.NullString{String: hashVal, Valid: hashVal != ""},
-				Status:       "PENDING",
-			}
-			taskID, err := db.CreateTask(s.db, task)
-			if err != nil {
-				s.failMigration(migID, fmt.Sprintf("Failed to create task in DB: %v", err))
-				return
-			}
-			taskIDs = append(taskIDs, taskID)
-			totalFiles++
-			totalBytes += res.Size
-		}
-	}
-
-	// 2. Index calendars
-	for _, p := range calendars {
-		err = s.indexFolder(ctx, sourceClient, "calendars", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths)
-		if err != nil {
-			s.failMigration(migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
-			return
-		}
-	}
-
-	// 3. Index contacts
-	for _, p := range contacts {
-		err = s.indexFolder(ctx, sourceClient, "contacts", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths)
-		if err != nil {
-			s.failMigration(migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
-			return
-		}
-	}
-
-	// Update Totals and status to RUNNING in PostgreSQL
-	err = db.UpdateMigrationTotals(s.db, migID, totalFiles, totalBytes)
-	if err != nil {
-		s.failMigration(migID, fmt.Sprintf("Failed to update migration totals: %v", err))
-		return
-	}
-
-	// Re-evaluate completion: tasks may have all finished before totals were written
-	// (race condition with fast/small migrations). A zero-delta increment re-checks
-	// processed >= total inside the same transaction logic.
-	if err := db.IncrementMigrationProgress(s.db, migID, 0, 0, 0, 0); err != nil {
-		log.Printf("Warning: zero-delta progress check after indexing failed for %s: %v\n", migID, err)
-	}
-
-	if totalFiles == 0 {
-		err = db.UpdateMigrationStatus(s.db, migID, "COMPLETED", nil)
-		if err != nil {
-			s.failMigration(migID, fmt.Sprintf("Failed to set migration completed: %v", err))
-			return
-		}
-		log.Printf("Finished indexing migration %s. 0 files to migrate. Marked COMPLETED.\n", migID)
-		return
-	}
-
-	err = db.UpdateMigrationStatusIfIndexing(s.db, migID, "RUNNING")
-	if err != nil {
-		s.failMigration(migID, fmt.Sprintf("Failed to set migration running: %v", err))
-		return
-	}
-
-	log.Printf("Finished indexing migration %s. Total files: %d, Total size: %d bytes.\n", migID, totalFiles, totalBytes)
-}
-
-func (s *APIServer) indexFolder(ctx context.Context, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, taskIDs *[]string, indexedPaths map[string]bool) error {
-	queue := []string{startPath}
-	visited := make(map[string]bool)
-	visited[startPath] = true
-
-	for len(queue) > 0 {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		currentPath := queue[0]
-		queue = queue[1:]
-
-		files, err := client.GetDirectoryListing(ctx, resourceType, currentPath)
-		if err != nil {
-			return err
-		}
-
-		for _, file := range files {
-			if file.IsDir {
-				if !visited[file.Path] {
-					visited[file.Path] = true
-					queue = append(queue, file.Path)
-				}
-			} else {
-				key := fmt.Sprintf("%s:%s", resourceType, file.Path)
-				if indexedPaths[key] {
-					continue
-				}
-				indexedPaths[key] = true
-				task := &db.Task{
-					MigrationID:  migID,
-					ResourceType: resourceType,
-					FilePath:     file.Path,
-					FileSize:     file.Size,
-					SourceHash:   sql.NullString{String: file.Hash, Valid: file.Hash != ""},
-					Status:       "PENDING",
-				}
-				taskID, err := db.CreateTask(s.db, task)
-				if err != nil {
-					return err
-				}
-				*taskIDs = append(*taskIDs, taskID)
-				*totalFiles++
-				*totalBytes += file.Size
-			}
-		}
-	}
-	return nil
-}
-
-func (s *APIServer) failMigration(migID string, errMsg string) {
-	log.Printf("Migration %s failed during indexing: %s\n", migID, errMsg)
-	_ = db.UpdateMigrationStatus(s.db, migID, "FAILED", &errMsg)
 }
 
 func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
@@ -2139,10 +2021,122 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Cascade delete
+	// Cascade delete migration and associated schedules
 	err = db.DeleteMigrationCascade(s.db, id)
 	if err != nil {
 		log.Printf("Error deleting migration %s: %v\n", id, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete any schedules associated with this migration
+	err = db.DeleteSchedulesForTask(s.db, "migration", id)
+	if err != nil {
+		log.Printf("Warning: failed to delete schedules for migration %s: %v\n", id, err)
+		// Non-fatal: schedules will become orphaned but won't cause issues
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// ============================================================================
+// Schedule Management Handlers
+// ============================================================================
+
+// handleListSchedules returns all schedules for the authenticated user
+func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	schedules, err := db.GetSchedulesForUser(s.db, userID)
+	if err != nil {
+		log.Printf("handleListSchedules: failed to get schedules for user %s: %v\n", userID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Return empty array instead of null if no schedules
+	if schedules == nil {
+		schedules = []db.Schedule{}
+	}
+
+	writeJSON(w, http.StatusOK, schedules)
+}
+
+// handleGetSchedule returns a specific schedule if owned by the user
+func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing schedule ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Verify ownership. VerifyScheduleOwnership uses EXISTS, so it never returns
+	// sql.ErrNoRows. A non-owning result means the schedule either does not exist
+	// or belongs to another user — return 404 in both cases to avoid leaking
+	// existence/ownership information.
+	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("handleGetSchedule: error verifying ownership: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		http.Error(w, "Schedule not found", http.StatusNotFound)
+		return
+	}
+
+	schedule, err := db.GetSchedule(s.db, id)
+	if err != nil {
+		log.Printf("handleGetSchedule: failed to get schedule %s: %v\n", id, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, schedule)
+}
+
+// handleDeleteSchedule deletes a schedule if owned by the user
+func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing schedule ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Verify ownership. VerifyScheduleOwnership uses EXISTS, so it never returns
+	// sql.ErrNoRows. A non-owning result means the schedule either does not exist
+	// or belongs to another user — return 404 in both cases to avoid leaking
+	// existence/ownership information.
+	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("handleDeleteSchedule: error verifying ownership: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !owns {
+		http.Error(w, "Schedule not found", http.StatusNotFound)
+		return
+	}
+
+	err = db.DeleteSchedule(s.db, id)
+	if err != nil {
+		log.Printf("handleDeleteSchedule: failed to delete schedule %s: %v\n", id, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}

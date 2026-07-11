@@ -20,6 +20,8 @@
   - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s
   - `RunOrphanedRunningTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
 - **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google refresh tokens before expiry.
+- **Core Scheduler Engine**: A background daemon in `cmd/api` (`scheduler.Run`) checks for due schedules every minute and triggers the linked job (migration/sync/backup). It uses `github.com/robfig/cron/v3` for cron parsing/next-run calculation. Schedules live in the `schedules` table; a Redis `SET NX` lock (`schedule:lock:{id}`, 2-min TTL) ensures only one API instance triggers a given schedule in a multi-instance deployment.
+- **Indexer package**: `backend/internal/indexer` holds the shared indexing logic (`Indexer.Start`). Both the immediate `handleStart` path and the scheduler's `triggerMigration` call it, so scheduled migrations actually create PENDING tasks. Selected paths/calendars/contacts are persisted on the `migrations` row (`selected_paths`/`selected_calendars`/`selected_contacts` JSONB) and read at trigger time.
 - **WebSocket auth**: The `/api/migration/{id}/ws` endpoint is **not** behind `AuthMiddleware`. It authenticates via a `?token=<jwt>` query parameter and performs ownership validation manually inside the handler.
 
 ## Key Conventions
@@ -48,10 +50,20 @@
 - All endpoints operating on a specific migration (`GET /api/migration/{id}`, `DELETE /api/migration/{id}`, `GET /api/migration/{id}/report`) must call `auth.GetUserIDFromContext(r.Context())` and compare against `mig.UserID` — return `403 Forbidden` on mismatch.
 - The WebSocket handler (`/api/migration/{id}/ws`) performs the same check manually using the `?token` query parameter.
 - User ID is always sourced from the validated JWT claims injected by `AuthMiddleware` via `auth.ClaimsKey` context key.
+- Schedule endpoints (`GET /api/schedule/{id}`, `DELETE /api/schedule/{id}`) verify ownership via `db.VerifyScheduleOwnership` (uses `EXISTS`, never returns `sql.ErrNoRows`). A non-owning result means the schedule either does not exist or belongs to another user — return `404 Not Found` in both cases to avoid leaking existence/ownership (do **not** return `403`).
 
 ### Indexing (BFS)
 - Use queue-based Breadth-First Search with a `visited` map for recursive directory traversal to prevent infinite loops on symlink cycles or circular DAVs.
 - Track indexed paths with a `resourceType:path` key in an `indexedPaths` map to prevent duplicate tasks.
+
+### Scheduler Engine
+- **Schedule table**: `schedules` (id, user_id, task_type, task_id, cron_expression, run_at, next_run_at, is_active). One-shot jobs leave `cron_expression` NULL and set `run_at`/`next_run_at`; recurring jobs set `cron_expression` and compute `next_run_at` via `cron.ParseStandard`.
+- **Trigger loop**: `scheduler.Run` ticks every 1 min, calls `GetDueSchedules` (`is_active = TRUE AND next_run_at <= NOW()`), claims each via Redis `SET NX` (`schedule:lock:{id}`, 2-min TTL), then `processSchedule`.
+- **Overlap protection**: Before triggering, `isJobActive` checks the linked job's status. For migrations, `RUNNING`/`INDEXING` ⇒ skip (log + advance `next_run_at` for recurring). This satisfies the "90-min sync skipped at 60 min" acceptance criterion.
+- **Lifecycle**: One-shot ⇒ `DeactivateSchedule` after trigger. Recurring ⇒ recompute `next_run_at` via `NextRun(cron_expression)`.
+- **Failure handling**: If `triggerJob` errors (e.g. linked task deleted, migration not in `SCHEDULED` state), the schedule is **deactivated** to prevent an infinite retry loop. The user re-creates it via the API if needed.
+- **Deferred migrations**: `handleStart` with `scheduled_time` creates the migration in `SCHEDULED` status + a one-shot schedule. The scheduler's `triggerMigration` calls `indexer.Start`, which reads persisted `selected_paths`/`calendars`/`contacts` and creates PENDING tasks — scheduled migrations actually execute (no silent stall in `SCHEDULED`/`INDEXING`).
+- **Cron validation**: Validate user-supplied cron expressions with `scheduler.ValidateCronExpression` (wraps `cron.ParseStandard`) before persisting.
 
 ### API Response Patterns
 - Use `writeJSON(w, status, data)` for all JSON responses — never write raw JSON manually.

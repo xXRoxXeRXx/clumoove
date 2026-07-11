@@ -43,6 +43,18 @@ const formatSize = (bytes: number): string => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
+// toLocalInputValue formats a Date as a local-time datetime-local string
+// (YYYY-MM-DDTHH:MM) without UTC conversion. datetime-local inputs expect the
+// value in the user's local timezone, so using toISOString() (which is UTC)
+// would shift the minimum by the timezone offset.
+const toLocalInputValue = (date: Date): string => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+};
+
 export const FileBrowser: React.FC<FileBrowserProps> = ({
   initialFiles,
   credentials,
@@ -77,6 +89,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [newFolderName, setNewFolderName] = useState('');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // Scheduling state
+  const [enableScheduling, setEnableScheduling] = useState(false);
+  const [scheduledTime, setScheduledTime] = useState('');
+
+  // Minimum selectable start time: now + 1 minute, formatted in the user's
+  // local timezone (datetime-local inputs expect local time, not UTC).
+  // Computed once via a useState lazy initializer to keep render pure
+  // (no Date.now() called during render).
+  const [minScheduledTime] = useState(() =>
+    toLocalInputValue(new Date(Date.now() + 60000))
+  );
 
   const fetchTargetChildren = async (folderPath: string) => {
     if (targetDirectoryContents[folderPath] || targetLoadingPaths[folderPath]) return;
@@ -294,25 +318,41 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       return;
     }
 
+    // Validate scheduled time if scheduling is enabled
+    if (enableScheduling && scheduledTime) {
+      const scheduledDate = new Date(scheduledTime);
+      if (scheduledDate <= new Date()) {
+        setError('Der geplante Startzeitpunkt muss in der Zukunft liegen.');
+        return;
+      }
+    }
+
     setStarting(true);
     setError(null);
 
     try {
+      const requestBody: Record<string, unknown> = {
+        ...credentials,
+        conflict_strategy: conflictStrategy,
+        paths: pathsToMigrate,
+        calendars: calendarsToMigrate,
+        contacts: contactsToMigrate,
+        target_dir: targetDir,
+        threads: threads,
+      };
+
+      // Add scheduled_time if scheduling is enabled
+      if (enableScheduling && scheduledTime) {
+        requestBody.scheduled_time = new Date(scheduledTime).toISOString();
+      }
+
       const response = await fetch(`${apiUrl}/api/migration/start`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          ...credentials,
-          conflict_strategy: conflictStrategy,
-          paths: pathsToMigrate,
-          calendars: calendarsToMigrate,
-          contacts: contactsToMigrate,
-          target_dir: targetDir,
-          threads: threads,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -801,6 +841,42 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 )}
               </p>
             </div>
+          </div>
+
+          {/* Scheduling Option */}
+          <div className="mt-4 p-4 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-2xl">
+            <label className="flex items-center gap-3 cursor-pointer group">
+              <input
+                type="checkbox"
+                checked={enableScheduling}
+                onChange={(e) => setEnableScheduling(e.target.checked)}
+                className="w-4 h-4 rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange/30 cursor-pointer"
+              />
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-portal-orange transition-colors" />
+                <span className="text-xs font-semibold text-[var(--color-text-primary)]">
+                  Migration für später planen
+                </span>
+              </div>
+            </label>
+            
+            {enableScheduling && (
+              <div className="mt-3 pl-7">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
+                  Startzeitpunkt
+                </label>
+                <input
+                  type="datetime-local"
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                  min={minScheduledTime}
+                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+                />
+                <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
+                  Die Migration wird automatisch zum gewählten Zeitpunkt gestartet. Sie können die Migration bis dahin jederzeit stornieren.
+                </p>
+              </div>
+            )}
           </div>
 
           {error && (

@@ -123,6 +123,15 @@ func (q *Queue) TryClaimWorkerRecoveryLock(ctx context.Context, workerID string,
 	return q.client.SetNX(ctx, key, "1", ttl).Result()
 }
 
+// TryClaimScheduleLock atomically claims a processing lock for a schedule using SET NX.
+// Returns true if this caller has acquired the lock and is responsible for triggering the job.
+// The lock expires after ttl, preventing a stale lock from blocking scheduling forever and
+// ensuring that in a multi-instance API deployment only one gateway triggers a given schedule.
+func (q *Queue) TryClaimScheduleLock(ctx context.Context, scheduleID string, ttl time.Duration) (bool, error) {
+	key := fmt.Sprintf("schedule:lock:%s", scheduleID)
+	return q.client.SetNX(ctx, key, "1", ttl).Result()
+}
+
 // RegisterActiveWorker registers/refreshes the worker's active status in Redis
 func (q *Queue) RegisterActiveWorker(ctx context.Context, workerID string, ttl time.Duration) error {
 	key := fmt.Sprintf("worker:active:%s", workerID)

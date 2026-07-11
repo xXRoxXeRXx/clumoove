@@ -46,9 +46,12 @@ CREATE TABLE IF NOT EXISTS migrations (
     target_token_expires_at TIMESTAMP WITH TIME ZONE,
     source_provider TEXT NOT NULL DEFAULT 'nextcloud',
     target_provider TEXT NOT NULL DEFAULT 'nextcloud',
-    status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+    status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED, SCHEDULED
     conflict_strategy TEXT NOT NULL DEFAULT 'SKIP', -- SKIP, OVERWRITE, RENAME
     target_dir TEXT NOT NULL DEFAULT '/',
+    selected_paths JSONB,
+    selected_calendars JSONB,
+    selected_contacts JSONB,
     total_files INT NOT NULL DEFAULT 0,
     total_bytes BIGINT NOT NULL DEFAULT 0,
     processed_files INT NOT NULL DEFAULT 0,
@@ -103,5 +106,38 @@ CREATE OR REPLACE TRIGGER update_migrations_updated_at
 
 CREATE OR REPLACE TRIGGER update_tasks_updated_at
     BEFORE UPDATE ON tasks
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Central Schedules Table (Core Scheduler Engine)
+CREATE TABLE IF NOT EXISTS schedules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    task_type TEXT NOT NULL CHECK (task_type IN ('migration', 'sync', 'backup')),
+    task_id UUID NOT NULL,
+    cron_expression TEXT,
+    run_at TIMESTAMP WITH TIME ZONE,
+    next_run_at TIMESTAMP WITH TIME ZONE,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Index for efficient daemon queries (only active schedules)
+CREATE INDEX IF NOT EXISTS idx_schedules_next_run 
+    ON schedules(next_run_at) 
+    WHERE is_active = TRUE;
+
+-- Index for user-scoped queries (multi-tenancy)
+CREATE INDEX IF NOT EXISTS idx_schedules_user_id 
+    ON schedules(user_id);
+
+-- Index for task lookup
+CREATE INDEX IF NOT EXISTS idx_schedules_task 
+    ON schedules(task_type, task_id);
+
+-- Auto-update trigger for schedules
+CREATE OR REPLACE TRIGGER update_schedules_updated_at
+    BEFORE UPDATE ON schedules
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
