@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudLightning, Eye, EyeOff, Palette, Sun, Moon, Monitor } from 'lucide-react';
+import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudSync, Eye, EyeOff, Palette, Sun, Moon, Monitor } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
 import { useThemeContext } from '../contexts/ThemeContext';
 
@@ -550,7 +550,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
           {user?.role === 'ADMIN' && (
             <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
               <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-                <CloudLightning className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+                <CloudSync className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
                 <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Systemsteuerung</h3>
               </div>
 

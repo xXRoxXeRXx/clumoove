@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CloudLightning, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
+import { CloudSync, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
 
 interface AuthFormProps {
   apiUrl: string;
@@ -90,7 +90,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
           <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
-            <CloudLightning className="w-6 h-6 stroke-[2.5]" />
+            <CloudSync className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
             {isLogin ? 'Willkommen zurück' : 'Account erstellen'}

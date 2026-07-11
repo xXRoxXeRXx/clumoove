@@ -5,7 +5,7 @@ import { Dashboard } from './components/Dashboard';
 import { AuthForm } from './components/AuthForm';
 import { MigrationsDashboard } from './components/MigrationsDashboard';
 import { SettingsPage } from './components/SettingsPage';
-import { CloudLightning, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
+import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings';
@@ -260,7 +260,7 @@ function App() {
           <div className="relative">
             <div className="absolute inset-0 bg-portal-orange/20 blur-xl rounded-full animate-pulse-glow" />
             <div className="relative p-4 bg-gradient-to-tr from-portal-navy to-portal-navy-light rounded-2xl text-white shadow-md animate-bounce">
-              <CloudLightning className="w-8 h-8 stroke-[2.5]" />
+              <CloudSync className="w-8 h-8 stroke-[2.5]" />
             </div>
           </div>
           <div className="space-y-2">
@@ -288,7 +288,7 @@ function App() {
               onClick={() => step !== 'login' && setStep('history')}
               className="group w-10 h-10 flex items-center justify-center bg-gradient-to-tr from-portal-orange to-orange-500 rounded-xl text-white shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer hover:-translate-y-0.5"
             >
-              <CloudLightning className="w-5 h-5 stroke-[2.5] group-hover:rotate-12 transition-transform duration-300" />
+              <CloudSync className="w-5 h-5 stroke-[2.5] group-hover:rotate-12 transition-transform duration-300" />
             </div>
             
             <span className="font-display font-extrabold text-xl tracking-tight leading-none text-[var(--color-portal-navy-themed)] select-none">
