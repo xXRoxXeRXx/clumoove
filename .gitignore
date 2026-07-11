@@ -19,6 +19,7 @@ desktop.ini
 *.njsproj
 *.sln
 *.sw?
+.kilo/*
 
 # Ignore backend build binaries
 backend/bin/
