@@ -116,20 +116,21 @@ type Migration struct {
 }
 
 type Task struct {
-	ID           string         `json:"id"`
-	MigrationID  string         `json:"migration_id"`
-	FilePath     string         `json:"file_path"`
-	FileSize     int64          `json:"file_size"`
-	SourceHash   sql.NullString `json:"source_hash"`
-	WorkerHash   sql.NullString `json:"worker_hash"`
-	TargetHash   sql.NullString `json:"target_hash"`
-	Status       string         `json:"status"`        // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
-	ResourceType string         `json:"resource_type"` // files, calendars, contacts
-	ErrorMessage sql.NullString `json:"error_message"`
-	Attempts     int            `json:"attempts"`
-	NextRetryAt  sql.NullTime   `json:"next_retry_at"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	ID           string          `json:"id"`
+	MigrationID  string          `json:"migration_id"`
+	FilePath     string          `json:"file_path"`
+	FileSize     int64           `json:"file_size"`
+	SourceHash   sql.NullString  `json:"source_hash"`
+	WorkerHash   sql.NullString  `json:"worker_hash"`
+	TargetHash   sql.NullString  `json:"target_hash"`
+	Status       string          `json:"status"`        // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
+	ResourceType string          `json:"resource_type"` // files, calendars, contacts
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	ErrorMessage sql.NullString  `json:"error_message"`
+	Attempts     int             `json:"attempts"`
+	NextRetryAt  sql.NullTime    `json:"next_retry_at"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // InitDB initializes the database connection with startup retries
@@ -213,6 +214,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS resource_type TEXT NOT NULL DEFAULT 'files'`)
 			if err != nil {
 				log.Printf("Failed schema migration (resource_type): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS metadata JSONB`)
+			if err != nil {
+				log.Printf("Failed schema migration (metadata): %v\n", err)
 			}
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS target_dir TEXT NOT NULL DEFAULT '/'`)
 			if err != nil {
@@ -521,13 +526,13 @@ func UpdateMigrationTotals(db *sql.DB, id string, totalFiles int, totalBytes int
 func CreateTask(db *sql.DB, t *Task) (string, error) {
 	query := `
 		INSERT INTO tasks (
-			migration_id, file_path, file_size, source_hash, status, resource_type
-		) VALUES ($1, $2, $3, $4, $5, $6)
+			migration_id, file_path, file_size, source_hash, status, resource_type, metadata
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
-		t.MigrationID, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType,
+		t.MigrationID, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata,
 	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 
 	if err != nil {
@@ -540,13 +545,13 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, migration_id, file_path, file_size, source_hash, worker_hash, target_hash,
-		       status, error_message, attempts, next_retry_at, created_at, updated_at, resource_type
+		       status, error_message, attempts, next_retry_at, created_at, updated_at, resource_type, metadata
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
 		&t.ID, &t.MigrationID, &t.FilePath, &t.FileSize, &t.SourceHash, &t.WorkerHash, &t.TargetHash,
-		&t.Status, &t.ErrorMessage, &t.Attempts, &t.NextRetryAt, &t.CreatedAt, &t.UpdatedAt, &t.ResourceType,
+		&t.Status, &t.ErrorMessage, &t.Attempts, &t.NextRetryAt, &t.CreatedAt, &t.UpdatedAt, &t.ResourceType, &t.Metadata,
 	)
 	if err != nil {
 		return nil, err

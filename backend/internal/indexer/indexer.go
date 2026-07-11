@@ -3,6 +3,7 @@ package indexer
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -97,6 +98,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			}
 			indexedPaths[key] = true
 			hashVal := res.Hash
+			metaJSON, _ := json.Marshal(storage.FileMetadata{
+				ModifiedTime: res.LastModified,
+				Description:  res.Metadata.Description,
+			})
 			task := &db.Task{
 				MigrationID:  migID,
 				ResourceType: "files",
@@ -104,6 +109,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				FileSize:     res.Size,
 				SourceHash:   sql.NullString{String: hashVal, Valid: hashVal != ""},
 				Status:       "PENDING",
+				Metadata:     metaJSON,
 			}
 			taskID, err := db.CreateTask(idx.db, task)
 			if err != nil {
@@ -199,6 +205,10 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					continue
 				}
 				indexedPaths[key] = true
+				metaJSON, _ := json.Marshal(storage.FileMetadata{
+					ModifiedTime: file.LastModified,
+					Description:  file.Metadata.Description,
+				})
 				task := &db.Task{
 					MigrationID:  migID,
 					ResourceType: resourceType,
@@ -206,6 +216,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					FileSize:     file.Size,
 					SourceHash:   sql.NullString{String: file.Hash, Valid: file.Hash != ""},
 					Status:       "PENDING",
+					Metadata:     metaJSON,
 				}
 				taskID, err := db.CreateTask(database, task)
 				if err != nil {

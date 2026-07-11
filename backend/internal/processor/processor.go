@@ -6,10 +6,12 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path"
@@ -720,21 +722,29 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		return fmt.Errorf("upload to target failed: %w", err)
 	}
 
-	// Date preservation (F-05, SHOULD)
-	if preserver, ok := targetClient.(interface {
-		SetModTime(ctx context.Context, resourceType, filePath string, modTime time.Time) error
-	}); ok {
-		if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil {
-			_ = preserver.SetModTime(ctx, task.ResourceType, uploadPath, srcInfo.LastModified)
-		}
-	}
-
 	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
 	if deleteAfterUpload {
 		// Attempt to delete original. Ignore not found error if it's already gone.
 		_ = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 		if renameErr := targetClient.RenameFile(ctx, task.ResourceType, uploadPath, targetPath); renameErr != nil {
 			return fmt.Errorf("failed to rename temp file to target path: %w", renameErr)
+		}
+	}
+
+	if applier, ok := targetClient.(storage.MetadataApplier); ok {
+		var meta storage.FileMetadata
+		if task.Metadata != nil {
+			_ = json.Unmarshal(task.Metadata, &meta)
+		}
+		if meta.ModifiedTime.IsZero() {
+			if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil {
+				meta.ModifiedTime = srcInfo.LastModified
+			}
+		}
+		if !meta.ModifiedTime.IsZero() || meta.Description != "" {
+			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, meta); err != nil {
+				log.Printf("Warning: failed to apply metadata for %s: %v", targetPath, err)
+			}
 		}
 	}
 

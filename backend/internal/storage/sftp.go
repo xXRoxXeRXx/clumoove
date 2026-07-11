@@ -476,3 +476,19 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 
 	return nil
 }
+
+func (p *SFTPProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+	if resourceType != "files" || meta.ModifiedTime.IsZero() {
+		return nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.ensureConnected(ctx); err != nil {
+		return nil
+	}
+
+	cleanPath := p.cleanPath(filePath)
+	_ = p.sftpClient.Chtimes(cleanPath, time.Now(), meta.ModifiedTime)
+	return nil
+}

@@ -13,13 +13,26 @@ var ErrDuplicateUID = errors.New("sabredav: duplicate UID index violation")
 // Use errors.Is to detect it rather than substring-matching error strings.
 var ErrAuth = errors.New("authentication failed: invalid credentials")
 
+type FileMetadata struct {
+	ModifiedTime time.Time         `json:"modified_time,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	Tags         []string          `json:"tags,omitempty"`
+	Starred      bool              `json:"starred,omitempty"`
+	CustomProps  map[string]string `json:"custom_props,omitempty"`
+}
+
 type CloudResource struct {
-	Path         string    `json:"path"`
-	Name         string    `json:"name"`
-	Size         int64     `json:"size"`
-	IsDir        bool      `json:"is_dir"`
-	Hash         string    `json:"hash"`
-	LastModified time.Time `json:"last_modified"`
+	Path         string       `json:"path"`
+	Name         string       `json:"name"`
+	Size         int64        `json:"size"`
+	IsDir        bool         `json:"is_dir"`
+	Hash         string       `json:"hash"`
+	LastModified time.Time    `json:"last_modified"`
+	Metadata     FileMetadata `json:"metadata"`
+}
+
+type MetadataApplier interface {
+	ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error
 }
 
 type StorageProvider interface {

@@ -99,7 +99,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 		for {
 			call := p.driveService.Files.List().
 				Q(query).
-				Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime, md5Checksum)").
+				Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime, md5Checksum, description)").
 				Context(ctx)
 			if pageToken != "" {
 				call = call.PageToken(pageToken)
@@ -134,6 +134,9 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 					IsDir:        isDir,
 					Hash:         f.Md5Checksum,
 					LastModified: modTime,
+					Metadata: FileMetadata{
+						Description: f.Description,
+					},
 				})
 			}
 			if result.NextPageToken == "" {
@@ -376,7 +379,7 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 		if err != nil {
 			return CloudResource{}, err
 		}
-		f, err := p.driveService.Files.Get(id).Fields("id, name, mimeType, size, modifiedTime, md5Checksum").Context(ctx).Do()
+		f, err := p.driveService.Files.Get(id).Fields("id, name, mimeType, size, modifiedTime, md5Checksum, description").Context(ctx).Do()
 		if err != nil {
 			return CloudResource{}, err
 		}
@@ -399,6 +402,9 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 			IsDir:        isDir,
 			Hash:         f.Md5Checksum,
 			LastModified: modTime,
+			Metadata: FileMetadata{
+				Description: f.Description,
+			},
 		}, nil
 	default:
 		return CloudResource{}, fmt.Errorf("InspectResource not implemented for %s", resourceType)
@@ -951,4 +957,29 @@ func (p *GoogleProvider) findExistingContact(ctx context.Context, person *people
 	}
 
 	return "", nil
+}
+
+func (p *GoogleProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+	if resourceType != "files" {
+		return nil
+	}
+	if meta.ModifiedTime.IsZero() && meta.Description == "" {
+		return nil
+	}
+	fileID, err := p.resolveDriveFileID(ctx, filePath)
+	if err != nil {
+		return nil
+	}
+	update := &drive.File{}
+	if !meta.ModifiedTime.IsZero() {
+		update.ModifiedTime = meta.ModifiedTime.Format(time.RFC3339)
+	}
+	if meta.Description != "" {
+		update.Description = meta.Description
+	}
+	_, err = p.driveService.Files.Update(fileID, update).Context(ctx).Do()
+	if err != nil {
+		return nil
+	}
+	return nil
 }

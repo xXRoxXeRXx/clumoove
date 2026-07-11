@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     target_hash TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
     resource_type TEXT NOT NULL DEFAULT 'files', -- files, calendars, contacts
+    metadata JSONB,
     error_message TEXT,
     attempts INT NOT NULL DEFAULT 0,
     next_retry_at TIMESTAMP WITH TIME ZONE,

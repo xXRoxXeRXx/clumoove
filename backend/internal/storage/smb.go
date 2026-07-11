@@ -456,9 +456,9 @@ func (p *SMBProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 	return nil
 }
 
-func (p *SMBProvider) SetModTime(ctx context.Context, resourceType, filePath string, modTime time.Time) error {
-	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by SMB", resourceType)
+func (p *SMBProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+	if resourceType != "files" || meta.ModifiedTime.IsZero() {
+		return nil
 	}
 
 	p.mu.Lock()
@@ -470,9 +470,9 @@ func (p *SMBProvider) SetModTime(ctx context.Context, resourceType, filePath str
 	cleanPath := p.cleanPath(filePath)
 	fsWithCtx := p.fs.WithContext(ctx)
 
-	err := fsWithCtx.Chtimes(cleanPath, time.Now(), modTime)
+	err := fsWithCtx.Chtimes(cleanPath, time.Now(), meta.ModifiedTime)
 	if err != nil {
-		return p.handleError(fmt.Errorf("smb chtimes failed: %w", err))
+		return p.handleError(err)
 	}
 
 	return nil

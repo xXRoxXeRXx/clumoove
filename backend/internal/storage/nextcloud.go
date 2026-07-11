@@ -931,6 +931,37 @@ func (p *NextcloudProvider) RenameFile(ctx context.Context, resourceType, oldPat
 	return nil
 }
 
+func (p *NextcloudProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+	if resourceType != "files" || meta.ModifiedTime.IsZero() {
+		return nil
+	}
+
+	u := p.buildResourceURL(resourceType, filePath)
+	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" ?>
+<d:propertyupdate xmlns:d="DAV:">
+  <d:set>
+    <d:prop>
+      <d:lastmodified>%s</d:lastmodified>
+    </d:prop>
+  </d:set>
+</d:propertyupdate>`, meta.ModifiedTime.UTC().Format(time.RFC3339))
+
+	req, err := p.newRequest("PROPPATCH", u, strings.NewReader(body))
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	req = req.WithContext(ctx)
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	return nil
+}
+
 var hexRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
 
 func ParseHashString(hashStr string) (string, string) {
