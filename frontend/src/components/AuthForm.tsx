@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { CloudLightning, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
 
 interface AuthFormProps {
@@ -14,6 +14,20 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
+
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.registrations_enabled === 'false') {
+          setRegistrationsEnabled(false);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to fetch settings:', err);
+      });
+  }, [apiUrl]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -190,19 +204,25 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         {/* Toggle between login and registration */}
         <div className="mt-6 text-center text-xs font-mono text-slate-450 border-t border-slate-200/40 pt-5">
           {isLogin ? (
-            <p>
-              Noch keinen Account?{' '}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsLogin(false);
-                  setError('');
-                }}
-                className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
-              >
-                Registrieren
-              </button>
-            </p>
+            registrationsEnabled ? (
+              <p>
+                Noch keinen Account?{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsLogin(false);
+                    setError('');
+                  }}
+                  className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
+                >
+                  Registrieren
+                </button>
+              </p>
+            ) : (
+              <p className="text-slate-400">
+                Registrierungen sind derzeit deaktiviert.
+              </p>
+            )
           ) : (
             <p>
               Bereits registriert?{' '}

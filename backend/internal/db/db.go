@@ -31,6 +31,8 @@ type User struct {
 	PasswordHash string    `json:"-"`
 	DisplayName  string    `json:"display_name"`
 	Role         string    `json:"role"`
+	Avatar       []byte    `json:"-"`
+	AvatarMime   string    `json:"-"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
@@ -110,6 +112,8 @@ func InitDB(connStr string) (*sql.DB, error) {
 					password_hash TEXT NOT NULL,
 					display_name TEXT NOT NULL,
 					role TEXT NOT NULL DEFAULT 'USER',
+					avatar BYTEA,
+					avatar_mime TEXT,
 					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 					updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 				)
@@ -130,6 +134,27 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				// Fatal: authentication depends on this table
 				return nil, fmt.Errorf("fatal schema migration (create refresh_tokens table): %w", err)
+			}
+
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS settings (
+					key TEXT PRIMARY KEY,
+					value TEXT NOT NULL,
+					updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				return nil, fmt.Errorf("fatal schema migration (create settings table): %w", err)
+			}
+
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar BYTEA`)
+			if err != nil {
+				log.Printf("Failed schema migration (user avatar): %v\n", err)
+			}
+
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_mime TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (user avatar_mime): %v\n", err)
 			}
 
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE`)
@@ -574,29 +599,84 @@ func CreateUser(db *sql.DB, email, passwordHash, displayName string) (*User, err
 // GetUserByEmail retrieves a user by email
 func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at
 		FROM users WHERE email = $1
 	`
 	var u User
-	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	var mime sql.NullString
+	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.AvatarMime = mime.String
 	return &u, nil
 }
 
 // GetUserByID retrieves a user by UUID
 func GetUserByID(db *sql.DB, id string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at
 		FROM users WHERE id = $1
 	`
 	var u User
-	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.CreatedAt, &u.UpdatedAt)
+	var mime sql.NullString
+	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	u.AvatarMime = mime.String
 	return &u, nil
+}
+
+// UpdateUserDisplayName updates the user's display name
+func UpdateUserDisplayName(db *sql.DB, id, name string) error {
+	query := `UPDATE users SET display_name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
+	_, err := db.Exec(query, name, id)
+	return err
+}
+
+// UpdateUserPassword updates the user's password hash
+func UpdateUserPassword(db *sql.DB, id, newHash string) error {
+	query := `UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
+	_, err := db.Exec(query, newHash, id)
+	return err
+}
+
+// UpdateUserAvatar updates the user's avatar image bytes and mime type
+func UpdateUserAvatar(db *sql.DB, id string, data []byte, mime string) error {
+	query := `UPDATE users SET avatar = $1, avatar_mime = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3`
+	_, err := db.Exec(query, data, mime, id)
+	return err
+}
+
+// DeleteUserAvatar clears the user's avatar image
+func DeleteUserAvatar(db *sql.DB, id string) error {
+	query := `UPDATE users SET avatar = NULL, avatar_mime = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`
+	_, err := db.Exec(query, id)
+	return err
+}
+
+// GetSetting retrieves the setting value for the given key, returning empty string if it does not exist
+func GetSetting(db *sql.DB, key string) (string, error) {
+	var val string
+	query := `SELECT value FROM settings WHERE key = $1`
+	err := db.QueryRow(query, key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return val, err
+}
+
+// SetSetting sets or updates a setting key-value pair
+func SetSetting(db *sql.DB, key, value string) error {
+	query := `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES ($1, $2, CURRENT_TIMESTAMP)
+		ON CONFLICT (key) DO UPDATE
+		SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP
+	`
+	_, err := db.Exec(query, key, value)
+	return err
 }
 
 // StoreRefreshToken saves a hashed refresh token mapped to a user

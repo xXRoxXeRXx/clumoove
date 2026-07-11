@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ConnectForm } from './components/ConnectForm';
 import { FileBrowser } from './components/FileBrowser';
 import { Dashboard } from './components/Dashboard';
 import { AuthForm } from './components/AuthForm';
 import { MigrationsDashboard } from './components/MigrationsDashboard';
-import { CloudLightning, LogOut, User as UserIcon } from 'lucide-react';
+import { SettingsPage } from './components/SettingsPage';
+import { CloudLightning, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 
-type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard';
+type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings';
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -49,6 +50,23 @@ function App() {
   const [initialFiles, setInitialFiles] = useState<any[]>([]);
   const [migrationId, setMigrationId] = useState<string>('');
   const [isValidating, setIsValidating] = useState<boolean>(true);
+  const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Click outside to close user menu
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    if (showUserMenu) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [showUserMenu]);
 
   // 1. Silent login / Refresh Token check on load
   useEffect(() => {
@@ -279,24 +297,55 @@ function App() {
 
           {/* User Section in Header */}
           {user && (
-            <div className="flex items-center gap-3.5 text-xs">
-              <div className="flex items-center gap-2.5 bg-slate-100/80 border border-slate-200/40 pl-2.5 pr-4 py-1.5 rounded-full shadow-xs">
-                <div className="w-7 h-7 bg-portal-navy text-white rounded-full flex items-center justify-center shadow-xs">
-                  <UserIcon className="w-4 h-4" />
-                </div>
+            <div className="relative" ref={userMenuRef}>
+              <div 
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-2.5 bg-slate-100/80 hover:bg-slate-200/50 border border-slate-200/40 pl-2.5 pr-4 py-1.5 rounded-full shadow-xs cursor-pointer select-none transition-colors"
+              >
+                {user.avatar ? (
+                  <img 
+                    src={user.avatar} 
+                    className="w-7 h-7 rounded-full object-cover shadow-xs border border-slate-200" 
+                    alt={user.display_name}
+                  />
+                ) : (
+                  <div className="w-7 h-7 bg-portal-navy text-white rounded-full flex items-center justify-center shadow-xs">
+                    <UserIcon className="w-4 h-4" />
+                  </div>
+                )}
                 <div className="flex flex-col text-left">
                   <span className="font-bold text-slate-800 leading-tight">{user.display_name}</span>
                   <span className="text-[9px] text-slate-500 font-mono leading-none mt-0.5">{user.email}</span>
                 </div>
               </div>
-              
-              <button
-                onClick={handleLogout}
-                className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 rounded-full hover:border-slate-350 hover:bg-slate-50 transition-all font-mono font-bold text-[11px] cursor-pointer text-slate-650 hover:text-portal-navy shadow-xs hover:shadow-sm"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Abmelden</span>
-              </button>
+
+              {showUserMenu && (
+                <div className="absolute right-0 top-full mt-2 w-48 bg-white/95 backdrop-blur-md border border-slate-200/60 rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in">
+                  <div className="px-3.5 py-2 text-[10px] text-slate-450 font-mono border-b border-slate-100 mb-1 select-none">
+                    // BENUTZER-SYSTEM
+                  </div>
+                  <button
+                    onClick={() => {
+                      setStep('settings');
+                      setShowUserMenu(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-portal-navy transition-colors cursor-pointer text-left font-sans"
+                  >
+                    <SettingsIcon className="w-4 h-4 text-slate-450" />
+                    Einstellungen
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleLogout();
+                      setShowUserMenu(false);
+                    }}
+                    className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50/50 transition-colors cursor-pointer text-left font-sans"
+                  >
+                    <LogOut className="w-4 h-4 text-rose-450" />
+                    Abmelden
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -348,6 +397,16 @@ function App() {
               apiUrl={API_URL}
               onReset={handleReset}
               token={token}
+            />
+          )}
+
+          {step === 'settings' && (
+            <SettingsPage
+              apiUrl={API_URL}
+              token={token}
+              user={user}
+              onBack={() => setStep('history')}
+              onUpdateUser={(updated) => setUser(updated)}
             />
           )}
         </div>

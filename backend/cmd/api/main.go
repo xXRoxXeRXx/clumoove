@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -121,10 +122,16 @@ func main() {
 	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
 	mux.HandleFunc("POST /api/auth/refresh", server.handleRefresh)
 	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
+	mux.HandleFunc("GET /api/settings", server.handleGetSettings)
 
 	// Protected Auth Routes
 	jwtMiddleware := auth.AuthMiddleware(server.jwtSecret)
 	mux.Handle("GET /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleMe)))
+	mux.Handle("PUT /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleUpdateProfile)))
+	mux.Handle("POST /api/auth/change-password", jwtMiddleware(http.HandlerFunc(server.handleChangePassword)))
+	mux.Handle("POST /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleSetAvatar)))
+	mux.Handle("DELETE /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleDeleteAvatar)))
+	mux.Handle("PUT /api/settings", jwtMiddleware(http.HandlerFunc(server.handleUpdateSetting)))
 
 	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
 	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
@@ -1531,6 +1538,17 @@ type RegisterRequest struct {
 }
 
 func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
+	regEnabled, err := db.GetSetting(s.db, "registrations_enabled")
+	if err != nil {
+		log.Printf("Register error: failed to check registrations_enabled: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if regEnabled == "false" {
+		http.Error(w, "Registrations are disabled", http.StatusForbidden)
+		return
+	}
+
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid body", http.StatusBadRequest)
@@ -1544,7 +1562,7 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify if user already exists
-	_, err := db.GetUserByEmail(s.db, req.Email)
+	_, err = db.GetUserByEmail(s.db, req.Email)
 	if err == nil {
 		// User found — reject duplicate
 		http.Error(w, "User with this email already exists", http.StatusConflict)
@@ -1633,8 +1651,17 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	auth.SetRefreshTokenCookie(w, r, refreshToken, expiresAt)
 
+	userResp := map[string]interface{}{
+		"id":           u.ID,
+		"email":        u.Email,
+		"display_name": u.DisplayName,
+		"role":         u.Role,
+	}
+	if len(u.Avatar) > 0 {
+		userResp["avatar"] = avatarDataURL(u)
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"user":         u,
+		"user":         userResp,
 		"access_token": accessToken,
 	})
 }
@@ -1809,19 +1836,274 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 	}
 }
 func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
-	// All user data is already embedded in the validated JWT claims;
-	// no extra DB round-trip needed for a simple /me endpoint.
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	u, err := db.GetUserByID(s.db, userID)
+	if err != nil {
+		log.Printf("handleMe: failed to load user %s: %v\n", userID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := map[string]interface{}{
+		"id":           u.ID,
+		"email":        u.Email,
+		"display_name": u.DisplayName,
+		"role":         u.Role,
+	}
+	if len(u.Avatar) > 0 {
+		resp["avatar"] = avatarDataURL(u)
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func avatarDataURL(u *db.User) string {
+	if len(u.Avatar) == 0 {
+		return ""
+	}
+	mime := u.AvatarMime
+	if mime == "" {
+		mime = "image/png"
+	}
+	encoded := base64.StdEncoding.EncodeToString(u.Avatar)
+	return fmt.Sprintf("data:%s;base64,%s", mime, encoded)
+}
+
+type UpdateProfileRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+func (s *APIServer) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req UpdateProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if req.DisplayName == "" {
+		http.Error(w, "Display name is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.UpdateUserDisplayName(s.db, userID, req.DisplayName); err != nil {
+		log.Printf("handleUpdateProfile: failed to update display name: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "display_name": req.DisplayName})
+}
+
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+	ConfirmPassword string `json:"confirm_password"`
+}
+
+func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.NewPassword != req.ConfirmPassword {
+		http.Error(w, "New passwords do not match", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.NewPassword) < 8 {
+		http.Error(w, "New password must be at least 8 characters long", http.StatusBadRequest)
+		return
+	}
+
+	u, err := db.GetUserByID(s.db, userID)
+	if err != nil {
+		log.Printf("handleChangePassword: user not found: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !auth.CheckPasswordHash(req.CurrentPassword, u.PasswordHash) {
+		http.Error(w, "Invalid current password", http.StatusUnauthorized)
+		return
+	}
+
+	newHash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		log.Printf("handleChangePassword: hash error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := db.UpdateUserPassword(s.db, userID, newHash); err != nil {
+		log.Printf("handleChangePassword: update error: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+type SetAvatarRequest struct {
+	Avatar string `json:"avatar"`
+}
+
+func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req SetAvatarRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if !strings.HasPrefix(req.Avatar, "data:") {
+		http.Error(w, "Invalid avatar format: missing data prefix", http.StatusBadRequest)
+		return
+	}
+
+	parts := strings.SplitN(req.Avatar, ",", 2)
+	if len(parts) != 2 {
+		http.Error(w, "Invalid avatar format: missing comma separator", http.StatusBadRequest)
+		return
+	}
+
+	header := parts[0]
+	payload := parts[1]
+
+	if !strings.HasSuffix(header, ";base64") {
+		http.Error(w, "Invalid avatar format: only base64 encoding supported", http.StatusBadRequest)
+		return
+	}
+
+	mime := strings.TrimSuffix(strings.TrimPrefix(header, "data:"), ";base64")
+	validMimes := map[string]bool{
+		"image/png":  true,
+		"image/jpeg": true,
+		"image/webp": true,
+		"image/gif":  true,
+	}
+	if !validMimes[mime] {
+		http.Error(w, "Unsupported image type. Use PNG, JPEG, WebP, or GIF.", http.StatusBadRequest)
+		return
+	}
+
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		http.Error(w, "Invalid base64 payload", http.StatusBadRequest)
+		return
+	}
+
+	if len(data) > 2*1024*1024 {
+		http.Error(w, "Avatar exceeds 2 MB size limit", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.UpdateUserAvatar(s.db, userID, data, mime); err != nil {
+		log.Printf("handleSetAvatar: failed to update avatar: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"avatar":  req.Avatar,
+	})
+}
+
+func (s *APIServer) handleDeleteAvatar(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := db.DeleteUserAvatar(s.db, userID); err != nil {
+		log.Printf("handleDeleteAvatar: failed to delete avatar: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	val, err := db.GetSetting(s.db, "registrations_enabled")
+	if err != nil {
+		log.Printf("handleGetSettings: failed to fetch registrations_enabled: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if val == "" {
+		val = "true"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"registrations_enabled": val,
+	})
+}
+
+type UpdateSettingRequest struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
 	if !ok || claims == nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":           claims.UserID,
-		"email":        claims.Email,
-		"display_name": claims.DisplayName,
-		"role":         claims.Role,
-	})
+
+	if claims.Role != "ADMIN" {
+		http.Error(w, "Forbidden: administrators only", http.StatusForbidden)
+		return
+	}
+
+	var req UpdateSettingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Key != "registrations_enabled" {
+		http.Error(w, "Forbidden setting key", http.StatusForbidden)
+		return
+	}
+
+	if req.Value != "true" && req.Value != "false" {
+		http.Error(w, "Invalid setting value", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.SetSetting(s.db, req.Key, req.Value); err != nil {
+		log.Printf("handleUpdateSetting: failed to set setting: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request) {
