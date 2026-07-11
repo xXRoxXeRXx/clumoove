@@ -37,6 +37,8 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 		return NewSMBProvider(urlStr, username, password)
 	case "s3":
 		return NewS3Provider(urlStr, username, password)
+	case "sftp":
+		return NewSFTPProvider(urlStr, username, password)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", providerType)
 	}

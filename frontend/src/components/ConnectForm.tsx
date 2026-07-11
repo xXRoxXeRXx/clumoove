@@ -21,8 +21,8 @@ interface MigrationConfig {
   target_password: string;
   target_refresh_token: string;
   target_token_expires_in: number;
-  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
-  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3';
+  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp';
+  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp';
 }
 
 interface ConnectFormProps {
@@ -43,8 +43,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetPass, setTargetPass] = useState('');
   const [targetRefreshToken, setTargetRefreshToken] = useState('');
   const [targetTokenExpiresIn, setTargetTokenExpiresIn] = useState(0);
-  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3'>('nextcloud');
-  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3'>('nextcloud');
+  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp'>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp'>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
 
@@ -67,6 +67,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetS3Region, setTargetS3Region] = useState('us-east-1');
   const [targetS3Bucket, setTargetS3Bucket] = useState('');
   const [targetS3Insecure, setTargetS3Insecure] = useState(false);
+
+  const [sourceSftpHost, setSourceSftpHost] = useState('');
+  const [sourceSftpPort, setSourceSftpPort] = useState('22');
+  const [sourceSftpAuthMode, setSourceSftpAuthMode] = useState<'password' | 'key'>('password');
+  const [sourceSftpPrivateKey, setSourceSftpPrivateKey] = useState('');
+
+  const [targetSftpHost, setTargetSftpHost] = useState('');
+  const [targetSftpPort, setTargetSftpPort] = useState('22');
+  const [targetSftpAuthMode, setTargetSftpAuthMode] = useState<'password' | 'key'>('password');
+  const [targetSftpPrivateKey, setTargetSftpPrivateKey] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,15 +147,41 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
       : sourceProvider === 's3'
       ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
+      : sourceProvider === 'sftp'
+      ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
       : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl);
     const finalSourceUser = (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser;
+    const finalSourcePass = sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass;
     const finalTargetUrl = targetProvider === 'smb'
       ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
       : targetProvider === 's3'
       ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
+      : targetProvider === 'sftp'
+      ? `sftp://${targetSftpHost}:${targetSftpPort}`
       : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl);
     const finalTargetUser = (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser;
+    const finalTargetPass = targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass;
 
+    if (sourceProvider === 'sftp') {
+      if (!sourceSftpHost.trim()) {
+        setError('Bitte gib einen Server Host für die SFTP-Quelle an.');
+        return;
+      }
+      if (sourceSftpAuthMode === 'key' && !sourceSftpPrivateKey.trim()) {
+        setError('Bitte gib einen privaten SSH-Schlüssel für die SFTP-Quelle an.');
+        return;
+      }
+    }
+    if (targetProvider === 'sftp') {
+      if (!targetSftpHost.trim()) {
+        setError('Bitte gib einen Server Host für das SFTP-Ziel an.');
+        return;
+      }
+      if (targetSftpAuthMode === 'key' && !targetSftpPrivateKey.trim()) {
+        setError('Bitte gib einen privaten SSH-Schlüssel für das SFTP-Ziel an.');
+        return;
+      }
+    }
     if (sourceProvider === 'smb') {
       if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
         setError('Bitte gib einen Server Host und einen Freigabe-Namen für die Quelle an.');
@@ -171,7 +207,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     }
 
-    if (!finalSourceUrl || !finalSourceUser || !sourcePass || !finalTargetUrl || !finalTargetUser || !targetPass) {
+    if (!finalSourceUrl || !finalSourceUser || !finalSourcePass || !finalTargetUrl || !finalTargetUser || !finalTargetPass) {
       setError('Bitte fülle alle Eingabefelder aus bzw. autorisiere die Anbieter.');
       return;
     }
@@ -189,12 +225,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         body: JSON.stringify({
           source_url: finalSourceUrl,
           source_username: finalSourceUser,
-          source_password: sourcePass,
+          source_password: finalSourcePass,
           source_refresh_token: sourceRefreshToken,
           source_token_expires_in: sourceTokenExpiresIn,
           target_url: finalTargetUrl,
           target_username: finalTargetUser,
-          target_password: targetPass,
+          target_password: finalTargetPass,
           target_refresh_token: targetRefreshToken,
           target_token_expires_in: targetTokenExpiresIn,
           source_provider: sourceProvider,
@@ -212,12 +248,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           {
             source_url: finalSourceUrl,
             source_username: finalSourceUser,
-            source_password: sourcePass,
+          source_password: finalSourcePass,
             source_refresh_token: sourceRefreshToken,
             source_token_expires_in: sourceTokenExpiresIn,
             target_url: finalTargetUrl,
             target_username: finalTargetUser,
-            target_password: targetPass,
+          target_password: finalTargetPass,
             target_refresh_token: targetRefreshToken,
             target_token_expires_in: targetTokenExpiresIn,
             source_provider: sourceProvider,
@@ -234,7 +270,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setLoading(false);
     }
   };
-  const handleSourceProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3') => {
+  const handleSourceProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp') => {
     setSourceProvider(val);
     if (val === 'dropbox' || val === 'google') {
       setSourceUrl(`https://api.${val}.com`);
@@ -257,6 +293,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setSourceS3Region('us-east-1');
       setSourceS3Bucket('');
       setSourceS3Insecure(false);
+    } else if (val === 'sftp') {
+      setSourceUrl('');
+      setSourceUser('');
+      setSourcePass('');
+      setSourceSftpHost('');
+      setSourceSftpPort('22');
+      setSourceSftpAuthMode('password');
+      setSourceSftpPrivateKey('');
     } else {
       setSourceUrl('');
       setSourceUser('');
@@ -264,7 +308,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
 
-  const handleTargetProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3') => {
+  const handleTargetProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp') => {
     setTargetProvider(val);
     if (val === 'dropbox' || val === 'google') {
       setTargetUrl(`https://api.${val}.com`);
@@ -287,6 +331,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setTargetS3Region('us-east-1');
       setTargetS3Bucket('');
       setTargetS3Insecure(false);
+    } else if (val === 'sftp') {
+      setTargetUrl('');
+      setTargetUser('');
+      setTargetPass('');
+      setTargetSftpHost('');
+      setTargetSftpPort('22');
+      setTargetSftpAuthMode('password');
+      setTargetSftpPrivateKey('');
     } else {
       setTargetUrl('');
       setTargetUser('');
@@ -294,11 +346,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
 
-  const providerOptions: { id: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3'; name: string }[] = [
+  const providerOptions: { id: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp'; name: string }[] = [
     { id: 'nextcloud', name: 'Nextcloud' },
     { id: 'webdav', name: 'WebDAV' },
     { id: 'smb', name: 'SMB/CIFS' },
     { id: 's3', name: 'S3' },
+    { id: 'sftp', name: 'SFTP' },
     { id: 'dropbox', name: 'Dropbox' },
     { id: 'google', name: 'Google' }
   ];
@@ -420,6 +473,99 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       required
                     />
                   </div>
+                </>
+              ) : sourceProvider === 'sftp' ? (
+                <>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Server Host / IP</label>
+                      <input
+                        type="text"
+                        placeholder="192.168.1.10"
+                        value={sourceSftpHost}
+                        onChange={(e) => setSourceSftpHost(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Port</label>
+                      <input
+                        type="text"
+                        placeholder="22"
+                        value={sourceSftpPort}
+                        onChange={(e) => setSourceSftpPort(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Benutzername</label>
+                    <input
+                      type="text"
+                      placeholder="root"
+                      value={sourceUser}
+                      onChange={(e) => setSourceUser(e.target.value)}
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono mb-2">Authentifizierung</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSourceSftpAuthMode('password')}
+                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                          sourceSftpAuthMode === 'password'
+                            ? 'bg-portal-navy border-portal-navy text-white'
+                            : 'bg-slate-50/50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Passwort
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSourceSftpAuthMode('key')}
+                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                          sourceSftpAuthMode === 'key'
+                            ? 'bg-portal-navy border-portal-navy text-white'
+                            : 'bg-slate-50/50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        SSH Key
+                      </button>
+                    </div>
+                  </div>
+
+                  {sourceSftpAuthMode === 'password' ? (
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Kennwort / Passwort</label>
+                      <input
+                        type="password"
+                        placeholder="passwort"
+                        value={sourcePass}
+                        onChange={(e) => setSourcePass(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
+                        required
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Privater SSH-Schlüssel (PEM)</label>
+                      <textarea
+                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                        value={sourceSftpPrivateKey}
+                        onChange={(e) => setSourceSftpPrivateKey(e.target.value)}
+                        rows={4}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-mono resize-none"
+                        required
+                      />
+                    </div>
+                  )}
                 </>
               ) : sourceProvider === 's3' ? (
                 <>
@@ -692,6 +838,99 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       required
                     />
                   </div>
+                </>
+              ) : targetProvider === 'sftp' ? (
+                <>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="col-span-2 space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Server Host / IP</label>
+                      <input
+                        type="text"
+                        placeholder="192.168.1.10"
+                        value={targetSftpHost}
+                        onChange={(e) => setTargetSftpHost(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Port</label>
+                      <input
+                        type="text"
+                        placeholder="22"
+                        value={targetSftpPort}
+                        onChange={(e) => setTargetSftpPort(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Benutzername</label>
+                    <input
+                      type="text"
+                      placeholder="root"
+                      value={targetUser}
+                      onChange={(e) => setTargetUser(e.target.value)}
+                      className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono mb-2">Authentifizierung</label>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTargetSftpAuthMode('password')}
+                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                          targetSftpAuthMode === 'password'
+                            ? 'bg-portal-navy border-portal-navy text-white'
+                            : 'bg-slate-50/50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        Passwort
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTargetSftpAuthMode('key')}
+                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                          targetSftpAuthMode === 'key'
+                            ? 'bg-portal-navy border-portal-navy text-white'
+                            : 'bg-slate-50/50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        SSH Key
+                      </button>
+                    </div>
+                  </div>
+
+                  {targetSftpAuthMode === 'password' ? (
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Kennwort / Passwort</label>
+                      <input
+                        type="password"
+                        placeholder="passwort"
+                        value={targetPass}
+                        onChange={(e) => setTargetPass(e.target.value)}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-sans font-mono"
+                        required
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest font-mono">Privater SSH-Schlüssel (PEM)</label>
+                      <textarea
+                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                        value={targetSftpPrivateKey}
+                        onChange={(e) => setTargetSftpPrivateKey(e.target.value)}
+                        rows={4}
+                        className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-white transition-all font-mono resize-none"
+                        required
+                      />
+                    </div>
+                  )}
                 </>
               ) : targetProvider === 's3' ? (
                 <>

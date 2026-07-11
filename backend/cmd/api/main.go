@@ -354,7 +354,8 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	files, err := targetClient.GetDirectoryListing(ctx, "files", reqPath)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to list target files for path %s: %v", reqPath, err)})
+		log.Printf("handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, req.TargetProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to list target files. Check URL and credentials."})
 		return
 	}
 
@@ -588,7 +589,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Whitelist provider values to fail fast with a clear error
-	validProviders := map[string]bool{"nextcloud": true, "webdav": true, "dropbox": true, "google": true, "smb": true, "s3": true}
+	validProviders := map[string]bool{"nextcloud": true, "webdav": true, "dropbox": true, "google": true, "smb": true, "s3": true, "sftp": true}
 	if !validProviders[req.SourceProvider] {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": fmt.Sprintf("unsupported source provider: %s", req.SourceProvider)})
 		return

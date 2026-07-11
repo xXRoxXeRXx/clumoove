@@ -12,6 +12,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/lib/pq v1.12.3
+	github.com/pkg/sftp v1.13.10
 	github.com/redis/go-redis/v9 v9.20.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/oauth2 v0.36.0
@@ -45,6 +46,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.17 // indirect
 	github.com/googleapis/gax-go/v2 v2.22.0 // indirect
+	github.com/kr/fs v0.1.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.67.0 // indirect
 	go.opentelemetry.io/otel v1.43.0 // indirect
