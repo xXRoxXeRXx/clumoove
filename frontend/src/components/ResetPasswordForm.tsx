@@ -64,8 +64,8 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
       setSuccess(true);
       setTimeout(() => onSuccess(), 1500);
-    } catch (err: any) {
-      setError(err.message || 'Verbindung zum Server fehlgeschlagen.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
     } finally {
       setLoading(false);
     }

@@ -8,6 +8,7 @@ import { ResetPasswordForm } from './components/ResetPasswordForm';
 import { SettingsPage } from './components/SettingsPage';
 import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
+import type { User, MigrationConfig, CloudFile } from './types';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'reset-password';
 
@@ -45,16 +46,38 @@ const setMigrationInUrl = (id: string) => {
 };
 
 function App() {
-  const [step, setStep] = useState<Step>('login');
+  const resetTokenFromUrl = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('reset-token')
+    : null;
+
+  const [step, setStep] = useState<Step>(() => (resetTokenFromUrl ? 'reset-password' : 'login'));
   const [token, setToken] = useState<string>('');
-  const [user, setUser] = useState<any>(null);
-  const [credentials, setCredentials] = useState<any>(null);
-  const [initialFiles, setInitialFiles] = useState<any[]>([]);
+  const [user, setUser] = useState<User | null>(null);
+  const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
+  const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
   const [migrationId, setMigrationId] = useState<string>('');
-  const [isValidating, setIsValidating] = useState<boolean>(true);
+  const [isValidating, setIsValidating] = useState<boolean>(
+    () => !resetTokenFromUrl && localStorage.getItem('has_session') === 'true'
+  );
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
-  const [resetToken, setResetToken] = useState<string>('');
+  const [resetToken, setResetToken] = useState<string>(resetTokenFromUrl || '');
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
+    } catch (e) {
+      console.error('Logout request failed:', e);
+    }
+    localStorage.removeItem('has_session');
+    setToken('');
+    setUser(null);
+    setCredentials(null);
+    setInitialFiles([]);
+    setMigrationId('');
+    setMigrationInUrl('');
+    setStep('login');
+  };
 
   // Click outside to close user menu
   useEffect(() => {
@@ -73,19 +96,13 @@ function App() {
 
   // 1. Silent login / Refresh Token check on load
   useEffect(() => {
-    // Check for password reset token in URL first
-    const urlParams = new URLSearchParams(window.location.search);
-    const tokenParam = urlParams.get('reset-token');
-    if (tokenParam) {
-      setResetToken(tokenParam);
-      setStep('reset-password');
-      setIsValidating(false);
+    // If we arrived via a password reset link, skip auth validation entirely.
+    if (resetTokenFromUrl) {
       return;
     }
 
+    // No session stored -> stay on login (initial state already covers this).
     if (localStorage.getItem('has_session') !== 'true') {
-      setStep('login');
-      setIsValidating(false);
       return;
     }
 
@@ -139,7 +156,7 @@ function App() {
       .finally(() => {
         setIsValidating(false);
       });
-  }, []);
+  }, [resetTokenFromUrl]);
 
   // 2. Silent JWT refresh (every 14 minutes)
   useEffect(() => {
@@ -162,34 +179,18 @@ function App() {
     return () => clearInterval(interval);
   }, [token]);
 
-  const handleAuthSuccess = (accessToken: string, loggedUser: any) => {
+  const handleAuthSuccess = (accessToken: string, loggedUser: User) => {
     localStorage.setItem('has_session', 'true');
     setToken(accessToken);
     setUser(loggedUser);
     setStep('history');
   };
 
-  const handleLogout = async () => {
-    try {
-      await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
-    } catch (e) {
-      console.error('Logout request failed:', e);
-    }
-    localStorage.removeItem('has_session');
-    setToken('');
-    setUser(null);
-    setCredentials(null);
-    setInitialFiles([]);
-    setMigrationId('');
-    setMigrationInUrl('');
-    setStep('login');
-  };
-
   // Patch global fetch to handle 401 token refresh automatically (I4 frontend fix)
   useEffect(() => {
     const originalFetch = window.fetch;
     window.fetch = async (input, init) => {
-      let response = await originalFetch(input, init);
+      const response = await originalFetch(input, init);
 
       const url = typeof input === 'string' ? input : (input as Request).url;
       const isAuthRequest = url.includes('/api/auth/login') || url.includes('/api/auth/register') || url.includes('/api/auth/refresh');
@@ -245,7 +246,7 @@ function App() {
     };
   }, [token]);
 
-  const handleConnectSuccess = (config: any, files: any[]) => {
+  const handleConnectSuccess = (config: MigrationConfig, files: CloudFile[]) => {
     setCredentials(config);
     setInitialFiles(files);
     setStep('select');
@@ -410,7 +411,7 @@ function App() {
             />
           )}
           
-          {step === 'select' && (
+          {step === 'select' && credentials && (
             <FileBrowser
               initialFiles={initialFiles}
               credentials={credentials}

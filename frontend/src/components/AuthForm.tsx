@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { CloudSync, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
+import type { User as UserType } from '../types';
 
 interface AuthFormProps {
   apiUrl: string;
-  onAuthSuccess: (token: string, user: any) => void;
+  onAuthSuccess: (token: string, user: UserType) => void;
 }
 
 export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
@@ -72,8 +73,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       }
 
       setResetEmailSent(true);
-    } catch (err: any) {
-      setError(err.message || 'Verbindung zum Server fehlgeschlagen.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
     } finally {
       setLoading(false);
     }
@@ -210,8 +211,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         setPassword('');
         setError('Registrierung erfolgreich! Bitte logge dich ein.');
       }
-    } catch (err: any) {
-      setError(err.message || 'Verbindung zum Server fehlgeschlagen.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
     } finally {
       setLoading(false);
     }

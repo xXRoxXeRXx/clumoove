@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudSync, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
-import { useThemeContext } from '../contexts/ThemeContext';
+import { useThemeContext } from '../contexts/useThemeContext';
 
 interface SettingsUser {
   id?: string;
@@ -98,7 +98,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       return;
     }
 
-    const payload: any = {
+    const payload: Record<string, string | number | boolean> = {
       smtp_host: smtpHost,
       smtp_port: portNum,
       smtp_username: smtpUsername,

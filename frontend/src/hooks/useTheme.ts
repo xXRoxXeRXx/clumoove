@@ -47,9 +47,6 @@ export function useTheme() {
       setSystemTheme(e.matches ? 'dark' : 'light');
     };
 
-    // Set initial system theme
-    setSystemTheme(mediaQuery.matches ? 'dark' : 'light');
-
     // Listen for changes
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);

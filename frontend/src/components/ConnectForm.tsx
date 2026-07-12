@@ -1,29 +1,6 @@
 import React, { useState } from 'react';
 import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
-
-interface CloudFile {
-  path: string;
-  name: string;
-  size: number;
-  is_dir: boolean;
-  hash: string;
-  last_modified: string;
-}
-
-interface MigrationConfig {
-  source_url: string;
-  source_username: string;
-  source_password: string;
-  source_refresh_token: string;
-  source_token_expires_in: number;
-  target_url: string;
-  target_username: string;
-  target_password: string;
-  target_refresh_token: string;
-  target_token_expires_in: number;
-  source_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp';
-  target_provider: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp';
-}
+import type { CloudFile, MigrationConfig } from '../types';
 
 interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;

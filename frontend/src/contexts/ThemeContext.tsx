@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, type ReactNode } from 'react';
 import { useTheme, type ThemePreference, type EffectiveTheme } from '../hooks/useTheme';
 
 interface ThemeContextValue {
@@ -20,10 +20,4 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useThemeContext() {
-  const context = useContext(ThemeContext);
-  if (context === undefined) {
-    throw new Error('useThemeContext must be used within a ThemeProvider');
-  }
-  return context;
-}
+export { ThemeContext };

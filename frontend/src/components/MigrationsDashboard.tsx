@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import type { User, Migration } from '../types';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
   token: string;
-  user: any;
+  user: User | null;
   onStartNewMigration: () => void;
   onSelectActiveMigration: (id: string) => void;
 }
@@ -16,12 +17,12 @@ export function MigrationsDashboard({
   onStartNewMigration,
   onSelectActiveMigration,
 }: MigrationsDashboardProps) {
-  const [migrations, setMigrations] = useState<any[]>([]);
+  const [migrations, setMigrations] = useState<Migration[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
 
-  const fetchMigrations = async () => {
+  const fetchMigrations = useCallback(async () => {
     try {
       const response = await fetch(`${apiUrl}/api/migration`, {
         headers: {
@@ -33,19 +34,20 @@ export function MigrationsDashboard({
       }
       const data = await response.json();
       setMigrations(data || []);
-    } catch (err: any) {
-      setError(err.message || 'Verbindungsfehler');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Verbindungsfehler');
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiUrl, token]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchMigrations();
     // Poll every 10 seconds for active updates in the table
     const interval = setInterval(fetchMigrations, 10000);
     return () => clearInterval(interval);
-  }, [apiUrl, token]);
+  }, [fetchMigrations]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Avoid triggering row selection click
@@ -66,8 +68,8 @@ export function MigrationsDashboard({
         throw new Error('Löschen fehlgeschlagen.');
       }
       setMigrations((prev) => prev.filter((m) => m.id !== id));
-    } catch (err: any) {
-      alert(err.message || 'Fehler beim Löschen');
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Fehler beim Löschen');
     } finally {
       setDeleteLoading(null);
     }
@@ -158,7 +160,7 @@ export function MigrationsDashboard({
           <div className="space-y-2">
             <p className="text-[9px] font-mono tracking-widest text-[var(--color-portal-orange-themed)] font-bold uppercase">// SAAS migrations-system</p>
             <h1 className="font-display font-extrabold text-3xl tracking-tight">
-              Hallo, {user.display_name || 'Benutzer'}
+              Hallo, {user?.display_name || 'Benutzer'}
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] max-w-xl">
               Verwalte und überwache deine Datenübertragungen zwischen Cloud-Systemen in Echtzeit auf einer zentralen Oberfläche.
