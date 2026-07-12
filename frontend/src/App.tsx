@@ -4,11 +4,12 @@ import { FileBrowser } from './components/FileBrowser';
 import { Dashboard } from './components/Dashboard';
 import { AuthForm } from './components/AuthForm';
 import { MigrationsDashboard } from './components/MigrationsDashboard';
+import { ResetPasswordForm } from './components/ResetPasswordForm';
 import { SettingsPage } from './components/SettingsPage';
 import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 
-type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings';
+type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'reset-password';
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -52,6 +53,7 @@ function App() {
   const [migrationId, setMigrationId] = useState<string>('');
   const [isValidating, setIsValidating] = useState<boolean>(true);
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
+  const [resetToken, setResetToken] = useState<string>('');
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   // Click outside to close user menu
@@ -71,6 +73,16 @@ function App() {
 
   // 1. Silent login / Refresh Token check on load
   useEffect(() => {
+    // Check for password reset token in URL first
+    const urlParams = new URLSearchParams(window.location.search);
+    const tokenParam = urlParams.get('reset-token');
+    if (tokenParam) {
+      setResetToken(tokenParam);
+      setStep('reset-password');
+      setIsValidating(false);
+      return;
+    }
+
     if (localStorage.getItem('has_session') !== 'true') {
       setStep('login');
       setIsValidating(false);
@@ -245,6 +257,15 @@ function App() {
     setStep('dashboard');
   };
 
+  const handleResetPasswordSuccess = () => {
+    // Clean up the URL param and return to login
+    const url = new URL(window.location.href);
+    url.searchParams.delete('reset-token');
+    window.history.replaceState({}, '', url.toString());
+    setResetToken('');
+    setStep('login');
+  };
+
   const handleReset = () => {
     setCredentials(null);
     setInitialFiles([]);
@@ -357,6 +378,14 @@ function App() {
         <div className="w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />
+          )}
+
+          {step === 'reset-password' && (
+            <ResetPasswordForm
+              apiUrl={API_URL}
+              token={resetToken}
+              onSuccess={handleResetPasswordSuccess}
+            />
           )}
 
           {step === 'history' && (

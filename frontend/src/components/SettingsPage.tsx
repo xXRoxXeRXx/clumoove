@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudSync, Eye, EyeOff, Palette, Sun, Moon, Monitor } from 'lucide-react';
+import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudSync, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
 import { useThemeContext } from '../contexts/ThemeContext';
 
@@ -48,6 +48,114 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
   const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
   const [adminMessage, setAdminMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // SMTP settings state
+  const [smtpHost, setSmtpHost] = useState<string>('');
+  const [smtpPort, setSmtpPort] = useState<string>('587');
+  const [smtpUsername, setSmtpUsername] = useState<string>('');
+  const [smtpPassword, setSmtpPassword] = useState<string>('');
+  const [smtpFromEmail, setSmtpFromEmail] = useState<string>('');
+  const [smtpFromName, setSmtpFromName] = useState<string>('');
+  const [smtpEncryption, setSmtpEncryption] = useState<string>('tls');
+  const [smtpNotify, setSmtpNotify] = useState<boolean>(true);
+  const [smtpHasConfig, setSmtpHasConfig] = useState<boolean>(false);
+  const [smtpLoading, setSmtpLoading] = useState<boolean>(false);
+  const [smtpMessage, setSmtpMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Fetch SMTP settings
+  useEffect(() => {
+    fetch(`${apiUrl}/api/settings/smtp`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+      .then((res) => {
+        if (res.ok) return res.json();
+        throw new Error('no-smtp');
+      })
+      .then((data) => {
+        setSmtpHasConfig(true);
+        setSmtpHost(data.smtp_host || '');
+        setSmtpPort(String(data.smtp_port || '587'));
+        setSmtpUsername(data.smtp_username || '');
+        setSmtpFromEmail(data.smtp_from_email || '');
+        setSmtpFromName(data.smtp_from_name || '');
+        setSmtpEncryption(data.smtp_encryption || 'tls');
+        setSmtpNotify(data.notify_on_completion !== false);
+      })
+      .catch(() => {
+        setSmtpHasConfig(false);
+      });
+  }, [apiUrl, token]);
+
+  const handleSaveSMTP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSmtpMessage(null);
+    setSmtpLoading(true);
+
+    const portNum = parseInt(smtpPort, 10);
+    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+      setSmtpMessage({ text: 'Der SMTP-Port muss zwischen 1 und 65535 liegen.', type: 'error' });
+      setSmtpLoading(false);
+      return;
+    }
+
+    const payload: any = {
+      smtp_host: smtpHost,
+      smtp_port: portNum,
+      smtp_username: smtpUsername,
+      smtp_from_email: smtpFromEmail,
+      smtp_from_name: smtpFromName,
+      smtp_encryption: smtpEncryption,
+      notify_on_completion: smtpNotify,
+    };
+    // Only send password if changed (not the mask placeholder, not empty on initial)
+    if (smtpPassword && smtpPassword !== '••••••••') {
+      payload.smtp_password = smtpPassword;
+    }
+
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/smtp`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Fehler beim Speichern der SMTP-Einstellungen.');
+      }
+
+      setSmtpHasConfig(true);
+      setSmtpPassword('');
+      setSmtpMessage({ text: 'SMTP-Einstellungen erfolgreich gespeichert!', type: 'success' });
+    } catch (err) {
+      setSmtpMessage({ text: (err as Error).message, type: 'error' });
+    } finally {
+      setSmtpLoading(false);
+    }
+  };
+
+  const handleTestSMTP = async () => {
+    setSmtpMessage(null);
+    setSmtpLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/settings/smtp/test`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'SMTP-Test fehlgeschlagen.');
+      }
+      setSmtpMessage({ text: 'Test-E-Mail erfolgreich gesendet!', type: 'success' });
+    } catch (err) {
+      setSmtpMessage({ text: (err as Error).message, type: 'error' });
+    } finally {
+      setSmtpLoading(false);
+    }
+  };
 
   // Fetch admin settings if admin
   useEffect(() => {
@@ -543,6 +651,168 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               >
                 {passwordLoading ? 'Wird geändert...' : 'Passwort ändern'}
               </button>
+            </form>
+          </div>
+
+          {/* Section: E-Mail Benachrichtigungen (SMTP) */}
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <Mail className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">E-Mail Benachrichtigungen</h3>
+            </div>
+
+            {smtpMessage && (
+              <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
+                smtpMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
+              }`}>
+                {smtpMessage.text}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveSMTP} className="space-y-4">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-2 space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    SMTP-Host
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={smtpHost}
+                    onChange={(e) => setSmtpHost(e.target.value)}
+                    placeholder="smtp.example.com"
+                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    Port
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    max={65535}
+                    value={smtpPort}
+                    onChange={(e) => setSmtpPort(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  Benutzername
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={smtpUsername}
+                  onChange={(e) => setSmtpUsername(e.target.value)}
+                  placeholder="user@example.com"
+                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  Passwort
+                </label>
+                <div className="relative group">
+                  <input
+                    type="password"
+                    required={!smtpHasConfig}
+                    value={smtpPassword}
+                    onChange={(e) => setSmtpPassword(e.target.value)}
+                    placeholder={smtpHasConfig ? '•••••••• (unverändert lassen)' : '••••••••'}
+                    className="w-full px-4 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                  />
+                </div>
+                {smtpHasConfig && (
+                  <p className="text-[9px] text-[var(--color-text-muted)] font-mono leading-relaxed">
+                    Leer lassen, um das bestehende Passwort beizubehalten.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    Absender-E-Mail
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={smtpFromEmail}
+                    onChange={(e) => setSmtpFromEmail(e.target.value)}
+                    placeholder="noreply@example.com"
+                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    Absender-Name
+                  </label>
+                  <input
+                    type="text"
+                    value={smtpFromName}
+                    onChange={(e) => setSmtpFromName(e.target.value)}
+                    placeholder="Clumove"
+                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  Verschlüsselung
+                </label>
+                <select
+                  value={smtpEncryption}
+                  onChange={(e) => setSmtpEncryption(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                >
+                  <option value="tls">TLS (Implicit)</option>
+                  <option value="starttls">STARTTLS</option>
+                  <option value="none">Keine</option>
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
+                <div className="text-left space-y-1 pr-4">
+                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">Bei Migrations-Abschluss benachrichtigen</h4>
+                  <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
+                    Erhältst du eine E-Mail, sobald eine Migration abgeschlossen oder fehlgeschlagen ist.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={smtpNotify}
+                    onChange={(e) => setSmtpNotify(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
+                </label>
+              </div>
+
+              <div className="flex flex-wrap gap-2.5">
+                <button
+                  type="submit"
+                  disabled={smtpLoading || !smtpHost || !smtpUsername || !smtpFromEmail}
+                  className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                >
+                  {smtpLoading ? 'Wird gespeichert...' : 'Speichern'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleTestSMTP}
+                  disabled={smtpLoading}
+                  className="px-4 py-2.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
+                >
+                  Test-E-Mail senden
+                </button>
+              </div>
             </form>
           </div>
 

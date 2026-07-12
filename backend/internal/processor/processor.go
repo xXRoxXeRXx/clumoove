@@ -22,6 +22,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/email"
 	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
@@ -81,6 +82,7 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
 	go p.RunOrphanedRunningTasksRecovery(ctx)
+	go p.RunCompletionNotifier(ctx)
 
 	// Start Cancel Listener
 	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {
@@ -1128,4 +1130,104 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	}
 
 	return tokenResp.AccessToken, nil
+}
+
+// RunCompletionNotifier polls for migrations that have reached a terminal state
+// (COMPLETED or FAILED) and have not yet had their completion email sent. It uses
+// the user's own per-user SMTP configuration (if configured and enabled).
+func (p *Processor) RunCompletionNotifier(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	cleanupTicker := time.NewTicker(1 * time.Hour)
+	defer cleanupTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.sendPendingCompletionEmails(ctx)
+		case <-cleanupTicker.C:
+			if err := db.DeleteExpiredPasswordResetTokens(p.db); err != nil {
+				fmt.Printf("[CompletionNotifier] Error cleaning up expired reset tokens: %v\n", err)
+			}
+		}
+	}
+}
+
+func (p *Processor) sendPendingCompletionEmails(ctx context.Context) {
+	notifications, err := db.ClaimPendingEmailNotifications(p.db, 10)
+	if err != nil {
+		fmt.Printf("[CompletionNotifier] Error claiming pending notifications: %v\n", err)
+		return
+	}
+
+	for _, n := range notifications {
+		p.sendCompletionEmail(ctx, n)
+	}
+}
+
+func (p *Processor) sendCompletionEmail(ctx context.Context, n db.PendingEmailNotification) {
+	settings, err := db.GetUserSMTPSettings(p.db, n.UserID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// User has no SMTP config: silently skip email
+			_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
+			return
+		}
+		fmt.Printf("[CompletionNotifier] Error fetching SMTP settings for user %s: %v\n", n.UserID, err)
+		return
+	}
+
+	if !settings.NotifyOnCompletion {
+		// User disabled completion notifications: silently skip
+		_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
+		return
+	}
+
+	password, err := crypto.Decrypt(settings.SMTPPasswordEnc, p.secretKey)
+	if err != nil {
+		fmt.Printf("[CompletionNotifier] Error decrypting SMTP password for user %s: %v\n", n.UserID, err)
+		_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
+		return
+	}
+
+	smtpCfg := email.SMTPConfig{
+		Host:       settings.SMTPHost,
+		Port:       strconv.Itoa(settings.SMTPPort),
+		Username:   settings.SMTPUsername,
+		Password:   password,
+		FromEmail:  settings.SMTPFromEmail,
+		FromName:   settings.SMTPFromName,
+		Encryption: settings.SMTPEncryption,
+	}
+
+	user, err := db.GetUserByID(p.db, n.UserID)
+	if err != nil {
+		fmt.Printf("[CompletionNotifier] Error fetching user %s: %v\n", n.UserID, err)
+		_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
+		return
+	}
+
+	errMsg := ""
+	if n.ErrorMessage.Valid {
+		errMsg = n.ErrorMessage.String
+	}
+
+	htmlBody := email.BuildMigrationReportEmail(
+		n.MigrationID, n.Status,
+		n.TotalFiles, n.ProcessedFiles, n.FailedFiles, n.SkippedFiles,
+		n.TotalBytes, n.ProcessedBytes, errMsg,
+	)
+
+	if err := email.SendMail(smtpCfg, user.Email, "Clumove — Migrationsbericht", htmlBody); err != nil {
+		fmt.Printf("[CompletionNotifier] Error sending completion email for migration %s: %v\n", n.MigrationID, err)
+		// Leave email_sent = FALSE so it gets retried on the next tick
+		return
+	}
+
+	if err := db.MarkMigrationEmailSent(p.db, n.MigrationID); err != nil {
+		fmt.Printf("[CompletionNotifier] Error marking email sent for migration %s: %v\n", n.MigrationID, err)
+	}
 }

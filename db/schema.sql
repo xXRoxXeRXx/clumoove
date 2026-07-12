@@ -142,3 +142,34 @@ CREATE OR REPLACE TRIGGER update_schedules_updated_at
     BEFORE UPDATE ON schedules
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- Email sent flag for migration completion notifications
+ALTER TABLE migrations ADD COLUMN IF NOT EXISTS email_sent BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Per-user SMTP settings for migration completion emails
+CREATE TABLE IF NOT EXISTS user_smtp_settings (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    smtp_host TEXT NOT NULL,
+    smtp_port INT NOT NULL DEFAULT 587,
+    smtp_username TEXT NOT NULL,
+    smtp_password_encrypted TEXT NOT NULL,
+    smtp_from_email TEXT NOT NULL,
+    smtp_from_name TEXT NOT NULL DEFAULT '',
+    smtp_encryption TEXT NOT NULL DEFAULT 'tls',
+    notify_on_completion BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE TRIGGER update_user_smtp_settings_updated_at
+    BEFORE UPDATE ON user_smtp_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Password reset tokens
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

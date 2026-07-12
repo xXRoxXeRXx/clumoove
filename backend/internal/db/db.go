@@ -308,6 +308,53 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (idx_schedules_task): %v\n", err)
 			}
 
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS email_sent BOOLEAN NOT NULL DEFAULT FALSE`)
+			if err != nil {
+				log.Printf("Failed schema migration (email_sent): %v\n", err)
+			}
+
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS user_smtp_settings (
+					user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+					smtp_host TEXT NOT NULL,
+					smtp_port INT NOT NULL DEFAULT 587,
+					smtp_username TEXT NOT NULL,
+					smtp_password_encrypted TEXT NOT NULL,
+					smtp_from_email TEXT NOT NULL,
+					smtp_from_name TEXT NOT NULL DEFAULT '',
+					smtp_encryption TEXT NOT NULL DEFAULT 'tls',
+					notify_on_completion BOOLEAN NOT NULL DEFAULT TRUE,
+					updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (create user_smtp_settings table): %v\n", err)
+			}
+
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS password_reset_tokens (
+					token_hash TEXT PRIMARY KEY,
+					user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+					used BOOLEAN NOT NULL DEFAULT FALSE,
+					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (create password_reset_tokens table): %v\n", err)
+			}
+
+
+			_, err = db.Exec(`
+				CREATE OR REPLACE TRIGGER update_user_smtp_settings_updated_at
+				    BEFORE UPDATE ON user_smtp_settings
+				    FOR EACH ROW
+				    EXECUTE FUNCTION update_updated_at_column()
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (trigger user_smtp_settings_updated_at): %v\n", err)
+			}
+
 			// Set connection pool settings
 			maxConns := 50
 			if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
@@ -1042,6 +1089,27 @@ func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
 // ============================================================================
 
 // Schedule represents a scheduled task (migration, sync, or backup)
+type UserSMTPSettings struct {
+	UserID             string `json:"user_id"`
+	SMTPHost           string `json:"smtp_host"`
+	SMTPPort           int    `json:"smtp_port"`
+	SMTPUsername       string `json:"smtp_username"`
+	SMTPPasswordEnc    string `json:"-"`
+	SMTPFromEmail      string `json:"smtp_from_email"`
+	SMTPFromName       string `json:"smtp_from_name"`
+	SMTPEncryption     string `json:"smtp_encryption"`
+	NotifyOnCompletion bool   `json:"notify_on_completion"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+type PasswordResetToken struct {
+	TokenHash string    `json:"token_hash"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Used      bool      `json:"used"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Schedule struct {
 	ID             string         `json:"id"`
 	UserID         string         `json:"user_id"`
@@ -1215,5 +1283,178 @@ func UpdateSchedule(db *sql.DB, s *Schedule) error {
 		WHERE id = $5
 	`
 	_, err := db.Exec(query, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive, s.ID)
+	return err
+}
+
+// ============================================================================
+// User SMTP Settings
+// ============================================================================
+
+func GetUserSMTPSettings(db *sql.DB, userID string) (*UserSMTPSettings, error) {
+	query := `
+		SELECT user_id, smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
+		       smtp_from_email, smtp_from_name, smtp_encryption, notify_on_completion, updated_at
+		FROM user_smtp_settings WHERE user_id = $1
+	`
+	var s UserSMTPSettings
+	err := db.QueryRow(query, userID).Scan(
+		&s.UserID, &s.SMTPHost, &s.SMTPPort, &s.SMTPUsername, &s.SMTPPasswordEnc,
+		&s.SMTPFromEmail, &s.SMTPFromName, &s.SMTPEncryption, &s.NotifyOnCompletion, &s.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func UpsertUserSMTPSettings(db *sql.DB, s *UserSMTPSettings) error {
+	query := `
+		INSERT INTO user_smtp_settings (
+			user_id, smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
+			smtp_from_email, smtp_from_name, smtp_encryption, notify_on_completion
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (user_id) DO UPDATE SET
+			smtp_host = EXCLUDED.smtp_host,
+			smtp_port = EXCLUDED.smtp_port,
+			smtp_username = EXCLUDED.smtp_username,
+			smtp_password_encrypted = EXCLUDED.smtp_password_encrypted,
+			smtp_from_email = EXCLUDED.smtp_from_email,
+			smtp_from_name = EXCLUDED.smtp_from_name,
+			smtp_encryption = EXCLUDED.smtp_encryption,
+			notify_on_completion = EXCLUDED.notify_on_completion,
+			updated_at = CURRENT_TIMESTAMP
+	`
+	_, err := db.Exec(query,
+		s.UserID, s.SMTPHost, s.SMTPPort, s.SMTPUsername, s.SMTPPasswordEnc,
+		s.SMTPFromEmail, s.SMTPFromName, s.SMTPEncryption, s.NotifyOnCompletion,
+	)
+	return err
+}
+
+// ============================================================================
+// Password Reset Tokens
+// ============================================================================
+
+func CreatePasswordResetToken(db *sql.DB, tokenHash, userID string, expiresAt time.Time) error {
+	query := `
+		INSERT INTO password_reset_tokens (token_hash, user_id, expires_at)
+		VALUES ($1, $2, $3)
+	`
+	_, err := db.Exec(query, tokenHash, userID, expiresAt)
+	return err
+}
+
+func GetPasswordResetToken(db *sql.DB, tokenHash string) (*PasswordResetToken, error) {
+	query := `
+		SELECT token_hash, user_id, expires_at, used, created_at
+		FROM password_reset_tokens WHERE token_hash = $1
+	`
+	var t PasswordResetToken
+	err := db.QueryRow(query, tokenHash).Scan(&t.TokenHash, &t.UserID, &t.ExpiresAt, &t.Used, &t.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+
+// ClaimPasswordResetToken atomically validates and claims a password reset token.
+// It checks that the token exists, is not used, and is not expired, then marks it used
+// and updates the user's password in a single transaction to prevent TOCTOU races.
+// Returns the user ID on success, or sql.ErrNoRows if the token is invalid/expired/used.
+func ClaimPasswordResetToken(db *sql.DB, tokenHash, newPasswordHash string) (string, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	// Atomically claim the token: must be unused and not expired
+	var userID string
+	err = tx.QueryRow(`
+		UPDATE password_reset_tokens
+		SET used = TRUE
+		WHERE token_hash = $1 AND used = FALSE AND expires_at > NOW()
+		RETURNING user_id
+	`, tokenHash).Scan(&userID)
+	if err != nil {
+		return "", err // sql.ErrNoRows if invalid/expired/used
+	}
+
+	// Update the password within the same transaction
+	if _, err := tx.Exec(`UPDATE users SET password_hash = $1 WHERE id = $2`, newPasswordHash, userID); err != nil {
+		return "", err
+	}
+
+	// Invalidate all refresh tokens for this user within the same transaction
+	if _, err := tx.Exec(`DELETE FROM refresh_tokens WHERE user_id = $1`, userID); err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return userID, nil
+}
+
+func DeleteExpiredPasswordResetTokens(db *sql.DB) error {
+	query := `DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used = TRUE`
+	_, err := db.Exec(query)
+	return err
+}
+
+// ============================================================================
+// Migration Email Sent Flag
+// ============================================================================
+
+type PendingEmailNotification struct {
+	MigrationID    string
+	UserID         string
+	Status         string
+	TotalFiles     int
+	ProcessedFiles int
+	FailedFiles    int
+	SkippedFiles   int
+	TotalBytes     int64
+	ProcessedBytes int64
+	ErrorMessage   sql.NullString
+}
+
+// ClaimPendingEmailNotifications atomically claims up to limit pending email notifications
+// using SELECT ... FOR UPDATE SKIP LOCKED to prevent duplicate sends across workers.
+func ClaimPendingEmailNotifications(db *sql.DB, limit int) ([]PendingEmailNotification, error) {
+	query := `
+		SELECT m.id, m.user_id, m.status, m.total_files, m.processed_files,
+		       m.failed_files, m.skipped_files, m.total_bytes, m.processed_bytes, m.error_message
+		FROM migrations m
+		WHERE m.status IN ('COMPLETED', 'FAILED')
+		  AND m.email_sent = FALSE
+		  AND m.user_id IS NOT NULL
+		ORDER BY m.id
+		LIMIT $1
+		FOR UPDATE SKIP LOCKED
+	`
+	rows, err := db.Query(query, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var notifications []PendingEmailNotification
+	for rows.Next() {
+		var n PendingEmailNotification
+		err := rows.Scan(&n.MigrationID, &n.UserID, &n.Status, &n.TotalFiles, &n.ProcessedFiles,
+			&n.FailedFiles, &n.SkippedFiles, &n.TotalBytes, &n.ProcessedBytes, &n.ErrorMessage)
+		if err != nil {
+			return nil, err
+		}
+		notifications = append(notifications, n)
+	}
+	return notifications, rows.Err()
+}
+
+func MarkMigrationEmailSent(db *sql.DB, migrationID string) error {
+	query := `UPDATE migrations SET email_sent = TRUE WHERE id = $1`
+	_, err := db.Exec(query, migrationID)
 	return err
 }

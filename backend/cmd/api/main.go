@@ -17,13 +17,16 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/email"
 	"backend/internal/indexer"
 	"backend/internal/oauth"
 	"backend/internal/queue"
@@ -50,6 +53,34 @@ type APIServer struct {
 	encryptionKey string // AES key for credential encryption
 	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
 	ctx           context.Context
+	rateLimiter   ipRateLimiter
+}
+
+
+type ipRateLimiter struct {
+	mu      sync.Mutex
+	visitors map[string]*rateVisitor
+}
+
+type rateVisitor struct {
+	count    int
+	resetAt  time.Time
+}
+
+func (rl *ipRateLimiter) Allow(ip string, maxRequests int, window time.Duration) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	v, ok := rl.visitors[ip]
+	if !ok || now.After(v.resetAt) {
+		rl.visitors[ip] = &rateVisitor{count: 1, resetAt: now.Add(window)}
+		return true
+	}
+	if v.count >= maxRequests {
+		return false
+	}
+	v.count++
+	return true
 }
 
 func main() {
@@ -112,8 +143,8 @@ func main() {
 		encryptionKey: encryptionKey,
 		jwtSecret:     jwtSecret,
 		ctx:           ctx,
+		rateLimiter:   ipRateLimiter{visitors: make(map[string]*rateVisitor)},
 	}
-
 	// Start Garbage Collector (GC) is removed as per requirements (permanent history until manual deletion)
 	// go server.runGarbageCollector(ctx)
 
@@ -135,6 +166,13 @@ func main() {
 	mux.Handle("POST /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleSetAvatar)))
 	mux.Handle("DELETE /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleDeleteAvatar)))
 	mux.Handle("PUT /api/settings", jwtMiddleware(http.HandlerFunc(server.handleUpdateSetting)))
+	mux.Handle("GET /api/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleGetSMTPSettings)))
+	mux.Handle("PUT /api/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleUpdateSMTPSettings)))
+	mux.Handle("POST /api/settings/smtp/test", jwtMiddleware(http.HandlerFunc(server.handleTestSMTP)))
+
+	mux.HandleFunc("GET /api/auth/password-reset-available", server.handlePasswordResetAvailable)
+	mux.HandleFunc("POST /api/auth/forgot-password", server.handleForgotPassword)
+	mux.HandleFunc("POST /api/auth/reset-password", server.handleResetPassword)
 
 	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
 	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
@@ -2137,6 +2175,336 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 	err = db.DeleteSchedule(s.db, id)
 	if err != nil {
 		log.Printf("handleDeleteSchedule: failed to delete schedule %s: %v\n", id, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// ============================================================================
+// SMTP Settings Handlers
+// ============================================================================
+
+func (s *APIServer) handleGetSMTPSettings(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	settings, err := db.GetUserSMTPSettings(s.db, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSON(w, http.StatusOK, nil)
+			return
+		}
+		log.Printf("handleGetSMTPSettings: error fetching settings: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"smtp_host":            settings.SMTPHost,
+		"smtp_port":            settings.SMTPPort,
+		"smtp_username":        settings.SMTPUsername,
+		"smtp_password_set":    true,
+		"smtp_from_email":      settings.SMTPFromEmail,
+		"smtp_from_name":       settings.SMTPFromName,
+		"smtp_encryption":      settings.SMTPEncryption,
+		"notify_on_completion": settings.NotifyOnCompletion,
+	})
+}
+
+func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		SMTPHost           string `json:"smtp_host"`
+		SMTPPort           int    `json:"smtp_port"`
+		SMTPUsername       string `json:"smtp_username"`
+		SMTPPassword       string `json:"smtp_password"`
+		PasswordChanged    bool   `json:"password_changed"`
+		SMTPFromEmail      string `json:"smtp_from_email"`
+		SMTPFromName       string `json:"smtp_from_name"`
+		SMTPEncryption     string `json:"smtp_encryption"`
+		NotifyOnCompletion *bool  `json:"notify_on_completion"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SMTPHost == "" || req.SMTPUsername == "" || req.SMTPFromEmail == "" {
+		http.Error(w, "SMTP host, username, and from email are required", http.StatusBadRequest)
+		return
+	}
+
+	if err := email.ValidateSMTPHost(req.SMTPHost); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.SMTPPort < 1 || req.SMTPPort > 65535 {
+		http.Error(w, "SMTP port must be between 1 and 65535", http.StatusBadRequest)
+		return
+	}
+
+	switch req.SMTPEncryption {
+	case "tls", "starttls", "none":
+	default:
+		http.Error(w, "smtp_encryption must be 'tls', 'starttls', or 'none'", http.StatusBadRequest)
+		return
+	}
+
+	notify := true
+	if req.NotifyOnCompletion != nil {
+		notify = *req.NotifyOnCompletion
+	}
+
+	var encryptedPassword string
+	if !req.PasswordChanged {
+		existing, err := db.GetUserSMTPSettings(s.db, userID)
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("handleUpdateSMTPSettings: error fetching existing settings: %v\n", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if existing != nil {
+			encryptedPassword = existing.SMTPPasswordEnc
+		} else {
+			http.Error(w, "SMTP password is required for initial configuration", http.StatusBadRequest)
+			return
+		}
+	} else {
+		enc, err := crypto.Encrypt(req.SMTPPassword, s.encryptionKey)
+		if err != nil {
+			log.Printf("handleUpdateSMTPSettings: error encrypting password: %v\n", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		encryptedPassword = enc
+	}
+
+	settings := &db.UserSMTPSettings{
+		UserID:             userID,
+		SMTPHost:           req.SMTPHost,
+		SMTPPort:           req.SMTPPort,
+		SMTPUsername:       req.SMTPUsername,
+		SMTPPasswordEnc:    encryptedPassword,
+		SMTPFromEmail:      req.SMTPFromEmail,
+		SMTPFromName:       req.SMTPFromName,
+		SMTPEncryption:     req.SMTPEncryption,
+		NotifyOnCompletion: notify,
+	}
+
+	if err := db.UpsertUserSMTPSettings(s.db, settings); err != nil {
+		log.Printf("handleUpdateSMTPSettings: error upserting settings: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	settings, err := db.GetUserSMTPSettings(s.db, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "No SMTP settings configured"})
+			return
+		}
+		log.Printf("handleTestSMTP: error fetching settings: %v\n", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Internal server error"})
+		return
+	}
+
+	password, err := crypto.Decrypt(settings.SMTPPasswordEnc, s.encryptionKey)
+	if err != nil {
+		log.Printf("handleTestSMTP: error decrypting password: %v\n", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to decrypt SMTP password"})
+		return
+	}
+
+	user, err := db.GetUserByID(s.db, userID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to fetch user email"})
+		return
+	}
+
+	smtpCfg := email.SMTPConfig{
+		Host:       settings.SMTPHost,
+		Port:       strconv.Itoa(settings.SMTPPort),
+		Username:   settings.SMTPUsername,
+		Password:   password,
+		FromEmail:  settings.SMTPFromEmail,
+		FromName:   settings.SMTPFromName,
+		Encryption: settings.SMTPEncryption,
+	}
+
+	if err := email.SendMail(smtpCfg, user.Email, "Clumove — SMTP-Test erfolgreich", email.BuildTestEmail()); err != nil {
+		log.Printf("handleTestSMTP: send failed: %v\n", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "SMTP test failed: check your settings"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// ============================================================================
+// Password Reset Handlers
+// ============================================================================
+
+func (s *APIServer) handlePasswordResetAvailable(w http.ResponseWriter, r *http.Request) {
+	available := os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_FROM_EMAIL") != ""
+	writeJSON(w, http.StatusOK, map[string]interface{}{"available": available})
+}
+
+func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if !s.rateLimiter.Allow(ip, 3, 1*time.Minute) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	if req.Email == "" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpFromEmail := os.Getenv("SMTP_FROM_EMAIL")
+	if smtpHost == "" || smtpFromEmail == "" {
+		log.Printf("handleForgotPassword: SMTP not configured, skipping\n")
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	u, err := db.GetUserByEmail(s.db, req.Email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+			return
+		}
+		log.Printf("handleForgotPassword: error fetching user: %v\n", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	rawToken := generateRandomString(32)
+	if rawToken == "" {
+		log.Printf("handleForgotPassword: failed to generate token\n")
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+	tokenHash := hashToken(rawToken)
+	expiresAt := time.Now().Add(4 * time.Hour)
+
+	if err := db.CreatePasswordResetToken(s.db, tokenHash, u.ID, expiresAt); err != nil {
+		log.Printf("handleForgotPassword: error storing token: %v\n", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
+	resetURL := fmt.Sprintf("%s/?reset-token=%s", strings.TrimRight(frontendURL, "/"), rawToken)
+
+	smtpEncryption := os.Getenv("SMTP_ENCRYPTION")
+	if smtpEncryption == "" {
+		smtpEncryption = "starttls"
+	}
+
+	smtpCfg := email.SMTPConfig{
+		Host:       smtpHost,
+		Port:       os.Getenv("SMTP_PORT"),
+		Username:   os.Getenv("SMTP_USERNAME"),
+		Password:   os.Getenv("SMTP_PASSWORD"),
+		FromEmail:  smtpFromEmail,
+		FromName:   os.Getenv("SMTP_FROM_NAME"),
+		Encryption: smtpEncryption,
+	}
+	if smtpCfg.Port == "" {
+		smtpCfg.Port = "587"
+	}
+	if smtpCfg.FromName == "" {
+		smtpCfg.FromName = "Clumove"
+	}
+
+	htmlBody := email.BuildPasswordResetEmail(resetURL)
+	if err := email.SendMail(smtpCfg, u.Email, "Clumove — Passwort zurücksetzen", htmlBody); err != nil {
+		log.Printf("handleForgotPassword: error sending email: %v\n", err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	emailHash := sha256.Sum256([]byte(req.Email))
+	log.Printf("handleForgotPassword: reset email sent (hash: %x)\n", emailHash[:8])
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
+		http.Error(w, "Too many requests", http.StatusTooManyRequests)
+		return
+	}
+
+	var req struct {
+		Token       string `json:"token"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Token == "" || req.NewPassword == "" {
+		http.Error(w, "Token and new password are required", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.NewPassword) < 8 {
+		http.Error(w, "Password must be at least 8 characters long", http.StatusBadRequest)
+		return
+	}
+
+	newHash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		log.Printf("handleResetPassword: error hashing password: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	tokenHash := hashToken(req.Token)
+	_, err = db.ClaimPasswordResetToken(s.db, tokenHash, newHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid or expired reset token", http.StatusBadRequest)
+			return
+		}
+		log.Printf("handleResetPassword: error claiming token: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
