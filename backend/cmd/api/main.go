@@ -187,6 +187,7 @@ func main() {
 	mux.Handle("DELETE /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteMigration)))
 	mux.Handle("GET /api/migration/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadReport)))
 	mux.Handle("POST /api/migration/{id}/retry-failed", jwtMiddleware(http.HandlerFunc(server.handleRetryFailed)))
+	mux.Handle("PUT /api/migration/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetBandwidth)))
 
 	// Schedule Management Routes (Protected)
 	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
@@ -604,6 +605,64 @@ func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
+type BandwidthRequest struct {
+	LimitMbps int `json:"limit_mbps"`
+}
+
+func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil || !owns {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	var req BandwidthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.LimitMbps < 0 {
+		http.Error(w, "limit_mbps must be >= 0", http.StatusBadRequest)
+		return
+	}
+	if req.LimitMbps > 1000 {
+		http.Error(w, "limit_mbps must be <= 1000", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.UpdateMigrationBandwidthLimit(s.db, id, req.LimitMbps); err != nil {
+		log.Printf("Error updating bandwidth limit for migration %s: %v", id, err)
+		http.Error(w, "Failed to update bandwidth limit", http.StatusInternalServerError)
+		return
+	}
+
+	mig, err := db.GetMigration(s.db, id)
+	if err == nil {
+		switch mig.Status {
+		case "COMPLETED", "FAILED", "CANCELLED":
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+			return
+		}
+	}
+
+	if err := s.queue.PublishBandwidthChange(r.Context(), queue.BandwidthEvent{
+		MigrationID:        id,
+		BandwidthLimitMbps: req.LimitMbps,
+	}); err != nil {
+		log.Printf("Warning: failed to publish bandwidth change for migration %s: %v", id, err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
 type ConnectRequest struct {
 	SourceURL            string `json:"source_url"`
 	SourceUsername       string `json:"source_username"`
@@ -703,13 +762,14 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 type StartRequest struct {
 	ConnectRequest
-	ConflictStrategy string   `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
-	Paths            []string `json:"paths"`             // List of selected paths (files or directories)
-	Calendars        []string `json:"calendars"`         // List of selected calendars
-	Contacts         []string `json:"contacts"`          // List of selected contacts
-	TargetDir        string   `json:"target_dir"`        // Target directory to copy files to
-	Threads          int      `json:"threads"`
-	ScheduledTime    string   `json:"scheduled_time"` // ISO 8601 timestamp for scheduled start (optional)
+	ConflictStrategy   string   `json:"conflict_strategy"`
+	Paths              []string `json:"paths"`
+	Calendars          []string `json:"calendars"`
+	Contacts           []string `json:"contacts"`
+	TargetDir          string   `json:"target_dir"`
+	Threads            int      `json:"threads"`
+	ScheduledTime      string   `json:"scheduled_time"`
+	BandwidthLimitMbps int      `json:"bandwidth_limit_mbps"`
 }
 
 func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
@@ -793,6 +853,14 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		threads = 16
 	}
 
+	// Validate bandwidth limit
+	bandwidthLimit := req.BandwidthLimitMbps
+	if bandwidthLimit < 0 {
+		bandwidthLimit = 0
+	} else if bandwidthLimit > 1000 {
+		bandwidthLimit = 1000
+	}
+
 	// Determine initial status based on whether scheduling is requested
 	initialStatus := "INDEXING"
 	var scheduledAt time.Time
@@ -832,6 +900,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		SelectedCalendars:           db.StringArray(req.Calendars),
 		SelectedContacts:            db.StringArray(req.Contacts),
 		Threads:                     threads,
+		BandwidthLimitMbps:          bandwidthLimit,
 	}
 
 	migrationID, err := db.CreateMigration(s.db, m)
@@ -1096,18 +1165,19 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 
 			responsePayload := map[string]interface{}{
-				"id":              mig.ID,
-				"status":          mig.Status,
-				"total_files":     mig.TotalFiles,
-				"total_bytes":     mig.TotalBytes,
-				"processed_files": mig.ProcessedFiles,
-				"processed_bytes": mig.ProcessedBytes,
-				"skipped_files":   mig.SkippedFiles,
-				"failed_files":    mig.FailedFiles,
-				"error_message":   "",
-				"active_file":     activeFile,
-				"active_files":    activeFiles,
-				"threads":         mig.Threads,
+				"id":                   mig.ID,
+				"status":               mig.Status,
+				"total_files":          mig.TotalFiles,
+				"total_bytes":          mig.TotalBytes,
+				"processed_files":      mig.ProcessedFiles,
+				"processed_bytes":      mig.ProcessedBytes,
+				"skipped_files":        mig.SkippedFiles,
+				"failed_files":         mig.FailedFiles,
+				"error_message":        "",
+				"active_file":          activeFile,
+				"active_files":         activeFiles,
+				"threads":              mig.Threads,
+				"bandwidth_limit_mbps": mig.BandwidthLimitMbps,
 			}
 
 			if mig.ErrorMessage.Valid {

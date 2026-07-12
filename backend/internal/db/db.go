@@ -113,6 +113,7 @@ type Migration struct {
 	UpdatedAt                   time.Time               `json:"updated_at"`
 	ResourceStats               *MigrationResourceStats `json:"resource_stats,omitempty"`
 	Threads                     int                     `json:"threads"`
+	BandwidthLimitMbps          int                     `json:"bandwidth_limit_mbps"`
 }
 
 type Task struct {
@@ -313,6 +314,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (email_sent): %v\n", err)
 			}
 
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS bandwidth_limit_mbps INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (bandwidth_limit_mbps): %v\n", err)
+			}
+
 			_, err = db.Exec(`
 				CREATE TABLE IF NOT EXISTS user_smtp_settings (
 					user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -386,8 +392,8 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 			target_url, target_username, target_password_encrypted,
 			target_refresh_token_encrypted, target_token_expires_at,
 			source_provider, target_provider, status, conflict_strategy, target_dir,
-			selected_paths, selected_calendars, selected_contacts, threads
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+			selected_paths, selected_calendars, selected_contacts, threads, bandwidth_limit_mbps
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
@@ -397,7 +403,7 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted,
 		m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt,
 		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir,
-		m.SelectedPaths, m.SelectedCalendars, m.SelectedContacts, m.Threads,
+		m.SelectedPaths, m.SelectedCalendars, m.SelectedContacts, m.Threads, m.BandwidthLimitMbps,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err != nil {
@@ -416,7 +422,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
 		       processed_files, processed_bytes, skipped_files, failed_files,
 		       error_message, created_at, updated_at, target_dir, threads,
-		       selected_paths, selected_calendars, selected_contacts
+		       selected_paths, selected_calendars, selected_contacts, bandwidth_limit_mbps
 		FROM migrations WHERE id = $1
 	`
 	var m Migration
@@ -428,12 +434,23 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		&m.SourceProvider, &m.TargetProvider, &m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
 		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
 		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
-		&m.SelectedPaths, &m.SelectedCalendars, &m.SelectedContacts,
+		&m.SelectedPaths, &m.SelectedCalendars, &m.SelectedContacts, &m.BandwidthLimitMbps,
 	)
 	if err != nil {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// UpdateMigrationBandwidthLimit updates the bandwidth limit for a migration
+func UpdateMigrationBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
+	query := `
+		UPDATE migrations
+		SET bandwidth_limit_mbps = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+	_, err := db.Exec(query, limitMbps, id)
+	return err
 }
 
 // UpdateMigrationStatus updates the status of a migration.

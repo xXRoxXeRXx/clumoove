@@ -43,7 +43,7 @@ interface MigrationResourceStats {
 
 interface ProgressData {
   id: string;
-  status: string; // INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+  status: string;
   total_files: number;
   total_bytes: number;
   processed_files: number;
@@ -54,6 +54,7 @@ interface ProgressData {
   active_file: string;
   active_files?: string[];
   threads?: number;
+  bandwidth_limit_mbps?: number;
   resource_stats?: MigrationResourceStats;
 }
 
@@ -93,6 +94,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [copied, setCopied] = useState<boolean>(false);
   const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
   const [reconnectNonce, setReconnectNonce] = useState<number>(0);
+  const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
+  const [bandwidthLoading, setBandwidthLoading] = useState<boolean>(false);
 
   const directLink = `${window.location.origin}${window.location.pathname}?migration=${migrationId}`;
 
@@ -155,6 +158,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setControlLoading(null);
+    }
+  };
+
+  const commitBandwidthChange = async (value: number) => {
+    setBandwidthLoading(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/bandwidth`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ limit_mbps: value }),
+      });
+      if (!response.ok) {
+        throw new Error('Bandbreitenlimit konnte nicht aktualisiert werden.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setBandwidthLoading(false);
     }
   };
 
@@ -224,7 +249,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
       setData(payload);
 
-
+      if (payload.bandwidth_limit_mbps !== undefined) {
+        setBandwidthLimit(payload.bandwidth_limit_mbps);
+      }
 
       // Reset progress history if status changes to avoid calculations across states
       if (payload.status !== prevStatusRef.current) {
@@ -578,6 +605,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               )}
             </div>
           </div>
+
+          {/* Bandwidth Limit Slider */}
+          {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
+            <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl">
+          <div className="flex items-center justify-between mb-3">
+            <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
+              Bandbreitenlimit (Mbps)
+            </label>
+            <span className="text-xs font-bold text-portal-orange font-mono">
+              {bandwidthLimit === 0 ? 'Unbegrenzt' : `${bandwidthLimit} Mbps`}
+            </span>
+          </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={1000}
+                  step={1}
+                  value={bandwidthLimit}
+                  disabled={bandwidthLoading}
+                  onChange={(e) => setBandwidthLimit(Number(e.target.value))}
+                  onPointerUp={(e) => commitBandwidthChange(Number((e.target as HTMLInputElement).value))}
+                  className="w-full"
+                />
+              <div className="flex justify-between text-[9px] text-[var(--color-text-muted)] font-mono mt-2">
+                <span>0</span>
+                <span>10</span>
+                <span>20</span>
+                <span>30</span>
+                <span>40</span>
+                <span>50</span>
+              </div>
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="space-y-3">

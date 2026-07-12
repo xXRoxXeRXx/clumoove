@@ -27,6 +27,7 @@ import (
 	"backend/internal/queue"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
+	"backend/internal/throttle"
 )
 
 type activeTaskInfo struct {
@@ -41,7 +42,8 @@ type Processor struct {
 	secretKey    string
 	maxThreads   int
 	activeTasks  sync.Map
-	refreshLocks sync.Map // migrationID string -> *sync.Mutex
+	refreshLocks sync.Map
+	throttlers   sync.Map
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
@@ -95,6 +97,15 @@ func (p *Processor) Start(ctx context.Context) {
 			}
 			return true
 		})
+	})
+
+	// Start Bandwidth Change Listener
+	go p.queue.SubscribeToBandwidthChanges(ctx, func(event queue.BandwidthEvent) {
+		log.Printf("[Worker %s] Bandwidth change for migration %s: %d Mbps",
+			p.workerID, event.MigrationID, event.BandwidthLimitMbps)
+		if throttler, ok := p.throttlers.Load(event.MigrationID); ok {
+			throttler.(*throttle.MigrationThrottler).SetLimit(event.BandwidthLimitMbps)
+		}
 	})
 
 	var wg sync.WaitGroup
@@ -393,13 +404,19 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		migrationID: payload.MigrationID,
 		cancel:      cancel,
 	})
-	defer p.activeTasks.Delete(payload.TaskID)
+	defer func() {
+		p.activeTasks.Delete(payload.TaskID)
+	}()
 
 	// 1. Fetch Migration from DB
 	mig, err := db.GetMigration(p.db, payload.MigrationID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch migration: %w", err)
 	}
+
+	// Get or create throttler for this migration
+	throttler, _ := p.throttlers.LoadOrStore(payload.MigrationID, throttle.NewMigrationThrottler(mig.BandwidthLimitMbps))
+	migrationThrottler := throttler.(*throttle.MigrationThrottler)
 
 	// If migration is paused or in connection loss, return nil (task stays in RUNNING, but we want it PENDING)
 	// Actually, DequeueSQL only picks PENDING. If migration is paused, DequeueSQL won't pick it!
@@ -597,6 +614,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	}
 	defer downloadStream.Close()
 
+	// Wrap download stream with throttling (before TeeReader to limit actual network I/O)
+	throttledDownloadStream := throttle.NewThrottledReader(downloadStream, migrationThrottler, downloadCtx)
+
 	// Handle Hash Algorithm Selection
 	var sourceHasher hash.Hash
 	sourceAlgo := "SHA1" // Default
@@ -718,7 +738,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	}()
 
 	// io.TeeReader writes all data read from the download stream to the hasher in-memory
-	hashingReader := io.TeeReader(downloadStream, activeWriter)
+	hashingReader := io.TeeReader(throttledDownloadStream, activeWriter)
 
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
 	// Apply a dynamic per-request timeout scaled by file size (same policy as downloads)
@@ -734,7 +754,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 
 	// If size > 50MB, do chunked upload
 	if task.FileSize > 50*1024*1024 {
-		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, hashingReader, task.FileSize, progressChan)
+		// Wrap hashingReader with upload throttling
+		throttledHashingReader := throttle.NewUploadThrottledReader(hashingReader, migrationThrottler, uploadCtx)
+		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, task.FileSize, progressChan)
 	} else {
 		// Simple upload
 		// Wrap with a progress reporting reader
@@ -742,7 +764,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			Reader:       hashingReader,
 			ProgressChan: progressChan,
 		}
-		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, progressReader, task.FileSize)
+		// Wrap progressReader with upload throttling
+		throttledProgressReader := throttle.NewUploadThrottledReader(progressReader, migrationThrottler, uploadCtx)
+		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, task.FileSize)
 	}
 
 	if err != nil {
@@ -1142,6 +1166,9 @@ func (p *Processor) RunCompletionNotifier(ctx context.Context) {
 	cleanupTicker := time.NewTicker(1 * time.Hour)
 	defer cleanupTicker.Stop()
 
+	throttleCleanupTicker := time.NewTicker(1 * time.Minute)
+	defer throttleCleanupTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1152,8 +1179,30 @@ func (p *Processor) RunCompletionNotifier(ctx context.Context) {
 			if err := db.DeleteExpiredPasswordResetTokens(p.db); err != nil {
 				fmt.Printf("[CompletionNotifier] Error cleaning up expired reset tokens: %v\n", err)
 			}
+		case <-throttleCleanupTicker.C:
+			p.cleanupThrottlers()
 		}
 	}
+}
+
+// cleanupThrottlers removes throttlers for migrations that have reached a
+// terminal state. Throttlers are intentionally kept alive for the full lifetime
+// of a migration (not per-task) so that bandwidth changes applied between task
+// batches are never dropped (avoids a delete-then-publish race).
+func (p *Processor) cleanupThrottlers() {
+	p.throttlers.Range(func(key, value interface{}) bool {
+		migrationID := key.(string)
+		mig, err := db.GetMigration(p.db, migrationID)
+		if err != nil || mig == nil {
+			p.throttlers.Delete(migrationID)
+			return true
+		}
+		switch mig.Status {
+		case "COMPLETED", "FAILED", "CANCELLED":
+			p.throttlers.Delete(migrationID)
+		}
+		return true
+	})
 }
 
 func (p *Processor) sendPendingCompletionEmails(ctx context.Context) {

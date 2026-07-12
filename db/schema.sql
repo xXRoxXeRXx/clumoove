@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     failed_files INT NOT NULL DEFAULT 0,
     error_message TEXT,
     threads INT NOT NULL DEFAULT 4,
+    bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

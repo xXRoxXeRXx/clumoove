@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,11 @@ import (
 type Payload struct {
 	MigrationID string `json:"migration_id"`
 	TaskID      string `json:"task_id"`
+}
+
+type BandwidthEvent struct {
+	MigrationID      string `json:"migration_id"`
+	BandwidthLimitMbps int  `json:"bandwidth_limit_mbps"`
 }
 
 type Queue struct {
@@ -206,6 +212,62 @@ func (q *Queue) SubscribeToCancelEvents(ctx context.Context, callback func(migra
 				} else {
 					backoff = time.Second // reset on successful message
 					callback(msg.Payload)
+				}
+			}
+		}
+		pubsub.Close()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// PublishBandwidthChange publishes a bandwidth change event for a migration via Redis Pub/Sub
+func (q *Queue) PublishBandwidthChange(ctx context.Context, event BandwidthEvent) error {
+	channel := "migration-control:bandwidth"
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal bandwidth event: %w", err)
+	}
+	return q.client.Publish(ctx, channel, payload).Err()
+}
+
+// SubscribeToBandwidthChanges listens for bandwidth change events and calls the callback.
+// If the Pub/Sub channel closes (e.g. transient Redis disconnect) it reconnects
+// with exponential back-off so bandwidth events are never silently lost.
+func (q *Queue) SubscribeToBandwidthChanges(ctx context.Context, callback func(event BandwidthEvent)) {
+	channel := "migration-control:bandwidth"
+	backoff := time.Second
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		pubsub := q.client.Subscribe(ctx, channel)
+		ch := pubsub.Channel()
+
+		closed := false
+		for !closed {
+			select {
+			case <-ctx.Done():
+				pubsub.Close()
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					closed = true
+				} else {
+					backoff = time.Second
+					var event BandwidthEvent
+					if err := json.Unmarshal([]byte(msg.Payload), &event); err == nil {
+						callback(event)
+					}
 				}
 			}
 		}

@@ -93,6 +93,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // Scheduling state
   const [enableScheduling, setEnableScheduling] = useState(false);
   const [scheduledTime, setScheduledTime] = useState('');
+  const [bandwidthLimit, setBandwidthLimit] = useState(0);
 
   // Minimum selectable start time: now + 1 minute, formatted in the user's
   // local timezone (datetime-local inputs expect local time, not UTC).
@@ -339,6 +340,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         contacts: contactsToMigrate,
         target_dir: targetDir,
         threads: threads,
+        bandwidth_limit_mbps: bandwidthLimit,
       };
 
       // Add scheduled_time if scheduling is enabled
@@ -877,6 +879,34 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </p>
               </div>
             )}
+          </div>
+
+          {/* Bandwidth Limit */}
+          <div className="mt-4 p-4 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-2xl">
+            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
+              Bandbreitenlimit (Mbps)
+            </label>
+            <div className="flex items-center gap-4">
+              <input
+                type="range"
+                min="0"
+                max="1000"
+                step="1"
+                value={bandwidthLimit}
+                onChange={(e) => setBandwidthLimit(parseInt(e.target.value, 10))}
+                className="flex-grow accent-portal-navy cursor-pointer"
+              />
+              <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[48px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
+                {bandwidthLimit === 0 ? '∞' : `${bandwidthLimit}`}
+              </span>
+            </div>
+            <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
+              {bandwidthLimit === 0 ? (
+                'Keine Begrenzung – maximale Übertragungsgeschwindigkeit.'
+              ) : (
+                `Begrenzt auf ${bandwidthLimit} Mbps. Kann während der Migration angepasst werden.`
+              )}
+            </p>
           </div>
 
           {error && (
