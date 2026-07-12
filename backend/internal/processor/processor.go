@@ -24,6 +24,7 @@ import (
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/queue"
+	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
 
@@ -486,6 +487,37 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		// slash-separated, independent of the OS this server process runs on.
 		targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
 	}
+
+	// 3a. Filename Sanitization (before conflict resolution)
+	if task.ResourceType == "files" {
+		result := sanitize.SanitizeFilename(path.Base(targetPath), mig.TargetProvider)
+		if result.Changed {
+			dir := path.Dir(targetPath)
+			targetPath = path.Join(dir, result.SanitizedName)
+			log.Printf("[SANITIZE] %s: \"%s\" → \"%s\" (%s)",
+				task.ID, result.OriginalName, result.SanitizedName, strings.Join(result.Reasons, ", "))
+			_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
+		}
+
+		if sanitize.IsCaseInsensitive(mig.TargetProvider) {
+			collision, err := sanitize.CheckCaseCollision(ctx, targetClient, task.ResourceType,
+				path.Dir(targetPath), path.Base(targetPath))
+			if err != nil {
+				log.Printf("Warning: case collision check failed: %v", err)
+			} else if collision != "" {
+				resolved, err := sanitize.ResolveCollision(ctx, targetClient, task.ResourceType,
+					path.Dir(targetPath), path.Base(targetPath), mig.TargetProvider)
+				if err != nil {
+					return fmt.Errorf("failed to resolve case collision: %w", err)
+				}
+				targetPath = path.Join(path.Dir(targetPath), resolved)
+				log.Printf("[COLLISION] %s: case collision with \"%s\" → \"%s\"",
+					task.ID, collision, path.Base(targetPath))
+				_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
+			}
+		}
+	}
+
 	exists, _, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 	if err != nil {
 		return fmt.Errorf("failed to check if target file exists: %w", err)
@@ -528,7 +560,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 					}
 					if !candidateExists {
 						targetPath = candidatePath
-						task.FilePath = targetPath
+						_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
 						break
 					}
 					counter++

@@ -575,6 +575,12 @@ func UpdateTaskStatus(db *sql.DB, t *Task) error {
 	return err
 }
 
+// UpdateTaskFilePath updates a task's file_path (used when sanitization changes the target name)
+func UpdateTaskFilePath(db *sql.DB, taskID, newFilePath string) error {
+	_, err := db.Exec(`UPDATE tasks SET file_path = $1 WHERE id = $2`, newFilePath, taskID)
+	return err
+}
+
 // GetFailedTasksForReport retrieves all failed tasks of a migration for reporting
 func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	query := `
