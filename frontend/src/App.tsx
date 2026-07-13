@@ -430,6 +430,7 @@ function App() {
 
           {step === 'settings' && (
             <SettingsPage
+              key={user?.id}
               apiUrl={API_URL}
               token={token}
               user={user}

@@ -19,6 +19,19 @@ interface SettingsPageProps {
   onUpdateUser: (updatedUser: Partial<SettingsUser>) => void;
 }
 
+type MessageState = { text: string; type: 'success' | 'error' } | null;
+
+function MessageBanner({ message }: { message: MessageState }) {
+  if (!message) return null;
+  return (
+    <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
+      message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
+    }`}>
+      {message.text}
+    </div>
+  );
+}
+
 export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: SettingsPageProps) {
   // Theme context
   const { preference, setPreference, systemTheme } = useThemeContext();
@@ -107,8 +120,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       smtp_encryption: smtpEncryption,
       notify_on_completion: smtpNotify,
     };
-    // Only send password if changed (not the mask placeholder, not empty on initial)
-    if (smtpPassword && smtpPassword !== '••••••••') {
+    // Only send the password when the user entered a new one (existing password is kept otherwise)
+    if (smtpPassword) {
       payload.smtp_password = smtpPassword;
     }
 
@@ -369,75 +382,17 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       {/* Main Grid Layout */}
       <div className="grid md:grid-cols-2 gap-6">
         
-        {/* Left Side: Profile Information & Avatar */}
+        {/* Left Side: Profilbild, Profil-Details & Passwort */}
         <div className="space-y-6">
           
-          {/* Section 1: Profil */}
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
-            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Profil-Details</h3>
-            </div>
-
-            {profileMessage && (
-              <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                profileMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-              }`}>
-                {profileMessage.text}
-              </div>
-            )}
-
-            <form onSubmit={handleUpdateProfile} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  E-Mail Adresse (Nicht änderbar)
-                </label>
-                <input
-                  type="text"
-                  disabled
-                  value={user?.email || ''}
-                  className="w-full px-4 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]/85 rounded-xl text-sm text-[var(--color-text-muted)] cursor-not-allowed font-sans"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Anzeigename
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="Max Mustermann"
-                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={profileLoading || displayName.trim() === '' || displayName.trim() === user?.display_name}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
-              >
-                {profileLoading ? 'Wird gespeichert...' : 'Änderungen speichern'}
-              </button>
-            </form>
-          </div>
-
-          {/* Section 2: Profilbild */}
+          {/* Section 1: Profilbild */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <ImageIcon className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
               <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Profilbild</h3>
             </div>
 
-            {avatarMessage && (
-              <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                avatarMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-              }`}>
-                {avatarMessage.text}
-              </div>
-            )}
+            <MessageBanner message={avatarMessage} />
 
             <div className="flex flex-col items-center sm:flex-row gap-5 p-2 bg-[var(--color-bg-tertiary)]/50 rounded-2xl border border-[var(--color-border)]/50">
               <div className="relative shrink-0">
@@ -490,7 +445,149 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             </div>
           </div>
 
-          {/* Section 3: Darstellung */}
+{/* Section 2: Profil-Details */}
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Profil-Details</h3>
+            </div>
+
+            <MessageBanner message={profileMessage} />
+
+            <form onSubmit={handleUpdateProfile} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  E-Mail Adresse (Nicht änderbar)
+                </label>
+                <input
+                  type="text"
+                  disabled
+                  value={user?.email || ''}
+                  className="w-full px-4 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]/85 rounded-xl text-sm text-[var(--color-text-muted)] cursor-not-allowed font-sans"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  Anzeigename
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Max Mustermann"
+                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={profileLoading || displayName.trim() === '' || displayName.trim() === user?.display_name}
+                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+              >
+                {profileLoading ? 'Wird gespeichert...' : 'Änderungen speichern'}
+              </button>
+            </form>
+          </div>
+
+{/* Section 3: Passwort */}
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Passwort ändern</h3>
+            </div>
+
+            <MessageBanner message={passwordMessage} />
+
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  Aktuelles Passwort
+                </label>
+                <div className="relative group">
+                  <input
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    required
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                    aria-label={showCurrentPassword ? 'Aktuelles Passwort verbergen' : 'Aktuelles Passwort anzeigen'}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+                  >
+                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  Neues Passwort
+                </label>
+                <div className="relative group">
+                  <input
+                    type={showNewPassword ? 'text' : 'password'}
+                    required
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    aria-label={showNewPassword ? 'Neues Passwort verbergen' : 'Neues Passwort anzeigen'}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  Neues Passwort bestätigen
+                </label>
+                <div className="relative group">
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? 'Passwort-Bestätigung verbergen' : 'Passwort-Bestätigung anzeigen'}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
+                  >
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
+                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+              >
+                {passwordLoading ? 'Wird geändert...' : 'Passwort ändern'}
+              </button>
+            </form>
+          </div>
+        </div>
+
+        {/* Right Side: Darstellung, Systemsteuerung & E-Mail Benachrichtigungen */}
+        <div className="space-y-6">
+          
+          {/* Section 4: Darstellung */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Palette className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -554,120 +651,47 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               </p>
             )}
           </div>
-        </div>
 
-        {/* Right Side: Password & Admin Settings */}
-        <div className="space-y-6">
-          
-          {/* Section 3: Passwort */}
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
-            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Passwort ändern</h3>
+{/* Section 5: Systemsteuerung (nur sichtbar für Rolle ADMIN) */}
+          {user?.role === 'ADMIN' && (
+            <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+              <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+                <CloudSync className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Systemsteuerung</h3>
+              </div>
+
+              <MessageBanner message={adminMessage} />
+
+              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
+                <div className="text-left space-y-1 pr-4">
+                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">Registrierungen erlauben</h4>
+                  <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
+                    Schalte aus, um neue Benutzerregistrierungen systemweit zu sperren. Bestehende Logins bleiben aktiv.
+                  </p>
+                </div>
+                
+                <label className="relative inline-flex items-center cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={registrationsEnabled}
+                    disabled={adminLoading}
+                    onChange={(e) => handleToggleRegistrations(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
+                </label>
+              </div>
             </div>
+          )}
 
-            {passwordMessage && (
-              <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                passwordMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-              }`}>
-                {passwordMessage.text}
-              </div>
-            )}
-
-            <form onSubmit={handleChangePassword} className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Aktuelles Passwort
-                </label>
-                <div className="relative group">
-                  <input
-                    type={showCurrentPassword ? 'text' : 'password'}
-                    required
-                    value={currentPassword}
-                    onChange={(e) => setCurrentPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
-                  >
-                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Neues Passwort
-                </label>
-                <div className="relative group">
-                  <input
-                    type={showNewPassword ? 'text' : 'password'}
-                    required
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowNewPassword(!showNewPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
-                  >
-                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Neues Passwort bestätigen
-                </label>
-                <div className="relative group">
-                  <input
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    required
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
-                  >
-                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
-              >
-                {passwordLoading ? 'Wird geändert...' : 'Passwort ändern'}
-              </button>
-            </form>
-          </div>
-
-          {/* Section: E-Mail Benachrichtigungen (SMTP) */}
+{/* Section 6: E-Mail Benachrichtigungen (SMTP) */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Mail className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
               <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">E-Mail Benachrichtigungen</h3>
             </div>
 
-            {smtpMessage && (
-              <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                smtpMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-              }`}>
-                {smtpMessage.text}
-              </div>
-            )}
+            <MessageBanner message={smtpMessage} />
 
             <form onSubmit={handleSaveSMTP} className="space-y-4">
               <div className="grid grid-cols-3 gap-4">
@@ -815,44 +839,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               </div>
             </form>
           </div>
-
-          {/* Section 4: Registrierungen sperren (Only visible if user role === 'ADMIN') */}
-          {user?.role === 'ADMIN' && (
-            <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
-              <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-                <CloudSync className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Systemsteuerung</h3>
-              </div>
-
-              {adminMessage && (
-                <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-                  adminMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-                }`}>
-                  {adminMessage.text}
-                </div>
-              )}
-
-              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
-                <div className="text-left space-y-1 pr-4">
-                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">Registrierungen erlauben</h4>
-                  <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
-                    Schalte aus, um neue Benutzerregistrierungen systemweit zu sperren. Bestehende Logins bleiben aktiv.
-                  </p>
-                </div>
-                
-                <label className="relative inline-flex items-center cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={registrationsEnabled}
-                    disabled={adminLoading}
-                    onChange={(e) => handleToggleRegistrations(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
-                </label>
-              </div>
-            </div>
-          )}
 
         </div>
 
