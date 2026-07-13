@@ -344,9 +344,6 @@ function App() {
 
               {showUserMenu && (
                 <div className="absolute right-0 top-full mt-2 w-48 bg-[var(--color-bg-elevated)] backdrop-blur-md border border-[var(--color-border)] rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in">
-                  <div className="px-3.5 py-2 text-[10px] text-[var(--color-text-muted)] font-mono border-b border-[var(--color-border-light)] mb-1 select-none">
-                    // BENUTZER-SYSTEM
-                  </div>
                   <button
                     onClick={() => {
                       setStep('settings');
