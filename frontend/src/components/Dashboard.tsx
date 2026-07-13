@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Link, Copy, Check, Pause, Play, XCircle, Loader2 } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Pause, Play, XCircle, Loader2 } from 'lucide-react';
 
 // formatSize is defined at module level so it is not recreated on every render.
 const formatSize = (bytes: number): string => {
@@ -91,24 +91,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [controlLoading, setControlLoading] = useState<string | null>(null);
   const [speed, setSpeed] = useState<number>(0); // Bytes per second
   const [eta, setEta] = useState<string>('Berechnung...');
-  const [copied, setCopied] = useState<boolean>(false);
   const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
   const [reconnectNonce, setReconnectNonce] = useState<number>(0);
   const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
   const [bandwidthLoading, setBandwidthLoading] = useState<boolean>(false);
-
-  const directLink = `${window.location.origin}${window.location.pathname}?migration=${migrationId}`;
-
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(directLink)
-      .then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      })
-      .catch((err) => {
-        console.error('Kopieren fehlgeschlagen:', err);
-      });
-  };
 
   const handleDownloadReport = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -415,35 +401,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   return (
     <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in text-left">
       
-      {/* Privacy-First Bookmarkable Direct Link Card */}
-      <div className="mb-6 p-5 glass-panel border border-[var(--color-glass-border)] rounded-3xl shadow-portal flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-start md:items-center gap-3.5">
-          <div className="p-2.5 bg-orange-50 text-portal-orange rounded-xl shrink-0">
-            <Link className="w-4 h-4" />
-          </div>
-          <div className="flex flex-col text-left">
-            <span className="text-[10px] font-bold text-[var(--color-portal-navy-themed)] uppercase tracking-widest font-mono">Direktlink zu dieser Migration</span>
-            <span className="text-[11px] text-[var(--color-text-muted)] mt-0.5">Speichere diesen Link als Lesezeichen, um den Fortschritt später wieder aufzurufen.</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)] rounded-2xl px-3 py-2 shrink-0 max-w-full overflow-hidden shadow-inner">
-          <span className="font-mono text-[10.5px] text-[var(--color-text-secondary)] truncate select-all pr-1" title={directLink}>
-            {directLink}
-          </span>
-          <button
-            onClick={handleCopyLink}
-            className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-border)] rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] border border-[var(--color-border)] transition-colors shrink-0 cursor-pointer"
-            title="Link kopieren"
-          >
-            {copied ? (
-              <Check className="w-3.5 h-3.5 text-emerald-650 animate-pulse" />
-            ) : (
-              <Copy className="w-3.5 h-3.5" />
-            )}
-          </button>
-        </div>
-      </div>
-
       {/* Background Mode Guarantee Stamp (Grab a coffee) */}
       <div className="mb-6 p-4.5 bg-gradient-to-r from-portal-navy to-portal-navy-light text-white border border-white/10 rounded-2xl shadow-md flex items-center justify-between text-xs">
         <div className="flex items-center gap-3">
