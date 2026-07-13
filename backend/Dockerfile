@@ -7,7 +7,7 @@ COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
 # API runs by default in dev stage, worker can override via docker-compose command
-CMD ["go", "run", "cmd/api/main.go"]
+CMD ["go", "run", "./cmd/api"]
 
 # --- Build Stage ---
 FROM golang:alpine AS builder
@@ -15,8 +15,8 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/api cmd/api/main.go
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/worker cmd/worker/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/worker ./cmd/worker
 
 # --- Production Stage ---
 FROM alpine:3.19 AS prod
