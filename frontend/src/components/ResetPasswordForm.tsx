@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CloudSync, Lock, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
+import { useApiError } from '../utils/apiError';
 
 interface ResetPasswordFormProps {
   apiUrl: string;
@@ -16,12 +18,14 @@ function getPasswordStrength(password: string): { score: number; label: string; 
   if (/\d/.test(password)) score++;
   if (/[^A-Za-z0-9]/.test(password)) score++;
 
-  if (score <= 1) return { score, label: 'Schwach', color: 'bg-rose-500' };
-  if (score <= 3) return { score, label: 'Mittel', color: 'bg-amber-500' };
-  return { score, label: 'Stark', color: 'bg-emerald-500' };
+  if (score <= 1) return { score, label: 'weak', color: 'bg-rose-500' };
+  if (score <= 3) return { score, label: 'medium', color: 'bg-amber-500' };
+  return { score, label: 'strong', color: 'bg-emerald-500' };
 }
 
 export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFormProps) {
+  const { t } = useTranslation();
+  const translateApiError = useApiError();
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -37,12 +41,12 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
     setError('');
 
     if (password.length < 8) {
-      setError('Das Passwort muss mindestens 8 Zeichen lang sein.');
+      setError(t('reset.tooShort'));
       return;
     }
 
     if (password !== confirmPassword) {
-      setError('Die Passwörter stimmen nicht überein.');
+      setError(t('reset.mismatch'));
       return;
     }
 
@@ -58,14 +62,14 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
       });
 
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || 'Das Zurücksetzen des Passworts ist fehlgeschlagen.');
+        const data = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(data.error_code));
       }
 
       setSuccess(true);
       setTimeout(() => onSuccess(), 1500);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
+      setError(err instanceof Error ? err.message : t('reset.networkError'));
     } finally {
       setLoading(false);
     }
@@ -84,10 +88,10 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
               <CheckCircle2 className="w-12 h-12" />
             </div>
             <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
-              Passwort geändert
+               {t('reset.changed')}
             </h2>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
-              Du wirst zur Anmeldung weitergeleitet...
+               {t('reset.redirecting')}
             </p>
           </div>
         </div>
@@ -108,10 +112,10 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
             <CloudSync className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
-            Neues Passwort
+            {t('reset.title')}
           </h2>
           <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
-            // CLUMOVE SAAS PORTAL
+             {t('reset.portal')}
           </p>
         </div>
 
@@ -125,7 +129,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
             <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-              Neues Passwort
+              {t('reset.title')}
             </label>
             <div className="relative group">
               <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
@@ -157,14 +161,14 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
                     style={{ width: `${(strength.score / 5) * 100}%` }}
                   />
                 </div>
-                <span className="text-[9px] font-mono text-[var(--color-text-muted)] uppercase">{strength.label}</span>
+                 <span className="text-[9px] font-mono text-[var(--color-text-muted)] uppercase">{t(`reset.strength.${strength.label}`)}</span>
               </div>
             )}
           </div>
 
           <div className="space-y-1.5">
             <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-              Passwort bestätigen
+              {t('settings.confirmPassword')}
             </label>
             <div className="relative group">
               <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
@@ -194,14 +198,14 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
             disabled={loading || password.length < 8 || password !== confirmPassword}
             className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
           >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
-                Wird verarbeitet...
-              </span>
-            ) : (
-              'Passwort zurücksetzen'
-            )}
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  {t('common.processing')}
+                </span>
+              ) : (
+                t('reset.submit')
+              )}
           </button>
         </form>
       </div>

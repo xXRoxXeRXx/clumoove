@@ -38,7 +38,7 @@
 
 ### Security
 - **Credential handling**: Never pass plaintext credentials to background goroutines. Query from database by `MigrationID` and decrypt at the last moment using `crypto.Decrypt`.
-- **Error messages**: Never forward raw `err.Error()` strings for connection failures to API responses — they may embed URLs with embedded credentials. Log with `log.Printf`, return a generic message to the client.
+- **Error messages**: Never forward raw `err.Error()` strings for connection failures to API responses (may embed URLs with embedded credentials). Log with `log.Printf`, and return only a machine-readable `error_code` (see API Response Patterns) - never a human-readable/English message.
 - **Key Segregation**: Use `ENCRYPTION_SECRET_KEY` exclusively for AES-256-GCM encryption/decryption (`crypto.Encrypt` / `crypto.Decrypt`). Use `JWT_SECRET_KEY` exclusively for JWT signing. The API server **refuses to start** if either is missing.
 - **AES-256-GCM key derivation**: The raw secret is SHA-256-hashed inside `crypto.deriveKey` to produce a 32-byte key — any length secret is accepted; the hash is the actual key.
 - **OAuth2 Credentials**: OAuth2 access tokens and refresh tokens are stored AES-GCM encrypted in the `migrations` table (`source_refresh_token_encrypted`, `target_refresh_token_encrypted`). The `RunOAuthRotationDaemon` in the API gateway rotates them automatically before expiry.
@@ -67,8 +67,18 @@
 
 ### API Response Patterns
 - Use `writeJSON(w, status, data)` for all JSON responses — never write raw JSON manually.
-- Connection-test endpoints (`/connect`, `/browse`, `/target/browse`) return `HTTP 200` with `{"success": false, "error": "..."}` for logical failures (not `4xx`) so the frontend can display the error message directly.
-- Structural/validation errors (missing body, invalid provider) use standard `http.Error(w, msg, 4xx)`.
+- **Machine-readable error codes (i18n)**: Every error response carries only a machine-readable `error_code` (no human-readable text). Use the typed `APIErrorCode` enum with `writeError(w, status, code)`, `writeValidationError(w, code)` (400), or `writeConflictError(w, code)` (409). Add every new code to the `APIErrorCode` constant block AND to both frontend locale files; the backend never localizes.
+- Connection-test endpoints (`/connect`, `/browse`, `/target/browse`, `mkdir`) return `HTTP 200` with `{"success": false, "error_code": "..."}` for logical failures (not `4xx`) so the frontend displays the localized message via `translateApiError`.
+- Never return raw `err.Error()` strings or use `http.Error(w, msg, 4xx)` for client-facing errors - this leaks internals (e.g. URLs with embedded credentials). See Security -> Error messages.
+
+### Internationalization (i18n)
+- **Library**: Frontend uses `i18next` + `react-i18next` + `i18next-browser-languagedetector`, initialized in `src/i18n.ts`. Supported languages: `de`, `en` (fallback `en`).
+- **Translation files**: `src/locales/{de,en}/translation.json`. Both files MUST stay in key parity - every key present in one must exist in the other (run a structural diff after editing either file).
+- **Error codes**: Backend `error_code` values are localized under the `errors.*` namespace (e.g. `errors.MIGRATION_NOT_OWNED`). When adding a new `APIErrorCode`, add the matching `errors.<CODE>` entry to BOTH locale files. Unmapped codes fall back to `errors.UNKNOWN` via `translateApiError`.
+- **Consuming error codes**: Components call `useApiError()` (from `src/utils/apiError.ts`) to obtain `translateApiError`, then call `translateApiError(data.error_code)`. Do NOT read raw `error`/`message` fields from API responses.
+- **API error parsing**: Read `error_code` from the JSON body, e.g. `const body = await res.json().catch(() => ({})); translateApiError(body.error_code)`.
+- **Formatting**: Locale-aware number/date/bytes formatting lives in `src/utils/format.ts` (`formatBytes`, `formatDate`, `formatDateTime`, `useFormat`). Never hand-format with `toFixed`/`toLocaleString` without passing the active language.
+- **Language switcher**: `src/components/LanguageSwitcher.tsx` lets users switch; the choice is persisted to `localStorage` by the detector.
 
 ### Threads & Parallelism
 - `threads` per migration is capped at 1–16 in `handleStart`. The worker respects this via the SQL dequeue query (`COUNT(*) < m.threads`).

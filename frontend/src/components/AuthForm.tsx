@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CloudSync, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
 import type { User as UserType } from '../types';
+import { useApiError } from '../utils/apiError';
 
 interface AuthFormProps {
   apiUrl: string;
@@ -8,12 +10,15 @@ interface AuthFormProps {
 }
 
 export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
+  const { t } = useTranslation();
+  const translateApiError = useApiError();
   const [isLogin, setIsLogin] = useState<boolean>(true);
   const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [displayName, setDisplayName] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [successMessage, setSuccessMessage] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
   const [passwordResetAvailable, setPasswordResetAvailable] = useState<boolean>(false);
@@ -65,7 +70,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
-      setError('Bitte gib deine E-Mail-Adresse ein.');
+      setError(t('auth.enterEmail'));
       setLoading(false);
       return;
     }
@@ -80,13 +85,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       });
 
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || 'Ein Fehler ist aufgetreten.');
+        const data = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(data.error_code));
       }
 
       setResetEmailSent(true);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
+      setError(err instanceof Error ? err.message : t('reset.networkError'));
     } finally {
       setLoading(false);
     }
@@ -99,7 +104,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
     const code = otpCode.trim();
     if (!code) {
-      setOtpError('Bitte gib deinen Code ein.');
+      setOtpError(t('errors.TOTP_CODE_REQUIRED'));
       setLoading(false);
       return;
     }
@@ -117,20 +122,20 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       if (response.status === 429) {
         const retryAfter = Number(response.headers.get('Retry-After') || '900');
         setLockSeconds(retryAfter);
-        setOtpError('Zu viele Fehlversuche. Konto für 15 Minuten gesperrt.');
+        setOtpError(t('auth.totpLocked'));
         setLoading(false);
         return;
       }
 
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || 'Ungültiger Code.');
+        const data = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(data.error_code));
       }
 
       const data = await response.json();
       onAuthSuccess(data.access_token, data.user);
     } catch (err: unknown) {
-      setOtpError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
+      setOtpError(err instanceof Error ? err.message : t('reset.networkError'));
     } finally {
       setLoading(false);
     }
@@ -150,10 +155,10 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               <Lock className="w-6 h-6 stroke-[2.5]" />
             </div>
             <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
-              Zwei-Faktor-Authentifizierung
+              {t('auth.totpTitle')}
             </h2>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
-              // GIB DEINEN CODE EIN
+              {t('auth.totpEnterCode')}
             </p>
           </div>
 
@@ -184,7 +189,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
             {lockSeconds > 0 && (
               <p className="text-center text-xs font-mono text-rose-700">
-                Gesperrt. Erneut in {Math.floor(lockSeconds / 60)}:{(lockSeconds % 60).toString().padStart(2, '0')}
+                {t('auth.lockedRetry', { time: `${Math.floor(lockSeconds / 60)}:${(lockSeconds % 60).toString().padStart(2, '0')}` })}
               </p>
             )}
 
@@ -196,10 +201,10 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
                   <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
-                  Wird verarbeitet...
+                  {t('common.processing')}
                 </span>
               ) : (
-                'Verifizieren'
+                t('auth.verify')
               )}
             </button>
           </form>
@@ -215,7 +220,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               }}
               className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
             >
-              Abbrechen
+               {t('common.cancel')}
             </button>
           </div>
         </div>
@@ -237,10 +242,10 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               <CloudSync className="w-6 h-6 stroke-[2.5]" />
             </div>
             <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
-              Passwort zurücksetzen
+              {t('auth.forgotTitle')}
             </h2>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
-              // CLUMOVE SAAS PORTAL
+              {t('auth.portalLogin')}
             </p>
           </div>
 
@@ -255,7 +260,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               <form onSubmit={handleForgotPassword} className="space-y-5">
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    E-Mail Adresse
+                     {t('auth.email')}
                   </label>
                   <div className="relative group">
                     <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
@@ -281,17 +286,17 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   {loading ? (
                     <span className="flex items-center justify-center gap-2">
                       <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
-                      Wird verarbeitet...
-                    </span>
-                  ) : (
-                    'Link senden'
-                  )}
+                  {t('common.processing')}
+                </span>
+              ) : (
+                t('auth.sendLink')
+              )}
                 </button>
               </form>
             </>
           ) : (
             <div className="p-4 rounded-xl border text-xs text-center font-mono leading-relaxed bg-emerald-50/80 border-emerald-200 text-emerald-800 mb-6">
-              Falls ein Account mit dieser E-Mail existiert, wurde ein Link gesendet.
+               {t('auth.forgotSent')}
             </div>
           )}
 
@@ -305,8 +310,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               }}
               className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
             >
-              Zurück zum Login
-            </button>
+                   {t('auth.backToLogin')}
+                 </button>
           </div>
         </div>
       </div>
@@ -316,11 +321,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccessMessage('');
     setLoading(true);
 
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !password || (!isLogin && !displayName.trim())) {
-      setError('Bitte alle Felder ausfüllen.');
+      setError(t('auth.fillAllFields'));
       setLoading(false);
       return;
     }
@@ -341,8 +347,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       });
 
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || 'Ein Fehler ist aufgetreten.');
+        const data = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(data.error_code));
       }
 
       if (isLogin) {
@@ -359,10 +365,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         // Registration success: switch to login and show success message
         setIsLogin(true);
         setPassword('');
-        setError('Registrierung erfolgreich! Bitte logge dich ein.');
+        setSuccessMessage(t('auth.registrationSuccess'));
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
+      setError(err instanceof Error ? err.message : t('reset.networkError'));
+      setSuccessMessage('');
     } finally {
       setLoading(false);
     }
@@ -384,20 +391,22 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <CloudSync className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
-            {isLogin ? 'Willkommen zurück' : 'Account erstellen'}
+            {isLogin ? t('auth.welcomeBack') : t('auth.createAccount')}
           </h2>
           <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
-            {isLogin ? '// CLUMOVE SAAS PORTAL' : '// ACCOUNT REGISTRIERUNG'}
+            {isLogin ? t('auth.portalLogin') : t('auth.portalRegister')}
           </p>
         </div>
 
         {error && (
-          <div className={`p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in ${
-            error.includes('erfolgreich')
-              ? 'bg-emerald-50/80 border-emerald-200 text-emerald-800'
-              : 'bg-rose-50/80 border-rose-250 text-rose-800'
-          }`}>
+          <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-emerald-50/80 border-emerald-200 text-emerald-800">
+            {successMessage}
           </div>
         )}
 
@@ -406,7 +415,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {!isLogin && (
             <div className="space-y-1.5">
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                Name
+                {t('auth.name')}
               </label>
               <div className="relative group">
                 <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
@@ -427,7 +436,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {/* Email input */}
           <div className="space-y-1.5">
             <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-              E-Mail Adresse
+              {t('auth.email')}
             </label>
             <div className="relative group">
               <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
@@ -448,8 +457,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {/* Password input */}
           <div className="space-y-1.5">
             <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-              Passwort
-            </label>
+                {t('auth.password')}
+              </label>
             <div className="relative group">
               <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
                 <Lock className="w-4 h-4" />
@@ -484,8 +493,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 }}
                 className="text-xs font-mono text-[var(--color-text-muted)] hover:text-portal-orange transition-colors cursor-pointer underline-offset-2 hover:underline"
               >
-                Passwort vergessen?
-              </button>
+                 {t('auth.forgotPassword')}
+               </button>
             </div>
           )}
 
@@ -498,13 +507,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             {loading ? (
               <span className="flex items-center justify-center gap-2">
                 <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
-                Wird verarbeitet...
-              </span>
-            ) : isLogin ? (
-              'Anmelden'
-            ) : (
-              'Registrieren'
-            )}
+                 {t('common.processing')}
+               </span>
+             ) : isLogin ? (
+               t('auth.login')
+             ) : (
+               t('auth.register')
+             )}
           </button>
         </form>
 
@@ -513,7 +522,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {isLogin ? (
             registrationsEnabled ? (
               <p>
-                Noch keinen Account?{' '}
+                 {t('auth.noAccount')}{' '}
                 <button
                   type="button"
                   onClick={() => {
@@ -522,17 +531,17 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   }}
                   className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
                 >
-                  Registrieren
-                </button>
+                   {t('auth.register')}
+                 </button>
               </p>
             ) : (
               <p className="text-[var(--color-text-muted)]">
-                Registrierungen sind derzeit deaktiviert.
+                {t('auth.registrationsDisabled')}
               </p>
             )
           ) : (
             <p>
-              Bereits registriert?{' '}
+               {t('auth.hasAccount')}{' '}
               <button
                 type="button"
                 onClick={() => {
@@ -541,8 +550,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 }}
                 className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
               >
-                Anmelden
-              </button>
+                   {t('auth.login')}
+                 </button>
             </p>
           )}
         </div>

@@ -7,8 +7,10 @@ import { MigrationsDashboard } from './components/MigrationsDashboard';
 import { ResetPasswordForm } from './components/ResetPasswordForm';
 import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
+import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'reset-password' | 'confirm-email';
@@ -47,6 +49,7 @@ const setMigrationInUrl = (id: string) => {
 };
 
 function App() {
+  const { t } = useTranslation();
   const resetTokenFromUrl = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('reset-token')
     : null;
@@ -309,7 +312,7 @@ function App() {
               <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.15s]" />
               <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce" />
             </div>
-            <p className="text-[10px] font-mono tracking-wider text-[var(--color-text-muted)] uppercase mt-2">// INITIALISIERE PORTAL...</p>
+            <p className="text-[10px] font-mono tracking-wider text-[var(--color-text-muted)] uppercase mt-2">{t('common.initializing')}</p>
           </div>
         </div>
       </div>
@@ -369,7 +372,7 @@ function App() {
                     className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
                   >
                     <SettingsIcon className="w-4 h-4 text-[var(--color-text-muted)]" />
-                    Einstellungen
+                    {t('nav.settings')}
                   </button>
                   <button
                     onClick={() => {
@@ -379,7 +382,7 @@ function App() {
                     className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50/50 transition-colors cursor-pointer text-left font-sans"
                   >
                     <LogOut className="w-4 h-4 text-rose-450" />
-                    Abmelden
+                    {t('nav.logout')}
                   </button>
                 </div>
               )}
@@ -470,12 +473,17 @@ function App() {
       <footer className="border-t border-[var(--color-border)] py-8 mt-12 bg-[var(--color-glass-bg)] backdrop-blur-md">
         <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
           <div>
-            <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">// Clumove Migrations-Plattform</p>
-            <p className="text-[var(--color-text-muted)]">© 2026 Alle Rechte vorbehalten. Schnelle und sichere Transfers für Cloud-Infrastrukturen.</p>
+            <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">{t('footer.title')}</p>
+            <p className="text-[var(--color-text-muted)]">{t('footer.copyright')}</p>
           </div>
-          <div>
-            <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">// Zero-Data-Retention-Puffer</p>
-            <p className="text-[var(--color-text-muted)]">Die Datenübertragung erfolgt verschlüsselt und flüchtig direkt über den Arbeitsspeicher des Gateways. Es findet keine dauerhafte Speicherung der Transferdaten statt.</p>
+          <div className="flex flex-col gap-3">
+            <div>
+              <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">{t('footer.bufferTitle')}</p>
+              <p className="text-[var(--color-text-muted)]">{t('footer.bufferText')}</p>
+            </div>
+            <div className="md:flex md:justify-end">
+              <LanguageSwitcher />
+            </div>
           </div>
         </div>
       </footer>

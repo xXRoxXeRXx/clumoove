@@ -31,30 +31,30 @@ type TOTPVerifyRequest struct {
 func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 	var req TOTPVerifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	req.Code = sanitizeCode(req.Code)
 	if req.TempSession == "" || req.Code == "" {
-		http.Error(w, "Session and code are required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrTotpCodeRequired)
 		return
 	}
 
 	claims, err := auth.Validate2FATempToken(req.TempSession, s.jwtSecret)
 	if err != nil {
-		http.Error(w, "Unauthorized: invalid or expired session", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrTotpSessionInvalid)
 		return
 	}
 
 	u, err := db.GetUserByID(s.db, claims.UserID)
 	if err != nil {
 		log.Printf("handleTOTP: failed to load user %s: %v\n", claims.UserID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if !u.TotpEnabled {
-		http.Error(w, "Unauthorized: 2FA not enabled for this account", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrTotpNotEnabled)
 		return
 	}
 
@@ -68,14 +68,14 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 			retryAfter = 1
 		}
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-		http.Error(w, "Too many failed attempts. Try again later.", http.StatusTooManyRequests)
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
 	secret, err := crypto.Decrypt(u.TotpSecretEnc, s.encryptionKey)
 	if err != nil {
 		log.Printf("handleTOTP: failed to decrypt secret for user %s: %v\n", u.ID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -95,7 +95,7 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 			remaining = append(remaining, u.TotpBackupCodes[idx+1:]...)
 			if err := db.ReplaceUsedBackupCode(s.db, u.ID, remaining); err != nil {
 				log.Printf("handleTOTP: failed to consume backup code for user %s: %v\n", u.ID, err)
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				writeError(w, http.StatusInternalServerError, ErrInternalError)
 				return
 			}
 		}
@@ -105,22 +105,22 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		locked, lerr := db.IncrementTOTPFailed(s.db, u.ID, totpMaxAttempts, totpLockDuration)
 		if lerr != nil {
 			log.Printf("handleTOTP: failed to increment attempts for user %s: %v\n", u.ID, lerr)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 		if locked {
 			w.Header().Set("Retry-After", strconv.Itoa(int(totpLockDuration.Seconds())))
-			http.Error(w, "Too many failed attempts. Account locked for 15 minutes.", http.StatusTooManyRequests)
+			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 			return
 		}
-		http.Error(w, "Invalid code", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrTotpInvalidCode)
 		return
 	}
 
 	// Success: clear failed attempts/lockout and issue normal tokens.
 	if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
 		log.Printf("handleTOTP: failed to reset attempts for user %s: %v\n", u.ID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -139,7 +139,7 @@ type TOTPSetupResponse struct {
 func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
@@ -147,7 +147,7 @@ func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
 		log.Printf("handle2FASetup: failed to load user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -155,27 +155,27 @@ func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 	// the secret and clear backup codes without a password check, defeating the
 	// password gate on /api/auth/2fa/disable (session-theft protection).
 	if u.TotpEnabled {
-		http.Error(w, "2FA is already enabled. Disable it first to re-configure.", http.StatusConflict)
+		writeError(w, http.StatusConflict, ErrTotpAlreadyEnabled)
 		return
 	}
 
 	secret, otpauthURI, qrPNG, err := totp2fa.GenerateProvisioning(u.Email)
 	if err != nil {
 		log.Printf("handle2FASetup: failed to generate provisioning for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	encrypted, err := crypto.Encrypt(secret, s.encryptionKey)
 	if err != nil {
 		log.Printf("handle2FASetup: failed to encrypt secret for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := db.SetUserTOTPSecret(s.db, userID, encrypted); err != nil {
 		log.Printf("handle2FASetup: failed to store secret for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -196,58 +196,58 @@ type TOTPEnableRequest struct {
 func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	var req TOTPEnableRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 	req.Code = sanitizeCode(req.Code)
 	if req.Code == "" {
-		http.Error(w, "Code is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrTotpCodeRequired)
 		return
 	}
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
 		log.Printf("handle2FAEnable: failed to load user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if u.TotpEnabled {
-		http.Error(w, "2FA is already enabled", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrTotpAlreadyEnabled)
 		return
 	}
 	if u.TotpSecretEnc == "" {
-		http.Error(w, "No pending 2FA setup found. Call /api/auth/2fa/setup first.", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrTotpNoPendingSetup)
 		return
 	}
 
 	secret, err := crypto.Decrypt(u.TotpSecretEnc, s.encryptionKey)
 	if err != nil {
 		log.Printf("handle2FAEnable: failed to decrypt secret for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if !totp2fa.Validate(secret, req.Code) {
-		http.Error(w, "Invalid code", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrTotpInvalidCode)
 		return
 	}
 
 	plainCodes, hashes, err := totp2fa.GenerateBackupCodes()
 	if err != nil {
 		log.Printf("handle2FAEnable: failed to generate backup codes for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := db.EnableUserTOTP(s.db, userID, db.StringArray(hashes)); err != nil {
 		log.Printf("handle2FAEnable: failed to enable 2FA for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -267,36 +267,36 @@ type TOTPDisableRequest struct {
 func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	var req TOTPDisableRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 	req.Password = strings.TrimSpace(req.Password)
 	if req.Password == "" {
-		http.Error(w, "Password is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrPasswordRequired)
 		return
 	}
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
 		log.Printf("handle2FADisable: failed to load user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if !auth.CheckPasswordHash(req.Password, u.PasswordHash) {
-		http.Error(w, "Invalid password", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrPasswordInvalid)
 		return
 	}
 
 	if err := db.DisableUserTOTP(s.db, userID); err != nil {
 		log.Printf("handle2FADisable: failed to disable 2FA for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -307,14 +307,14 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
 		log.Printf("handle2FAStatus: failed to load user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -327,14 +327,14 @@ func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.Us
 	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
 	if err != nil {
 		log.Printf("issueTokens: failed to generate access token for user %s: %v\n", u.ID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	refreshToken, err := auth.GenerateRefreshToken()
 	if err != nil {
 		log.Printf("issueTokens: failed to generate refresh token for user %s: %v\n", u.ID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -343,7 +343,7 @@ func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.Us
 
 	if err := db.StoreRefreshToken(s.db, tokenHash, u.ID, expiresAt); err != nil {
 		log.Printf("issueTokens: failed to store refresh token for user %s: %v\n", u.ID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 

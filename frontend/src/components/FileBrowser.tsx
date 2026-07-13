@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X } from 'lucide-react';
 import type { CloudFile, MigrationConfig } from '../types';
+import { useTranslation } from 'react-i18next';
+import { useFormat } from '../utils/format';
+import { useApiError } from '../utils/apiError';
 
 interface FileBrowserProps {
   initialFiles: CloudFile[];
@@ -10,15 +13,6 @@ interface FileBrowserProps {
   onStartSuccess: (migrationId: string) => void;
   token: string;
 }
-
-// formatSize is defined at module level so it is not recreated on every render.
-const formatSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-};
 
 // toLocalInputValue formats a Date as a local-time datetime-local string
 // (YYYY-MM-DDTHH:MM) without UTC conversion. datetime-local inputs expect the
@@ -50,6 +44,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   onStartSuccess,
   token,
 }) => {
+  const { t } = useTranslation();
+  const { formatBytes } = useFormat();
+  const translateApiError = useApiError();
+
   const [activeTab, setActiveTab] = useState<'files' | 'calendars' | 'contacts'>('files');
   const [calendars, setCalendars] = useState<CloudFile[]>([]);
   const [contacts, setContacts] = useState<CloudFile[]>([]);
@@ -118,18 +116,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }),
       });
 
-      if (!response.ok) throw new Error('Fehler beim Laden des Ziel-Verzeichnisses');
+      if (!response.ok) throw new Error(t('fileBrowser.errors.loadTarget'));
 
       const data = await response.json();
       if (data.success) {
         const foldersOnly = (data.files || []).filter((f: CloudFile) => f.is_dir);
         setTargetDirectoryContents((prev) => ({ ...prev, [folderPath]: foldersOnly }));
       } else {
-        setTargetError(data.error || 'Fehler beim Laden des Ziel-Verzeichnisses');
+        setTargetError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.loadTarget'));
       }
     } catch (err) {
       console.error(err);
-      setTargetError(err instanceof Error ? err.message : 'Fehler beim Laden des Ziel-Verzeichnisses');
+      setTargetError(err instanceof Error ? err.message : t('fileBrowser.errors.loadTarget'));
     } finally {
       setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
     }
@@ -160,7 +158,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }),
       });
 
-      if (!response.ok) throw new Error('Fehler beim Erstellen des Ordners');
+      if (!response.ok) throw new Error(t('fileBrowser.errors.createFolder'));
 
       const data = await response.json();
       if (data.success) {
@@ -174,11 +172,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         });
         await fetchTargetChildren(parentPath);
       } else {
-        setTargetError(data.error || 'Fehler beim Erstellen des Ordners');
+        setTargetError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.createFolder'));
       }
     } catch (err) {
       console.error(err);
-      setTargetError(err instanceof Error ? err.message : 'Fehler beim Erstellen des Ordners');
+      setTargetError(err instanceof Error ? err.message : t('fileBrowser.errors.createFolder'));
     } finally {
       setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: false }));
     }
@@ -209,7 +207,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           resource_type: 'calendars',
         }),
       });
-      if (!response.ok) throw new Error('Fehler beim Laden der Kalender');
+      if (!response.ok) throw new Error(t('fileBrowser.errors.loadCalendars'));
       const data = await response.json();
       if (data.success) {
         const items = sortEntries(data.items || []);
@@ -247,7 +245,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           resource_type: 'contacts',
         }),
       });
-      if (!response.ok) throw new Error('Fehler beim Laden der Kontakte');
+      if (!response.ok) throw new Error(t('fileBrowser.errors.loadContacts'));
       const data = await response.json();
       if (data.success) {
         const items = sortEntries(data.items || []);
@@ -294,7 +292,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }),
       });
 
-      if (!response.ok) throw new Error('Fehler beim Laden des Verzeichnisses');
+      if (!response.ok) throw new Error(t('fileBrowser.errors.loadDir'));
 
       const data = await response.json();
       if (data.success) {
@@ -302,8 +300,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
         // Newly loaded children are selected by default.
         // Newly loaded children are selected by default, but only if the
-        // user has not explicitly interacted with them yet (so an "Alle
-        // abwählen" followed by expanding a folder keeps the children
+        // user has not explicitly interacted with them yet (so a "Deselect
+        // all" followed by expanding a folder keeps the children
         // unselected).
         setSelectedPaths((prev) => {
           const next = { ...prev };
@@ -344,7 +342,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const contactsToMigrate = Object.keys(selectedContacts).filter((p) => selectedContacts[p]);
 
     if (pathsToMigrate.length === 0 && calendarsToMigrate.length === 0 && contactsToMigrate.length === 0) {
-      setError('Bitte wähle mindestens ein Verzeichnis, einen Kalender oder ein Adressbuch aus.');
+      setError(t('fileBrowser.errors.selectOne'));
       return;
     }
 
@@ -352,7 +350,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     if (enableScheduling && scheduledTime) {
       const scheduledDate = new Date(scheduledTime);
       if (scheduledDate <= new Date()) {
-        setError('Der geplante Startzeitpunkt muss in der Zukunft liegen.');
+        setError(t('fileBrowser.errors.futureTime'));
         return;
       }
     }
@@ -387,17 +385,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       });
 
       if (!response.ok) {
-        throw new Error(`Migration konnte nicht gestartet werden. Status ${response.status}`);
+        throw new Error(t('fileBrowser.errors.startFailed'));
       }
 
       const data = await response.json();
       if (data.success && data.migration_id) {
         onStartSuccess(data.migration_id);
       } else {
-        setError(data.error || 'Fehler beim Starten der Migration.');
+        setError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.startError'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Verbindungsfehler beim Starten der Übertragung.');
+      setError(err instanceof Error ? err.message : t('fileBrowser.errors.networkError'));
     } finally {
       setStarting(false);
     }
@@ -475,7 +473,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           
           {!file.is_dir && (
             <span className="text-[10px] font-bold text-[var(--color-text-muted)] border border-portal-border px-2 py-0.5 bg-[var(--color-bg-tertiary)] rounded">
-              {formatSize(file.size)}
+              {formatBytes(file.size)}
             </span>
           )}
         </div>
@@ -493,7 +491,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <div
             className="text-[10px] text-[var(--color-text-muted)] italic py-2.5 pl-14"
           >
-            // LEERES VERZEICHNIS
+            {t('fileBrowser.emptyDir')}
           </div>
         )}
       </div>
@@ -572,7 +570,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               children.map((child) => renderTargetNode(child, depth + 1))
             ) : isLoading ? null : (
               <div className="text-[10px] text-[var(--color-text-muted)] italic py-2 pl-[42px]">
-                Keine Unterverzeichnisse
+                {t('fileBrowser.noSubdirs')}
               </div>
             )}
           </div>
@@ -590,14 +588,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           className="px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[11px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm"
         >
           <ArrowLeft className="w-3.5 h-3.5 stroke-[2.5] inline-block mr-1.5 align-text-bottom" />
-          <span>Zurück</span>
+          <span>{t('common.back')}</span>
         </button>
         <div>
           <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-portal-navy-themed)] tracking-tight">
-            Dateien auswählen
+            {t('fileBrowser.title')}
           </h1>
           <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">
-            // WÄHLE DIE DATEIBESTÄNDE FÜR DEN ÜBERTRAGUNGSLAUF AUS
+            {t('fileBrowser.subtitle')}
           </p>
         </div>
       </div>
@@ -617,7 +615,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                 }`}
               >
-                Dateien
+                {t('fileBrowser.files')}
               </button>
               {(credentials.source_provider === 'nextcloud' || credentials.source_provider === 'google') && (
                 <>
@@ -629,7 +627,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                     }`}
                   >
-                    Kalender ({Object.values(selectedCalendars).filter(Boolean).length})
+                    {t('fileBrowser.calendars')} ({Object.values(selectedCalendars).filter(Boolean).length})
                   </button>
                   <button
                     onClick={() => handleTabChange('contacts')}
@@ -639,7 +637,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                     }`}
                   >
-                    Kontakte ({Object.values(selectedContacts).filter(Boolean).length})
+                    {t('fileBrowser.contacts')} ({Object.values(selectedContacts).filter(Boolean).length})
                   </button>
                 </>
               )}
@@ -649,10 +647,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               <button
                 onClick={deselectAll}
                 className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-orange-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] flex items-center gap-1.5"
-                title="Alle abwählen"
+                title={t('common.deselectAll')}
               >
                 <X className="w-4 h-4" />
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider">Alle abwählen</span>
+                <span className="text-[11px] font-mono font-bold uppercase tracking-wider">{t('common.deselectAll')}</span>
               </button>
 
               {activeTab !== 'files' && (
@@ -660,7 +658,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
                   disabled={loadingCalendars || loadingContacts}
                   className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] disabled:opacity-50"
-                  title="Aktualisieren"
+                  title={t('common.refresh')}
                 >
                   <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
                 </button>
@@ -675,7 +673,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               ) : (
                 <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
                   <Folder className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
-                  <p className="font-mono text-[10px] italic text-[var(--color-text-muted)]">// KEINE DATEIEN GEFUNDEN</p>
+                  <p className="font-mono text-[10px] italic text-[var(--color-text-muted)]">{t('fileBrowser.noFiles')}</p>
                 </div>
               )
             )}
@@ -684,7 +682,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               loadingCalendars ? (
                 <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
                   <RefreshCw className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
-                  <p className="font-mono text-[10px] italic">// LADE KALENDER...</p>
+                   <p className="font-mono text-[10px] italic">{t('fileBrowser.loadingCalendars')}</p>
                 </div>
               ) : calendars.length > 0 ? (
                 <div className="space-y-2">
@@ -715,7 +713,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               ) : (
                 <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
                   <Calendar className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
-                  <p className="font-mono text-[10px] italic">// KEINE KALENDER GEFUNDEN</p>
+                   <p className="font-mono text-[10px] italic">{t('fileBrowser.noCalendars')}</p>
                 </div>
               )
             )}
@@ -724,7 +722,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               loadingContacts ? (
                 <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
                   <RefreshCw className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
-                  <p className="font-mono text-[10px] italic">// LADE ADRESSBÜCHER...</p>
+                   <p className="font-mono text-[10px] italic">{t('fileBrowser.loadingContacts')}</p>
                 </div>
               ) : contacts.length > 0 ? (
                 <div className="space-y-2">
@@ -755,7 +753,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               ) : (
                 <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
                   <BookOpen className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
-                  <p className="font-mono text-[10px] italic">// KEINE ADRESSBÜCHER GEFUNDEN</p>
+                   <p className="font-mono text-[10px] italic">{t('fileBrowser.noContacts')}</p>
                 </div>
               )
             )}
@@ -773,12 +771,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             {starting ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Indexierung läuft...</span>
+                <span>{t('fileBrowser.indexing')}</span>
               </>
             ) : (
               <>
                 <Play className="w-4 h-4 fill-current stroke-[2.5]" />
-                <span>Transfer starten</span>
+                <span>{t('fileBrowser.startTransfer')}</span>
               </>
             )}
           </button>
@@ -786,12 +784,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6 flex-grow text-left">
             
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-3 mb-1">
-              <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] tracking-tight">Konfiguration</h3>
+              <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] tracking-tight">{t('fileBrowser.config')}</h3>
             </div>
 
             {/* Target Path */}
             <div className="space-y-2 text-xs">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Ziel-Stammverzeichnis</label>
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.targetDir')}</label>
               <input
                 type="text"
                 value={targetDir}
@@ -804,16 +802,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 className="w-full py-2.5 bg-portal-navy hover:bg-portal-navy-light text-[var(--color-text-inverse)] text-[11px] font-bold font-mono uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <FolderOpen className="w-4 h-4" />
-                <span>Ordner Auswählen</span>
+                <span>{t('fileBrowser.selectFolder')}</span>
               </button>
               <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed font-sans">
-                Kopiert Bestände in den ausgewählten Ordner auf der Zielinstanz.
+                {t('fileBrowser.targetCopied')}
               </p>
             </div>
 
             {/* Conflict Strategy block selector */}
             <div className="space-y-3 text-xs">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Kollisions-Behandlung</label>
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.conflictHandling')}</label>
               <div className="space-y-2">
                 {/* SKIP card */}
                 <button
@@ -826,11 +824,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="font-display">Überspringen</span>
+                    <span className="font-display">{t('fileBrowser.skip')}</span>
                     {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
                   </div>
                   <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'SKIP' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
-                    Bereits existierende Dateien werden im Ziel nicht überschrieben.
+                    {t('fileBrowser.skipDesc')}
                   </p>
                 </button>
 
@@ -845,11 +843,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="font-display">Überschreiben</span>
+                    <span className="font-display">{t('fileBrowser.overwrite')}</span>
                     {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
                   </div>
                   <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'OVERWRITE' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
-                    Ersetzt doppelte Dateinamen im Ziel bedingungslos.
+                    {t('fileBrowser.overwriteDesc')}
                   </p>
                 </button>
 
@@ -864,11 +862,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="font-display">Automatisch umbenennen</span>
+                    <span className="font-display">{t('fileBrowser.rename')}</span>
                     {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
                   </div>
                   <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'RENAME' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
-                    Fügt Suffixe hinzu (z. B. datei(1).pdf).
+                    {t('fileBrowser.renameDesc')}
                   </p>
                 </button>
               </div>
@@ -876,7 +874,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
             {/* Thread count selector */}
             <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Parallele Threads</label>
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.threads')}</label>
               <div className="flex items-center gap-4">
                 <input
                   type="range"
@@ -894,9 +892,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               </div>
               <p className="text-[9.5px] text-[var(--color-text-muted)] leading-relaxed font-sans">
                 {threads > 8 ? (
-                  <span className="text-[var(--color-portal-orange-themed)] font-semibold">⚠️ Hohe Thread-Zahl erhöht die Übertragungsrate, kann aber Serverdrosselung verursachen.</span>
+                  <span className="text-[var(--color-portal-orange-themed)] font-semibold">{t('fileBrowser.threadsHighWarn')}</span>
                 ) : (
-                  'Höhere Werte beschleunigen die Migration, belasten aber Quell- und Zielserver.'
+                  t('fileBrowser.threadsHint')
                 )}
               </p>
             </div>
@@ -913,16 +911,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <div className="flex items-center gap-2">
                   <Calendar className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-portal-orange transition-colors" />
                   <span className="text-xs font-semibold text-[var(--color-text-primary)]">
-                    Migration für später planen
+                    {t('fileBrowser.schedule')}
                   </span>
                 </div>
               </label>
               
               {enableScheduling && (
                 <div className="mt-3 pl-7">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    Startzeitpunkt
-                  </label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
+                      {t('fileBrowser.scheduleTime')}
+                    </label>
                   <input
                     type="datetime-local"
                     value={scheduledTime}
@@ -931,7 +929,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
                   />
                   <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
-                    Die Migration wird automatisch zum gewählten Zeitpunkt gestartet. Sie können die Migration bis dahin jederzeit stornieren.
+                    {t('fileBrowser.scheduleHint')}
                   </p>
                 </div>
               )}
@@ -940,7 +938,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             {/* Bandwidth Limit */}
             <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
-                Bandbreitenlimit (Mbps)
+                {t('fileBrowser.bandwidth')}
               </label>
               <div className="flex items-center gap-4">
                 <input
@@ -958,9 +956,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               </div>
               <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
                 {bandwidthLimit === 0 ? (
-                  'Keine Begrenzung – maximale Übertragungsgeschwindigkeit.'
+                  t('fileBrowser.bandwidthUnlimited')
                 ) : (
-                  `Begrenzt auf ${bandwidthLimit} Mbps. Kann während der Migration angepasst werden.`
+                  t('fileBrowser.bandwidthHint', { limit: bandwidthLimit })
                 )}
               </p>
             </div>
@@ -984,10 +982,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             <div className="p-5 border-b border-[var(--color-border-light)] flex items-center justify-between bg-[var(--color-bg-tertiary)]/50">
               <div>
                 <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] tracking-tight">
-                  Ziel-Verzeichnis auswählen
+                  {t('fileBrowser.targetSelectTitle')}
                 </h3>
                 <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 uppercase tracking-wider font-mono">
-                  // WÄHLE EIN VERZEICHNIS AUF DER ZIELINSTANZ
+                  {t('fileBrowser.targetSelectSubtitle')}
                 </p>
               </div>
               <button
@@ -1048,7 +1046,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     <span className={`text-[11.5px] truncate flex-grow text-left ${
                       targetDir === '/' ? 'text-[var(--color-portal-navy-themed)]' : 'text-[var(--color-text-secondary)]'
                     }`}>
-                      Hauptverzeichnis (/)
+                      {t('fileBrowser.mainDir')}
                     </span>
                     {targetDir === '/' && (
                       <Check className="w-3.5 h-3.5 text-[var(--color-portal-orange-themed)] stroke-[3]" />
@@ -1112,7 +1110,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     }}
                     className="px-3.5 py-2 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] text-xs font-mono font-bold uppercase rounded-xl hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer"
                   >
-                    Abbrechen
+                    {t('common.cancel')}
                   </button>
                 </div>
               </form>
@@ -1143,7 +1141,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   }}
                   className="px-4 py-2 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] text-[11px] font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all cursor-pointer"
                 >
-                  Auswählen
+                  {t('common.select')}
                 </button>
               </div>
             </div>
