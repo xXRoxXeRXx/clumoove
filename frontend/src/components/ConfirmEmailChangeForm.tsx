@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle } from 'lucide-react';
+import { useApiError } from '../utils/apiError';
 interface ConfirmEmailChangeFormProps {
   apiUrl: string;
   token: string;
@@ -7,6 +9,8 @@ interface ConfirmEmailChangeFormProps {
 }
 
 export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmailChangeFormProps) {
+  const { t } = useTranslation();
+  const translateApiError = useApiError();
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [success, setSuccess] = useState<boolean>(false);
@@ -25,21 +29,21 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
         });
 
         if (!response.ok) {
-          const text = await response.text();
-          throw new Error(text || 'Die E-Mail-Änderung ist fehlgeschlagen.');
+          const data = (await response.json().catch(() => ({}))) as { error_code?: string };
+          throw new Error(translateApiError(data.error_code));
         }
 
         setSuccess(true);
         setTimeout(() => onSuccess(), 1800);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
+        setError(err instanceof Error ? err.message : t('confirmEmail.networkError'));
       } finally {
         setLoading(false);
       }
     };
 
     confirm();
-  }, [apiUrl, token, onSuccess]);
+  }, [apiUrl, token, onSuccess, t, translateApiError]);
 
   if (loading) {
     return (
@@ -52,10 +56,10 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
           <div className="flex flex-col items-center gap-4 py-4">
             <span className="animate-spin rounded-full h-12 w-12 border-2 border-portal-orange border-t-transparent" />
             <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
-              E-Mail-Adresse wird geändert
+               {t('confirmEmail.changing')}
             </h2>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
-              Bitte einen Moment Geduld...
+               {t('confirmEmail.pleaseWait')}
             </p>
           </div>
         </div>
@@ -76,10 +80,10 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
               <CheckCircle2 className="w-12 h-12" />
             </div>
             <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
-              E-Mail-Adresse geändert
+               {t('confirmEmail.changed')}
             </h2>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
-              Du wirst zur Anmeldung weitergeleitet...
+               {t('reset.redirecting')}
             </p>
           </div>
         </div>
@@ -99,10 +103,10 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
             <XCircle className="w-12 h-12" />
           </div>
           <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
-            Link ungültig
+             {t('confirmEmail.invalid')}
           </h2>
           <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
-            {error || 'Dieser Bestätigungslink ist ungültig oder abgelaufen.'}
+              {error || t('confirmEmail.invalidDefault')}
           </p>
         </div>
       </div>

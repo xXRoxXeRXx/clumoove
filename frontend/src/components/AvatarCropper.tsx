@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ZoomIn, ZoomOut, Check, X } from 'lucide-react';
 
 interface AvatarCropperProps {
@@ -8,6 +9,7 @@ interface AvatarCropperProps {
 }
 
 export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [zoom, setZoom] = useState<number>(1.0);
@@ -161,7 +163,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--color-bg-inverse)]/60 backdrop-blur-sm p-4 animate-fade-in">
       <div className="glass-panel max-w-sm w-full rounded-3xl p-6 border border-[var(--color-glass-border)]/40 shadow-2xl flex flex-col items-center bg-[var(--color-bg-secondary)]/95">
-        <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">Bild anpassen</h3>
+        <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">{t('settings.profilePicture')}</h3>
         <p className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">// CANVAS CROPPER TOOL</p>
 
         {/* Canvas Area */}
@@ -204,7 +206,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             className="flex items-center justify-center gap-1.5 py-2.5 border border-[var(--color-border)] hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer shadow-xs"
           >
             <X className="w-4 h-4" />
-            Abbrechen
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -212,7 +214,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             className="flex items-center justify-center gap-1.5 py-2.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:shadow-md text-[var(--color-text-inverse)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer"
           >
             <Check className="w-4 h-4" />
-            Anwenden
+            {t('common.confirm')}
           </button>
         </div>
       </div>

@@ -1,17 +1,13 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Pause, Play, XCircle, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { useFormat } from '../utils/format';
+import { useApiError } from '../utils/apiError';
 
-// formatSize is defined at module level so it is not recreated on every render.
-const formatSize = (bytes: number): string => {
-  if (!bytes || bytes <= 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
-};
+type TFunc = (key: string) => string;
 
-const formatDuration = (seconds: number): string => {
-  if (seconds === Infinity || isNaN(seconds)) return 'Berechnung...';
+const formatDuration = (seconds: number, t: TFunc): string => {
+  if (seconds === Infinity || isNaN(seconds)) return t('dashboard.eta.computing');
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const mins = Math.floor(seconds / 60);
   const secs = Math.round(seconds % 60);
@@ -58,26 +54,26 @@ interface ProgressData {
   resource_stats?: MigrationResourceStats;
 }
 
-const renderResourceSection = (title: string, stats: ResourceStats | undefined) => {
+const renderResourceSection = (title: string, stats: ResourceStats | undefined, t: TFunc) => {
   if (!stats || stats.total === 0) return null;
   const success = Math.max(0, stats.processed - stats.failed - stats.skipped);
   return (
     <div className="w-full mt-4 first:mt-0 first:border-t-0 first:pt-0 border-t border-[var(--color-border-light)] pt-4 text-[var(--color-text-muted)] text-left">
       <h5 className="font-bold text-[var(--color-text-secondary)] mb-2 uppercase tracking-wider text-[10px]">{title}</h5>
       <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
-        <span>Gesamt:</span>
+        <span>{t('dashboard.total')}:</span>
         <span className="font-bold text-[var(--color-text-primary)] font-mono">{stats.total}</span>
       </div>
       <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
-        <span>Übertragen:</span>
+        <span>{t('dashboard.success')}:</span>
         <span className="font-bold text-emerald-600 font-mono">{success}</span>
       </div>
       <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
-        <span>Übersprungen:</span>
+        <span>{t('dashboard.skipped')}:</span>
         <span className="font-bold text-[var(--color-text-primary)] font-mono">{stats.skipped}</span>
       </div>
       <div className="flex justify-between items-center py-1">
-        <span>Fehlgeschlagen:</span>
+        <span>{t('dashboard.failed')}:</span>
         <span className={`font-bold font-mono ${stats.failed > 0 ? 'text-rose-600' : 'text-[var(--color-text-secondary)]'}`}>
           {stats.failed}
         </span>
@@ -87,10 +83,14 @@ const renderResourceSection = (title: string, stats: ResourceStats | undefined) 
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onReset, token }) => {
+  const { t } = useTranslation();
+  const { formatBytes } = useFormat();
+  const translateApiError = useApiError();
+
   const [data, setData] = useState<ProgressData | null>(null);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
   const [speed, setSpeed] = useState<number>(0); // Bytes per second
-  const [eta, setEta] = useState<string>('Berechnung...');
+  const [eta, setEta] = useState<string>(t('dashboard.eta.computing'));
   const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
   const [reconnectNonce, setReconnectNonce] = useState<number>(0);
   const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
@@ -107,7 +107,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         },
       });
       if (!response.ok) {
-        throw new Error('Fehlerbericht konnte nicht geladen werden.');
+        throw new Error(t('dashboard.downloadFailed'));
       }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -120,15 +120,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
-      alert('Bericht konnte nicht heruntergeladen werden.');
+      alert(t('dashboard.downloadFailed'));
     }
   };
 
   const handleMigrationControl = async (action: 'pause' | 'resume' | 'cancel') => {
-    if (action === 'cancel' && !window.confirm('Möchtest du diese Migration wirklich abbrechen? Dies kann nicht rückgängig gemacht werden.')) {
+    if (action === 'cancel' && !window.confirm(t('dashboard.cancelConfirm'))) {
       return;
     }
-    
+
     setControlLoading(action);
     try {
       const response = await fetch(`${apiUrl}/api/migration/${migrationId}/${action}`, {
@@ -138,12 +138,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         },
       });
       if (!response.ok) {
-        throw new Error(`Aktion ${action} fehlgeschlagen.`);
+        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(body.error_code));
       }
       // Status will automatically update via WebSocket
     } catch (err) {
       console.error(err);
-      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setControlLoading(null);
     }
@@ -161,11 +162,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         body: JSON.stringify({ limit_mbps: value }),
       });
       if (!response.ok) {
-        throw new Error('Bandbreitenlimit konnte nicht aktualisiert werden.');
+        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(body.error_code));
       }
     } catch (err) {
       console.error(err);
-      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setBandwidthLoading(false);
     }
@@ -183,11 +185,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         body: JSON.stringify({ threads: value }),
       });
       if (!response.ok) {
-        throw new Error('Threads konnten nicht aktualisiert werden.');
+        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(body.error_code));
       }
     } catch (err) {
       console.error(err);
-      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setThreadsLoading(false);
     }
@@ -196,7 +199,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
 
   const handleRetryFailed = async () => {
-    if (!window.confirm('Möchtest du die fehlgeschlagenen Elemente erneut migrieren?')) {
+    if (!window.confirm(t('dashboard.retryConfirm'))) {
       return;
     }
 
@@ -209,17 +212,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         },
       });
       if (!response.ok) {
-        throw new Error('Erneuter Versuch fehlgeschlagen.');
+        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(body.error_code));
       }
       const resData = await response.json();
       if (resData.success && resData.retried > 0) {
         setReconnectNonce((n) => n + 1);
       } else {
-        alert('Keine fehlgeschlagenen Elemente zum erneuten Versuch gefunden.');
+        alert(t('dashboard.noFailed'));
       }
     } catch (err) {
       console.error(err);
-      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setControlLoading(null);
     }
@@ -279,19 +283,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       // Speed and ETA calculation
       if (payload.status === 'COMPLETED') {
         setSpeed(0);
-        setEta('Fertig');
+        setEta(t('dashboard.eta.done'));
       } else if (payload.status === 'FAILED') {
         setSpeed(0);
-        setEta('Fehlgeschlagen');
+        setEta(t('dashboard.eta.failed'));
       } else if (payload.status === 'INDEXING') {
         setSpeed(0);
-        setEta('Indexierung...');
+        setEta(t('dashboard.eta.indexing'));
       } else if (payload.status === 'PENDING') {
         setSpeed(0);
-        setEta('Warte auf Start...');
+        setEta(t('dashboard.eta.pending'));
       } else if (payload.status === 'PAUSED_CONNECTION_LOSS') {
         setSpeed(0);
-        setEta('Warte auf Verbindung...');
+        setEta(t('dashboard.eta.waitingConn'));
       } else {
         // RUNNING or other states
         const now = Date.now();
@@ -308,7 +312,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
           if (timeDiffSec > 0.5) {
             const bytesDiff = newest.bytes - oldest.bytes;
-            
+
             let calculatedSpeed: number;
 
             if (bytesDiff > 0) {
@@ -330,17 +334,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             // ETA calculation
             const remainingBytes = payload.total_bytes - payload.processed_bytes;
             if (remainingBytes <= 0) {
-              setEta('Fertig');
+              setEta(t('dashboard.eta.done'));
             } else if (calculatedSpeed > 0) {
               const etaSec = remainingBytes / calculatedSpeed;
-              setEta(formatDuration(etaSec));
+              setEta(formatDuration(etaSec, t));
             } else {
-              setEta('Berechnung...');
+              setEta(t('dashboard.eta.computing'));
             }
           }
         } else {
           setSpeed(0);
-          setEta('Berechnung...');
+          setEta(t('dashboard.eta.computing'));
         }
       }
     };
@@ -360,7 +364,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'FAILED') {
         return;
       }
-      
+
       // Ping API to trigger token refresh if it expired during WebSocket connection (I4 WS fix)
       fetch(`${apiUrl}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -389,22 +393,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       clearTimeout(reconnectTimeout);
       ws.close();
     };
-  }, [migrationId, apiUrl, token, reconnectNonce]);
+  }, [migrationId, apiUrl, token, reconnectNonce, t]);
 
   if (serverUnreachable) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
         <AlertTriangle className="w-10 h-10 text-amber-500" />
-        <p className="font-sans text-sm font-semibold text-[var(--color-text-secondary)]">Server nicht erreichbar</p>
+        <p className="font-sans text-sm font-semibold text-[var(--color-text-secondary)]">{t('dashboard.serverUnreachable')}</p>
         <p className="font-sans text-xs text-[var(--color-text-muted)] text-center max-w-sm">
-          Die Verbindung zum Migrations-Server konnte nicht hergestellt werden.
-          Bitte stelle sicher, dass der Server läuft, und lade die Seite neu.
+          {t('dashboard.serverUnreachableText')}
         </p>
         <button
           onClick={() => window.location.reload()}
           className="mt-2 px-4 py-2 bg-portal-orange text-white text-xs font-bold rounded-lg hover:bg-portal-orange-hover transition-colors cursor-pointer"
         >
-          Seite neu laden
+          {t('dashboard.reload')}
         </button>
       </div>
     );
@@ -414,26 +417,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
         <RefreshCw className="w-10 h-10 text-[var(--color-portal-navy-themed)] animate-spin" />
-        <p className="font-sans text-xs italic text-[var(--color-text-muted)]">Migrationsinformationen werden geladen</p>
+        <p className="font-sans text-xs italic text-[var(--color-text-muted)]">{t('dashboard.loadingInfo')}</p>
       </div>
     );
   }
 
   // Calculated stats
-  const byteProgressPercent = data.total_bytes > 0 
-    ? Math.min(Math.round((data.processed_bytes / data.total_bytes) * 100), 100) 
+  const byteProgressPercent = data.total_bytes > 0
+    ? Math.min(Math.round((data.processed_bytes / data.total_bytes) * 100), 100)
     : 0;
 
   const successFiles = Math.max(0, data.processed_files - data.failed_files - data.skipped_files);
 
   return (
     <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in text-left">
-      
+
       {/* Background Mode Guarantee Stamp (Grab a coffee) */}
       <div className="mb-6 p-4.5 bg-gradient-to-r from-portal-navy to-portal-navy-light text-white border border-white/10 rounded-2xl shadow-md flex items-center justify-between text-xs">
         <div className="flex items-center gap-3">
           <Coffee className="w-4 h-4 text-portal-orange shrink-0 animate-bounce" />
-          <span className="leading-snug">Der Migrationstransfer läuft serverseitig. Du kannst diese Seite bedenkenlos schließen.</span>
+          <span className="leading-snug">{t('dashboard.bgGuarantee')}</span>
         </div>
       </div>
 
@@ -442,9 +445,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         <div className="mb-6 p-5 border border-amber-250 bg-amber-50/70 backdrop-blur-md rounded-2xl flex items-start gap-4 animate-pulse-glow">
           <AlertTriangle className="w-6 h-6 shrink-0 text-amber-600 mt-0.5" />
           <div className="text-xs leading-relaxed text-[var(--color-text-secondary)] text-left">
-            <h4 className="font-display font-extrabold text-amber-900 uppercase tracking-wide">Verbindungsabbruch zur Instanz</h4>
+            <h4 className="font-display font-extrabold text-amber-900 uppercase tracking-wide">{t('dashboard.connLossTitle')}</h4>
             <p className="text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
-              Eine Instanz antwortet nicht. Das System pausiert temporär und prüft die Erreichbarkeit selbstständig alle 60 Sekunden. Sobald die Server wieder antworten, wird der Transfer exakt am Abbruchpunkt fortgesetzt.
+              {t('dashboard.connLossText')}
             </p>
           </div>
         </div>
@@ -452,25 +455,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
       {/* Main Grid */}
       <div className="grid md:grid-cols-3 gap-8">
-        
+
         {/* Progress & Metrics */}
         <div className="md:col-span-2 space-y-8">
-          
+
           {/* Main metric card */}
           <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
-            
+
             <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div>
-                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Fortschritt</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
                 <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
                   {byteProgressPercent}%
                 </h3>
               </div>
               <div className="text-right flex flex-col items-end">
-                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Übertragungsrate</span>
+                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
                 <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
-                  {formatSize(speed)}/s
+                  {formatBytes(speed)}/s
                 </p>
               </div>
             </div>
@@ -488,11 +491,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
               <div className="flex items-center gap-2">
                 <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                <span>Übertragen: <strong className="text-[var(--color-text-primary)]">{formatSize(data.processed_bytes)}</strong> / {formatSize(data.total_bytes)}</span>
+                <span>{t('dashboard.transferred')}: <strong className="text-[var(--color-text-primary)]">{formatBytes(data.processed_bytes)}</strong> / {formatBytes(data.total_bytes)}</span>
               </div>
               <div className="flex items-center gap-2 justify-end">
                 <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                <span>Restzeit: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
+                <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
               </div>
             </div>
           </div>
@@ -503,7 +506,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
                 <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
                 <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
-                  Aktive Übertragungen ({data.active_files.length} von {data.threads || 4} Threads)
+                  {t('dashboard.activeTransfers', { count: data.active_files.length, threads: data.threads || 4 })}
                 </h4>
               </div>
               <div className="space-y-2">
@@ -512,7 +515,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                   return (
                     <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
                       <span className="truncate pr-4" title={file}>{fileName}</span>
-                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">Läuft...</span>
+                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
                     </div>
                   );
                 })}
@@ -524,64 +527,64 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Status card & Sidebar Column */}
         <div className="space-y-6">
           <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl flex flex-col items-center text-center">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-4">STATUS</span>
-            
+            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-4">{t('dashboard.status')}</span>
+
             {/* Status Stamp capsule */}
             {data.status === 'COMPLETED' ? (
               <div className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
-                ABGESCHLOSSEN
+                {t('status.completed')}
               </div>
             ) : data.status === 'FAILED' ? (
               <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
-                FEHLGESCHLAGEN
+                {t('status.failed')}
               </div>
             ) : data.status === 'PAUSED_CONNECTION_LOSS' || data.status === 'PAUSED' ? (
               <div className="bg-amber-50 text-amber-750 border border-amber-250 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
-                PAUSIERT
+                {t('status.paused')}
               </div>
             ) : data.status === 'CANCELLED' ? (
               <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
-                ABGEBROCHEN
+                {t('status.cancelled')}
               </div>
             ) : (
               <div className="bg-blue-50 text-[var(--color-portal-navy-themed)] border border-blue-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
-                ÜBERTRAGUNG
+                {t('status.transfer')}
               </div>
             )}
 
             <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] tracking-wider uppercase mt-1">
-              Job: {data.status}
+              {t('dashboard.job')}: {data.status}
             </h4>
 
             {data.error_message && (
               <p className="font-mono text-[10px] text-rose-700 mt-4 bg-rose-50/80 border border-rose-250 p-3 rounded-2xl leading-normal text-left max-w-full overflow-hidden">
-                FEHLER: {data.error_message}
+                {t('dashboard.error')}: {data.error_message}
               </p>
             )}
 
             <div className="w-full mt-6 space-y-2 font-sans text-xs border-t border-[var(--color-border-light)] pt-5 text-[var(--color-text-muted)]">
               {data.resource_stats ? (
                 <>
-                  {renderResourceSection("Dateien", data.resource_stats.files)}
-                  {renderResourceSection("Kalender", data.resource_stats.calendars)}
-                  {renderResourceSection("Kontakte", data.resource_stats.contacts)}
+                  {renderResourceSection(t('dashboard.files'), data.resource_stats.files, t)}
+                  {renderResourceSection(t('dashboard.calendars'), data.resource_stats.calendars, t)}
+                  {renderResourceSection(t('dashboard.contacts'), data.resource_stats.contacts, t)}
                 </>
               ) : (
                 <>
                   <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
-                    <span>Dateien gesamt:</span>
+                    <span>{t('dashboard.filesTotal')}</span>
                     <span className="font-bold text-[var(--color-text-primary)] font-mono">{data.total_files}</span>
                   </div>
                   <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
-                    <span>Übertragen:</span>
+                    <span>{t('dashboard.success')}:</span>
                     <span className="font-bold text-emerald-600 font-mono">{successFiles}</span>
                   </div>
                   <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
-                    <span>Übersprungen:</span>
+                    <span>{t('dashboard.skipped')}:</span>
                     <span className="font-bold text-[var(--color-text-primary)] font-mono">{data.skipped_files}</span>
                   </div>
                   <div className="flex justify-between items-center py-1.5">
-                    <span>Fehlgeschlagen:</span>
+                    <span>{t('dashboard.failed')}:</span>
                     <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-[var(--color-text-muted)]'}`}>
                       {data.failed_files}
                     </span>
@@ -596,10 +599,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl">
           <div className="flex items-center justify-between mb-3">
             <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
-              Bandbreitenlimit (Mbps)
+              {t('dashboard.bandwidthLimit')}
             </label>
             <span className="text-xs font-bold text-portal-orange font-mono">
-              {bandwidthLimit === 0 ? 'Unbegrenzt' : `${bandwidthLimit} Mbps`}
+              {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
             </span>
           </div>
                 <input
@@ -629,7 +632,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl">
               <div className="flex items-center justify-between mb-3">
                 <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
-                  Parallele Threads
+                  {t('dashboard.threads')}
                 </label>
                 <span className="text-xs font-bold text-portal-orange font-mono">{threads}</span>
               </div>
@@ -654,7 +657,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 className="w-full"
               />
               <p className="text-[9px] text-[var(--color-text-muted)] mt-2 leading-relaxed">
-                Höhere Werte beschleunigen die Migration, belasten aber Quell- und Zielserver. Änderung wirkt sofort.
+                {t('dashboard.threadsHint')}
               </p>
             </div>
           )}
@@ -668,7 +671,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl shadow-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:border-[var(--color-border)] transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer"
               >
                 <Download className="w-4 h-4 text-portal-orange" />
-                <span>Fehlerbericht (.CSV)</span>
+                <span>{t('dashboard.reportCsv')}</span>
               </button>
             )}
 
@@ -684,7 +687,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 ) : (
                   <RefreshCw className="w-4 h-4 text-white" />
                 )}
-                <span>Fehlerhafte wiederholen</span>
+                <span>{t('dashboard.retryFailed')}</span>
               </button>
             )}
 
@@ -696,7 +699,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl shadow-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:border-[var(--color-border)] transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
               >
                 {controlLoading === 'pause' ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" /> : <Pause className="w-4 h-4 text-amber-500" />}
-                <span>Pausieren</span>
+                <span>{t('dashboard.pause')}</span>
               </button>
             )}
 
@@ -707,7 +710,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-emerald-50 border border-emerald-250 rounded-2xl shadow-xs text-emerald-750 hover:bg-emerald-100 hover:border-emerald-350 transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
               >
                 {controlLoading === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 text-emerald-600" />}
-                <span>Fortsetzen</span>
+                <span>{t('dashboard.resume')}</span>
               </button>
             )}
 
@@ -718,7 +721,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[var(--color-bg-secondary)] border border-rose-200 rounded-2xl shadow-xs text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50 mt-2"
               >
                 {controlLoading === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                <span>Abbrechen</span>
+                <span>{t('dashboard.cancel')}</span>
               </button>
             )}
 
@@ -728,7 +731,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 onClick={onReset}
                 className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-portal-orange to-orange-500 text-white rounded-2xl font-mono text-[11px] font-bold uppercase tracking-wider shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-99 transition-all cursor-pointer"
               >
-                <span>Neue Migration starten</span>
+                <span>{t('dashboard.newMigration')}</span>
               </button>
             )}
           </div>

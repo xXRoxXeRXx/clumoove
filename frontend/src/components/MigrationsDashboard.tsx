@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import type { User, Migration } from '../types';
+import { useTranslation } from 'react-i18next';
+import { useFormat } from '../utils/format';
+import { useApiError } from '../utils/apiError';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -22,6 +25,10 @@ export function MigrationsDashboard({
   const [error, setError] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
 
+  const { t } = useTranslation();
+  const { formatBytes, formatDateTime } = useFormat();
+  const translateApiError = useApiError();
+
   const fetchMigrations = useCallback(async () => {
     try {
       const response = await fetch(`${apiUrl}/api/migration`, {
@@ -30,16 +37,25 @@ export function MigrationsDashboard({
         },
       });
       if (!response.ok) {
-        throw new Error('Migrationsverlauf konnte nicht geladen werden.');
+        let message = t('migrations.loadFailed');
+        try {
+          const body = await response.json();
+          if (body?.error_code) {
+            message = translateApiError(body.error_code);
+          }
+        } catch {
+          /* ignore non-JSON bodies */
+        }
+        throw new Error(message);
       }
       const data = await response.json();
       setMigrations(data || []);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Verbindungsfehler');
+      setError(err instanceof Error ? err.message : t('migrations.connectionError'));
     } finally {
       setLoading(false);
     }
-  }, [apiUrl, token]);
+  }, [apiUrl, token, t, translateApiError]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -52,7 +68,7 @@ export function MigrationsDashboard({
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Avoid triggering row selection click
     
-    if (!window.confirm('Möchtest du diese Migration wirklich unwiderruflich löschen? Alle Übertragungsprotokolle und gespeicherten Zugangsdaten werden gelöscht.')) {
+    if (!window.confirm(t('migrations.deleteConfirm'))) {
       return;
     }
 
@@ -65,11 +81,20 @@ export function MigrationsDashboard({
         },
       });
       if (!response.ok) {
-        throw new Error('Löschen fehlgeschlagen.');
+        let message = t('migrations.deleteFailed');
+        try {
+          const body = await response.json();
+          if (body?.error_code) {
+            message = translateApiError(body.error_code);
+          }
+        } catch {
+          /* ignore non-JSON bodies */
+        }
+        throw new Error(message);
       }
       setMigrations((prev) => prev.filter((m) => m.id !== id));
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Fehler beim Löschen');
+      alert(err instanceof Error ? err.message : t('migrations.deleteError'));
     } finally {
       setDeleteLoading(null);
     }
@@ -81,42 +106,42 @@ export function MigrationsDashboard({
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
             <CheckCircle2 className="w-3.5 h-3.5" />
-            ABGESCHLOSSEN
+            {t('status.completed')}
           </span>
         );
       case 'FAILED':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
             <XCircle className="w-3.5 h-3.5" />
-            FEHLGESCHLAGEN
+            {t('status.failed')}
           </span>
         );
       case 'CANCELLED':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
             <XCircle className="w-3.5 h-3.5" />
-            ABGEBROCHEN
+            {t('status.cancelled')}
           </span>
         );
       case 'RUNNING':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-info-bg)] text-blue-700 border border-[var(--color-info-border)] animate-pulse">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            AKTIV
+            {t('status.active')}
           </span>
         );
       case 'INDEXING':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            INDEXIERUNG
+            {t('status.indexing')}
           </span>
         );
       case 'PAUSED_CONNECTION_LOSS':
       case 'PAUSED':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-            PAUSIERT
+            {t('status.paused')}
           </span>
         );
       default:
@@ -126,14 +151,6 @@ export function MigrationsDashboard({
           </span>
         );
     }
-  };
-
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
   // Calculate Stats
@@ -160,10 +177,10 @@ export function MigrationsDashboard({
           <div className="space-y-2">
             <p className="text-[9px] font-mono tracking-widest text-[var(--color-portal-orange-themed)] font-bold uppercase">// SAAS migrations-system</p>
             <h1 className="font-display font-extrabold text-3xl tracking-tight">
-              Hallo, {user?.display_name || 'Benutzer'}
+              {t('migrations.welcome', { name: user?.display_name || t('common.user') })}
             </h1>
             <p className="text-sm text-[var(--color-text-muted)] max-w-xl">
-              Verwalte und überwache deine Datenübertragungen zwischen Cloud-Systemen in Echtzeit auf einer zentralen Oberfläche.
+              {t('migrations.welcomeSub')}
             </p>
           </div>
           
@@ -172,7 +189,7 @@ export function MigrationsDashboard({
             className="group flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-[var(--color-text-inverse)] px-5 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
           >
             <Play className="w-4 h-4 fill-white group-hover:scale-110 transition-transform" />
-            <span>Neue Migration</span>
+            <span>{t('migrations.newMigration')}</span>
           </button>
         </div>
       </div>
@@ -185,7 +202,7 @@ export function MigrationsDashboard({
             <HardDrive className="w-5 h-5 stroke-[2]" />
           </div>
           <div className="flex flex-col text-left">
-            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">Daten übertragen</span>
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.dataTransferred')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
               {formatBytes(totalBytesMigrated)}
             </span>
@@ -198,7 +215,7 @@ export function MigrationsDashboard({
             <Layers className="w-5 h-5 stroke-[2]" />
           </div>
           <div className="flex flex-col text-left">
-            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">Migrationen</span>
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.migrations')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
               {totalMigrations}
             </span>
@@ -217,7 +234,7 @@ export function MigrationsDashboard({
             <RefreshCw className={`w-5 h-5 stroke-[2] ${activeMigrations > 0 ? 'animate-spin' : ''}`} />
           </div>
           <div className="flex flex-col text-left">
-            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">Aktiv</span>
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.active')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
               {activeMigrations}
             </span>
@@ -230,7 +247,7 @@ export function MigrationsDashboard({
             <CheckCircle2 className="w-5 h-5 stroke-[2]" />
           </div>
           <div className="flex flex-col text-left">
-            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">Erfolgsquote</span>
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.successRate')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
               {successRate}%
             </span>
@@ -244,7 +261,7 @@ export function MigrationsDashboard({
         {/* Header toolbar */}
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)]">
-            Deine Migrationen
+            {t('migrations.yourMigrations')}
           </h2>
           
           <button
@@ -260,7 +277,7 @@ export function MigrationsDashboard({
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
             <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
-            <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">// LADE DATENSÄTZE...</p>
+            <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
           </div>
         ) : error ? (
           <div className="p-4 bg-[var(--color-error-bg)]/80 border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl text-xs font-mono text-center">
@@ -269,13 +286,13 @@ export function MigrationsDashboard({
         ) : migrations.length === 0 ? (
           <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
             <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
-            <p className="font-display font-bold text-[var(--color-text-secondary)]">Keine Migrationen gefunden</p>
-            <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">// DATENBANK IST LEER</p>
+            <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('migrations.noMigrations')}</p>
+            <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('migrations.dbEmpty')}</p>
             <button
               onClick={onStartNewMigration}
               className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
             >
-              Erste Migration starten
+              {t('migrations.startFirst')}
             </button>
           </div>
         ) : (
@@ -283,22 +300,16 @@ export function MigrationsDashboard({
             <table className="w-full text-left border-collapse min-w-[600px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
-                  <th className="py-4.5 px-4 font-semibold">Erstellt am</th>
-                  <th className="py-4.5 px-4 font-semibold">Quelle / Ziel</th>
-                  <th className="py-4.5 px-4 font-semibold">Status</th>
-                  <th className="py-4.5 px-4 font-semibold">Fortschritt</th>
-                  <th className="py-4.5 px-4 font-semibold text-right">Aktionen</th>
+                  <th className="py-4.5 px-4 font-semibold">{t('migrations.createdAt')}</th>
+                  <th className="py-4.5 px-4 font-semibold">{t('migrations.sourceTarget')}</th>
+                  <th className="py-4.5 px-4 font-semibold">{t('migrations.status')}</th>
+                  <th className="py-4.5 px-4 font-semibold">{t('migrations.progress')}</th>
+                  <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {migrations.map((mig) => {
-                  const createdDate = new Date(mig.created_at).toLocaleDateString('de-DE', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  });
+                  const createdDate = formatDateTime(mig.created_at);
 
                   return (
                     <tr
@@ -322,7 +333,7 @@ export function MigrationsDashboard({
                               {mig.source_provider}
                             </span>
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
-                              {mig.source_url || 'OAuth-Authentifiziert'}
+                              {mig.source_url || t('migrations.oauth')}
                             </span>
                           </div>
                           
@@ -333,7 +344,7 @@ export function MigrationsDashboard({
                               {mig.target_provider}
                             </span>
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
-                              {mig.target_url || 'OAuth-Authentifiziert'}
+                              {mig.target_url || t('migrations.oauth')}
                             </span>
                           </div>
                         </div>
@@ -349,7 +360,7 @@ export function MigrationsDashboard({
                         <div className="flex flex-col gap-1.5 min-w-[120px]">
                           <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
                             <span>
-                              {mig.processed_files} / {mig.total_files} Dateien
+                              {t('migrations.filesCount', { processed: mig.processed_files, total: mig.total_files })}
                             </span>
                             {mig.total_bytes > 0 && (
                               <span>
@@ -386,7 +397,7 @@ export function MigrationsDashboard({
                           <button
                             onClick={() => onSelectActiveMigration(mig.id)}
                             className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer"
-                            title="Dashboard öffnen"
+                            title={t('migrations.openDashboard')}
                           >
                             <Play className="w-3.5 h-3.5 fill-current" />
                           </button>
@@ -394,7 +405,7 @@ export function MigrationsDashboard({
                             onClick={(e) => handleDelete(mig.id, e)}
                             disabled={deleteLoading === mig.id || mig.status === 'RUNNING' || mig.status === 'INDEXING'}
                             className="p-1.5 bg-[var(--color-bg-tertiary)] border border-transparent rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-error-text)] hover:border-rose-100 hover:bg-[var(--color-error-bg)]/50 transition-all focus:outline-none disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
-                            title="Migration löschen"
+                            title={t('migrations.deleteMigration')}
                           >
                             {deleteLoading === mig.id ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -417,7 +428,7 @@ export function MigrationsDashboard({
           <div className="mt-6 border-t border-[var(--color-border)]/40 pt-4 flex items-center gap-2 text-[10px] font-mono text-[var(--color-text-muted)]">
             <HardDrive className="w-3.5 h-3.5 shrink-0" />
             <span>
-              // INFORMATION: Um sensible Verbindungsdaten und Übertragungsprotokolle zu bereinigen, nutze bitte das Lösch-Symbol.
+              {t('migrations.infoDelete')}
             </span>
           </div>
         )}

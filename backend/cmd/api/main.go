@@ -274,7 +274,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			if !allowedOrigins[origin] {
-				http.Error(w, "Forbidden: untrusted origin", http.StatusForbidden)
+				writeError(w, http.StatusForbidden, ErrCorsOriginUntrusted)
 				return
 			}
 			// Credentialed requests are only allowed from the whitelisted origins
@@ -311,7 +311,7 @@ type BrowseRequest struct {
 func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	var req BrowseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
@@ -319,13 +319,13 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		req.SourceProvider = "nextcloud"
 	}
 	if req.ResourceType != "calendars" && req.ResourceType != "contacts" && req.ResourceType != "files" {
-		http.Error(w, "resource_type must be 'calendars', 'contacts', or 'files'", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
 		return
 	}
 
 	sourceClient, err := storage.NewProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
 	}
 	defer sourceClient.Close()
@@ -336,7 +336,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	ok, err := sourceClient.Connect(ctx)
 	if !ok {
 		log.Printf("handleBrowse: source connection failed for provider %s: %v", req.SourceProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Source connection failed. Check URL and credentials."})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
 	}
 
@@ -351,7 +351,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		log.Printf("handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, req.SourceProvider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success": false,
-			"error":   fmt.Sprintf("Failed to list %s. Check URL and credentials.", req.ResourceType),
+			"error_code": ErrListFailed,
 		})
 		return
 	}
@@ -382,7 +382,7 @@ type TargetBrowseRequest struct {
 func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 	var req TargetBrowseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
@@ -392,7 +392,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
 	}
 	defer targetClient.Close()
@@ -405,7 +405,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		// Do NOT forward err.Error() verbatim — the HTTP client may embed the URL
 		// including credentials in the error string.
 		log.Printf("handleTargetBrowse: connection failed for provider %s: %v", req.TargetProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Target connection failed. Check URL and credentials."})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
 
@@ -417,7 +417,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 	files, err := targetClient.GetDirectoryListing(ctx, "files", reqPath)
 	if err != nil {
 		log.Printf("handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, req.TargetProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to list target files. Check URL and credentials."})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
 
@@ -438,7 +438,7 @@ type TargetMkdirRequest struct {
 func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 	var req TargetMkdirRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
@@ -446,13 +446,13 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		req.TargetProvider = "nextcloud"
 	}
 	if req.Path == "" || req.Path == "/" {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid folder path"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrFolderPathInvalid})
 		return
 	}
 
 	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
 	}
 	defer targetClient.Close()
@@ -465,14 +465,14 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		// Do NOT forward err.Error() verbatim — the HTTP client may embed the URL
 		// including credentials in the error string.
 		log.Printf("handleTargetMkdir: connection failed for provider %s: %v", req.TargetProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Target connection failed. Check URL and credentials."})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
 
 	err = targetClient.CreateDirectory(ctx, "files", req.Path)
 	if err != nil {
 		log.Printf("handleTargetMkdir: CreateDirectory(%s) failed: %v", req.Path, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": fmt.Sprintf("Failed to create folder: %s", req.Path)})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrFolderCreateFailed})
 		return
 	}
 
@@ -484,30 +484,30 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
-		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
-		http.Error(w, "Migration cannot be paused in its current state", http.StatusConflict)
+		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
 
 	err = db.UpdateMigrationStatus(s.db, id, "PAUSED", nil)
 	if err != nil {
-		http.Error(w, "Failed to pause migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -517,30 +517,30 @@ func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
-		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if mig.Status != "PAUSED" && mig.Status != "PAUSED_CONNECTION_LOSS" {
-		http.Error(w, "Migration cannot be resumed in its current state", http.StatusConflict)
+		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
 
 	err = db.UpdateMigrationStatus(s.db, id, "RUNNING", nil)
 	if err != nil {
-		http.Error(w, "Failed to resume migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -550,31 +550,31 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
-		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if mig.Status != "COMPLETED" && mig.Status != "FAILED" {
-		http.Error(w, "Migration cannot be retried in its current state", http.StatusConflict)
+		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
 
 	count, err := db.ResetFailedTasksForRetry(s.db, id)
 	if err != nil {
 		log.Printf("Error resetting failed tasks for retry: %v", err)
-		http.Error(w, "Failed to retry failed tasks", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -589,24 +589,24 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
-		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if mig.Status != "FAILED" {
-		http.Error(w, "Migration can only be re-indexed from FAILED state", http.StatusConflict)
+		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
 
@@ -614,11 +614,11 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, db.ErrMigrationNotFailed) {
 			// Already re-indexing or no longer FAILED (e.g. a concurrent re-trigger).
 			// Treat as a benign conflict rather than a server error.
-			http.Error(w, "Migration is already being re-indexed or is no longer in FAILED state", http.StatusConflict)
+			writeError(w, http.StatusConflict, ErrMigrationReindexConflict)
 			return
 		}
 		log.Printf("Reindex error for migration %s: %v", id, err)
-		http.Error(w, "Failed to re-index migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -632,21 +632,21 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	// 1. Update Migration Status
 	err = db.UpdateMigrationStatus(s.db, id, "CANCELLED", nil)
 	if err != nil {
-		http.Error(w, "Failed to cancel migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -675,32 +675,32 @@ type ThreadsRequest struct {
 func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	var req ThreadsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	threads := req.Threads
 	if threads < 1 || threads > 16 {
-		http.Error(w, "threads must be between 1 and 16", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrThreadsOutOfRange)
 		return
 	}
 
 	if err := db.UpdateMigrationThreads(s.db, id, threads); err != nil {
 		log.Printf("Error updating threads for migration %s: %v", id, err)
-		http.Error(w, "Failed to update threads", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -710,35 +710,35 @@ func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
-		http.Error(w, "Forbidden", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	var req BandwidthRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if req.LimitMbps < 0 {
-		http.Error(w, "limit_mbps must be >= 0", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrBandwidthOutOfRange)
 		return
 	}
 	if req.LimitMbps > 1000 {
-		http.Error(w, "limit_mbps must be <= 1000", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrBandwidthOutOfRange)
 		return
 	}
 
 	if err := db.UpdateMigrationBandwidthLimit(s.db, id, req.LimitMbps); err != nil {
 		log.Printf("Error updating bandwidth limit for migration %s: %v", id, err)
-		http.Error(w, "Failed to update bandwidth limit", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -781,7 +781,7 @@ type ConnectRequest struct {
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var req ConnectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
@@ -798,18 +798,18 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// Whitelist provider values to fail fast with a clear error
 	validProviders := map[string]bool{"nextcloud": true, "webdav": true, "dropbox": true, "google": true, "smb": true, "s3": true, "sftp": true}
 	if !validProviders[req.SourceProvider] {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": fmt.Sprintf("unsupported source provider: %s", req.SourceProvider)})
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
 		return
 	}
 	if !validProviders[req.TargetProvider] {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error": fmt.Sprintf("unsupported target provider: %s", req.TargetProvider)})
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
 		return
 	}
 
 	// Test Source Connection
 	sourceClient, err := storage.NewProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid source URL format"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
 	}
 	defer sourceClient.Close()
@@ -818,14 +818,14 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	srcCancel()
 	if !sourceOK {
 		log.Printf("handleConnect: source connection failed for provider %s: %v", req.SourceProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Source connection failed. Check URL and credentials."})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
 	}
 
 	// Test Target Connection
 	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Invalid target URL format"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
 	}
 	defer targetClient.Close()
@@ -834,7 +834,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	tgtCancel()
 	if !targetOK {
 		log.Printf("handleConnect: target connection failed for provider %s: %v", req.TargetProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Target connection failed. Check URL and credentials."})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
 
@@ -848,7 +848,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	files, err := sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
 	if err != nil {
 		log.Printf("handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to list source files. Check URL and credentials."})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
 
@@ -873,12 +873,12 @@ type StartRequest struct {
 func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	var req StartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if len(req.Paths) == 0 && len(req.Calendars) == 0 && len(req.Contacts) == 0 {
-		http.Error(w, "No source paths selected", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrNoSourcePaths)
 		return
 	}
 
@@ -897,13 +897,13 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	// Encrypt credentials
 	sourcePassEnc, err := crypto.Encrypt(req.SourcePassword, s.encryptionKey)
 	if err != nil {
-		http.Error(w, "Encryption failed", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 
 	targetPassEnc, err := crypto.Encrypt(req.TargetPassword, s.encryptionKey)
 	if err != nil {
-		http.Error(w, "Encryption failed", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 
@@ -913,7 +913,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	if req.SourceRefreshToken != "" {
 		enc, err := crypto.Encrypt(req.SourceRefreshToken, s.encryptionKey)
 		if err != nil {
-			http.Error(w, "Encryption failed", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
 		}
 		sourceRefreshEnc = sql.NullString{String: enc, Valid: true}
@@ -929,7 +929,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	if req.TargetRefreshToken != "" {
 		enc, err := crypto.Encrypt(req.TargetRefreshToken, s.encryptionKey)
 		if err != nil {
-			http.Error(w, "Encryption failed", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
 		}
 		targetRefreshEnc = sql.NullString{String: enc, Valid: true}
@@ -966,11 +966,11 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		var err error
 		scheduledAt, err = time.Parse(time.RFC3339, req.ScheduledTime)
 		if err != nil {
-			http.Error(w, "Invalid scheduled_time format. Use ISO 8601 (e.g., 2026-07-15T02:00:00Z)", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, ErrInvalidScheduledTime)
 			return
 		}
 		if scheduledAt.Before(time.Now()) {
-			http.Error(w, "scheduled_time must be in the future", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, ErrScheduledTimePast)
 			return
 		}
 		initialStatus = "SCHEDULED"
@@ -1004,7 +1004,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	migrationID, err := db.CreateMigration(s.db, m)
 	if err != nil {
 		log.Printf("Start migration error: failed to create migration: %v\n", err)
-		http.Error(w, "Failed to start migration", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -1022,7 +1022,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		_, err = db.CreateSchedule(s.db, schedule)
 		if err != nil {
 			log.Printf("Failed to create schedule for migration %s: %v\n", migrationID, err)
-			http.Error(w, "Failed to create schedule", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 
@@ -1049,7 +1049,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
@@ -1058,16 +1058,16 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Migration not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		} else {
 			log.Printf("Error fetching migration %s: %v\n", id, err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
 		return
 	}
 
 	if !mig.UserID.Valid || mig.UserID.String != userID {
-		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
@@ -1084,7 +1084,7 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
@@ -1093,23 +1093,23 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Migration not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		} else {
 			log.Printf("Error fetching migration %s for report: %v\n", id, err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
 		return
 	}
 
 	if !mig.UserID.Valid || mig.UserID.String != userID {
-		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
 	tasks, err := db.GetFailedTasksForReport(s.db, id)
 	if err != nil {
 		log.Printf("Download report error: failed to get report: %v\n", err)
-		http.Error(w, "Failed to generate report", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -1159,7 +1159,7 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
@@ -1184,7 +1184,7 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		if queryToken != "" {
 			isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 			if isHTTPS {
-				http.Error(w, "Unauthorized: token in query string is disallowed on secure connections. Use Sec-WebSocket-Protocol subprotocol header instead.", http.StatusUnauthorized)
+				writeError(w, http.StatusUnauthorized, ErrWsTokenInsecure)
 				return
 			}
 			tokenStr = queryToken
@@ -1192,18 +1192,18 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if tokenStr == "" {
-		http.Error(w, "Unauthorized: token missing", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrWsTokenMissing)
 		return
 	}
 
 	claims, err := auth.ValidateToken(tokenStr, s.jwtSecret)
 	if err != nil {
-		http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrWsTokenInvalid)
 		return
 	}
 	// Reject 2FA temp tokens: password-only tokens must not reach the migration WS.
 	if err := auth.RequireAuthenticated(claims); err != nil {
-		http.Error(w, "Unauthorized: second factor required", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrTotpRequired)
 		return
 	}
 	userID := claims.UserID
@@ -1211,15 +1211,15 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Migration not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		} else {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
 		return
 	}
 
 	if !mig.UserID.Valid || mig.UserID.String != userID {
-		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
@@ -1361,6 +1361,101 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+// APIErrorCode is a machine-readable error identifier sent to the client.
+// The frontend localizes it via its own translation tables; the backend
+// never sends localized text.
+type APIErrorCode string
+
+const (
+	ErrInvalidBody            APIErrorCode = "INVALID_BODY"
+	ErrUnauthorized           APIErrorCode = "UNAUTHORIZED"
+	ErrForbidden              APIErrorCode = "FORBIDDEN"
+	ErrCredentialsInvalid     APIErrorCode = "CREDENTIALS_INVALID"
+	ErrRefreshTokenMissing    APIErrorCode = "REFRESH_TOKEN_MISSING"
+	ErrRefreshTokenInvalid    APIErrorCode = "REFRESH_TOKEN_INVALID"
+	ErrRegistrationDisabled   APIErrorCode = "REGISTRATION_DISABLED"
+	ErrMissingRequiredFields  APIErrorCode = "MISSING_REQUIRED_FIELDS"
+	ErrEmailAlreadyExists     APIErrorCode = "EMAIL_ALREADY_EXISTS"
+	ErrRateLimited            APIErrorCode = "RATE_LIMITED"
+	ErrTotpRequired           APIErrorCode = "TOTP_REQUIRED"
+	ErrTotpCodeRequired       APIErrorCode = "TOTP_CODE_REQUIRED"
+	ErrTotpSessionInvalid     APIErrorCode = "TOTP_SESSION_INVALID"
+	ErrTotpNotEnabled         APIErrorCode = "TOTP_NOT_ENABLED"
+	ErrTotpInvalidCode        APIErrorCode = "TOTP_INVALID_CODE"
+	ErrTotpAlreadyEnabled     APIErrorCode = "TOTP_ALREADY_ENABLED"
+	ErrTotpNoPendingSetup     APIErrorCode = "TOTP_NO_PENDING_SETUP"
+	ErrPasswordRequired       APIErrorCode = "PASSWORD_REQUIRED"
+	ErrPasswordInvalid        APIErrorCode = "PASSWORD_INVALID"
+	ErrMigrationIdMissing     APIErrorCode = "MIGRATION_ID_MISSING"
+	ErrMigrationNotOwned      APIErrorCode = "MIGRATION_NOT_OWNED"
+	ErrMigrationInvalidState  APIErrorCode = "MIGRATION_INVALID_STATE"
+	ErrMigrationReindexConflict APIErrorCode = "MIGRATION_REINDEX_CONFLICT"
+	ErrMigrationNotFound      APIErrorCode = "MIGRATION_NOT_FOUND"
+	ErrThreadsOutOfRange      APIErrorCode = "THREADS_OUT_OF_RANGE"
+	ErrBandwidthOutOfRange    APIErrorCode = "BANDWIDTH_OUT_OF_RANGE"
+	ErrNoSourcePaths          APIErrorCode = "NO_SOURCE_PATHS"
+	ErrEncryptionFailed       APIErrorCode = "ENCRYPTION_FAILED"
+	ErrInvalidScheduledTime   APIErrorCode = "INVALID_SCHEDULED_TIME"
+	ErrScheduledTimePast      APIErrorCode = "SCHEDULED_TIME_PAST"
+	ErrSourceUrlInvalid       APIErrorCode = "SOURCE_URL_INVALID"
+	ErrTargetUrlInvalid       APIErrorCode = "TARGET_URL_INVALID"
+	ErrSourceConnectionFailed APIErrorCode = "SOURCE_CONNECTION_FAILED"
+	ErrTargetConnectionFailed APIErrorCode = "TARGET_CONNECTION_FAILED"
+	ErrListFailed             APIErrorCode = "LIST_FAILED"
+	ErrProviderUnsupported    APIErrorCode = "PROVIDER_UNSUPPORTED"
+	ErrFolderPathInvalid      APIErrorCode = "FOLDER_PATH_INVALID"
+	ErrFolderCreateFailed     APIErrorCode = "FOLDER_CREATE_FAILED"
+	ErrInvalidResourceType    APIErrorCode = "INVALID_RESOURCE_TYPE"
+	ErrOauthProviderMissing   APIErrorCode = "OAUTH_PROVIDER_MISSING"
+	ErrOauthOriginMissing     APIErrorCode = "OAUTH_ORIGIN_MISSING"
+	ErrOauthOriginInvalid     APIErrorCode = "OAUTH_ORIGIN_INVALID"
+	ErrOauthOriginUntrusted   APIErrorCode = "OAUTH_ORIGIN_UNTRUSTED"
+	ErrOauthGenerationFailed  APIErrorCode = "OAUTH_GENERATION_FAILED"
+	ErrDisplayNameRequired    APIErrorCode = "DISPLAY_NAME_REQUIRED"
+	ErrPasswordMismatch       APIErrorCode = "PASSWORD_MISMATCH"
+	ErrPasswordTooShort       APIErrorCode = "PASSWORD_TOO_SHORT"
+	ErrAvatarInvalid          APIErrorCode = "AVATAR_INVALID"
+	ErrAvatarTypeUnsupported  APIErrorCode = "AVATAR_TYPE_UNSUPPORTED"
+	ErrAvatarTooLarge         APIErrorCode = "AVATAR_TOO_LARGE"
+	ErrAdminOnly              APIErrorCode = "ADMIN_ONLY"
+	ErrSettingForbidden       APIErrorCode = "SETTING_FORBIDDEN"
+	ErrSettingInvalid         APIErrorCode = "SETTING_INVALID"
+	ErrScheduleIdMissing      APIErrorCode = "SCHEDULE_ID_MISSING"
+	ErrScheduleNotFound       APIErrorCode = "SCHEDULE_NOT_FOUND"
+	ErrSmtpConfigIncomplete   APIErrorCode = "SMTP_CONFIG_INCOMPLETE"
+	ErrSmtpPortInvalid        APIErrorCode = "SMTP_PORT_INVALID"
+	ErrSmtpEncryptionInvalid  APIErrorCode = "SMTP_ENCRYPTION_INVALID"
+	ErrSmtpPasswordRequired   APIErrorCode = "SMTP_PASSWORD_REQUIRED"
+	ErrMailNotConfigured      APIErrorCode = "MAIL_NOT_CONFIGURED"
+	ErrSmtpNotConfigured      APIErrorCode = "SMTP_NOT_CONFIGURED"
+	ErrSmtpDecryptFailed      APIErrorCode = "SMTP_DECRYPT_FAILED"
+	ErrSmtpTestFailed         APIErrorCode = "SMTP_TEST_FAILED"
+	ErrResetFieldsRequired    APIErrorCode = "RESET_FIELDS_REQUIRED"
+	ErrResetTokenInvalid      APIErrorCode = "RESET_TOKEN_INVALID"
+	ErrEmailInvalid           APIErrorCode = "EMAIL_INVALID"
+	ErrEmailUnchanged         APIErrorCode = "EMAIL_UNCHANGED"
+	ErrEmailChangeTokenInvalid APIErrorCode = "EMAIL_CHANGE_TOKEN_INVALID"
+	ErrCorsOriginUntrusted    APIErrorCode = "CORS_ORIGIN_UNTRUSTED"
+	ErrWsTokenInsecure        APIErrorCode = "WS_TOKEN_INSECURE"
+	ErrWsTokenMissing         APIErrorCode = "WS_TOKEN_MISSING"
+	ErrWsTokenInvalid         APIErrorCode = "WS_TOKEN_INVALID"
+	ErrInternalError          APIErrorCode = "INTERNAL_ERROR"
+)
+
+// writeError emits a structured error response carrying only a machine-readable
+// code. It deliberately omits any localized message (the frontend translates).
+func writeError(w http.ResponseWriter, status int, code APIErrorCode) {
+	writeJSON(w, status, map[string]any{"success": false, "error_code": string(code)})
+}
+
+func writeValidationError(w http.ResponseWriter, code APIErrorCode) {
+	writeError(w, http.StatusBadRequest, code)
+}
+
+func writeConflictError(w http.ResponseWriter, code APIErrorCode) {
+	writeError(w, http.StatusConflict, code)
+}
+
 func generateRandomString(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -1387,7 +1482,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	log.Printf("handleOAuthAuth: Hit with provider=%q", provider)
 
 	if provider == "" {
-		http.Error(w, "Missing provider parameter", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrOauthProviderMissing)
 		return
 	}
 
@@ -1402,19 +1497,19 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	if origin == "" {
 		log.Printf("handleOAuthAuth: rejected request with no determinable origin")
-		http.Error(w, "Missing origin: supply ?origin=https://your-app.example.com", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrOauthOriginMissing)
 		return
 	}
 	// Validate origin is an absolute URL with a recognised scheme (no wildcard)
 	if parsedOrigin, err := url.Parse(origin); err != nil || (parsedOrigin.Scheme != "http" && parsedOrigin.Scheme != "https") {
 		log.Printf("handleOAuthAuth: rejected invalid origin %q", origin)
-		http.Error(w, "Invalid origin: must be an absolute http(s) URL", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrOauthOriginInvalid)
 		return
 	}
 	// Check against allowedOrigins whitelist (C1 security fix)
 	if !allowedOrigins[origin] {
 		log.Printf("handleOAuthAuth: rejected untrusted origin %q", origin)
-		http.Error(w, "Untrusted origin: must be whitelisted", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrOauthOriginUntrusted)
 		return
 	}
 	log.Printf("handleOAuthAuth: final origin set to %q", origin)
@@ -1422,7 +1517,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	stateToken := generateRandomString(16)
 	if stateToken == "" {
 		log.Printf("handleOAuthAuth: Failed to generate state token")
-		http.Error(w, "Failed to generate state token", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrOauthGenerationFailed)
 		return
 	}
 
@@ -1450,7 +1545,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	authURL, err := oauth.GetAuthURL(provider, redirectURI, stateParam)
 	if err != nil {
 		log.Printf("handleOAuthAuth: GetAuthURL failed: %v", err)
-		http.Error(w, "Failed to generate OAuth URL", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrOauthGenerationFailed)
 		return
 	}
 
@@ -1653,23 +1748,23 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	regEnabled, err := db.GetSetting(s.db, "registrations_enabled")
 	if err != nil {
 		log.Printf("Register error: failed to check registrations_enabled: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if regEnabled == "false" {
-		http.Error(w, "Registrations are disabled", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrRegistrationDisabled)
 		return
 	}
 
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || req.Password == "" || req.DisplayName == "" {
-		http.Error(w, "Email, password, and display name are required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMissingRequiredFields)
 		return
 	}
 
@@ -1677,20 +1772,20 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	_, err = db.GetUserByEmail(s.db, req.Email)
 	if err == nil {
 		// User found — reject duplicate
-		http.Error(w, "User with this email already exists", http.StatusConflict)
+		writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 		return
 	}
 	if err != sql.ErrNoRows {
 		// Unexpected DB error — do not proceed with registration
 		log.Printf("Error checking existing user for %s: %v\n", req.Email, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	// Hash password
 	passHash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		http.Error(w, "Internal server error during password hashing", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -1698,7 +1793,7 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName)
 	if err != nil {
 		log.Printf("Register error: failed to create user: %v\n", err)
-		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -1713,28 +1808,28 @@ type LoginRequest struct {
 func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || req.Password == "" {
-		http.Error(w, "Email and password are required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMissingRequiredFields)
 		return
 	}
 
 	u, err := db.GetUserByEmail(s.db, req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+			writeError(w, http.StatusUnauthorized, ErrCredentialsInvalid)
 		} else {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
 		return
 	}
 
 	if !auth.CheckPasswordHash(req.Password, u.PasswordHash) {
-		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrCredentialsInvalid)
 		return
 	}
 
@@ -1744,7 +1839,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		tempToken, err := auth.Generate2FATempToken(u, s.jwtSecret)
 		if err != nil {
 			log.Printf("Login error: failed to generate 2FA temp token for user %s: %v\n", u.ID, err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]interface{}{
@@ -1761,27 +1856,27 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil {
-		http.Error(w, "Unauthorized: Refresh token missing", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrRefreshTokenMissing)
 		return
 	}
 
 	oldTokenHash := hashToken(cookie.Value)
 	userID, err := db.GetUserIDByRefreshToken(s.db, oldTokenHash)
 	if err != nil {
-		http.Error(w, "Unauthorized: Invalid or expired refresh token", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 		return
 	}
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	// Rotate refresh token atomically using a database transaction
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	defer tx.Rollback()
@@ -1789,13 +1884,13 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	deleteQuery := `DELETE FROM refresh_tokens WHERE token_hash = $1`
 	if _, err := tx.ExecContext(r.Context(), deleteQuery, oldTokenHash); err != nil {
 		log.Printf("Error deleting old refresh token in tx: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	newRefreshToken, err := auth.GenerateRefreshToken()
 	if err != nil {
-		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	newExpiresAt := time.Now().Add(7 * 24 * time.Hour)
@@ -1807,13 +1902,13 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	`
 	if _, err := tx.ExecContext(r.Context(), insertQuery, newHashedToken, u.ID, newExpiresAt); err != nil {
 		log.Printf("Error storing new refresh token in tx: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
 		log.Printf("Error committing token rotation transaction: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -1822,7 +1917,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	// New Access Token
 	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
 	if err != nil {
-		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -1930,13 +2025,13 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
 		log.Printf("handleMe: failed to load user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -1979,25 +2074,25 @@ type UpdateProfileRequest struct {
 func (s *APIServer) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	var req UpdateProfileRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	if req.DisplayName == "" {
-		http.Error(w, "Display name is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrDisplayNameRequired)
 		return
 	}
 
 	if err := db.UpdateUserDisplayName(s.db, userID, req.DisplayName); err != nil {
 		log.Printf("handleUpdateProfile: failed to update display name: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2013,48 +2108,48 @@ type ChangePasswordRequest struct {
 func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	var req ChangePasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if req.NewPassword != req.ConfirmPassword {
-		http.Error(w, "New passwords do not match", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrPasswordMismatch)
 		return
 	}
 
 	if len(req.NewPassword) < 8 {
-		http.Error(w, "New password must be at least 8 characters long", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
 		return
 	}
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
 		log.Printf("handleChangePassword: user not found: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if !auth.CheckPasswordHash(req.CurrentPassword, u.PasswordHash) {
-		http.Error(w, "Invalid current password", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrPasswordInvalid)
 		return
 	}
 
 	newHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
 		log.Printf("handleChangePassword: hash error: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := db.UpdateUserPassword(s.db, userID, newHash); err != nil {
 		log.Printf("handleChangePassword: update error: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2068,24 +2163,24 @@ type SetAvatarRequest struct {
 func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	var req SetAvatarRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if !strings.HasPrefix(req.Avatar, "data:") {
-		http.Error(w, "Invalid avatar format: missing data prefix", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrAvatarInvalid)
 		return
 	}
 
 	parts := strings.SplitN(req.Avatar, ",", 2)
 	if len(parts) != 2 {
-		http.Error(w, "Invalid avatar format: missing comma separator", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrAvatarInvalid)
 		return
 	}
 
@@ -2093,7 +2188,7 @@ func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 	payload := parts[1]
 
 	if !strings.HasSuffix(header, ";base64") {
-		http.Error(w, "Invalid avatar format: only base64 encoding supported", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrAvatarInvalid)
 		return
 	}
 
@@ -2105,24 +2200,24 @@ func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 		"image/gif":  true,
 	}
 	if !validMimes[mime] {
-		http.Error(w, "Unsupported image type. Use PNG, JPEG, WebP, or GIF.", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrAvatarTypeUnsupported)
 		return
 	}
 
 	data, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
-		http.Error(w, "Invalid base64 payload", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrAvatarInvalid)
 		return
 	}
 
 	if len(data) > 2*1024*1024 {
-		http.Error(w, "Avatar exceeds 2 MB size limit", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrAvatarTooLarge)
 		return
 	}
 
 	if err := db.UpdateUserAvatar(s.db, userID, data, mime); err != nil {
 		log.Printf("handleSetAvatar: failed to update avatar: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2135,13 +2230,13 @@ func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleDeleteAvatar(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	if err := db.DeleteUserAvatar(s.db, userID); err != nil {
 		log.Printf("handleDeleteAvatar: failed to delete avatar: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2152,7 +2247,7 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	val, err := db.GetSetting(s.db, "registrations_enabled")
 	if err != nil {
 		log.Printf("handleGetSettings: failed to fetch registrations_enabled: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if val == "" {
@@ -2172,34 +2267,34 @@ type UpdateSettingRequest struct {
 func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
 	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
 	if !ok || claims == nil {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	if claims.Role != "ADMIN" {
-		http.Error(w, "Forbidden: administrators only", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrAdminOnly)
 		return
 	}
 
 	var req UpdateSettingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if req.Key != "registrations_enabled" {
-		http.Error(w, "Forbidden setting key", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrSettingForbidden)
 		return
 	}
 
 	if req.Value != "true" && req.Value != "false" {
-		http.Error(w, "Invalid setting value", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrSettingInvalid)
 		return
 	}
 
 	if err := db.SetSetting(s.db, req.Key, req.Value); err != nil {
 		log.Printf("handleUpdateSetting: failed to set setting: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2211,7 +2306,7 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 	list, err := db.GetMigrationsForUser(s.db, userID)
 	if err != nil {
 		log.Printf("Error listing migrations for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
@@ -2220,7 +2315,7 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
 
@@ -2229,12 +2324,12 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 	// Verify ownership
 	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if !owned {
-		http.Error(w, "Forbidden: You do not own this migration", http.StatusForbidden)
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
@@ -2242,7 +2337,7 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 	err = db.DeleteMigrationCascade(s.db, id)
 	if err != nil {
 		log.Printf("Error deleting migration %s: %v\n", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2264,14 +2359,14 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	schedules, err := db.GetSchedulesForUser(s.db, userID)
 	if err != nil {
 		log.Printf("handleListSchedules: failed to get schedules for user %s: %v\n", userID, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2287,13 +2382,13 @@ func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) 
 func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing schedule ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrScheduleIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
@@ -2304,18 +2399,18 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
 	if err != nil {
 		log.Printf("handleGetSchedule: error verifying ownership: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if !owns {
-		http.Error(w, "Schedule not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, ErrScheduleNotFound)
 		return
 	}
 
 	schedule, err := db.GetSchedule(s.db, id)
 	if err != nil {
 		log.Printf("handleGetSchedule: failed to get schedule %s: %v\n", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2326,13 +2421,13 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "Missing schedule ID", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrScheduleIdMissing)
 		return
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
@@ -2343,18 +2438,18 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
 	if err != nil {
 		log.Printf("handleDeleteSchedule: error verifying ownership: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if !owns {
-		http.Error(w, "Schedule not found", http.StatusNotFound)
+		writeError(w, http.StatusNotFound, ErrScheduleNotFound)
 		return
 	}
 
 	err = db.DeleteSchedule(s.db, id)
 	if err != nil {
 		log.Printf("handleDeleteSchedule: failed to delete schedule %s: %v\n", id, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2368,7 +2463,7 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleGetSMTPSettings(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
@@ -2379,7 +2474,7 @@ func (s *APIServer) handleGetSMTPSettings(w http.ResponseWriter, r *http.Request
 			return
 		}
 		log.Printf("handleGetSMTPSettings: error fetching settings: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2398,7 +2493,7 @@ func (s *APIServer) handleGetSMTPSettings(w http.ResponseWriter, r *http.Request
 func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
@@ -2414,29 +2509,29 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 		NotifyOnCompletion *bool  `json:"notify_on_completion"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if req.SMTPHost == "" || req.SMTPUsername == "" || req.SMTPFromEmail == "" {
-		http.Error(w, "SMTP host, username, and from email are required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrSmtpConfigIncomplete)
 		return
 	}
 
 	if err := email.ValidateSMTPHost(req.SMTPHost); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrSettingInvalid)
 		return
 	}
 
 	if req.SMTPPort < 1 || req.SMTPPort > 65535 {
-		http.Error(w, "SMTP port must be between 1 and 65535", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrSmtpPortInvalid)
 		return
 	}
 
 	switch req.SMTPEncryption {
 	case "tls", "starttls", "none":
 	default:
-		http.Error(w, "smtp_encryption must be 'tls', 'starttls', or 'none'", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrSmtpEncryptionInvalid)
 		return
 	}
 
@@ -2450,20 +2545,20 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 		existing, err := db.GetUserSMTPSettings(s.db, userID)
 		if err != nil && err != sql.ErrNoRows {
 			log.Printf("handleUpdateSMTPSettings: error fetching existing settings: %v\n", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 		if existing != nil {
 			encryptedPassword = existing.SMTPPasswordEnc
 		} else {
-			http.Error(w, "SMTP password is required for initial configuration", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, ErrSmtpPasswordRequired)
 			return
 		}
 	} else {
 		enc, err := crypto.Encrypt(req.SMTPPassword, s.encryptionKey)
 		if err != nil {
 			log.Printf("handleUpdateSMTPSettings: error encrypting password: %v\n", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 		encryptedPassword = enc
@@ -2483,7 +2578,7 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 
 	if err := db.UpsertUserSMTPSettings(s.db, settings); err != nil {
 		log.Printf("handleUpdateSMTPSettings: error upserting settings: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2493,31 +2588,31 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 func (s *APIServer) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
 
 	settings, err := db.GetUserSMTPSettings(s.db, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "No SMTP settings configured"})
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSmtpNotConfigured})
 			return
 		}
 		log.Printf("handleTestSMTP: error fetching settings: %v\n", err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Internal server error"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrInternalError})
 		return
 	}
 
 	password, err := crypto.Decrypt(settings.SMTPPasswordEnc, s.encryptionKey)
 	if err != nil {
 		log.Printf("handleTestSMTP: error decrypting password: %v\n", err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to decrypt SMTP password"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSmtpDecryptFailed})
 		return
 	}
 
 	user, err := db.GetUserByID(s.db, userID)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "Failed to fetch user email"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMailNotConfigured})
 		return
 	}
 
@@ -2533,7 +2628,7 @@ func (s *APIServer) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 
 	if err := email.SendMail(smtpCfg, user.Email, "Clumove — SMTP-Test erfolgreich", email.BuildTestEmail()); err != nil {
 		log.Printf("handleTestSMTP: send failed: %v\n", err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error": "SMTP test failed: check your settings"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSmtpTestFailed})
 		return
 	}
 
@@ -2646,7 +2741,7 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	ip := r.RemoteAddr
 	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
-		http.Error(w, "Too many requests", http.StatusTooManyRequests)
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
@@ -2655,24 +2750,24 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 		NewPassword string `json:"new_password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if req.Token == "" || req.NewPassword == "" {
-		http.Error(w, "Token and new password are required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrResetFieldsRequired)
 		return
 	}
 
 	if len(req.NewPassword) < 8 {
-		http.Error(w, "Password must be at least 8 characters long", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
 		return
 	}
 
 	newHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
 		log.Printf("handleResetPassword: error hashing password: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2680,11 +2775,11 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 	_, err = db.ClaimPasswordResetToken(s.db, tokenHash, newHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Invalid or expired reset token", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, ErrResetTokenInvalid)
 			return
 		}
 		log.Printf("handleResetPassword: error claiming token: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2719,19 +2814,19 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 
 	req.NewEmail = strings.TrimSpace(strings.ToLower(req.NewEmail))
 	if req.NewEmail == "" || !strings.Contains(req.NewEmail, "@") || !strings.Contains(req.NewEmail, ".") {
-		http.Error(w, "Valid email is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrEmailInvalid)
 		return
 	}
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
 		log.Printf("handleChangeEmail: error fetching user: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if req.NewEmail == strings.ToLower(u.Email) {
-		http.Error(w, "New email must differ from current email", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrEmailUnchanged)
 		return
 	}
 
@@ -2739,25 +2834,25 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	existing, err := db.GetUserByEmail(s.db, req.NewEmail)
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("handleChangeEmail: error checking email: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if err == nil && existing.ID != userID {
-		http.Error(w, "Email already in use", http.StatusConflict)
+		writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 		return
 	}
 
 	smtpHost := os.Getenv("SMTP_HOST")
 	smtpFromEmail := os.Getenv("SMTP_FROM_EMAIL")
 	if smtpHost == "" || smtpFromEmail == "" {
-		http.Error(w, "Mail service not configured", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrMailNotConfigured)
 		return
 	}
 
 	rawToken := generateRandomString(32)
 	if rawToken == "" {
 		log.Printf("handleChangeEmail: failed to generate token\n")
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	tokenHash := hashToken(rawToken)
@@ -2765,7 +2860,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 
 	if err := db.CreateEmailChangeToken(s.db, tokenHash, userID, req.NewEmail, expiresAt); err != nil {
 		log.Printf("handleChangeEmail: error storing token: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2799,7 +2894,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	htmlBody := email.BuildEmailChangeEmail(confirmURL, req.NewEmail)
 	if err := email.SendMail(smtpCfg, u.Email, "Clumove — E-Mail-Adresse ändern", htmlBody); err != nil {
 		log.Printf("handleChangeEmail: error sending email: %v\n", err)
-		http.Error(w, "Failed to send confirmation email", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
@@ -2811,7 +2906,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
 	ip := r.RemoteAddr
 	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
-		http.Error(w, "Too many requests", http.StatusTooManyRequests)
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
@@ -2819,12 +2914,12 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
 
 	if req.Token == "" {
-		http.Error(w, "Token is required", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, ErrEmailChangeTokenInvalid)
 		return
 	}
 
@@ -2832,15 +2927,15 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 	userID, newEmail, err := db.ClaimEmailChangeToken(s.db, tokenHash)
 	if err != nil {
 		if errors.Is(err, db.ErrEmailTaken) {
-			http.Error(w, "Email already in use", http.StatusConflict)
+			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 			return
 		}
 		if err == sql.ErrNoRows {
-			http.Error(w, "Invalid, expired, or already used token", http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, ErrEmailChangeTokenInvalid)
 			return
 		}
 		log.Printf("handleConfirmEmailChange: error claiming token: %v\n", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 

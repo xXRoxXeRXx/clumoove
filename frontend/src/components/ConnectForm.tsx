@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
+
+type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
+import { useApiError } from '../utils/apiError';
 
 interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
@@ -59,6 +63,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
+  const { t } = useTranslation();
+  const translateApiError = useApiError();
+
   const openOAuthPopup = (provider: string, type: 'source' | 'target') => {
     const width = 600;
     const height = 700;
@@ -103,7 +110,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         }
         cleanup();
       } else if (event.data && event.data.type === 'oauth-error') {
-        setError(`OAuth Fehler: ${event.data.error}`);
+        setError(t('connect.errors.oauthError', { error: event.data.error }));
         cleanup();
       }
     };
@@ -141,51 +148,51 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
     if (sourceProvider === 'sftp') {
       if (!sourceSftpHost.trim()) {
-        setError('Bitte gib einen Server Host für die SFTP-Quelle an.');
+        setError(t('connect.errors.sourceSftpHost'));
         return;
       }
       if (sourceSftpAuthMode === 'key' && !sourceSftpPrivateKey.trim()) {
-        setError('Bitte gib einen privaten SSH-Schlüssel für die SFTP-Quelle an.');
+        setError(t('connect.errors.sourceSftpKey'));
         return;
       }
     }
     if (targetProvider === 'sftp') {
       if (!targetSftpHost.trim()) {
-        setError('Bitte gib einen Server Host für das SFTP-Ziel an.');
+        setError(t('connect.errors.targetSftpHost'));
         return;
       }
       if (targetSftpAuthMode === 'key' && !targetSftpPrivateKey.trim()) {
-        setError('Bitte gib einen privaten SSH-Schlüssel für das SFTP-Ziel an.');
+        setError(t('connect.errors.targetSftpKey'));
         return;
       }
     }
     if (sourceProvider === 'smb') {
       if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
-        setError('Bitte gib einen Server Host und einen Freigabe-Namen für die Quelle an.');
+        setError(t('connect.errors.sourceSmb'));
         return;
       }
     }
     if (sourceProvider === 's3') {
       if (!sourceS3Bucket.trim() || !sourceS3Region.trim()) {
-        setError('Bitte gib einen Bucket-Namen und eine Region für die Quelle an.');
+        setError(t('connect.errors.sourceS3'));
         return;
       }
     }
     if (targetProvider === 'smb') {
       if (!targetSmbHost.trim() || !targetSmbShare.trim()) {
-        setError('Bitte gib einen Server Host und einen Freigabe-Namen für das Ziel an.');
+        setError(t('connect.errors.targetSmb'));
         return;
       }
     }
     if (targetProvider === 's3') {
       if (!targetS3Bucket.trim() || !targetS3Region.trim()) {
-        setError('Bitte gib einen Bucket-Namen und eine Region für das Ziel an.');
+        setError(t('connect.errors.targetS3'));
         return;
       }
     }
 
     if (!finalSourceUrl || !finalSourceUser || !finalSourcePass || !finalTargetUrl || !finalTargetUser || !finalTargetPass) {
-      setError('Bitte fülle alle Eingabefelder aus bzw. autorisiere die Anbieter.');
+      setError(t('connect.errors.missingFields'));
       return;
     }
 
@@ -216,10 +223,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       });
 
       if (!response.ok) {
-        throw new Error(`Die Verbindung konnte nicht hergestellt werden. HTTP-Status ${response.status}`);
+        throw new Error(t('connect.errors.connectionFailed'));
       }
 
-      const data = await response.json();
+      const data = await response.json() as ConnectResponse;
       if (data.success) {
         onConnectSuccess(
           {
@@ -239,10 +246,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           data.files || []
         );
       } else {
-        setError(data.error || 'Verbindung fehlgeschlagen. Bitte prüfe deine Zugangsdaten.');
+        setError(translateApiError(data.error_code));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ein Netzwerkfehler ist aufgetreten. Bitte überprüfe deine Internetverbindung.');
+      setError(err instanceof Error ? err.message : t('connect.errors.networkError'));
     } finally {
       setLoading(false);
     }
@@ -348,14 +355,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <Server className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">Quelle (Source)</h2>
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">// VERZEICHNIS DER QUELLEDATEN</p>
+                <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">{t('connect.sourceTitle')}</h2>
+                <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.sourceSubtitle')}</p>
               </div>
             </div>
 
             <div className="space-y-5 text-xs text-left">
               <div>
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">Anbieter (Provider)</label>
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</label>
                 
                 {/* Visual Provider Pills */}
                 <div className="grid grid-cols-3 gap-2">
@@ -380,7 +387,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="col-span-2 space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Server Host / IP</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
                         placeholder="192.168.1.10"
@@ -391,7 +398,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Port</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
                         type="text"
                         placeholder="445"
@@ -405,7 +412,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Freigabe-Name (Share)</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
                         type="text"
                         placeholder="projekte"
@@ -416,7 +423,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Domain (Optional)</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.domain')}</label>
                       <input
                         type="text"
                         placeholder="WORKGROUP"
@@ -428,7 +435,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Benutzername</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
                       placeholder="benutzername"
@@ -440,10 +447,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Kennwort / Passwort</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                     <input
                       type="password"
-                      placeholder="passwort"
+                      placeholder={t('connect.password')}
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
@@ -455,7 +462,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="col-span-2 space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Server Host / IP</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
                         placeholder="192.168.1.10"
@@ -466,7 +473,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Port</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
                         type="text"
                         placeholder="22"
@@ -479,7 +486,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Benutzername</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
                       placeholder="root"
@@ -491,7 +498,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">Authentifizierung</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.auth')}</label>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -502,7 +509,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                             : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
-                        Passwort
+                        {t('connect.authPassword')}
                       </button>
                       <button
                         type="button"
@@ -513,17 +520,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                             : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
-                        SSH Key
+                        {t('connect.sshKey')}
                       </button>
                     </div>
                   </div>
 
                   {sourceSftpAuthMode === 'password' ? (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Kennwort / Passwort</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                       <input
                         type="password"
-                        placeholder="passwort"
+                        placeholder={t('connect.password')}
                         value={sourcePass}
                         onChange={(e) => setSourcePass(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
@@ -532,7 +539,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Privater SSH-Schlüssel (PEM)</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sshKeyPem')}</label>
                       <textarea
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
                         value={sourceSftpPrivateKey}
@@ -548,7 +555,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Bucket Name</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input
                         type="text"
                         placeholder="mein-bucket"
@@ -559,7 +566,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Region</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Region')}</label>
                       <input
                         type="text"
                         placeholder="us-east-1"
@@ -572,7 +579,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Custom Endpoint URL (Optional)</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
                     <input
                       type="url"
                       placeholder="https://s3.wasabisys.com oder http://localhost:9000"
@@ -583,7 +590,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Access Key</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
                     <input
                       type="text"
                       placeholder="AKIAIOSFODNN7EXAMPLE"
@@ -595,7 +602,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Secret Key</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
                     <input
                       type="password"
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
@@ -615,15 +622,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
                     />
                     <label htmlFor="sourceS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
-                      HTTP erlauben (nur für lokale/MinIO Entwicklungsendpunkte)
-                    </label>
+                       {t('connect.s3AllowHttp')}
+                     </label>
                   </div>
                 </>
               ) : sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                      {sourceProvider === 'nextcloud' ? 'Nextcloud WebDAV-URL' : 'WebDAV-URL'}
+                      {sourceProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
                       type="url"
@@ -636,7 +643,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Benutzername</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
                       placeholder="benutzername"
@@ -649,13 +656,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="space-y-1">
                     <div className="flex justify-between items-center mb-1.5">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">App-Passwort</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.appPasswordLabel')}</label>
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
                         className="text-[10px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
                       >
-                        <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
+                         <HelpCircle className="w-3.5 h-3.5" /> {t('connect.helpGuide')}
                       </button>
                     </div>
                     <input
@@ -671,13 +678,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {sourceProvider === 'google' ? 'Google Verbindung' : 'Dropbox Verbindung'}
+                    {sourceProvider === 'google' ? t('connect.googleConnect') : t('connect.dropboxConnect')}
                   </label>
                   {sourcePass ? (
                     <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
-                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">Verbunden als</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? 'Google Account' : 'Dropbox Account')}</p>
+                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                       <button
                         type="button"
@@ -687,8 +694,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         }}
                         className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
                       >
-                        Trennen
-                      </button>
+                         {t('connect.disconnect')}
+                       </button>
                     </div>
                   ) : (
                     <button
@@ -696,7 +703,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => openOAuthPopup(sourceProvider, 'source')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> Mit {sourceProvider === 'google' ? 'Google' : 'Dropbox'} verbinden
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : 'Dropbox' })}
                     </button>
                   )}
                 </div>
@@ -713,14 +720,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <Server className="w-5 h-5" />
               </div>
               <div className="text-left">
-                <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">Ziel (Target)</h2>
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">// ZIELVERZEICHNIS FÜR DIE MIGRATION</p>
+                <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">{t('connect.targetTitle')}</h2>
+                <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.targetSubtitle')}</p>
               </div>
             </div>
 
             <div className="space-y-5 text-xs text-left">
               <div>
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">Anbieter (Provider)</label>
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</label>
                 
                 {/* Visual Provider Pills */}
                 <div className="grid grid-cols-3 gap-2">
@@ -745,7 +752,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="col-span-2 space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Server Host / IP</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
                         placeholder="192.168.1.10"
@@ -756,7 +763,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Port</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
                         type="text"
                         placeholder="445"
@@ -770,7 +777,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Freigabe-Name (Share)</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
                         type="text"
                         placeholder="projekte"
@@ -781,7 +788,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Domain (Optional)</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.domain')}</label>
                       <input
                         type="text"
                         placeholder="WORKGROUP"
@@ -793,7 +800,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Benutzername</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
                       placeholder="benutzername"
@@ -805,10 +812,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Kennwort / Passwort</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                     <input
                       type="password"
-                      placeholder="passwort"
+                      placeholder={t('connect.password')}
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
@@ -820,7 +827,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="col-span-2 space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Server Host / IP</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
                         placeholder="192.168.1.10"
@@ -831,7 +838,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Port</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
                         type="text"
                         placeholder="22"
@@ -844,7 +851,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Benutzername</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
                       placeholder="root"
@@ -856,7 +863,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">Authentifizierung</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.auth')}</label>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -867,7 +874,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                             : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
-                        Passwort
+                        {t('connect.authPassword')}
                       </button>
                       <button
                         type="button"
@@ -878,17 +885,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                             : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
-                        SSH Key
+                        {t('connect.sshKey')}
                       </button>
                     </div>
                   </div>
 
                   {targetSftpAuthMode === 'password' ? (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Kennwort / Passwort</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                       <input
                         type="password"
-                        placeholder="passwort"
+                        placeholder={t('connect.password')}
                         value={targetPass}
                         onChange={(e) => setTargetPass(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
@@ -897,7 +904,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Privater SSH-Schlüssel (PEM)</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sshKeyPem')}</label>
                       <textarea
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
                         value={targetSftpPrivateKey}
@@ -913,7 +920,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Bucket Name</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input
                         type="text"
                         placeholder="mein-bucket"
@@ -924,7 +931,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Region</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Region')}</label>
                       <input
                         type="text"
                         placeholder="us-east-1"
@@ -937,7 +944,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Custom Endpoint URL (Optional)</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
                     <input
                       type="url"
                       placeholder="https://s3.wasabisys.com oder http://localhost:9000"
@@ -948,7 +955,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Access Key</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
                     <input
                       type="text"
                       placeholder="AKIAIOSFODNN7EXAMPLE"
@@ -960,7 +967,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Secret Key</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
                     <input
                       type="password"
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
@@ -980,15 +987,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
                     />
                     <label htmlFor="targetS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
-                      HTTP erlauben (nur für lokale/MinIO Entwicklungsendpunkte)
-                    </label>
+                       {t('connect.s3AllowHttp')}
+                     </label>
                   </div>
                 </>
               ) : targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                      {targetProvider === 'nextcloud' ? 'Nextcloud WebDAV-URL' : 'WebDAV-URL'}
+                      {targetProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
                       type="url"
@@ -1001,7 +1008,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Benutzername</label>
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
                       placeholder="benutzername"
@@ -1014,13 +1021,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="space-y-1">
                     <div className="flex justify-between items-center mb-1.5">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">App-Passwort</label>
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.appPasswordLabel')}</label>
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
                         className="text-[10px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
                       >
-                        <HelpCircle className="w-3.5 h-3.5" /> Hilfe-Anleitung
+                         <HelpCircle className="w-3.5 h-3.5" /> {t('connect.helpGuide')}
                       </button>
                     </div>
                     <input
@@ -1036,13 +1043,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {targetProvider === 'google' ? 'Google Verbindung' : 'Dropbox Verbindung'}
+                    {targetProvider === 'google' ? t('connect.googleConnect') : t('connect.dropboxConnect')}
                   </label>
                   {targetPass ? (
                     <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
-                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">Verbunden als</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? 'Google Account' : 'Dropbox Account')}</p>
+                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                       <button
                         type="button"
@@ -1052,8 +1059,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         }}
                         className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
                       >
-                        Trennen
-                      </button>
+                         {t('connect.disconnect')}
+                       </button>
                     </div>
                   ) : (
                     <button
@@ -1061,7 +1068,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => openOAuthPopup(targetProvider, 'target')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> Mit {targetProvider === 'google' ? 'Google' : 'Dropbox'} verbinden
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : 'Dropbox' })}
                     </button>
                   )}
                 </div>
@@ -1075,15 +1082,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           <div className="bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] p-6 rounded-2xl max-w-2xl mx-auto shadow-xs text-xs leading-relaxed text-[var(--color-text-secondary)] text-left animate-slide-up">
             <h4 className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)] mb-3 flex items-center gap-1.5">
               <HelpCircle className="w-4 h-4 text-portal-orange shrink-0" />
-              <span>Anleitung zur App-Passwort-Erstellung (Nextcloud / WebDAV)</span>
+              <span>{t('connect.appPassword.title')}</span>
             </h4>
             <ol className="list-decimal list-inside space-y-2 text-[var(--color-text-secondary)] pl-1">
-              <li>Melde dich in deiner Nextcloud über den Webbrowser an.</li>
-              <li>Klicke oben rechts auf dein Profilbild und wähle <strong className="text-[var(--color-text-primary)]">Einstellungen</strong>.</li>
-              <li>Klicke im linken Menü auf <strong className="text-[var(--color-text-primary)]">Sicherheit</strong>.</li>
-              <li>Scrolle ganz nach unten zu <strong className="text-[var(--color-text-primary)]">Geräte & Clients</strong>.</li>
-              <li>Gib links einen App-Namen ein (z. B. <code className="bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] px-1.5 py-0.5 rounded font-mono text-[10px] font-bold">Clumove</code>) und klicke auf <strong className="text-[var(--color-text-primary)]">Neues App-Passwort erstellen</strong>.</li>
-              <li>Kopiere das generierte Passwort und füge es oben ein (dein Hauptpasswort funktioniert oft nicht!).</li>
+              <li>{t('connect.appPassword.step1')}</li>
+              <li>{t('connect.appPassword.step2')}</li>
+              <li>{t('connect.appPassword.step3')}</li>
+              <li>{t('connect.appPassword.step4')}</li>
+              <li>{t('connect.appPassword.step5')}</li>
+              <li>{t('connect.appPassword.step6')}</li>
             </ol>
           </div>
         )}
@@ -1105,11 +1112,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             {loading ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Verbindung wird geprüft...</span>
+                <span>{t('connect.testing')}</span>
               </>
             ) : (
               <>
-                <span>Instanzen verbinden</span>
+                <span>{t('connect.connectInstances')}</span>
                 <ArrowRight className="w-4 h-4 stroke-[2.5]" />
               </>
             )}

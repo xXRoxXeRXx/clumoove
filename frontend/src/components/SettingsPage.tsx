@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudSync, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
 import { useThemeContext } from '../contexts/useThemeContext';
+import { useApiError } from '../utils/apiError';
+
+type ApiErrBody = { error_code?: string };
 
 interface SettingsUser {
   id?: string;
@@ -33,6 +37,9 @@ function MessageBanner({ message }: { message: MessageState }) {
 }
 
 export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: SettingsPageProps) {
+  const { t } = useTranslation();
+  const translateApiError = useApiError();
+
   // Theme context
   const { preference, setPreference, systemTheme } = useThemeContext();
 
@@ -101,8 +108,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
         headers: { 'Authorization': `Bearer ${token}` },
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Einrichtung fehlgeschlagen.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
       const data = await res.json();
       setSetupData(data);
@@ -119,7 +126,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
     setTotpMessage(null);
     const code = enableCode.trim();
     if (!code) {
-      setTotpMessage({ text: 'Bitte gib den Code aus deiner App ein.', type: 'error' });
+      setTotpMessage({ text: t('settings.messages.totpNeedCode'), type: 'error' });
       return;
     }
     setEnableLoading(true);
@@ -133,8 +140,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
         body: JSON.stringify({ code }),
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Code ungültig.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
       const data = await res.json();
       setTotpEnabled(true);
@@ -152,7 +159,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
     e.preventDefault();
     setTotpMessage(null);
     if (!disablePassword) {
-      setTotpMessage({ text: 'Bitte gib dein Passwort ein.', type: 'error' });
+      setTotpMessage({ text: t('settings.messages.totpNeedPassword'), type: 'error' });
       return;
     }
     setDisableLoading(true);
@@ -166,14 +173,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
         body: JSON.stringify({ password: disablePassword }),
       });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Deaktivierung fehlgeschlagen.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
       setTotpEnabled(false);
       setDisablePassword('');
       setSetupData(null);
       setBackupCodes([]);
-      setTotpMessage({ text: 'Zwei-Faktor-Authentifizierung deaktiviert.', type: 'success' });
+      setTotpMessage({ text: t('settings.messages.totpDisabled'), type: 'success' });
     } catch (err) {
       setTotpMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -242,7 +249,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
     const portNum = parseInt(smtpPort, 10);
     if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-      setSmtpMessage({ text: 'Der SMTP-Port muss zwischen 1 und 65535 liegen.', type: 'error' });
+      setSmtpMessage({ text: t('settings.messages.smtpPortRange'), type: 'error' });
       setSmtpLoading(false);
       return;
     }
@@ -272,13 +279,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Fehler beim Speichern der SMTP-Einstellungen.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
 
       setSmtpHasConfig(true);
       setSmtpPassword('');
-      setSmtpMessage({ text: 'SMTP-Einstellungen erfolgreich gespeichert!', type: 'success' });
+      setSmtpMessage({ text: t('settings.messages.smtpSaved'), type: 'success' });
     } catch (err) {
       setSmtpMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -296,9 +303,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'SMTP-Test fehlgeschlagen.');
+        throw new Error(translateApiError(data.error_code));
       }
-      setSmtpMessage({ text: 'Test-E-Mail erfolgreich gesendet!', type: 'success' });
+      setSmtpMessage({ text: t('settings.messages.smtpTestSent'), type: 'success' });
     } catch (err) {
       setSmtpMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -336,13 +343,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Fehler beim Aktualisieren des Profils.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
 
       const data = await res.json();
       onUpdateUser({ ...user, display_name: data.display_name });
-      setProfileMessage({ text: 'Profil erfolgreich aktualisiert!', type: 'success' });
+      setProfileMessage({ text: t('settings.messages.profileUpdated'), type: 'success' });
     } catch (err) {
       setProfileMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -374,13 +381,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Fehler beim Hochladen des Profilbilds.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
 
       const data = await res.json();
       onUpdateUser({ ...user, avatar: data.avatar });
-      setAvatarMessage({ text: 'Profilbild erfolgreich hochgeladen!', type: 'success' });
+      setAvatarMessage({ text: t('settings.messages.avatarUploaded'), type: 'success' });
     } catch (err) {
       setAvatarMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -389,7 +396,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
   };
 
   const handleDeleteAvatar = async () => {
-    if (!window.confirm('Möchtest du dein Profilbild wirklich löschen?')) return;
+    if (!window.confirm(t('settings.deleteAvatarConfirm'))) return;
     setAvatarMessage(null);
     setAvatarLoading(true);
 
@@ -402,15 +409,15 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Fehler beim Löschen des Profilbilds.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
 
       // Remove avatar from state
       const updatedUser = { ...user };
       delete updatedUser.avatar;
       onUpdateUser(updatedUser);
-      setAvatarMessage({ text: 'Profilbild erfolgreich gelöscht!', type: 'success' });
+      setAvatarMessage({ text: t('settings.messages.avatarDeleted'), type: 'success' });
     } catch (err) {
       setAvatarMessage({ text: (err as Error).message, type: 'error' });
     } finally {
@@ -423,12 +430,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
     setPasswordMessage(null);
 
     if (newPassword !== confirmPassword) {
-      setPasswordMessage({ text: 'Die neuen Passwörter stimmen nicht überein.', type: 'error' });
+      setPasswordMessage({ text: t('settings.messages.passwordMismatch'), type: 'error' });
       return;
     }
 
     if (newPassword.length < 8) {
-      setPasswordMessage({ text: 'Das neue Passwort muss mindestens 8 Zeichen lang sein.', type: 'error' });
+      setPasswordMessage({ text: t('settings.messages.passwordTooShort'), type: 'error' });
       return;
     }
 
@@ -449,11 +456,11 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Fehler beim Ändern des Passworts.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
 
-      setPasswordMessage({ text: 'Passwort erfolgreich geändert!', type: 'success' });
+      setPasswordMessage({ text: t('settings.messages.passwordChanged'), type: 'success' });
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
@@ -482,13 +489,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
 
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Fehler beim Speichern der Einstellung.');
+        const data = await res.json().catch(() => ({}) as ApiErrBody);
+        throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
 
       setRegistrationsEnabled(checked);
       setAdminMessage({
-        text: checked ? 'Registrierungen wurden aktiviert.' : 'Registrierungen wurden gesperrt.',
+        text: checked ? t('settings.messages.adminSavedOn') : t('settings.messages.adminSavedOff'),
         type: 'success',
       });
     } catch (err) {
@@ -507,25 +514,25 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
           className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
         >
           <ArrowLeft className="w-4 h-4" />
-          Zurück
+          {t('settings.back')}
         </button>
         <div className="flex items-center gap-2">
           <Settings className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
-          <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] leading-none">Einstellungen</h2>
+          <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] leading-none">{t('settings.title')}</h2>
         </div>
       </div>
 
       {/* Main Grid Layout */}
       <div className="grid md:grid-cols-2 gap-6">
         
-        {/* Left Side: Profilbild, Profil-Details & Passwort */}
+        {/* Left Side: Profile picture, profile details & password */}
         <div className="space-y-6">
           
-          {/* Section 1: Profilbild */}
+          {/* Section 1: Profile picture */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <ImageIcon className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Profilbild</h3>
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.profilePicture')}</h3>
             </div>
 
             <MessageBanner message={avatarMessage} />
@@ -552,12 +559,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
               <div className="flex-grow space-y-2.5">
                 <p className="text-[10px] text-[var(--color-text-muted)] font-sans leading-relaxed">
-                  Lade ein neues Profilbild hoch. Unterstützt werden PNG, JPEG, WebP und GIF bis max. 2 MB.
+                  {t('settings.avatarHint')}
                 </p>
                 <div className="flex flex-wrap gap-2.5">
                   <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs">
                     <Upload className="w-3.5 h-3.5" />
-                    <span>Bild wählen</span>
+                    <span>{t('settings.selectImage')}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -573,7 +580,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                       className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl hover:bg-[var(--color-error-bg)]/70 hover:border-rose-350 transition-all font-mono font-bold text-[10px] cursor-pointer shadow-xs"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      Löschen
+                      {t('settings.delete')}
                     </button>
                   )}
                 </div>
@@ -581,11 +588,11 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             </div>
           </div>
 
-{/* Section 2: Profil-Details */}
+{/* Section 2: Profile details */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Profil-Details</h3>
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.profileDetails')}</h3>
             </div>
 
             <MessageBanner message={profileMessage} />
@@ -597,11 +604,11 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   setEmailChangeMessage(null);
                   const trimmed = newEmail.trim().toLowerCase();
                   if (!trimmed || !trimmed.includes('@') || !trimmed.includes('.')) {
-                    setEmailChangeMessage({ text: 'Bitte gib eine gültige E-Mail-Adresse ein.', type: 'error' });
+                    setEmailChangeMessage({ text: t('settings.messages.emailValid'), type: 'error' });
                     return;
                   }
                   if (trimmed === (user?.email || '').toLowerCase()) {
-                    setEmailChangeMessage({ text: 'Die neue Adresse entspricht deiner aktuellen Adresse.', type: 'error' });
+                    setEmailChangeMessage({ text: t('settings.messages.emailSame'), type: 'error' });
                     return;
                   }
                   setEmailChangeLoading(true);
@@ -616,16 +623,16 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     });
                     if (res.ok) {
                       setNewEmail('');
-                      setEmailChangeMessage({ text: 'Bestätigungslink an deine aktuelle Adresse gesendet. Bitte prüfe dein Postfach.', type: 'success' });
+                      setEmailChangeMessage({ text: t('settings.messages.emailSent'), type: 'success' });
                     } else if (res.status === 409) {
-                      setEmailChangeMessage({ text: 'Diese E-Mail-Adresse wird bereits verwendet.', type: 'error' });
+                      setEmailChangeMessage({ text: t('settings.messages.emailInUse'), type: 'error' });
                     } else if (res.status === 400) {
-                      setEmailChangeMessage({ text: 'Ungültige Anfrage oder Mailservice nicht konfiguriert.', type: 'error' });
+                      setEmailChangeMessage({ text: t('settings.messages.emailInvalid'), type: 'error' });
                     } else {
-                      setEmailChangeMessage({ text: 'E-Mail-Änderung fehlgeschlagen. Bitte erneut versuchen.', type: 'error' });
+                      setEmailChangeMessage({ text: t('settings.messages.emailFailed'), type: 'error' });
                     }
                   } catch {
-                    setEmailChangeMessage({ text: 'Verbindung zum Server fehlgeschlagen.', type: 'error' });
+                    setEmailChangeMessage({ text: t('settings.messages.emailConnectionError'), type: 'error' });
                   } finally {
                     setEmailChangeLoading(false);
                   }
@@ -634,7 +641,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               >
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    Aktuelle E-Mail-Adresse
+                    {t('settings.currentEmail')}
                   </label>
                   <input
                     type="text"
@@ -646,7 +653,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    Neue E-Mail-Adresse
+                    {t('settings.newEmail')}
                   </label>
                   <div className="relative group">
                     <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
@@ -669,13 +676,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   disabled={emailChangeLoading || newEmail.trim() === ''}
                   className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
-                  {emailChangeLoading ? 'Wird gesendet...' : 'Bestätigungslink anfordern'}
+                  {emailChangeLoading ? t('settings.saving') : t('settings.requestLink')}
                 </button>
               </form>
             ) : (
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  E-Mail Adresse (Nicht änderbar)
+                  {t('settings.emailNotChangeable')}
                 </label>
                 <input
                   type="text"
@@ -685,7 +692,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 />
                 {emailChangeAvailable === false && (
                   <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1">
-                    Mailservice nicht konfiguriert – E-Mail-Änderung derzeit nicht verfügbar.
+                    {t('settings.emailChangeAvailableHint')}
                   </p>
                 )}
               </div>
@@ -695,13 +702,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Anzeigename</h3>
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.displayName')}</h3>
             </div>
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Anzeigename
+                  {t('settings.displayName')}
                 </label>
                 <input
                   type="text"
@@ -718,7 +725,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 disabled={profileLoading || displayName.trim() === '' || displayName.trim() === user?.display_name}
                 className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
               >
-                {profileLoading ? 'Wird gespeichert...' : 'Änderungen speichern'}
+                {profileLoading ? t('settings.saving') : t('settings.saveChanges')}
               </button>
             </form>
           </div>
@@ -726,7 +733,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Passwort ändern</h3>
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.changePassword')}</h3>
             </div>
 
             <MessageBanner message={passwordMessage} />
@@ -734,7 +741,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             <form onSubmit={handleChangePassword} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Aktuelles Passwort
+                  {t('settings.currentPassword')}
                 </label>
                 <div className="relative group">
                   <input
@@ -748,7 +755,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   <button
                     type="button"
                     onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                    aria-label={showCurrentPassword ? 'Aktuelles Passwort verbergen' : 'Aktuelles Passwort anzeigen'}
+                    aria-label={showCurrentPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
                     {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -758,7 +765,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Neues Passwort
+                  {t('settings.newPassword')}
                 </label>
                 <div className="relative group">
                   <input
@@ -772,7 +779,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   <button
                     type="button"
                     onClick={() => setShowNewPassword(!showNewPassword)}
-                    aria-label={showNewPassword ? 'Neues Passwort verbergen' : 'Neues Passwort anzeigen'}
+                    aria-label={showNewPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
                     {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -782,7 +789,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Neues Passwort bestätigen
+                  {t('settings.confirmPassword')}
                 </label>
                 <div className="relative group">
                   <input
@@ -796,7 +803,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   <button
                     type="button"
                     onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    aria-label={showConfirmPassword ? 'Passwort-Bestätigung verbergen' : 'Passwort-Bestätigung anzeigen'}
+                    aria-label={showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
                     {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -809,7 +816,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
                 className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
               >
-                {passwordLoading ? 'Wird geändert...' : 'Passwort ändern'}
+                {passwordLoading ? t('settings.changing') : t('settings.changePassword')}
               </button>
             </form>
           </div>
@@ -819,14 +826,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <div className="flex items-center gap-2">
                 <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Zwei-Faktor-Authentifizierung</h3>
+                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.twoFactor')}</h3>
               </div>
               {totpStatusLoading ? (
                 <span className="text-[10px] font-mono text-[var(--color-text-muted)]">…</span>
               ) : totpEnabled ? (
-                <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">Aktiv</span>
+                <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">{t('settings.active')}</span>
               ) : (
-                <span className="text-[10px] font-mono font-bold text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">Inaktiv</span>
+                <span className="text-[10px] font-mono font-bold text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">{t('settings.inactive')}</span>
               )}
             </div>
 
@@ -835,7 +842,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             {backupCodes.length > 0 ? (
               <div className="space-y-3">
                 <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
-                  Speichere diese Backup-Codes an einem sicheren Ort. Jeder Code funktioniert genau einmal.
+                  {t('settings.backupCodesHint')}
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {backupCodes.map((code) => (
@@ -846,10 +853,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 </div>
                 <button
                   type="button"
-                  onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')); setTotpMessage({ text: 'Backup-Codes in Zwischenablage kopiert.', type: 'success' }); }}
+                  onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')); setTotpMessage({ text: t('settings.copied'), type: 'success' }); }}
                   className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer"
                 >
-                  Codes kopieren
+                  {t('settings.copyCodes')}
                 </button>
               </div>
             ) : setupData ? (
@@ -862,7 +869,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    Code bestätigen
+                    {t('settings.confirmCode')}
                   </label>
                   <input
                     type="text"
@@ -880,25 +887,25 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     disabled={enableLoading || !enableCode}
                     className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                   >
-                    {enableLoading ? 'Wird aktiviert...' : 'Aktivieren'}
+                    {enableLoading ? t('settings.activating') : t('settings.activate')}
                   </button>
                   <button
                     type="button"
                     onClick={() => { setSetupData(null); setEnableCode(''); }}
                     className="px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer"
                   >
-                    Abbrechen
+                    {t('common.cancel')}
                   </button>
                 </div>
               </form>
             ) : totpEnabled ? (
               <form onSubmit={handle2FADisable} className="space-y-4">
                 <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
-                  Gib dein aktuelles Passwort ein, um die Zwei-Faktor-Authentifizierung zu deaktivieren.
+                  {t('settings.disableHint')}
                 </p>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    Passwort
+                    {t('settings.currentPassword')}
                   </label>
                   <input
                     type="password"
@@ -914,13 +921,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   disabled={disableLoading || !disablePassword}
                   className="w-full bg-[var(--color-error-bg)] text-[var(--color-error-text)] border border-[var(--color-error-border)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
-                  {disableLoading ? 'Wird deaktiviert...' : 'Deaktivieren'}
+                  {disableLoading ? t('settings.deactivating') : t('settings.deactivate')}
                 </button>
               </form>
             ) : (
               <div className="space-y-4">
                 <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
-                  Schütze dein Konto mit einem zeitbasierten Einmalpasswort (TOTP) aus einer Authenticator-App.
+                  {t('settings.setupHint')}
                 </p>
                 <button
                   type="button"
@@ -928,25 +935,25 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   disabled={setupLoading}
                   className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
-                  {setupLoading ? 'Wird vorbereitet...' : 'Einrichten'}
+                  {setupLoading ? t('settings.preparing') : t('settings.setup')}
                 </button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Right Side: Darstellung, Systemsteuerung & E-Mail Benachrichtigungen */}
+        {/* Right Side: Appearance, system control & email notifications */}
         <div className="space-y-6">
           
-          {/* Section 4: Darstellung */}
+          {/* Section 4: Appearance */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Palette className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Darstellung</h3>
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.appearance')}</h3>
             </div>
 
             <p className="text-[10px] text-[var(--color-text-muted)] font-sans leading-relaxed">
-              Wähle das Erscheinungsbild der Anwendung. Automatisch folgt den Systemeinstellungen.
+              {t('settings.appearanceHint')}
             </p>
 
             <div className="grid grid-cols-3 gap-3">
@@ -961,7 +968,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               >
                 <Sun className={`w-6 h-6 ${preference === 'light' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
                 <span className={`text-xs font-bold font-mono ${preference === 'light' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
-                  Hell
+                  {t('settings.light')}
                 </span>
               </button>
 
@@ -976,7 +983,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               >
                 <Moon className={`w-6 h-6 ${preference === 'dark' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
                 <span className={`text-xs font-bold font-mono ${preference === 'dark' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
-                  Dunkel
+                  {t('settings.dark')}
                 </span>
               </button>
 
@@ -991,33 +998,33 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               >
                 <Monitor className={`w-6 h-6 ${preference === 'auto' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
                 <span className={`text-xs font-bold font-mono ${preference === 'auto' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
-                  Auto
+                  {t('settings.auto')}
                 </span>
               </button>
             </div>
 
             {preference === 'auto' && (
               <p className="text-[10px] text-[var(--color-text-muted)] font-mono text-center mt-2">
-                Aktuell: {systemTheme === 'dark' ? 'Dunkel' : 'Hell'} (Systemeinstellung)
+                {t('settings.currentTheme', { theme: systemTheme === 'dark' ? t('settings.systemDark') : t('settings.systemLight') })}
               </p>
             )}
           </div>
 
-{/* Section 5: Systemsteuerung (nur sichtbar für Rolle ADMIN) */}
+{/* Section 5: System control (only visible for ADMIN role) */}
           {user?.role === 'ADMIN' && (
             <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
               <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
                 <CloudSync className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Systemsteuerung</h3>
+                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.systemControl')}</h3>
               </div>
 
               <MessageBanner message={adminMessage} />
 
               <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
                 <div className="text-left space-y-1 pr-4">
-                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">Registrierungen erlauben</h4>
+                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.allowRegistrations')}</h4>
                   <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
-                    Schalte aus, um neue Benutzerregistrierungen systemweit zu sperren. Bestehende Logins bleiben aktiv.
+                    {t('settings.allowRegistrationsHint')}
                   </p>
                 </div>
                 
@@ -1035,11 +1042,11 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             </div>
           )}
 
-{/* Section 6: E-Mail Benachrichtigungen (SMTP) */}
+{/* Section 6: Email notifications (SMTP) */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Mail className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">E-Mail Benachrichtigungen</h3>
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.emailNotifications')}</h3>
             </div>
 
             <MessageBanner message={smtpMessage} />
@@ -1048,7 +1055,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               <div className="grid grid-cols-3 gap-4">
                 <div className="col-span-2 space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    SMTP-Host
+                    {t('settings.smtpHost')}
                   </label>
                   <input
                     type="text"
@@ -1061,7 +1068,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    Port
+                    {t('settings.smtpPort')}
                   </label>
                   <input
                     type="number"
@@ -1077,7 +1084,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Benutzername
+                  {t('settings.smtpUsername')}
                 </label>
                 <input
                   type="text"
@@ -1091,7 +1098,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Passwort
+                  {t('settings.smtpPassword')}
                 </label>
                 <div className="relative group">
                   <input
@@ -1099,13 +1106,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     required={!smtpHasConfig}
                     value={smtpPassword}
                     onChange={(e) => setSmtpPassword(e.target.value)}
-                    placeholder={smtpHasConfig ? '•••••••• (unverändert lassen)' : '••••••••'}
+                    placeholder={smtpHasConfig ? `•••••••• ${t('settings.smtpPasswordUnchanged')}` : '••••••••'}
                     className="w-full px-4 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
                   />
                 </div>
                 {smtpHasConfig && (
                   <p className="text-[9px] text-[var(--color-text-muted)] font-mono leading-relaxed">
-                    Leer lassen, um das bestehende Passwort beizubehalten.
+                    {t('settings.smtpPasswordHint')}
                   </p>
                 )}
               </div>
@@ -1113,7 +1120,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    Absender-E-Mail
+                    {t('settings.smtpFromEmail')}
                   </label>
                   <input
                     type="email"
@@ -1126,7 +1133,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 </div>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    Absender-Name
+                    {t('settings.smtpFromName')}
                   </label>
                   <input
                     type="text"
@@ -1140,7 +1147,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  Verschlüsselung
+                  {t('settings.smtpEncryption')}
                 </label>
                 <select
                   value={smtpEncryption}
@@ -1155,9 +1162,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
               <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
                 <div className="text-left space-y-1 pr-4">
-                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">Bei Migrations-Abschluss benachrichtigen</h4>
+                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.smtpNotify')}</h4>
                   <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
-                    Erhältst du eine E-Mail, sobald eine Migration abgeschlossen oder fehlgeschlagen ist.
+                    {t('settings.smtpNotifyHint')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer select-none">
@@ -1177,7 +1184,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   disabled={smtpLoading || !smtpHost || !smtpUsername || !smtpFromEmail}
                   className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
-                  {smtpLoading ? 'Wird gespeichert...' : 'Speichern'}
+                  {smtpLoading ? t('settings.saving') : t('settings.saveSmtp')}
                 </button>
                 <button
                   type="button"
@@ -1185,7 +1192,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   disabled={smtpLoading}
                   className="px-4 py-2.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
                 >
-                  Test-E-Mail senden
+                  {t('settings.testSmtp')}
                 </button>
               </div>
             </form>
