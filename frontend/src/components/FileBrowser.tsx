@@ -32,6 +32,16 @@ const toLocalInputValue = (date: Date): string => {
   );
 };
 
+// sortEntries returns a new array with folders first, then files, each group
+// sorted alphabetically (case-insensitive). Used for files, calendars and
+// contacts so the selection lists are consistently ordered.
+const sortEntries = (entries: CloudFile[]): CloudFile[] => {
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
+  });
+};
+
 export const FileBrowser: React.FC<FileBrowserProps> = ({
   initialFiles,
   credentials,
@@ -49,10 +59,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [selectedContacts, setSelectedContacts] = useState<Record<string, boolean>>({});
 
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
-  const [directoryContents, setDirectoryContents] = useState<Record<string, CloudFile[]>>({
-    '/': initialFiles,
-  });
-  const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>({});
+  const [directoryContents, setDirectoryContents] = useState<Record<string, CloudFile[]>>(() => ({
+    '/': sortEntries(initialFiles),
+  }));
+  // All files/folders are selected by default. Pre-populate the top-level
+  // entries so the selection checkboxes render checked on first paint.
+  const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>(() =>
+    initialFiles.reduce((acc, f) => {
+      acc[f.path] = true;
+      return acc;
+    }, {} as Record<string, boolean>)
+  );
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
   const [conflictStrategy, setConflictStrategy] = useState('SKIP');
   const [threads, setThreads] = useState(4);
@@ -195,7 +212,15 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       if (!response.ok) throw new Error('Fehler beim Laden der Kalender');
       const data = await response.json();
       if (data.success) {
-        setCalendars(data.items || []);
+        const items = sortEntries(data.items || []);
+        setCalendars(items);
+        setSelectedCalendars((prev) => {
+          const next = { ...prev };
+          for (const c of items) {
+            if (next[c.path] === undefined) next[c.path] = true;
+          }
+          return next;
+        });
       }
     } catch (err) {
       console.error(err);
@@ -225,7 +250,15 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       if (!response.ok) throw new Error('Fehler beim Laden der Kontakte');
       const data = await response.json();
       if (data.success) {
-        setContacts(data.items || []);
+        const items = sortEntries(data.items || []);
+        setContacts(items);
+        setSelectedContacts((prev) => {
+          const next = { ...prev };
+          for (const c of items) {
+            if (next[c.path] === undefined) next[c.path] = true;
+          }
+          return next;
+        });
       }
     } catch (err) {
       console.error(err);
@@ -265,7 +298,20 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       const data = await response.json();
       if (data.success) {
-        setDirectoryContents((prev) => ({ ...prev, [folderPath]: data.items || data.files || [] }));
+        const items = sortEntries(data.items || data.files || []);
+        setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
+        // Newly loaded children are selected by default.
+        // Newly loaded children are selected by default, but only if the
+        // user has not explicitly interacted with them yet (so an "Alle
+        // abwählen" followed by expanding a folder keeps the children
+        // unselected).
+        setSelectedPaths((prev) => {
+          const next = { ...prev };
+          for (const child of items) {
+            if (next[child.path] === undefined) next[child.path] = true;
+          }
+          return next;
+        });
       }
     } catch (err) {
       console.error(err);
@@ -284,6 +330,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const toggleSelect = (filePath: string) => {
     setSelectedPaths((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
+  };
+
+  const deselectAll = () => {
+    setSelectedPaths({});
+    setSelectedCalendars({});
+    setSelectedContacts({});
   };
 
   const handleStartMigration = async () => {
@@ -550,10 +602,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-8">
+      <div className="grid md:grid-cols-3 gap-8 items-stretch">
         
         {/* Ledger Browser Tree Card */}
-        <div className="md:col-span-2 glass-panel border border-[var(--color-glass-border)] shadow-portal rounded-3xl min-h-[450px] max-h-[600px] overflow-y-auto scrollbar-portal flex flex-col p-5">
+        <div className="md:col-span-2 glass-panel border border-[var(--color-glass-border)] shadow-portal rounded-3xl flex flex-col p-5 h-full">
           {/* Tab Switcher */}
           <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4 mb-4 gap-4">
             <div className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-2xl flex-grow max-w-md">
@@ -593,16 +645,27 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               )}
             </div>
 
-            {activeTab !== 'files' && (
+            <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
-                disabled={loadingCalendars || loadingContacts}
-                className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] disabled:opacity-50"
-                title="Aktualisieren"
+                onClick={deselectAll}
+                className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-orange-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] flex items-center gap-1.5"
+                title="Alle abwählen"
               >
-                <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
+                <X className="w-4 h-4" />
+                <span className="text-[11px] font-mono font-bold uppercase tracking-wider">Alle abwählen</span>
               </button>
-            )}
+
+              {activeTab !== 'files' && (
+                <button
+                  onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
+                  disabled={loadingCalendars || loadingContacts}
+                  className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] disabled:opacity-50"
+                  title="Aktualisieren"
+                >
+                  <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex-grow overflow-y-auto scrollbar-portal">
@@ -701,6 +764,25 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
         {/* Configurations Sidebar */}
         <div className="space-y-6 flex flex-col">
+          {/* Action submit button - moved to top */}
+          <button
+            onClick={handleStartMigration}
+            disabled={starting}
+            className="w-full flex items-center justify-center gap-2.5 py-4 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {starting ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Indexierung läuft...</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4 fill-current stroke-[2.5]" />
+                <span>Transfer starten</span>
+              </>
+            )}
+          </button>
+
           <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6 flex-grow text-left">
             
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-3 mb-1">
@@ -710,22 +792,20 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             {/* Target Path */}
             <div className="space-y-2 text-xs">
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">Ziel-Stammverzeichnis</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={targetDir}
-                  className="flex-grow bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl py-2.5 px-3.5 text-[var(--color-text-secondary)] font-mono text-[11px] cursor-default focus:outline-none"
-                  readOnly
-                />
-                <button
-                  type="button"
-                  onClick={openTargetBrowser}
-                  className="px-3.5 py-2.5 bg-portal-navy hover:bg-portal-navy-light text-[var(--color-text-inverse)] text-[11px] font-bold font-mono uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <FolderOpen className="w-4 h-4" />
-                  <span>Ordner</span>
-                </button>
-              </div>
+              <input
+                type="text"
+                value={targetDir}
+                className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl py-2.5 px-3.5 text-[var(--color-text-secondary)] font-mono text-[11px] cursor-default focus:outline-none"
+                readOnly
+              />
+              <button
+                type="button"
+                onClick={openTargetBrowser}
+                className="w-full py-2.5 bg-portal-navy hover:bg-portal-navy-light text-[var(--color-text-inverse)] text-[11px] font-bold font-mono uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span>Ordner Auswählen</span>
+              </button>
               <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed font-sans">
                 Kopiert Bestände in den ausgewählten Ordner auf der Zielinstanz.
               </p>
@@ -820,70 +900,70 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 )}
               </p>
             </div>
-          </div>
 
-          {/* Scheduling Option */}
-          <div className="mt-4 p-4 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-2xl">
-            <label className="flex items-center gap-3 cursor-pointer group">
-              <input
-                type="checkbox"
-                checked={enableScheduling}
-                onChange={(e) => setEnableScheduling(e.target.checked)}
-                className="w-4 h-4 rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange/30 cursor-pointer"
-              />
-              <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-portal-orange transition-colors" />
-                <span className="text-xs font-semibold text-[var(--color-text-primary)]">
-                  Migration für später planen
+            {/* Scheduling Option */}
+            <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={enableScheduling}
+                  onChange={(e) => setEnableScheduling(e.target.checked)}
+                  className="w-4 h-4 rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange/30 cursor-pointer"
+                />
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-portal-orange transition-colors" />
+                  <span className="text-xs font-semibold text-[var(--color-text-primary)]">
+                    Migration für später planen
+                  </span>
+                </div>
+              </label>
+              
+              {enableScheduling && (
+                <div className="mt-3 pl-7">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
+                    Startzeitpunkt
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={scheduledTime}
+                    onChange={(e) => setScheduledTime(e.target.value)}
+                    min={minScheduledTime}
+                    className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+                  />
+                  <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
+                    Die Migration wird automatisch zum gewählten Zeitpunkt gestartet. Sie können die Migration bis dahin jederzeit stornieren.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Bandwidth Limit */}
+            <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
+                Bandbreitenlimit (Mbps)
+              </label>
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="0"
+                  max="1000"
+                  step="1"
+                  value={bandwidthLimit}
+                  onChange={(e) => setBandwidthLimit(parseInt(e.target.value, 10))}
+                  className="flex-grow accent-portal-navy cursor-pointer"
+                />
+                <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[48px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
+                  {bandwidthLimit === 0 ? '∞' : `${bandwidthLimit}`}
                 </span>
               </div>
-            </label>
-            
-            {enableScheduling && (
-              <div className="mt-3 pl-7">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                  Startzeitpunkt
-                </label>
-                <input
-                  type="datetime-local"
-                  value={scheduledTime}
-                  onChange={(e) => setScheduledTime(e.target.value)}
-                  min={minScheduledTime}
-                  className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
-                />
-                <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
-                  Die Migration wird automatisch zum gewählten Zeitpunkt gestartet. Sie können die Migration bis dahin jederzeit stornieren.
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Bandwidth Limit */}
-          <div className="mt-4 p-4 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-2xl">
-            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
-              Bandbreitenlimit (Mbps)
-            </label>
-            <div className="flex items-center gap-4">
-              <input
-                type="range"
-                min="0"
-                max="1000"
-                step="1"
-                value={bandwidthLimit}
-                onChange={(e) => setBandwidthLimit(parseInt(e.target.value, 10))}
-                className="flex-grow accent-portal-navy cursor-pointer"
-              />
-              <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[48px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
-                {bandwidthLimit === 0 ? '∞' : `${bandwidthLimit}`}
-              </span>
+              <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
+                {bandwidthLimit === 0 ? (
+                  'Keine Begrenzung – maximale Übertragungsgeschwindigkeit.'
+                ) : (
+                  `Begrenzt auf ${bandwidthLimit} Mbps. Kann während der Migration angepasst werden.`
+                )}
+              </p>
             </div>
-            <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
-              {bandwidthLimit === 0 ? (
-                'Keine Begrenzung – maximale Übertragungsgeschwindigkeit.'
-              ) : (
-                `Begrenzt auf ${bandwidthLimit} Mbps. Kann während der Migration angepasst werden.`
-              )}
-            </p>
           </div>
 
           {error && (
@@ -892,25 +972,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               <span>{error}</span>
             </div>
           )}
-
-          {/* Action submit button */}
-          <button
-            onClick={handleStartMigration}
-            disabled={starting}
-            className="w-full flex items-center justify-center gap-2.5 py-4 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed mt-4 shrink-0"
-          >
-            {starting ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Indexierung läuft...</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4 fill-current stroke-[2.5]" />
-                <span>Transfer starten</span>
-              </>
-            )}
-          </button>
         </div>
       </div>
 
