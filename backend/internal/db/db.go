@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -350,6 +351,24 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (create password_reset_tokens table): %v\n", err)
 			}
 
+			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS indexing_errors (
+					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+					migration_id UUID NOT NULL REFERENCES migrations(id) ON DELETE CASCADE,
+					path TEXT NOT NULL,
+					resource_type TEXT NOT NULL DEFAULT 'files',
+					error_message TEXT NOT NULL,
+					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (create indexing_errors table): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_indexing_errors_migration_id ON indexing_errors(migration_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_indexing_errors_migration_id): %v\n", err)
+			}
 
 			_, err = db.Exec(`
 				CREATE OR REPLACE TRIGGER update_user_smtp_settings_updated_at
@@ -672,6 +691,127 @@ func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 		return nil, err
 	}
 	return tasks, nil
+}
+
+// IndexingError represents a per-folder error encountered during the resilient
+// indexing phase. These are recorded (not fatal) so the migration can proceed and
+// the skipped paths can be surfaced in the report.
+type IndexingError struct {
+	Path         string
+	ResourceType string
+	ErrorMessage string
+	CreatedAt    time.Time
+}
+
+// IndexingErrorInput is the payload used to persist indexing errors.
+type IndexingErrorInput struct {
+	Path         string
+	ResourceType string
+	ErrorMessage string
+}
+
+// RecordIndexingErrors persists a batch of indexing errors for a migration in a
+// single transaction so a mid-batch failure cannot leave a partial error set.
+func RecordIndexingErrors(db *sql.DB, migrationID string, errors []IndexingErrorInput) error {
+	if len(errors) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO indexing_errors (migration_id, path, resource_type, error_message)
+		VALUES ($1, $2, $3, $4)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, e := range errors {
+		if _, err := stmt.Exec(migrationID, e.Path, e.ResourceType, e.ErrorMessage); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// GetIndexingErrorsForReport retrieves all indexing errors of a migration for reporting.
+func GetIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError, error) {
+	query := `
+		SELECT path, resource_type, error_message, created_at
+		FROM indexing_errors
+		WHERE migration_id = $1
+		ORDER BY path ASC
+	`
+	rows, err := db.Query(query, migrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var errs []IndexingError
+	for rows.Next() {
+		var e IndexingError
+		if err := rows.Scan(&e.Path, &e.ResourceType, &e.ErrorMessage, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		errs = append(errs, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return errs, nil
+}
+
+// DeleteIndexingErrors removes all indexing errors for a migration (used on re-index).
+func DeleteIndexingErrors(db *sql.DB, migrationID string) error {
+	_, err := db.Exec(`DELETE FROM indexing_errors WHERE migration_id = $1`, migrationID)
+	return err
+}
+
+// ErrMigrationNotFailed is returned by ResetMigrationForReindex when the migration
+// is not in FAILED state (e.g. already re-indexing, or finished). It lets the API
+// distinguish a benign concurrent re-trigger from a real error.
+var ErrMigrationNotFailed = errors.New("migration is not in FAILED state")
+
+// ResetMigrationForReindex clears tasks and indexing errors and resets counters so the
+// shared indexer can re-run indexing for an existing FAILED migration. The status flip
+// to INDEXING is guarded by `WHERE status = 'FAILED'`, which also prevents a second
+// concurrent re-index request from spawning a duplicate indexer (TOCTOU safe).
+func ResetMigrationForReindex(db *sql.DB, migrationID string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err = tx.Exec(`DELETE FROM tasks WHERE migration_id = $1`, migrationID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM indexing_errors WHERE migration_id = $1`, migrationID); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`
+		UPDATE migrations
+		SET status = 'INDEXING',
+		    total_files = 0, total_bytes = 0,
+		    processed_files = 0, processed_bytes = 0,
+		    skipped_files = 0, failed_files = 0,
+		    error_message = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'FAILED'
+	`, migrationID)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return ErrMigrationNotFailed
+	}
+	return tx.Commit()
 }
 
 // DeleteOldMigrations deletes migrations (and their tasks via CASCADE) older than 24 hours
@@ -1107,15 +1247,15 @@ func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
 
 // Schedule represents a scheduled task (migration, sync, or backup)
 type UserSMTPSettings struct {
-	UserID             string `json:"user_id"`
-	SMTPHost           string `json:"smtp_host"`
-	SMTPPort           int    `json:"smtp_port"`
-	SMTPUsername       string `json:"smtp_username"`
-	SMTPPasswordEnc    string `json:"-"`
-	SMTPFromEmail      string `json:"smtp_from_email"`
-	SMTPFromName       string `json:"smtp_from_name"`
-	SMTPEncryption     string `json:"smtp_encryption"`
-	NotifyOnCompletion bool   `json:"notify_on_completion"`
+	UserID             string    `json:"user_id"`
+	SMTPHost           string    `json:"smtp_host"`
+	SMTPPort           int       `json:"smtp_port"`
+	SMTPUsername       string    `json:"smtp_username"`
+	SMTPPasswordEnc    string    `json:"-"`
+	SMTPFromEmail      string    `json:"smtp_from_email"`
+	SMTPFromName       string    `json:"smtp_from_name"`
+	SMTPEncryption     string    `json:"smtp_encryption"`
+	NotifyOnCompletion bool      `json:"notify_on_completion"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
@@ -1373,7 +1513,6 @@ func GetPasswordResetToken(db *sql.DB, tokenHash string) (*PasswordResetToken, e
 	}
 	return &t, nil
 }
-
 
 // ClaimPasswordResetToken atomically validates and claims a password reset token.
 // It checks that the token exists, is not used, and is not expired, then marks it used

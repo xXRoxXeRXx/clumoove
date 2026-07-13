@@ -174,3 +174,15 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     used BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Per-folder indexing errors (resilient indexing: skipped folders are recorded, not fatal)
+CREATE TABLE IF NOT EXISTS indexing_errors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    migration_id UUID NOT NULL REFERENCES migrations(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    resource_type TEXT NOT NULL DEFAULT 'files',
+    error_message TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_indexing_errors_migration_id ON indexing_errors(migration_id);

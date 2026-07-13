@@ -243,8 +243,6 @@ func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, r
 }
 
 func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
 	u := p.buildResourceURL(resourceType, dirPath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -263,9 +261,8 @@ func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceTyp
 	}
 	req.Header.Set("Depth", "1")
 	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
-	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := doPropfind(ctx, p.HTTPClient, req)
 	if err != nil {
 		return nil, err
 	}

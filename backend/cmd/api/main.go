@@ -10,6 +10,7 @@ import (
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"log"
@@ -56,15 +57,14 @@ type APIServer struct {
 	rateLimiter   ipRateLimiter
 }
 
-
 type ipRateLimiter struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	visitors map[string]*rateVisitor
 }
 
 type rateVisitor struct {
-	count    int
-	resetAt  time.Time
+	count   int
+	resetAt time.Time
 }
 
 func (rl *ipRateLimiter) Allow(ip string, maxRequests int, window time.Duration) bool {
@@ -187,6 +187,7 @@ func main() {
 	mux.Handle("DELETE /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteMigration)))
 	mux.Handle("GET /api/migration/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadReport)))
 	mux.Handle("POST /api/migration/{id}/retry-failed", jwtMiddleware(http.HandlerFunc(server.handleRetryFailed)))
+	mux.Handle("POST /api/migration/{id}/reindex", jwtMiddleware(http.HandlerFunc(server.handleReindex)))
 	mux.Handle("PUT /api/migration/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetBandwidth)))
 
 	// Schedule Management Routes (Protected)
@@ -568,6 +569,54 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "retried": count})
+}
+
+// handleReindex re-runs the indexing phase for an existing FAILED migration. This
+// is the recovery path for migrations that failed during indexing (e.g. a WebDAV
+// PROPFIND timeout) where there are no FAILED tasks for handleRetryFailed to reset.
+// It clears prior tasks/indexing errors, resets counters, and spawns the shared
+// indexer again on the same migration.
+func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil || !owns {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	mig, err := db.GetMigration(s.db, id)
+	if err != nil {
+		http.Error(w, "Failed to fetch migration", http.StatusInternalServerError)
+		return
+	}
+	if mig.Status != "FAILED" {
+		http.Error(w, "Migration can only be re-indexed from FAILED state", http.StatusConflict)
+		return
+	}
+
+	if err := db.ResetMigrationForReindex(s.db, id); err != nil {
+		if errors.Is(err, db.ErrMigrationNotFailed) {
+			// Already re-indexing or no longer FAILED (e.g. a concurrent re-trigger).
+			// Treat as a benign conflict rather than a server error.
+			http.Error(w, "Migration is already being re-indexed or is no longer in FAILED state", http.StatusConflict)
+			return
+		}
+		log.Printf("Reindex error for migration %s: %v", id, err)
+		http.Error(w, "Failed to re-index migration", http.StatusInternalServerError)
+		return
+	}
+
+	// Spawn the shared indexer (it will set status to INDEXING then RUNNING).
+	go s.indexer.Start(s.ctx, id)
+
+	log.Printf("Migration %s re-index triggered.\n", id)
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{"success": true, "migration_id": id})
 }
 
 func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
@@ -1036,6 +1085,24 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 			fmt.Sprintf("%d", task.Attempts),
 			errMsg,
 		})
+	}
+
+	// Append per-folder indexing errors (skipped folders) so they appear in the
+	// same report list rather than being silently dropped.
+	indexErrs, err := db.GetIndexingErrorsForReport(s.db, id)
+	if err != nil {
+		log.Printf("Download report error: failed to get indexing errors: %v\n", err)
+	} else {
+		for _, ie := range indexErrs {
+			// Size/Retries columns are not meaningful for skipped folders; leave
+			// Retries blank so the report does not imply a retry was attempted.
+			_ = writer.Write([]string{
+				ie.Path,
+				"0",
+				"",
+				fmt.Sprintf("[indexing/%s] %s", ie.ResourceType, ie.ErrorMessage),
+			})
+		}
 	}
 }
 
