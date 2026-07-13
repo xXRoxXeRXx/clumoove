@@ -216,6 +216,69 @@ func BuildMigrationReportEmail(migrationID, status string, totalFiles, processed
 }
 
 
+func BuildEmailChangeEmail(confirmURL, newEmail string) string {
+	escapedURL := html.EscapeString(confirmURL)
+	escapedEmail := html.EscapeString(newEmail)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
+	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
+			<h1 style="color:white;margin:0;font-size:24px;">Clumove</h1>
+			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">E-Mail-Adresse ändern</p>
+		</div>
+		<div style="padding:30px;">
+			<p style="color:#374151;font-size:14px;line-height:1.6;">
+				Du hast eine Änderung deiner E-Mail-Adresse auf <strong>%s</strong> angefordert. Bestätige die Änderung, indem du auf den Button unten klickst.
+			</p>
+			<div style="text-align:center;margin:30px 0;">
+				<a href="%s" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#f97316,#ea580c);color:white;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">
+					E-Mail-Adresse bestätigen
+				</a>
+			</div>
+			<p style="color:#6b7280;font-size:12px;line-height:1.6;">
+				Der Link ist 4 Stunden gültig. Falls du diese Änderung nicht angefordert hast, kannst du diese E-Mail ignorieren. Deine E-Mail-Adresse bleibt unverändert.
+			</p>
+			<div style="margin-top:20px;padding:12px;background:#f9fafb;border-radius:8px;word-break:break-all;">
+				<p style="margin:0;color:#9ca3af;font-size:11px;">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
+				<p style="margin:5px 0 0;color:#6b7280;font-size:11px;font-family:monospace;">%s</p>
+			</div>
+		</div>
+		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
+			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumove generiert.</p>
+		</div>
+	</div>
+</body>
+</html>`, escapedEmail, escapedURL, escapedURL)
+}
+
+func BuildEmailChangedNotificationEmail(newEmail string) string {
+	escapedEmail := html.EscapeString(newEmail)
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
+	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
+			<h1 style="color:white;margin:0;font-size:24px;">Clumove</h1>
+			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">E-Mail-Adresse geändert</p>
+		</div>
+		<div style="padding:30px;text-align:center;">
+			<div style="display:inline-block;padding:16px;background:#ecfdf5;border-radius:50%%;margin-bottom:20px;">
+				<span style="font-size:32px;">&#10003;</span>
+			</div>
+			<h2 style="color:#065f46;margin:0 0 10px;">Änderung erfolgreich!</h2>
+			<p style="color:#6b7280;font-size:14px;line-height:1.6;">
+				Deine Clumove-Konto-E-Mail-Adresse ist nun <strong>%s</strong>. Du wirst bei künftigen Anmeldungen diese Adresse verwenden müssen.
+			</p>
+		</div>
+		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
+			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumove generiert.</p>
+		</div>
+	</div>
+</body>
+</html>`, escapedEmail)
+}
+
 func BuildPasswordResetEmail(resetURL string) string {
 	escapedURL := html.EscapeString(resetURL)
 	return fmt.Sprintf(`<!DOCTYPE html>

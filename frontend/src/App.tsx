@@ -5,12 +5,13 @@ import { Dashboard } from './components/Dashboard';
 import { AuthForm } from './components/AuthForm';
 import { MigrationsDashboard } from './components/MigrationsDashboard';
 import { ResetPasswordForm } from './components/ResetPasswordForm';
+import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
 import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import type { User, MigrationConfig, CloudFile } from './types';
 
-type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'reset-password';
+type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'reset-password' | 'confirm-email';
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -50,17 +51,24 @@ function App() {
     ? new URLSearchParams(window.location.search).get('reset-token')
     : null;
 
-  const [step, setStep] = useState<Step>(() => (resetTokenFromUrl ? 'reset-password' : 'login'));
+  const emailChangeTokenFromUrl = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('email-change-token')
+    : null;
+
+  const [step, setStep] = useState<Step>(() =>
+    emailChangeTokenFromUrl ? 'confirm-email' : resetTokenFromUrl ? 'reset-password' : 'login'
+  );
   const [token, setToken] = useState<string>('');
   const [user, setUser] = useState<User | null>(null);
   const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
   const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
   const [migrationId, setMigrationId] = useState<string>('');
   const [isValidating, setIsValidating] = useState<boolean>(
-    () => !resetTokenFromUrl && localStorage.getItem('has_session') === 'true'
+    () => !resetTokenFromUrl && !emailChangeTokenFromUrl && localStorage.getItem('has_session') === 'true'
   );
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [resetToken, setResetToken] = useState<string>(resetTokenFromUrl || '');
+  const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = async () => {
@@ -96,8 +104,8 @@ function App() {
 
   // 1. Silent login / Refresh Token check on load
   useEffect(() => {
-    // If we arrived via a password reset link, skip auth validation entirely.
-    if (resetTokenFromUrl) {
+    // If we arrived via a password reset link or email change link, skip auth validation entirely.
+    if (resetTokenFromUrl || emailChangeTokenFromUrl) {
       return;
     }
 
@@ -156,7 +164,7 @@ function App() {
       .finally(() => {
         setIsValidating(false);
       });
-  }, [resetTokenFromUrl]);
+  }, [resetTokenFromUrl, emailChangeTokenFromUrl]);
 
   // 2. Silent JWT refresh (every 14 minutes)
   useEffect(() => {
@@ -265,6 +273,15 @@ function App() {
     window.history.replaceState({}, '', url.toString());
     setResetToken('');
     setStep('login');
+  };
+
+  const handleConfirmEmailChangeSuccess = () => {
+    // Clean up the URL param and return to login (refresh tokens were invalidated)
+    const url = new URL(window.location.href);
+    url.searchParams.delete('email-change-token');
+    window.history.replaceState({}, '', url.toString());
+    setEmailChangeToken('');
+    handleLogout();
   };
 
   const handleReset = () => {
@@ -383,6 +400,14 @@ function App() {
               apiUrl={API_URL}
               token={resetToken}
               onSuccess={handleResetPasswordSuccess}
+            />
+          )}
+
+          {step === 'confirm-email' && (
+            <ConfirmEmailChangeForm
+              apiUrl={API_URL}
+              token={emailChangeToken}
+              onSuccess={handleConfirmEmailChangeSuccess}
             />
           )}
 

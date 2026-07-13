@@ -175,6 +175,16 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Email change tokens (confirm new email via link sent to old address)
+CREATE TABLE IF NOT EXISTS email_change_tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    new_email TEXT NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    used BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Per-folder indexing errors (resilient indexing: skipped folders are recorded, not fatal)
 CREATE TABLE IF NOT EXISTS indexing_errors (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

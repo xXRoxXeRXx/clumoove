@@ -57,6 +57,24 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
   const [passwordLoading, setPasswordLoading] = useState<boolean>(false);
   const [passwordMessage, setPasswordMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // Email change state
+  const [emailChangeAvailable, setEmailChangeAvailable] = useState<boolean | null>(null);
+  const [newEmail, setNewEmail] = useState<string>('');
+  const [emailChangeLoading, setEmailChangeLoading] = useState<boolean>(false);
+  const [emailChangeMessage, setEmailChangeMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Fetch whether the system mail service allows email changes
+  useEffect(() => {
+    fetch(`${apiUrl}/api/auth/email-change-available`)
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => {
+        setEmailChangeAvailable(Boolean(data.available));
+      })
+      .catch(() => {
+        setEmailChangeAvailable(false);
+      });
+  }, [apiUrl]);
+
   // Admin settings state
   const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
   const [adminLoading, setAdminLoading] = useState<boolean>(false);
@@ -454,7 +472,89 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
             <MessageBanner message={profileMessage} />
 
-            <form onSubmit={handleUpdateProfile} className="space-y-4">
+            {emailChangeAvailable ? (
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setEmailChangeMessage(null);
+                  const trimmed = newEmail.trim().toLowerCase();
+                  if (!trimmed || !trimmed.includes('@') || !trimmed.includes('.')) {
+                    setEmailChangeMessage({ text: 'Bitte gib eine gültige E-Mail-Adresse ein.', type: 'error' });
+                    return;
+                  }
+                  if (trimmed === (user?.email || '').toLowerCase()) {
+                    setEmailChangeMessage({ text: 'Die neue Adresse entspricht deiner aktuellen Adresse.', type: 'error' });
+                    return;
+                  }
+                  setEmailChangeLoading(true);
+                  try {
+                    const res = await fetch(`${apiUrl}/api/auth/change-email`, {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`,
+                      },
+                      body: JSON.stringify({ new_email: trimmed }),
+                    });
+                    if (res.ok) {
+                      setNewEmail('');
+                      setEmailChangeMessage({ text: 'Bestätigungslink an deine aktuelle Adresse gesendet. Bitte prüfe dein Postfach.', type: 'success' });
+                    } else if (res.status === 409) {
+                      setEmailChangeMessage({ text: 'Diese E-Mail-Adresse wird bereits verwendet.', type: 'error' });
+                    } else if (res.status === 400) {
+                      setEmailChangeMessage({ text: 'Ungültige Anfrage oder Mailservice nicht konfiguriert.', type: 'error' });
+                    } else {
+                      setEmailChangeMessage({ text: 'E-Mail-Änderung fehlgeschlagen. Bitte erneut versuchen.', type: 'error' });
+                    }
+                  } catch {
+                    setEmailChangeMessage({ text: 'Verbindung zum Server fehlgeschlagen.', type: 'error' });
+                  } finally {
+                    setEmailChangeLoading(false);
+                  }
+                }}
+                className="space-y-4"
+              >
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    Aktuelle E-Mail-Adresse
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={user?.email || ''}
+                    className="w-full px-4 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]/85 rounded-xl text-sm text-[var(--color-text-muted)] cursor-not-allowed font-sans font-mono"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    Neue E-Mail-Adresse
+                  </label>
+                  <div className="relative group">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+                      <Mail className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      placeholder="neue.adresse@beispiel.de"
+                      className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                    />
+                  </div>
+                </div>
+
+                <MessageBanner message={emailChangeMessage} />
+
+                <button
+                  type="submit"
+                  disabled={emailChangeLoading || newEmail.trim() === ''}
+                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                >
+                  {emailChangeLoading ? 'Wird gesendet...' : 'Bestätigungslink anfordern'}
+                </button>
+              </form>
+            ) : (
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                   E-Mail Adresse (Nicht änderbar)
@@ -465,8 +565,22 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   value={user?.email || ''}
                   className="w-full px-4 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]/85 rounded-xl text-sm text-[var(--color-text-muted)] cursor-not-allowed font-sans"
                 />
+                {emailChangeAvailable === false && (
+                  <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1">
+                    Mailservice nicht konfiguriert – E-Mail-Änderung derzeit nicht verfügbar.
+                  </p>
+                )}
               </div>
+            )}
+          </div>
 
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Anzeigename</h3>
+            </div>
+
+            <form onSubmit={handleUpdateProfile} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                   Anzeigename
@@ -491,7 +605,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             </form>
           </div>
 
-{/* Section 3: Passwort */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />

@@ -352,6 +352,20 @@ func InitDB(connStr string) (*sql.DB, error) {
 			}
 
 			_, err = db.Exec(`
+				CREATE TABLE IF NOT EXISTS email_change_tokens (
+					token_hash TEXT PRIMARY KEY,
+					user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					new_email TEXT NOT NULL,
+					expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+					used BOOLEAN NOT NULL DEFAULT FALSE,
+					created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+				)
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (create email_change_tokens table): %v\n", err)
+			}
+
+			_, err = db.Exec(`
 				CREATE TABLE IF NOT EXISTS indexing_errors (
 					id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 					migration_id UUID NOT NULL REFERENCES migrations(id) ON DELETE CASCADE,
@@ -1278,6 +1292,15 @@ type PasswordResetToken struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type EmailChangeToken struct {
+	TokenHash string    `json:"token_hash"`
+	UserID    string    `json:"user_id"`
+	NewEmail  string    `json:"new_email"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Used      bool      `json:"used"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type Schedule struct {
 	ID             string         `json:"id"`
 	UserID         string         `json:"user_id"`
@@ -1566,6 +1589,94 @@ func ClaimPasswordResetToken(db *sql.DB, tokenHash, newPasswordHash string) (str
 
 func DeleteExpiredPasswordResetTokens(db *sql.DB) error {
 	query := `DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used = TRUE`
+	_, err := db.Exec(query)
+	return err
+}
+
+// ============================================================================
+// Email Change Tokens
+// ============================================================================
+
+// CreateEmailChangeToken stores a new email-change token. Any previously open
+// token for the same user is removed first so a user can only have one pending
+// email-change request at a time.
+func CreateEmailChangeToken(db *sql.DB, tokenHash, userID, newEmail string, expiresAt time.Time) error {
+	if _, err := db.Exec(`DELETE FROM email_change_tokens WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+	query := `
+		INSERT INTO email_change_tokens (token_hash, user_id, new_email, expires_at)
+		VALUES ($1, $2, $3, $4)
+	`
+	_, err := db.Exec(query, tokenHash, userID, newEmail, expiresAt)
+	return err
+}
+
+// ErrEmailTaken is returned by ClaimEmailChangeToken when the requested new
+// email address is already in use by a different user at confirm time.
+var ErrEmailTaken = errors.New("email already taken")
+
+// ClaimEmailChangeToken atomically validates and claims an email-change token,
+// then updates the user's email address inside the same transaction. The
+// availability of the new email is checked BEFORE the token is marked used, so a
+// taken address does not silently consume the token. On success it invalidates
+// all refresh tokens for the user (forces re-login, like password reset).
+// Returns the new email on success, ErrEmailTaken if the address is taken, or
+// sql.ErrNoRows if the token is invalid/expired/used.
+func ClaimEmailChangeToken(db *sql.DB, tokenHash string) (userID, newEmail string, err error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return "", "", err
+	}
+	defer tx.Rollback()
+
+	// Read the token without consuming it yet, so we can reject a taken address
+	// without marking the token used.
+	var uid, newMail string
+	err = tx.QueryRow(`
+		SELECT user_id, new_email
+		FROM email_change_tokens
+		WHERE token_hash = $1 AND used = FALSE AND expires_at > NOW()
+	`, tokenHash).Scan(&uid, &newMail)
+	if err != nil {
+		return "", "", err // sql.ErrNoRows if invalid/expired/used
+	}
+
+	// Ensure the new email is still free for this user BEFORE consuming the token.
+	var taken string
+	err = tx.QueryRow(`SELECT id FROM users WHERE email = $1 AND id <> $2 LIMIT 1`, newMail, uid).Scan(&taken)
+	if err == nil {
+		return "", "", ErrEmailTaken
+	}
+	if err != sql.ErrNoRows {
+		return "", "", err
+	}
+
+	// Atomically claim the token now that the address is confirmed free.
+	if _, err := tx.Exec(`
+		UPDATE email_change_tokens
+		SET used = TRUE
+		WHERE token_hash = $1
+	`, tokenHash); err != nil {
+		return "", "", err
+	}
+
+	if _, err := tx.Exec(`UPDATE users SET email = $1 WHERE id = $2`, newMail, uid); err != nil {
+		return "", "", err
+	}
+
+	if _, err := tx.Exec(`DELETE FROM refresh_tokens WHERE user_id = $1`, uid); err != nil {
+		return "", "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", "", err
+	}
+	return uid, newMail, nil
+}
+
+func DeleteExpiredEmailChangeTokens(db *sql.DB) error {
+	query := `DELETE FROM email_change_tokens WHERE expires_at < NOW() OR used = TRUE`
 	_, err := db.Exec(query)
 	return err
 }

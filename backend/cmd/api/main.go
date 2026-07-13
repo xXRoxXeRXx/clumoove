@@ -174,6 +174,10 @@ func main() {
 	mux.HandleFunc("POST /api/auth/forgot-password", server.handleForgotPassword)
 	mux.HandleFunc("POST /api/auth/reset-password", server.handleResetPassword)
 
+	mux.HandleFunc("GET /api/auth/email-change-available", server.handleEmailChangeAvailable)
+	mux.Handle("POST /api/auth/change-email", jwtMiddleware(http.HandlerFunc(server.handleChangeEmail)))
+	mux.HandleFunc("POST /api/auth/confirm-email-change", server.handleConfirmEmailChange)
+
 	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
 	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
 	mux.Handle("POST /api/migration/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowse)))
@@ -2684,6 +2688,191 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 		log.Printf("handleResetPassword: error claiming token: %v\n", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// ============================================================================
+// Email Change Handlers
+// ============================================================================
+
+func (s *APIServer) handleEmailChangeAvailable(w http.ResponseWriter, r *http.Request) {
+	available := os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_FROM_EMAIL") != ""
+	writeJSON(w, http.StatusOK, map[string]interface{}{"available": available})
+}
+
+func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+
+	ip := r.RemoteAddr
+	if !s.rateLimiter.Allow(ip, 3, 1*time.Minute) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	var req struct {
+		NewEmail string `json:"new_email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	req.NewEmail = strings.TrimSpace(strings.ToLower(req.NewEmail))
+	if req.NewEmail == "" || !strings.Contains(req.NewEmail, "@") || !strings.Contains(req.NewEmail, ".") {
+		http.Error(w, "Valid email is required", http.StatusBadRequest)
+		return
+	}
+
+	u, err := db.GetUserByID(s.db, userID)
+	if err != nil {
+		log.Printf("handleChangeEmail: error fetching user: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if req.NewEmail == strings.ToLower(u.Email) {
+		http.Error(w, "New email must differ from current email", http.StatusBadRequest)
+		return
+	}
+
+	// Ensure the new email is not already taken by another user
+	existing, err := db.GetUserByEmail(s.db, req.NewEmail)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("handleChangeEmail: error checking email: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if err == nil && existing.ID != userID {
+		http.Error(w, "Email already in use", http.StatusConflict)
+		return
+	}
+
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpFromEmail := os.Getenv("SMTP_FROM_EMAIL")
+	if smtpHost == "" || smtpFromEmail == "" {
+		http.Error(w, "Mail service not configured", http.StatusBadRequest)
+		return
+	}
+
+	rawToken := generateRandomString(32)
+	if rawToken == "" {
+		log.Printf("handleChangeEmail: failed to generate token\n")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	tokenHash := hashToken(rawToken)
+	expiresAt := time.Now().Add(4 * time.Hour)
+
+	if err := db.CreateEmailChangeToken(s.db, tokenHash, userID, req.NewEmail, expiresAt); err != nil {
+		log.Printf("handleChangeEmail: error storing token: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
+	confirmURL := fmt.Sprintf("%s/?email-change-token=%s", strings.TrimRight(frontendURL, "/"), rawToken)
+
+	smtpEncryption := os.Getenv("SMTP_ENCRYPTION")
+	if smtpEncryption == "" {
+		smtpEncryption = "starttls"
+	}
+
+	smtpCfg := email.SMTPConfig{
+		Host:       smtpHost,
+		Port:       os.Getenv("SMTP_PORT"),
+		Username:   os.Getenv("SMTP_USERNAME"),
+		Password:   os.Getenv("SMTP_PASSWORD"),
+		FromEmail:  smtpFromEmail,
+		FromName:   os.Getenv("SMTP_FROM_NAME"),
+		Encryption: smtpEncryption,
+	}
+	if smtpCfg.Port == "" {
+		smtpCfg.Port = "587"
+	}
+	if smtpCfg.FromName == "" {
+		smtpCfg.FromName = "Clumove"
+	}
+
+	htmlBody := email.BuildEmailChangeEmail(confirmURL, req.NewEmail)
+	if err := email.SendMail(smtpCfg, u.Email, "Clumove — E-Mail-Adresse ändern", htmlBody); err != nil {
+		log.Printf("handleChangeEmail: error sending email: %v\n", err)
+		http.Error(w, "Failed to send confirmation email", http.StatusInternalServerError)
+		return
+	}
+
+	emailHash := sha256.Sum256([]byte(u.Email))
+	log.Printf("handleChangeEmail: confirmation email sent to %x\n", emailHash[:8])
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
+	ip := r.RemoteAddr
+	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
+		http.Error(w, "Too many requests", http.StatusTooManyRequests)
+		return
+	}
+
+	var req struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Token == "" {
+		http.Error(w, "Token is required", http.StatusBadRequest)
+		return
+	}
+
+	tokenHash := hashToken(req.Token)
+	userID, newEmail, err := db.ClaimEmailChangeToken(s.db, tokenHash)
+	if err != nil {
+		if errors.Is(err, db.ErrEmailTaken) {
+			http.Error(w, "Email already in use", http.StatusConflict)
+			return
+		}
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid, expired, or already used token", http.StatusBadRequest)
+			return
+		}
+		log.Printf("handleConfirmEmailChange: error claiming token: %v\n", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	smtpHost := os.Getenv("SMTP_HOST")
+	smtpFromEmail := os.Getenv("SMTP_FROM_EMAIL")
+	if smtpHost != "" && smtpFromEmail != "" {
+		smtpEncryption := os.Getenv("SMTP_ENCRYPTION")
+		if smtpEncryption == "" {
+			smtpEncryption = "starttls"
+		}
+		smtpCfg := email.SMTPConfig{
+			Host:       smtpHost,
+			Port:       os.Getenv("SMTP_PORT"),
+			Username:   os.Getenv("SMTP_USERNAME"),
+			Password:   os.Getenv("SMTP_PASSWORD"),
+			FromEmail:  smtpFromEmail,
+			FromName:   os.Getenv("SMTP_FROM_NAME"),
+			Encryption: smtpEncryption,
+		}
+		if smtpCfg.Port == "" {
+			smtpCfg.Port = "587"
+		}
+		if smtpCfg.FromName == "" {
+			smtpCfg.FromName = "Clumove"
+		}
+
+		htmlBody := email.BuildEmailChangedNotificationEmail(newEmail)
+		if err := email.SendMail(smtpCfg, newEmail, "Clumove — E-Mail-Adresse geändert", htmlBody); err != nil {
+			log.Printf("handleConfirmEmailChange: error sending notification to new email (user %s): %v\n", userID, err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})

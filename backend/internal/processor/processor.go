@@ -1179,6 +1179,9 @@ func (p *Processor) RunCompletionNotifier(ctx context.Context) {
 			if err := db.DeleteExpiredPasswordResetTokens(p.db); err != nil {
 				fmt.Printf("[CompletionNotifier] Error cleaning up expired reset tokens: %v\n", err)
 			}
+			if err := db.DeleteExpiredEmailChangeTokens(p.db); err != nil {
+				fmt.Printf("[CompletionNotifier] Error cleaning up expired email change tokens: %v\n", err)
+			}
 		case <-throttleCleanupTicker.C:
 			p.cleanupThrottlers()
 		}
