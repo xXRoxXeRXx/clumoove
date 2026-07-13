@@ -386,7 +386,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
         <RefreshCw className="w-10 h-10 text-[var(--color-portal-navy-themed)] animate-spin" />
-        <p className="font-sans text-xs italic text-[var(--color-text-muted)]">// INITIALISIERE PROZESS-MONITOR</p>
+        <p className="font-sans text-xs italic text-[var(--color-text-muted)]">Migrationsinformationen werden geladen</p>
       </div>
     );
   }
