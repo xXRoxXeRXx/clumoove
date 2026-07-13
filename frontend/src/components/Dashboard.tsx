@@ -513,7 +513,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           {/* Active Transfers Card */}
-          {data.status === 'RUNNING' && data.active_files && data.active_files.length > 0 && (
+          {(data.status === 'RUNNING' || data.status === 'INDEXING') && data.active_files && data.active_files.length > 0 && (
             <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
               <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
                 <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
