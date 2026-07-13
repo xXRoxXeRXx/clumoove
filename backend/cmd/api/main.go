@@ -189,6 +189,7 @@ func main() {
 	mux.Handle("POST /api/migration/{id}/retry-failed", jwtMiddleware(http.HandlerFunc(server.handleRetryFailed)))
 	mux.Handle("POST /api/migration/{id}/reindex", jwtMiddleware(http.HandlerFunc(server.handleReindex)))
 	mux.Handle("PUT /api/migration/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetBandwidth)))
+	mux.Handle("PUT /api/migration/{id}/threads", jwtMiddleware(http.HandlerFunc(server.handleSetThreads)))
 
 	// Schedule Management Routes (Protected)
 	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
@@ -656,6 +657,45 @@ func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 
 type BandwidthRequest struct {
 	LimitMbps int `json:"limit_mbps"`
+}
+
+type ThreadsRequest struct {
+	Threads int `json:"threads"`
+}
+
+func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing migration ID", http.StatusBadRequest)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil || !owns {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	var req ThreadsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	threads := req.Threads
+	if threads < 1 || threads > 16 {
+		http.Error(w, "threads must be between 1 and 16", http.StatusBadRequest)
+		return
+	}
+
+	if err := db.UpdateMigrationThreads(s.db, id, threads); err != nil {
+		log.Printf("Error updating threads for migration %s: %v", id, err)
+		http.Error(w, "Failed to update threads", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {

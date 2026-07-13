@@ -472,6 +472,17 @@ func UpdateMigrationBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
 	return err
 }
 
+// UpdateMigrationThreads updates the thread count for a migration.
+func UpdateMigrationThreads(db *sql.DB, id string, threads int) error {
+	query := `
+		UPDATE migrations
+		SET threads = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+	_, err := db.Exec(query, threads, id)
+	return err
+}
+
 // UpdateMigrationStatus updates the status of a migration.
 // If errMsg is non-nil the error_message column is also updated;
 // passing nil leaves any previously recorded error intact.

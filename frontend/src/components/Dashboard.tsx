@@ -95,6 +95,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [reconnectNonce, setReconnectNonce] = useState<number>(0);
   const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
   const [bandwidthLoading, setBandwidthLoading] = useState<boolean>(false);
+  const [threads, setThreads] = useState<number>(4);
+  const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
 
   const handleDownloadReport = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -169,6 +171,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     }
   };
 
+  const commitThreadsChange = async (value: number) => {
+    setThreadsLoading(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/threads`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ threads: value }),
+      });
+      if (!response.ok) {
+        throw new Error('Threads konnten nicht aktualisiert werden.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert(`Fehler: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setThreadsLoading(false);
+    }
+  };
+
   const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
 
   const handleRetryFailed = async () => {
@@ -205,6 +229,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const lastActiveTime = useRef<number>(0);
 
   const prevStatusRef = useRef<string>('');
+  const threadsDraggingRef = useRef<boolean>(false);
 
 
   useEffect(() => {
@@ -237,6 +262,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
       if (payload.bandwidth_limit_mbps !== undefined) {
         setBandwidthLimit(payload.bandwidth_limit_mbps);
+      }
+      if (payload.threads !== undefined && !threadsDraggingRef.current) {
+        setThreads(payload.threads);
       }
 
       // Reset progress history if status changes to avoid calculations across states
@@ -593,6 +621,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 <span>40</span>
                 <span>50</span>
               </div>
+            </div>
+          )}
+
+          {/* Threads Slider */}
+          {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
+            <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
+                  Parallele Threads
+                </label>
+                <span className="text-xs font-bold text-portal-orange font-mono">{threads}</span>
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={16}
+                step={1}
+                value={threads}
+                disabled={threadsLoading}
+                onChange={(e) => setThreads(Number(e.target.value))}
+                onPointerDown={() => { threadsDraggingRef.current = true; }}
+                onPointerUp={(e) => {
+                  threadsDraggingRef.current = false;
+                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
+                }}
+                onKeyDown={() => { threadsDraggingRef.current = true; }}
+                onKeyUp={(e) => {
+                  threadsDraggingRef.current = false;
+                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
+                }}
+                className="w-full"
+              />
+              <p className="text-[9px] text-[var(--color-text-muted)] mt-2 leading-relaxed">
+                Höhere Werte beschleunigen die Migration, belasten aber Quell- und Zielserver. Änderung wirkt sofort.
+              </p>
             </div>
           )}
 
