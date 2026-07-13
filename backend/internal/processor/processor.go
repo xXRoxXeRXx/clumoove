@@ -47,9 +47,9 @@ type Processor struct {
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
-	// Default to a conservative worker pool (4) as documented in AGENTS.md.
+	// Default to 16 to match the maximum selectable threads per migration in the UI slider.
 	// The actual concurrency per migration is limited by the m.threads setting in the database during DequeueSQL.
-	maxThreads := 4
+	maxThreads := 16
 	if envVal := os.Getenv("MAX_THREADS"); envVal != "" {
 		if val, err := strconv.Atoi(envVal); err == nil && val > 0 {
 			maxThreads = val

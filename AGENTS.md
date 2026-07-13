@@ -72,7 +72,7 @@
 
 ### Threads & Parallelism
 - `threads` per migration is capped at 1–16 in `handleStart`. The worker respects this via the SQL dequeue query (`COUNT(*) < m.threads`).
-- Worker-level concurrency is set by `MAX_THREADS` env var (default: 4). This is the total parallel tasks per worker process, not per migration.
+- Worker-level concurrency is set by `MAX_THREADS` env var (default: 16, matching the max selectable per-migration threads slider). This is the total parallel tasks per worker process, not per migration.
 
 ### Retry & Backoff
 - Exponential backoff: $10 \times 3^{\text{attempt}}$ seconds (10 s → 30 s → 90 s), max 3 attempts.
