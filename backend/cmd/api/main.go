@@ -154,6 +154,7 @@ func main() {
 	// Auth Routes (Public)
 	mux.HandleFunc("POST /api/auth/register", server.handleRegister)
 	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
+	mux.HandleFunc("POST /api/auth/totp", server.handleTOTP)
 	mux.HandleFunc("POST /api/auth/refresh", server.handleRefresh)
 	mux.HandleFunc("POST /api/auth/logout", server.handleLogout)
 	mux.HandleFunc("GET /api/settings", server.handleGetSettings)
@@ -163,6 +164,10 @@ func main() {
 	mux.Handle("GET /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleMe)))
 	mux.Handle("PUT /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleUpdateProfile)))
 	mux.Handle("POST /api/auth/change-password", jwtMiddleware(http.HandlerFunc(server.handleChangePassword)))
+	mux.Handle("GET /api/auth/2fa/setup", jwtMiddleware(http.HandlerFunc(server.handle2FASetup)))
+	mux.Handle("POST /api/auth/2fa/enable", jwtMiddleware(http.HandlerFunc(server.handle2FAEnable)))
+	mux.Handle("POST /api/auth/2fa/disable", jwtMiddleware(http.HandlerFunc(server.handle2FADisable)))
+	mux.Handle("GET /api/auth/2fa/status", jwtMiddleware(http.HandlerFunc(server.handle2FAStatus)))
 	mux.Handle("POST /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleSetAvatar)))
 	mux.Handle("DELETE /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleDeleteAvatar)))
 	mux.Handle("PUT /api/settings", jwtMiddleware(http.HandlerFunc(server.handleUpdateSetting)))
@@ -1196,6 +1201,11 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
 		return
 	}
+	// Reject 2FA temp tokens: password-only tokens must not reach the migration WS.
+	if err := auth.RequireAuthenticated(claims); err != nil {
+		http.Error(w, "Unauthorized: second factor required", http.StatusUnauthorized)
+		return
+	}
 	userID := claims.UserID
 
 	mig, err := db.GetMigration(s.db, id)
@@ -1728,44 +1738,24 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Access Token (15 mins)
-	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
-	if err != nil {
-		http.Error(w, "Failed to generate access token", http.StatusInternalServerError)
+	// If 2FA is enabled, issue only a short-lived temp token and require a
+	// second factor at /api/auth/totp. No access/refresh tokens are issued yet.
+	if u.TotpEnabled {
+		tempToken, err := auth.Generate2FATempToken(u, s.jwtSecret)
+		if err != nil {
+			log.Printf("Login error: failed to generate 2FA temp token for user %s: %v\n", u.ID, err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{
+			"totp_required": true,
+			"temp_session":  tempToken,
+		})
 		return
 	}
 
-	// Refresh Token (7 days)
-	refreshToken, err := auth.GenerateRefreshToken()
-	if err != nil {
-		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
-		return
-	}
-
-	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-	tokenHash := hashToken(refreshToken)
-
-	err = db.StoreRefreshToken(s.db, tokenHash, u.ID, expiresAt)
-	if err != nil {
-		http.Error(w, "Failed to store refresh token", http.StatusInternalServerError)
-		return
-	}
-
-	auth.SetRefreshTokenCookie(w, r, refreshToken, expiresAt)
-
-	userResp := map[string]interface{}{
-		"id":           u.ID,
-		"email":        u.Email,
-		"display_name": u.DisplayName,
-		"role":         u.Role,
-	}
-	if len(u.Avatar) > 0 {
-		userResp["avatar"] = avatarDataURL(u)
-	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"user":         userResp,
-		"access_token": accessToken,
-	})
+	// No 2FA: issue access + refresh tokens directly.
+	s.issueTokens(w, r, u)
 }
 
 func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
@@ -1950,16 +1940,24 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := userResponse(u)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// userResponse builds the client-facing user object shared by all auth endpoints
+// (login, 2FA verification, and /api/auth/me) so the shape cannot drift.
+func userResponse(u *db.User) map[string]interface{} {
 	resp := map[string]interface{}{
 		"id":           u.ID,
 		"email":        u.Email,
 		"display_name": u.DisplayName,
 		"role":         u.Role,
+		"totp_enabled": u.TotpEnabled,
 	}
 	if len(u.Avatar) > 0 {
 		resp["avatar"] = avatarDataURL(u)
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp
 }
 
 func avatarDataURL(u *db.User) string {

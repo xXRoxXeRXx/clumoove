@@ -19,6 +19,10 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   const [passwordResetAvailable, setPasswordResetAvailable] = useState<boolean>(false);
   const [forgotMode, setForgotMode] = useState<boolean>(false);
   const [resetEmailSent, setResetEmailSent] = useState<boolean>(false);
+  const [totpSession, setTotpSession] = useState<string>('');
+  const [otpCode, setOtpCode] = useState<string>('');
+  const [otpError, setOtpError] = useState<string>('');
+  const [lockSeconds, setLockSeconds] = useState<number>(0);
 
   useEffect(() => {
     fetch(`${apiUrl}/api/settings`)
@@ -45,6 +49,14 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         console.error('Failed to fetch password reset availability:', err);
       });
   }, [apiUrl]);
+
+  useEffect(() => {
+    if (lockSeconds <= 0) return;
+    const timer = setInterval(() => {
+      setLockSeconds((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockSeconds]);
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,6 +91,137 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       setLoading(false);
     }
   };
+
+  const handleOTPSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setOtpError('');
+    setLoading(true);
+
+    const code = otpCode.trim();
+    if (!code) {
+      setOtpError('Bitte gib deinen Code ein.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiUrl}/api/auth/totp`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ temp_session: totpSession, code }),
+      });
+
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get('Retry-After') || '900');
+        setLockSeconds(retryAfter);
+        setOtpError('Zu viele Fehlversuche. Konto für 15 Minuten gesperrt.');
+        setLoading(false);
+        return;
+      }
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || 'Ungültiger Code.');
+      }
+
+      const data = await response.json();
+      onAuthSuccess(data.access_token, data.user);
+    } catch (err: unknown) {
+      setOtpError(err instanceof Error ? err.message : 'Verbindung zum Server fehlgeschlagen.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (totpSession) {
+    return (
+      <div className="max-w-md w-full mx-auto my-8 px-4 relative">
+        <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
+
+          <div className="flex flex-col items-center mb-8">
+            <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
+              <Lock className="w-6 h-6 stroke-[2.5]" />
+            </div>
+            <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
+              Zwei-Faktor-Authentifizierung
+            </h2>
+            <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
+              // GIB DEINEN CODE EIN
+            </p>
+          </div>
+
+          {otpError && (
+            <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+              {otpError}
+            </div>
+          )}
+
+          <form onSubmit={handleOTPSubmit} className="space-y-5">
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                Authenticator-Code
+              </label>
+              <div className="relative group">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoFocus
+                  required
+                  placeholder="123456"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm tracking-[0.5em] text-center focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                />
+              </div>
+            </div>
+
+            {lockSeconds > 0 && (
+              <p className="text-center text-xs font-mono text-rose-700">
+                Gesperrt. Erneut in {Math.floor(lockSeconds / 60)}:{(lockSeconds % 60).toString().padStart(2, '0')}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading || lockSeconds > 0}
+              className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  Wird verarbeitet...
+                </span>
+              ) : (
+                'Verifizieren'
+              )}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center text-xs font-mono text-[var(--color-text-muted)] border-t border-[var(--color-border)] pt-5">
+            <button
+              type="button"
+              onClick={() => {
+                setTotpSession('');
+                setOtpCode('');
+                setOtpError('');
+                setLockSeconds(0);
+              }}
+              className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
+            >
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (forgotMode) {
     return (
@@ -204,7 +347,14 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
       if (isLogin) {
         const data = await response.json();
-        onAuthSuccess(data.access_token, data.user);
+        if (data.totp_required && data.temp_session) {
+          setTotpSession(data.temp_session);
+          setOtpCode('');
+          setOtpError('');
+          setError('');
+        } else {
+          onAuthSuccess(data.access_token, data.user);
+        }
       } else {
         // Registration success: switch to login and show success message
         setIsLogin(true);

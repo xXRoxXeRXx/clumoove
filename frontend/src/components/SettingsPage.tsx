@@ -63,6 +63,124 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
   const [emailChangeLoading, setEmailChangeLoading] = useState<boolean>(false);
   const [emailChangeMessage, setEmailChangeMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // 2FA state
+  const [totpEnabled, setTotpEnabled] = useState<boolean>(false);
+  const [totpStatusLoading, setTotpStatusLoading] = useState<boolean>(true);
+  const [setupData, setSetupData] = useState<{ otpauth_uri: string; qr_png: string; secret: string } | null>(null);
+  const [setupLoading, setSetupLoading] = useState<boolean>(false);
+  const [enableCode, setEnableCode] = useState<string>('');
+  const [enableLoading, setEnableLoading] = useState<boolean>(false);
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [disablePassword, setDisablePassword] = useState<string>('');
+  const [disableLoading, setDisableLoading] = useState<boolean>(false);
+  const [totpMessage, setTotpMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Fetch 2FA status on mount
+  useEffect(() => {
+    fetch(`${apiUrl}/api/auth/2fa/status`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    })
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data) => {
+        setTotpEnabled(Boolean(data.totp_enabled));
+      })
+      .catch(() => {
+        setTotpEnabled(false);
+      })
+      .finally(() => {
+        setTotpStatusLoading(false);
+      });
+  }, [apiUrl, token]);
+
+  const handle2FASetup = async () => {
+    setTotpMessage(null);
+    setSetupLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/2fa/setup`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Einrichtung fehlgeschlagen.');
+      }
+      const data = await res.json();
+      setSetupData(data);
+      setBackupCodes([]);
+    } catch (err) {
+      setTotpMessage({ text: (err as Error).message, type: 'error' });
+    } finally {
+      setSetupLoading(false);
+    }
+  };
+
+  const handle2FAEnable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpMessage(null);
+    const code = enableCode.trim();
+    if (!code) {
+      setTotpMessage({ text: 'Bitte gib den Code aus deiner App ein.', type: 'error' });
+      return;
+    }
+    setEnableLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/2fa/enable`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ code }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Code ungültig.');
+      }
+      const data = await res.json();
+      setTotpEnabled(true);
+      setSetupData(null);
+      setEnableCode('');
+      setBackupCodes(data.backup_codes || []);
+    } catch (err) {
+      setTotpMessage({ text: (err as Error).message, type: 'error' });
+    } finally {
+      setEnableLoading(false);
+    }
+  };
+
+  const handle2FADisable = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTotpMessage(null);
+    if (!disablePassword) {
+      setTotpMessage({ text: 'Bitte gib dein Passwort ein.', type: 'error' });
+      return;
+    }
+    setDisableLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/auth/2fa/disable`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: disablePassword }),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Deaktivierung fehlgeschlagen.');
+      }
+      setTotpEnabled(false);
+      setDisablePassword('');
+      setSetupData(null);
+      setBackupCodes([]);
+      setTotpMessage({ text: 'Zwei-Faktor-Authentifizierung deaktiviert.', type: 'success' });
+    } catch (err) {
+      setTotpMessage({ text: (err as Error).message, type: 'error' });
+    } finally {
+      setDisableLoading(false);
+    }
+  };
+
   // Fetch whether the system mail service allows email changes
   useEffect(() => {
     fetch(`${apiUrl}/api/auth/email-change-available`)
@@ -694,6 +812,126 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 {passwordLoading ? 'Wird geändert...' : 'Passwort ändern'}
               </button>
             </form>
+          </div>
+
+          {/* 2FA Section */}
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <div className="flex items-center gap-2">
+                <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">Zwei-Faktor-Authentifizierung</h3>
+              </div>
+              {totpStatusLoading ? (
+                <span className="text-[10px] font-mono text-[var(--color-text-muted)]">…</span>
+              ) : totpEnabled ? (
+                <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">Aktiv</span>
+              ) : (
+                <span className="text-[10px] font-mono font-bold text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">Inaktiv</span>
+              )}
+            </div>
+
+            <MessageBanner message={totpMessage} />
+
+            {backupCodes.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
+                  Speichere diese Backup-Codes an einem sicheren Ort. Jeder Code funktioniert genau einmal.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {backupCodes.map((code) => (
+                    <div key={code} className="px-3 py-2 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-lg text-center font-mono text-sm tracking-widest text-[var(--color-portal-navy-themed)]">
+                      {code}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')); setTotpMessage({ text: 'Backup-Codes in Zwischenablage kopiert.', type: 'success' }); }}
+                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer"
+                >
+                  Codes kopieren
+                </button>
+              </div>
+            ) : setupData ? (
+              <form onSubmit={handle2FAEnable} className="space-y-4">
+                <div className="flex flex-col items-center gap-3">
+                  <img src={setupData.qr_png} alt="2FA QR-Code" className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2" />
+                  <p className="text-[10px] font-mono text-[var(--color-text-muted)] break-all text-center px-2">
+                    {setupData.secret}
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    Code bestätigen
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    value={enableCode}
+                    onChange={(e) => setEnableCode(e.target.value)}
+                    placeholder="123456"
+                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm tracking-[0.4em] text-center focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={enableLoading || !enableCode}
+                    className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  >
+                    {enableLoading ? 'Wird aktiviert...' : 'Aktivieren'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSetupData(null); setEnableCode(''); }}
+                    className="px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer"
+                  >
+                    Abbrechen
+                  </button>
+                </div>
+              </form>
+            ) : totpEnabled ? (
+              <form onSubmit={handle2FADisable} className="space-y-4">
+                <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
+                  Gib dein aktuelles Passwort ein, um die Zwei-Faktor-Authentifizierung zu deaktivieren.
+                </p>
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    Passwort
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    value={disablePassword}
+                    onChange={(e) => setDisablePassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={disableLoading || !disablePassword}
+                  className="w-full bg-[var(--color-error-bg)] text-[var(--color-error-text)] border border-[var(--color-error-border)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                >
+                  {disableLoading ? 'Wird deaktiviert...' : 'Deaktivieren'}
+                </button>
+              </form>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
+                  Schütze dein Konto mit einem zeitbasierten Einmalpasswort (TOTP) aus einer Authenticator-App.
+                </p>
+                <button
+                  type="button"
+                  onClick={handle2FASetup}
+                  disabled={setupLoading}
+                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                >
+                  {setupLoading ? 'Wird vorbereitet...' : 'Einrichten'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

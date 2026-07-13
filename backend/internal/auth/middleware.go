@@ -33,6 +33,13 @@ func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Reject 2FA temp tokens: they authenticate the password step only and
+			// must never grant access to protected routes before the second factor.
+			if err := RequireAuthenticated(claims); err != nil {
+				http.Error(w, "Unauthorized: second factor required", http.StatusUnauthorized)
+				return
+			}
+
 			// Inject full Claims into request context
 			ctx := context.WithValue(r.Context(), ClaimsKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))

@@ -201,7 +201,7 @@ function App() {
       const response = await originalFetch(input, init);
 
       const url = typeof input === 'string' ? input : (input as Request).url;
-      const isAuthRequest = url.includes('/api/auth/login') || url.includes('/api/auth/register') || url.includes('/api/auth/refresh');
+      const isAuthRequest = url.includes('/api/auth/login') || url.includes('/api/auth/register') || url.includes('/api/auth/refresh') || url.includes('/api/auth/totp');
 
       if (response.status === 401 && !isAuthRequest) {
         console.log('401 Unauthorized detected on URL:', url, 'Attempting silent token refresh...');

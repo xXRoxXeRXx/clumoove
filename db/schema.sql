@@ -11,6 +11,11 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT NOT NULL DEFAULT 'USER', -- USER, AUDITOR, ADMIN
     avatar BYTEA,
     avatar_mime TEXT,
+    totp_secret_encrypted TEXT,
+    totp_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    totp_backup_codes JSONB,
+    totp_failed_attempts INTEGER NOT NULL DEFAULT 0,
+    totp_locked_until TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

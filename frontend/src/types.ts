@@ -37,6 +37,7 @@ export interface User {
   display_name?: string;
   role?: string;
   avatar?: string;
+  totp_enabled?: boolean;
 }
 
 export interface Migration {

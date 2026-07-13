@@ -20,6 +20,7 @@ type Claims struct {
 	Email       string `json:"email"`
 	DisplayName string `json:"name"`
 	Role        string `json:"role"`
+	TwoFAPending bool  `json:"2fa_pending"`
 	jwt.RegisteredClaims
 }
 
@@ -86,6 +87,63 @@ func ValidateToken(tokenStr, secretKey string) (*Claims, error) {
 	}
 
 	return claims, nil
+}
+
+// Generate2FATempToken issues a short-lived (5 minutes) JWT carrying the
+// TwoFAPending marker. It is returned by the login endpoint when 2FA is enabled
+// and must be presented to /api/auth/totp to complete authentication.
+func Generate2FATempToken(user *db.User, secretKey string) (string, error) {
+	if secretKey == "" {
+		return "", errors.New("empty JWT secret key")
+	}
+
+	expirationTime := time.Now().Add(5 * time.Minute)
+	claims := &Claims{
+		UserID:       user.ID,
+		Email:        user.Email,
+		DisplayName:  user.DisplayName,
+		Role:         user.Role,
+		TwoFAPending: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "clumove-api",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(secretKey))
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
+}
+
+// Validate2FATempToken parses and validates a 2FA temp token, ensuring it
+// actually carries the TwoFAPending marker.
+func Validate2FATempToken(tokenStr, secretKey string) (*Claims, error) {
+	claims, err := ValidateToken(tokenStr, secretKey)
+	if err != nil {
+		return nil, err
+	}
+	if !claims.TwoFAPending {
+		return nil, errors.New("not a 2FA pending token")
+	}
+	return claims, nil
+}
+
+// RequireAuthenticated returns an error if the claims represent a token that is
+// not fully authenticated (e.g. a 2FA temp token still awaiting the second
+// factor). It must be called at every full-auth boundary after ValidateToken.
+func RequireAuthenticated(claims *Claims) error {
+	if claims == nil {
+		return errors.New("missing claims")
+	}
+	if claims.TwoFAPending {
+		return errors.New("second factor required")
+	}
+	return nil
 }
 
 // GenerateRefreshToken generates a secure, random refresh token

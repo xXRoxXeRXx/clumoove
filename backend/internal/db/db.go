@@ -64,15 +64,20 @@ type MigrationResourceStats struct {
 }
 
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	DisplayName  string    `json:"display_name"`
-	Role         string    `json:"role"`
-	Avatar       []byte    `json:"-"`
-	AvatarMime   string    `json:"-"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                 string         `json:"id"`
+	Email              string         `json:"email"`
+	PasswordHash       string         `json:"-"`
+	DisplayName        string         `json:"display_name"`
+	Role               string         `json:"role"`
+	Avatar             []byte         `json:"-"`
+	AvatarMime         string         `json:"-"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
+	TotpEnabled        bool           `json:"totp_enabled"`
+	TotpSecretEnc      string         `json:"-"`
+	TotpBackupCodes    StringArray    `json:"-"`
+	TotpFailedAttempts int            `json:"-"`
+	TotpLockedUntil    sql.NullTime   `json:"-"`
 }
 
 type RefreshToken struct {
@@ -318,6 +323,28 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS bandwidth_limit_mbps INT NOT NULL DEFAULT 0`)
 			if err != nil {
 				log.Printf("Failed schema migration (bandwidth_limit_mbps): %v\n", err)
+			}
+
+			// TOTP 2FA columns
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (totp_secret_encrypted): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`)
+			if err != nil {
+				log.Printf("Failed schema migration (totp_enabled): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_codes JSONB`)
+			if err != nil {
+				log.Printf("Failed schema migration (totp_backup_codes): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_failed_attempts INTEGER NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (totp_failed_attempts): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_locked_until TIMESTAMP WITH TIME ZONE`)
+			if err != nil {
+				log.Printf("Failed schema migration (totp_locked_until): %v\n", err)
 			}
 
 			_, err = db.Exec(`
@@ -935,33 +962,144 @@ func CreateUser(db *sql.DB, email, passwordHash, displayName string) (*User, err
 // GetUserByEmail retrieves a user by email
 func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at,
+			totp_enabled, totp_secret_encrypted, totp_backup_codes, totp_failed_attempts, totp_locked_until
 		FROM users WHERE email = $1
 	`
 	var u User
 	var mime sql.NullString
-	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt)
+	var secret sql.NullString
+	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+		&u.TotpEnabled, &secret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil)
 	if err != nil {
 		return nil, err
 	}
 	u.AvatarMime = mime.String
+	u.TotpSecretEnc = secret.String
 	return &u, nil
 }
 
 // GetUserByID retrieves a user by UUID
 func GetUserByID(db *sql.DB, id string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at,
+			totp_enabled, totp_secret_encrypted, totp_backup_codes, totp_failed_attempts, totp_locked_until
 		FROM users WHERE id = $1
 	`
 	var u User
 	var mime sql.NullString
-	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt)
+	var secret sql.NullString
+	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+		&u.TotpEnabled, &secret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil)
 	if err != nil {
 		return nil, err
 	}
 	u.AvatarMime = mime.String
+	u.TotpSecretEnc = secret.String
 	return &u, nil
+}
+
+// SetUserTOTPSecret stores the encrypted TOTP secret and resets 2FA state
+// (disabled, no backup codes, no failed attempts, no lockout). Used by setup
+// before the user verifies their first code.
+func SetUserTOTPSecret(database *sql.DB, userID, encryptedSecret string) error {
+	query := `
+		UPDATE users
+		SET totp_secret_encrypted = $1,
+		    totp_enabled = FALSE,
+		    totp_backup_codes = NULL,
+		    totp_failed_attempts = 0,
+		    totp_locked_until = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+	_, err := database.Exec(query, encryptedSecret, userID)
+	return err
+}
+
+// EnableUserTOTP marks 2FA as enabled and stores the backup code hashes.
+func EnableUserTOTP(database *sql.DB, userID string, backupCodeHashes StringArray) error {
+	query := `
+		UPDATE users
+		SET totp_enabled = TRUE,
+		    totp_backup_codes = $1,
+		    totp_failed_attempts = 0,
+		    totp_locked_until = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+	_, err := database.Exec(query, backupCodeHashes, userID)
+	return err
+}
+
+// DisableUserTOTP disables 2FA and clears the secret and backup codes.
+func DisableUserTOTP(database *sql.DB, userID string) error {
+	query := `
+		UPDATE users
+		SET totp_enabled = FALSE,
+		    totp_secret_encrypted = NULL,
+		    totp_backup_codes = NULL,
+		    totp_failed_attempts = 0,
+		    totp_locked_until = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`
+	_, err := database.Exec(query, userID)
+	return err
+}
+
+// ReplaceUsedBackupCode overwrites the stored backup code hashes with the
+// remaining set after one code has been consumed.
+func ReplaceUsedBackupCode(database *sql.DB, userID string, remainingHashes StringArray) error {
+	query := `
+		UPDATE users
+		SET totp_backup_codes = $1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+	_, err := database.Exec(query, remainingHashes, userID)
+	return err
+}
+
+// IncrementTOTPFailed atomically increments the failed-attempt counter. Once it
+// reaches maxAttempts (5) the account is locked for lockDuration (15 min) and the
+// counter is reset. Returns whether the account is now locked. The increment and
+// lock decision happen in a single UPDATE ... RETURNING to avoid a read-then-write
+// race under concurrent failed attempts.
+func IncrementTOTPFailed(database *sql.DB, userID string, maxAttempts int, lockDuration time.Duration) (bool, error) {
+	lockUntil := time.Now().Add(lockDuration)
+	query := `
+		UPDATE users
+		SET totp_failed_attempts = CASE
+		        WHEN totp_failed_attempts + 1 >= $2 THEN 0
+		        ELSE totp_failed_attempts + 1
+		    END,
+		    totp_locked_until = CASE
+		        WHEN totp_failed_attempts + 1 >= $2 THEN $3
+		        ELSE totp_locked_until
+		    END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+		RETURNING (totp_locked_until IS NOT NULL AND totp_locked_until > CURRENT_TIMESTAMP)
+	`
+	var locked bool
+	if err := database.QueryRow(query, userID, maxAttempts, lockUntil).Scan(&locked); err != nil {
+		return false, err
+	}
+	return locked, nil
+}
+
+// ResetTOTPFailed clears the failed-attempt counter and lockout.
+func ResetTOTPFailed(database *sql.DB, userID string) error {
+	query := `
+		UPDATE users
+		SET totp_failed_attempts = 0,
+		    totp_locked_until = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`
+	_, err := database.Exec(query, userID)
+	return err
 }
 
 // UpdateUserDisplayName updates the user's display name
