@@ -134,11 +134,24 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const handleCreateTargetFolder = async (parentPath: string) => {
-    if (!newFolderName.trim()) return;
+    const trimmedName = newFolderName.trim();
+    if (!trimmedName) return;
 
-    const fullNewPath = parentPath === '/' 
-      ? `/${newFolderName.trim()}` 
-      : `${parentPath}/${newFolderName.trim()}`;
+    // Client-side defense-in-depth against path traversal. Strip path
+    // separators and any ".." segments; the backend remains authoritative.
+    const safeName = trimmedName
+      .split('/').join('')
+      .split('\\').join('')
+      .split('..').join('')
+      .trim();
+    if (!safeName) {
+      setTargetError(t('fileBrowser.errors.invalidFolderName'));
+      return;
+    }
+
+    const fullNewPath = parentPath === '/'
+      ? `/${safeName}`
+      : `${parentPath}/${safeName}`;
 
     setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: true }));
     setTargetError(null);

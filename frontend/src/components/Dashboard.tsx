@@ -242,13 +242,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     lastActiveTime.current = 0;
     prevStatusRef.current = '';
 
-    // Construct WebSocket URL
+    // Construct WebSocket URL. The backend authenticates the socket via the
+    // `?token=<jwt>` query parameter (see AGENTS.md), NOT a subprotocol, so the
+    // bearer token must be appended here. Passing it as the 2nd WebSocket
+    // constructor argument would set it as a Subprotocol and leave the socket
+    // unauthenticated (broken access control).
     const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const apiUrlObj = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
-    const wsUrl = `${wsProto}://${apiUrlObj.host}/api/migration/${migrationId}/ws`;
+    const wsUrl = `${wsProto}://${apiUrlObj.host}/api/migration/${migrationId}/ws?token=${encodeURIComponent(token)}`;
 
     let isMounted = true;
-    let ws = new WebSocket(wsUrl, token);
+    let ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       // Connection established
@@ -378,8 +382,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
         const wsProtoR = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const apiUrlObjR = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
-        const wsUrlR = `${wsProtoR}://${apiUrlObjR.host}/api/migration/${migrationId}/ws`;
-        const wsR = new WebSocket(wsUrlR, token);
+        const wsUrlR = `${wsProtoR}://${apiUrlObjR.host}/api/migration/${migrationId}/ws?token=${encodeURIComponent(token)}`;
+        const wsR = new WebSocket(wsUrlR);
         wsR.onopen = ws.onopen;
         wsR.onmessage = ws.onmessage;
         wsR.onerror = ws.onerror;

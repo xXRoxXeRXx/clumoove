@@ -370,6 +370,18 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
     setAvatarMessage(null);
     setAvatarLoading(true);
 
+    // Client-side defense: cap the decoded avatar size before upload to avoid
+    // large-payload abuse. The backend remains authoritative for final limits.
+    const MAX_AVATAR_BYTES = 2 * 1024 * 1024; // 2 MiB
+    const commaIdx = croppedDataUrl.indexOf(',');
+    const b64 = commaIdx >= 0 ? croppedDataUrl.slice(commaIdx + 1) : croppedDataUrl;
+    const approxBytes = Math.ceil((b64.length * 3) / 4);
+    if (approxBytes > MAX_AVATAR_BYTES) {
+      setAvatarLoading(false);
+      setAvatarMessage({ text: t('settings.messages.avatarTooLarge'), type: 'error' });
+      return;
+    }
+
     try {
       const res = await fetch(`${apiUrl}/api/user/avatar`, {
         method: 'POST',
@@ -862,7 +874,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             ) : setupData ? (
               <form onSubmit={handle2FAEnable} className="space-y-4">
                 <div className="flex flex-col items-center gap-3">
-                  <img src={setupData.qr_png} alt="2FA QR-Code" className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2" />
+                  {setupData.qr_png.startsWith('data:image/') ? (
+                    <img src={setupData.qr_png} alt="2FA QR-Code" className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2" />
+                  ) : (
+                    <div className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2 flex items-center justify-center text-[10px] text-[var(--color-text-muted)] text-center font-mono">
+                      {t('settings.messages.qrInvalid')}
+                    </div>
+                  )}
                   <p className="text-[10px] font-mono text-[var(--color-text-muted)] break-all text-center px-2">
                     {setupData.secret}
                   </p>

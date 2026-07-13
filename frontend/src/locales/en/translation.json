@@ -173,7 +173,8 @@
       "createFolder": "Error creating the folder",
       "loadCalendars": "Error loading calendars",
       "loadContacts": "Error loading contacts",
-      "loadDir": "Error loading the directory"
+      "loadDir": "Error loading the directory",
+      "invalidFolderName": "Invalid folder name. Path separators and \"..\" are not allowed."
     }
   },
   "dashboard": {
@@ -285,6 +286,7 @@
     "backupCodesHint": "Store these backup codes in a safe place. Each code works exactly once.",
     "copyCodes": "Copy codes",
     "copied": "Backup codes copied to clipboard.",
+    "qrInvalid": "Invalid QR image received from the server.",
     "confirmCode": "Confirm code",
     "activate": "Activate",
     "activating": "Activating...",
@@ -327,6 +329,7 @@
       "avatarDeleted": "Profile picture deleted successfully!",
       "avatarError": "Error uploading the profile picture.",
       "avatarDeleteError": "Error deleting the profile picture.",
+      "avatarTooLarge": "The image is too large. Please choose an image smaller than 2 MiB.",
       "passwordChanged": "Password changed successfully!",
       "passwordMismatch": "The new passwords do not match.",
       "passwordTooShort": "The new password must be at least 8 characters long.",

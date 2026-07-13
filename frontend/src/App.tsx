@@ -36,6 +36,12 @@ const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
+// Security: warn when the API is reached over plaintext HTTP on a non-loopback
+// host, since access tokens and connection credentials would then transit in clear (A04).
+if (API_URL.startsWith('http://') && !/(localhost|127\.0\.0\.1)/.test(new URL(API_URL).hostname)) {
+  console.warn('[security] API communication is over plaintext HTTP. Use HTTPS to protect tokens and credentials.');
+}
+
 let refreshPromise: Promise<string> | null = null;
 
 const setMigrationInUrl = (id: string) => {
@@ -232,18 +238,14 @@ function App() {
           const newAccessToken = await refreshPromise;
           setToken(newAccessToken);
 
-          if (init) {
-            const headers = init.headers ? new Headers(init.headers) : new Headers();
-            headers.set('Authorization', `Bearer ${newAccessToken}`);
-            init.headers = headers;
-          } else {
-            init = {
-              headers: new Headers({
-                'Authorization': `Bearer ${newAccessToken}`
-              })
-            };
-          }
-          return originalFetch(input, init);
+          // Replay the original request with the refreshed token. Preserve the
+          // original init (method + body) — building a fresh init would drop
+          // them for non-GET requests. Only inject/override the auth header.
+          const replayInit: RequestInit = init ? { ...init } : {};
+          const headers = replayInit.headers ? new Headers(replayInit.headers) : new Headers();
+          headers.set('Authorization', `Bearer ${newAccessToken}`);
+          replayInit.headers = headers;
+          return originalFetch(input, replayInit);
         } catch (refreshErr) {
           console.error('Error during automatic token refresh:', refreshErr);
           handleLogout();
@@ -266,6 +268,10 @@ function App() {
   const handleStartSuccess = (id: string) => {
     setMigrationId(id);
     setMigrationInUrl(id);
+    // Secrets (source/target passwords, OAuth tokens, SFTP keys) are no longer
+    // needed once the migration is created — drop them from memory.
+    setCredentials(null);
+    setInitialFiles([]);
     setStep('dashboard');
   };
 
