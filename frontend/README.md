@@ -1,73 +1,44 @@
-# React + TypeScript + Vite
+# Clumove Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React-19-SPA (TypeScript 6) für die [Multi-Cloud-Migrationsplattform Clumove](../../README.md). Gebündelt mit Vite 8, gestylt mit Tailwind CSS v4, internationalisiert mit `i18next` (`de` / `en`).
 
-Currently, two official plugins are available:
+> 📘 **English:** [README.en.md](./README.en.md)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Tech-Stack
+- **React 19** + **TypeScript 6**
+- **Vite 8** (Dev-Server & Build)
+- **Tailwind CSS v4** (`@tailwindcss/vite`)
+- **Lucide React** (Icons)
+- **i18next** + **react-i18next** + `i18next-browser-languagedetector`
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Skripte
+```bash
+npm install      # Dependencies installieren
+npm run dev      # Vite-Dev-Server (Standard: http://localhost:5173)
+npm run build    # Typcheck (tsc -b) + Produktions-Build (dist/)
+npm run preview  # Build lokal voranschauen
+npm run lint     # ESLint
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Konfiguration
+Die API-URL wird automatisch aufgelöst (`src/utils/api.ts`):
+- `VITE_API_URL` gesetzt und kein `localhost` → direkt (Produktions-Proxy).
+- Benutzerdefinierte Domain ohne Port → Reverse-Proxy-Routing.
+- Lokal → Port `8001` (API-Container ist auf Host-Port `8001` gemappt).
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Fehlercodes aus dem Backend werden über die Locale-Tabellen (`src/locales/{de,en}/translation.json`, Namespace `errors.*`) lokalisiert – das Frontend liest niemals rohe `error`/`message`-Texte.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## Verzeichnisstruktur (Auszug)
 ```
+frontend/
+├── src/
+│   ├── components/     # UI-Komponenten (Dashboard, FileBrowser, Settings, …)
+│   ├── i18n.ts         # i18next-Initialisierung
+│   ├── locales/        # de / en Übersetzungen (Key-Parität erforderlich)
+│   └── utils/          # api.ts, apiError.ts, format.ts
+├── public/             # Statische Assets (logo.png, …)
+├── index.html
+└── vite.config.ts
+```
+
+Siehe das Haupt-README für Architektur, Storage-Anbieter, Sicherheitsmodell und API-Überblick.
