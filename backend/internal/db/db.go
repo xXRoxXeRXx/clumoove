@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 )
 
 // StringArray is a []string that implements sql.Scanner and driver.Valuer
@@ -78,6 +78,8 @@ type User struct {
 	TotpBackupCodes    StringArray    `json:"-"`
 	TotpFailedAttempts int            `json:"-"`
 	TotpLockedUntil    sql.NullTime   `json:"-"`
+	LoginFailedAttempts int           `json:"-"`
+	LoginLockedUntil   sql.NullTime   `json:"-"`
 }
 
 type RefreshToken struct {
@@ -342,10 +344,19 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (totp_failed_attempts): %v\n", err)
 			}
-			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_locked_until TIMESTAMP WITH TIME ZONE`)
-			if err != nil {
-				log.Printf("Failed schema migration (totp_locked_until): %v\n", err)
-			}
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_locked_until TIMESTAMP WITH TIME ZONE`)
+		if err != nil {
+			log.Printf("Failed schema migration (totp_locked_until): %v\n", err)
+		}
+
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_failed_attempts INTEGER NOT NULL DEFAULT 0`)
+		if err != nil {
+			log.Printf("Failed schema migration (login_failed_attempts): %v\n", err)
+		}
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_locked_until TIMESTAMP WITH TIME ZONE`)
+		if err != nil {
+			log.Printf("Failed schema migration (login_locked_until): %v\n", err)
+		}
 
 			_, err = db.Exec(`
 				CREATE TABLE IF NOT EXISTS user_smtp_settings (
@@ -943,6 +954,17 @@ func GetMigrationResourceStats(db *sql.DB, migrationID string) (*MigrationResour
 }
 
 // CreateUser inserts a new user into the database
+// IsUniqueViolation reports whether err is a PostgreSQL unique-constraint
+// violation (SQLSTATE 23505). Used to treat a duplicate-email insert as a
+// benign "already registered" case instead of a server error.
+func IsUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return pqErr.Code == "23505"
+	}
+	return false
+}
+
 func CreateUser(db *sql.DB, email, passwordHash, displayName string) (*User, error) {
 	query := `
 		INSERT INTO users (email, password_hash, display_name)
@@ -983,14 +1005,16 @@ func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 func GetUserByID(db *sql.DB, id string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at,
-			totp_enabled, totp_secret_encrypted, totp_backup_codes, totp_failed_attempts, totp_locked_until
+			totp_enabled, totp_secret_encrypted, totp_backup_codes, totp_failed_attempts, totp_locked_until,
+			login_failed_attempts, login_locked_until
 		FROM users WHERE id = $1
 	`
 	var u User
 	var mime sql.NullString
 	var secret sql.NullString
 	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
-		&u.TotpEnabled, &secret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil)
+		&u.TotpEnabled, &secret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
+		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {
 		return nil, err
 	}
@@ -1168,6 +1192,71 @@ func DeleteRefreshToken(db *sql.DB, tokenHash string) error {
 	query := `DELETE FROM refresh_tokens WHERE token_hash = $1`
 	_, err := db.Exec(query, tokenHash)
 	return err
+}
+
+// DeleteAllRefreshTokensForUser revokes every active session for a user. Used
+// after a password or email change so a previously compromised session can no
+// longer mint new access tokens.
+func DeleteAllRefreshTokensForUser(db *sql.DB, userID string) error {
+	query := `DELETE FROM refresh_tokens WHERE user_id = $1`
+	_, err := db.Exec(query, userID)
+	return err
+}
+
+// IncrementLoginFailed atomically increments the failed-login counter. Once it
+// reaches maxAttempts the account is locked for lockDuration and the counter is
+// reset. Returns whether the account is now locked. Mirrors IncrementTOTPFailed.
+func IncrementLoginFailed(database *sql.DB, userID string, maxAttempts int, lockDuration time.Duration) (bool, error) {
+	lockUntil := time.Now().Add(lockDuration)
+	query := `
+		UPDATE users
+		SET login_failed_attempts = CASE
+		        WHEN login_failed_attempts + 1 >= $2 THEN 0
+		        ELSE login_failed_attempts + 1
+		    END,
+		    login_locked_until = CASE
+		        WHEN login_failed_attempts + 1 >= $2 THEN $3
+		        ELSE login_locked_until
+		    END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+		RETURNING (login_locked_until IS NOT NULL AND login_locked_until > CURRENT_TIMESTAMP)
+	`
+	var locked bool
+	if err := database.QueryRow(query, userID, maxAttempts, lockUntil).Scan(&locked); err != nil {
+		return false, err
+	}
+	return locked, nil
+}
+
+// ResetLoginFailed clears the failed-login counter and lockout.
+func ResetLoginFailed(database *sql.DB, userID string) error {
+	query := `
+		UPDATE users
+		SET login_failed_attempts = 0,
+		    login_locked_until = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`
+	_, err := database.Exec(query, userID)
+	return err
+}
+
+// CountActiveMigrationsForUser returns the number of non-terminal migrations a
+// user currently has (INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS). Used
+// to enforce a per-user concurrency quota and prevent resource exhaustion.
+func CountActiveMigrationsForUser(db *sql.DB, userID string) (int, error) {
+	query := `
+		SELECT COUNT(*) FROM migrations
+		WHERE user_id = $1
+		  AND status IN ('INDEXING', 'RUNNING', 'PAUSED', 'PAUSED_CONNECTION_LOSS')
+	`
+	var count int
+	err := db.QueryRow(query, userID).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // GetUserIDByRefreshToken validates a refresh token and returns the owner's userID

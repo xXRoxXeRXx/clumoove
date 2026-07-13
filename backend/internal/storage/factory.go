@@ -23,6 +23,16 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 		}
 	}
 
+	// SSRF guard: reject egress to loopback / link-local (and private ranges
+	// when MIGRATION_BLOCK_PRIVATE is set) for providers that connect to a
+	// user-supplied host.
+	if providerType == "nextcloud" || providerType == "webdav" ||
+		providerType == "smb" || providerType == "sftp" {
+		if err := validateEgressURL(urlStr); err != nil {
+			return nil, err
+		}
+	}
+
 	switch providerType {
 	case "nextcloud":
 		return NewNextcloudProvider(urlStr, username, password)

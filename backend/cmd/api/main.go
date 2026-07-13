@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -41,7 +42,10 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
-			return true
+			// No Origin header (non-browser clients). The WS is authenticated via
+			// the token in Sec-WebSocket-Protocol / ?token, but we still require a
+			// browser-style origin from the whitelist to avoid open relay usage.
+			return false
 		}
 		return allowedOrigins[origin]
 	},
@@ -55,6 +59,11 @@ type APIServer struct {
 	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
 	ctx           context.Context
 	rateLimiter   ipRateLimiter
+	// trustedProxy, when true, lets the server derive the real client IP and
+	// HTTPS state from X-Forwarded-For / X-Forwarded-Proto. Only enable this
+	// when a trusted reverse proxy (that strips client-supplied copies of these
+	// headers) sits in front of the API — otherwise clients can spoof them.
+	trustedProxy bool
 }
 
 type ipRateLimiter struct {
@@ -67,13 +76,16 @@ type rateVisitor struct {
 	resetAt time.Time
 }
 
-func (rl *ipRateLimiter) Allow(ip string, maxRequests int, window time.Duration) bool {
+// Allow reports whether a request from key is permitted given a max request
+// count per window. Counters reset when the window expires. The limiter is a
+// simple fixed-window limiter; callers should use a stable per-client key.
+func (rl *ipRateLimiter) Allow(key string, maxRequests int, window time.Duration) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 	now := time.Now()
-	v, ok := rl.visitors[ip]
+	v, ok := rl.visitors[key]
 	if !ok || now.After(v.resetAt) {
-		rl.visitors[ip] = &rateVisitor{count: 1, resetAt: now.Add(window)}
+		rl.visitors[key] = &rateVisitor{count: 1, resetAt: now.Add(window)}
 		return true
 	}
 	if v.count >= maxRequests {
@@ -81,6 +93,82 @@ func (rl *ipRateLimiter) Allow(ip string, maxRequests int, window time.Duration)
 	}
 	v.count++
 	return true
+}
+
+// evictExpired periodically drops rate-limit visitors whose window has passed so
+// the in-memory map cannot grow without bound.
+func (rl *ipRateLimiter) evictExpired(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rl.mu.Lock()
+			now := time.Now()
+			for k, v := range rl.visitors {
+				if now.After(v.resetAt) {
+					delete(rl.visitors, k)
+				}
+			}
+			rl.mu.Unlock()
+		}
+	}
+}
+
+// Rate-limit and quota configuration for the public / sensitive endpoints.
+const (
+	loginRateLimit    = 10
+	loginRateWindow   = 1 * time.Minute
+	registerRateLimit = 5
+	registerRateWindow = 5 * time.Minute
+	connectRateLimit  = 30
+	connectRateWindow = 1 * time.Minute
+	totpRateLimit     = 10
+	totpRateWindow    = 1 * time.Minute
+
+	// Account lockout after repeated failed logins (mirrors the TOTP lockout).
+	loginMaxAttempts  = 5
+	loginLockDuration = 15 * time.Minute
+
+	// Per-user cap on simultaneously active (non-terminal) migrations.
+	maxActiveMigrations = 10
+)
+
+// clientIP returns a stable per-client key for rate limiting. When a trusted
+// reverse proxy is configured, the leftmost X-Forwarded-For address is used;
+// otherwise the connection's remote address (port stripped) is used. Trusting
+// X-Forwarded-For from an untrusted client would let the client spoof their key
+// and bypass the limiter, so it is only honoured behind a trusted proxy.
+func (s *APIServer) clientIP(r *http.Request) string {
+	if s.trustedProxy {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if idx := strings.IndexByte(xff, ','); idx >= 0 {
+				return strings.TrimSpace(xff[:idx])
+			}
+			return strings.TrimSpace(xff)
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// isSecure reports whether the request arrived over HTTPS. Behind a trusted
+// proxy this honours X-Forwarded-Proto; otherwise only a real TLS connection
+// counts. Client-supplied X-Forwarded-Proto is ignored unless the proxy is
+// trusted, preventing attackers from spoofing Secure-cookie / token behaviour.
+func (s *APIServer) isSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if s.trustedProxy && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return false
 }
 
 func main() {
@@ -136,6 +224,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// The JWT access token is signed with jwtSecret; the AES key is used only
+	// for credential encryption. They must differ (enforced above).
+	trustedProxy := os.Getenv("TRUSTED_PROXY") == "1" ||
+		strings.EqualFold(os.Getenv("TRUSTED_PROXY"), "true")
+
 	server := &APIServer{
 		db:            database,
 		queue:         q,
@@ -144,6 +237,7 @@ func main() {
 		jwtSecret:     jwtSecret,
 		ctx:           ctx,
 		rateLimiter:   ipRateLimiter{visitors: make(map[string]*rateVisitor)},
+		trustedProxy:  trustedProxy,
 	}
 	// Start Garbage Collector (GC) is removed as per requirements (permanent history until manual deletion)
 	// go server.runGarbageCollector(ctx)
@@ -210,8 +304,8 @@ func main() {
 	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
 	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
 
-	// Middleware (CORS)
-	handler := corsMiddleware(mux)
+	// Middleware (CORS + Security Headers)
+	handler := securityHeadersMiddleware(corsMiddleware(mux))
 
 	srv := &http.Server{
 		Addr:         ":" + port,
@@ -224,6 +318,9 @@ func main() {
 	// Graceful shutdown handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start the garbage collector style rate-limiter eviction loop
+	go server.rateLimiter.evictExpired(ctx, 1*time.Minute)
 
 	// Start the OAuth Token Rotation Daemon (PRD-12)
 	go server.RunOAuthRotationDaemon(ctx)
@@ -294,6 +391,29 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// securityHeadersMiddleware attaches defensive HTTP response headers to every
+// response. The OAuth callback route serves HTML, so it sets its own CSP with a
+// nonce via renderOAuthResultHTML; all other (JSON) responses get a strict
+// default-src 'none' policy which is safe for non-document bodies.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		// Only the OAuth HTML callback needs script execution; everything else
+		// is JSON and benefits from a locked-down policy.
+		if r.URL.Path != "/api/oauth/callback" {
+			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		}
+		// HSTS only makes sense over a real TLS connection.
+		if r.TLS != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // BrowseRequest is used by the dedicated resource-discovery endpoint.
 // Unlike ConnectRequest it only requires source credentials and a resource_type;
 // the target is not contacted (we are only browsing what to migrate from).
@@ -309,6 +429,11 @@ type BrowseRequest struct {
 // handleBrowse lists the top-level calendar collections or addressbooks, or files/directories on the source server.
 // It contacts only the source, avoiding the two extra round-trips that reusing handleConnect would cause.
 func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	var req BrowseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
@@ -380,6 +505,11 @@ type TargetBrowseRequest struct {
 }
 
 func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	var req TargetBrowseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
@@ -436,6 +566,11 @@ type TargetMkdirRequest struct {
 }
 
 func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	var req TargetMkdirRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
@@ -779,6 +914,11 @@ type ConnectRequest struct {
 }
 
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	var req ConnectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
@@ -943,6 +1083,19 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	// Get userID from context
 	userID := auth.GetUserIDFromContext(r.Context())
 
+	// Enforce a per-user cap on simultaneously active migrations to prevent
+	// resource exhaustion / runaway scheduling from a single account.
+	active, err := db.CountActiveMigrationsForUser(s.db, userID)
+	if err != nil {
+		log.Printf("handleStart: failed to count active migrations for user %s: %v\n", userID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if active >= maxActiveMigrations {
+		writeError(w, http.StatusConflict, ErrTooManyActiveMigrations)
+		return
+	}
+
 	// Validate threads
 	threads := req.Threads
 	if threads < 1 {
@@ -1081,6 +1234,22 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, mig)
 }
 
+// csvCell neutralises CSV formula injection: a cell that begins with one of the
+// spreadsheet formula trigger characters (= + - @ or a tab/CR) is prefixed with a
+// single quote so clients render it as literal text instead of executing it.
+// File paths and error messages in the report originate from the source server
+// and are therefore attacker-influenced.
+func csvCell(s string) string {
+	switch {
+	case s == "",
+		strings.HasPrefix(s, "="), strings.HasPrefix(s, "+"),
+		strings.HasPrefix(s, "-"), strings.HasPrefix(s, "@"),
+		strings.HasPrefix(s, "\t"), strings.HasPrefix(s, "\r"), strings.HasPrefix(s, "\n"):
+		return "'" + s
+	}
+	return s
+}
+
 func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -1129,10 +1298,10 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 			errMsg = task.ErrorMessage.String
 		}
 		_ = writer.Write([]string{
-			task.FilePath,
+			csvCell(task.FilePath),
 			fmt.Sprintf("%d", task.FileSize),
 			fmt.Sprintf("%d", task.Attempts),
-			errMsg,
+			csvCell(errMsg),
 		})
 	}
 
@@ -1146,10 +1315,10 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 			// Size/Retries columns are not meaningful for skipped folders; leave
 			// Retries blank so the report does not imply a retry was attempted.
 			_ = writer.Write([]string{
-				ie.Path,
+				csvCell(ie.Path),
 				"0",
 				"",
-				fmt.Sprintf("[indexing/%s] %s", ie.ResourceType, ie.ErrorMessage),
+				csvCell(fmt.Sprintf("[indexing/%s] %s", ie.ResourceType, ie.ErrorMessage)),
 			})
 		}
 	}
@@ -1182,7 +1351,7 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// Fallback to query param, but reject on secure HTTPS connections
 		queryToken := r.URL.Query().Get("token")
 		if queryToken != "" {
-			isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+			isHTTPS := s.isSecure(r)
 			if isHTTPS {
 				writeError(w, http.StatusUnauthorized, ErrWsTokenInsecure)
 				return
@@ -1390,6 +1559,7 @@ const (
 	ErrMigrationNotOwned      APIErrorCode = "MIGRATION_NOT_OWNED"
 	ErrMigrationInvalidState  APIErrorCode = "MIGRATION_INVALID_STATE"
 	ErrMigrationReindexConflict APIErrorCode = "MIGRATION_REINDEX_CONFLICT"
+	ErrTooManyActiveMigrations APIErrorCode = "TOO_MANY_ACTIVE_MIGRATIONS"
 	ErrMigrationNotFound      APIErrorCode = "MIGRATION_NOT_FOUND"
 	ErrThreadsOutOfRange      APIErrorCode = "THREADS_OUT_OF_RANGE"
 	ErrBandwidthOutOfRange    APIErrorCode = "BANDWIDTH_OUT_OF_RANGE"
@@ -1471,7 +1641,7 @@ func (s *APIServer) getRedirectURI(r *http.Request) string {
 	}
 
 	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+	if s.isSecure(r) {
 		scheme = "https"
 	}
 	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
@@ -1521,7 +1691,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isSecure := r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https"
+	isSecure := s.isSecure(r)
 	sameSite := http.SameSiteLaxMode
 	if isSecure {
 		sameSite = http.SameSiteNoneMode
@@ -1561,14 +1731,14 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if code == "" || state == "" {
 		log.Printf("handleOAuthCallback: Missing code or state")
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "*", "Authorization code or state missing")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "http://localhost:5173", "Authorization code or state missing")
 		return
 	}
 
 	parts := strings.SplitN(state, ":", 3)
 	if len(parts) < 3 {
 		log.Printf("handleOAuthCallback: Invalid state format (length %d)", len(parts))
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "*", "Invalid state parameter format")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "http://localhost:5173", "Invalid state parameter format")
 		return
 	}
 	stateToken := parts[0]
@@ -1579,18 +1749,18 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if !allowedOrigins[origin] {
 		log.Printf("handleOAuthCallback: rejected untrusted origin %q in state", origin)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "http://localhost:5173", "CSRF verification failed: untrusted origin")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", origin, "CSRF verification failed: untrusted origin")
 		return
 	}
 
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
 		log.Printf("handleOAuthCallback: CSRF check failed. Cookie err: %v, stateToken: %q", err, stateToken)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "*", "CSRF verification failed: state mismatch")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", origin, "CSRF verification failed: state mismatch")
 		return
 	}
 
-	isSecure := r.TLS != nil || strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https"
+	isSecure := s.isSecure(r)
 	sameSite := http.SameSiteLaxMode
 	if isSecure {
 		sameSite = http.SameSiteNoneMode
@@ -1632,6 +1802,16 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, targetOrigin string, errorMsg ...string) {
+	// Generate a CSP nonce and lock script execution to it. The inline script
+	// below is the only script on this page, so this prevents injection of
+	// arbitrary scripts even if a value were to be reflected unsafely.
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	nonce := base64.StdEncoding.EncodeToString(nonceBytes)
+	w.Header().Set("Content-Security-Policy", "script-src 'nonce-"+nonce+"'; frame-ancestors 'none'; object-src 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	var errStr string
@@ -1721,10 +1901,10 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 			<div class="card">
 				%s
 			</div>
-			<script>%s</script>
+			<script nonce="%s">%s</script>
 		</body>
 		</html>
-	`, func() string {
+	`, nonce, func() string {
 		if errStr != "" {
 			return fmt.Sprintf("<h3 style='color: #ef4444;'>Authorization Failed</h3><p>%s</p>", html.EscapeString(errStr))
 		}
@@ -1745,6 +1925,11 @@ type RegisterRequest struct {
 }
 
 func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), registerRateLimit, registerRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	regEnabled, err := db.GetSetting(s.db, "registrations_enabled")
 	if err != nil {
 		log.Printf("Register error: failed to check registrations_enabled: %v\n", err)
@@ -1768,36 +1953,43 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify if user already exists
-	_, err = db.GetUserByEmail(s.db, req.Email)
-	if err == nil {
-		// User found — reject duplicate
-		writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
-		return
-	}
-	if err != sql.ErrNoRows {
-		// Unexpected DB error — do not proceed with registration
-		log.Printf("Error checking existing user for %s: %v\n", req.Email, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	// Hash password
+	// Hash the password up front so both the "already registered" and the
+	// "freshly created" paths perform the (dominant) bcrypt work. This removes
+	// the timing side-channel that would otherwise distinguish the two cases.
 	passHash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	// Create user
-	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName)
-	if err != nil {
+	// Anti-enumeration: we must not reveal whether an email is already
+	// registered. Both "already exists" and "freshly created" return the same
+	// generic 200 response, so the endpoint cannot be used to enumerate
+	// accounts. (A 409-vs-201 distinction, or any body difference, would be an
+	// oracle.) The frontend simply switches to the login view on success.
+	if _, err := db.GetUserByEmail(s.db, req.Email); err == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	} else if err != sql.ErrNoRows {
+		log.Printf("Error checking existing user for %s: %v\n", req.Email, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	// Create user. A unique-violation here means a concurrent registration won
+	// the race; treat it identically to "already exists" (generic success) to
+	// stay non-enumerable.
+	if _, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName); err != nil {
+		if db.IsUniqueViolation(err) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+			return
+		}
 		log.Printf("Register error: failed to create user: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, u)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 type LoginRequest struct {
@@ -1806,6 +1998,11 @@ type LoginRequest struct {
 }
 
 func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), loginRateLimit, loginRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
@@ -1828,9 +2025,34 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject outright if the account is temporarily locked from failed logins.
+	if u.LoginLockedUntil.Valid && time.Now().Before(u.LoginLockedUntil.Time) {
+		retryAfter := int(time.Until(u.LoginLockedUntil.Time).Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	if !auth.CheckPasswordHash(req.Password, u.PasswordHash) {
+		locked, lerr := db.IncrementLoginFailed(s.db, u.ID, loginMaxAttempts, loginLockDuration)
+		if lerr != nil {
+			log.Printf("Login error: failed to record failed attempt for user %s: %v\n", u.ID, lerr)
+		}
+		if locked {
+			w.Header().Set("Retry-After", strconv.Itoa(int(loginLockDuration.Seconds())))
+			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+			return
+		}
 		writeError(w, http.StatusUnauthorized, ErrCredentialsInvalid)
 		return
+	}
+
+	// Successful credential check: clear any failed-login lockout state.
+	if err := db.ResetLoginFailed(s.db, u.ID); err != nil {
+		log.Printf("Login error: failed to reset failed attempts for user %s: %v\n", u.ID, err)
 	}
 
 	// If 2FA is enabled, issue only a short-lived temp token and require a
@@ -1912,7 +2134,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth.SetRefreshTokenCookie(w, r, newRefreshToken, newExpiresAt)
+	auth.SetRefreshTokenCookie(w, r, newRefreshToken, newExpiresAt, s.isSecure(r))
 
 	// New Access Token
 	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
@@ -1933,7 +2155,7 @@ func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 		_ = db.DeleteRefreshToken(s.db, tokenHash)
 	}
 
-	auth.ClearRefreshTokenCookie(w, r)
+	auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -2151,6 +2373,12 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		log.Printf("handleChangePassword: update error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+
+	// Revoke all existing sessions so a previously compromised token can no
+	// longer mint new access tokens after the password changed.
+	if err := db.DeleteAllRefreshTokensForUser(s.db, userID); err != nil {
+		log.Printf("handleChangePassword: failed to revoke refresh tokens for user %s: %v\n", userID, err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -2645,9 +2873,9 @@ func (s *APIServer) handlePasswordResetAvailable(w http.ResponseWriter, r *http.
 }
 
 func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
+	ip := s.clientIP(r)
 	if !s.rateLimiter.Allow(ip, 3, 1*time.Minute) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
@@ -2739,7 +2967,7 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
+	ip := s.clientIP(r)
 	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
@@ -2798,9 +3026,9 @@ func (s *APIServer) handleEmailChangeAvailable(w http.ResponseWriter, r *http.Re
 func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 
-	ip := r.RemoteAddr
+	ip := s.clientIP(r)
 	if !s.rateLimiter.Allow(ip, 3, 1*time.Minute) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
 
@@ -2904,7 +3132,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
-	ip := r.RemoteAddr
+	ip := s.clientIP(r)
 	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
@@ -2937,6 +3165,12 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 		log.Printf("handleConfirmEmailChange: error claiming token: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+
+	// Email changed: revoke all existing sessions so a previously compromised
+	// token can no longer mint new access tokens.
+	if err := db.DeleteAllRefreshTokensForUser(s.db, userID); err != nil {
+		log.Printf("handleConfirmEmailChange: failed to revoke refresh tokens for user %s: %v\n", userID, err)
 	}
 
 	smtpHost := os.Getenv("SMTP_HOST")

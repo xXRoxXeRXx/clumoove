@@ -72,6 +72,12 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 				return nil, fmt.Errorf("insecure connection (HTTP) is only allowed for local or private endpoints")
 			}
 		}
+
+		// SSRF guard: never allow egress to internal addresses, even over HTTPS
+		// (this is what would otherwise reach a cloud metadata endpoint).
+		if err := validateEgressHost(epURL.Hostname()); err != nil {
+			return nil, err
+		}
 	}
 
 	// Load default AWS SDK config.

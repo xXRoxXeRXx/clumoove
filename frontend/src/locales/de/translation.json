@@ -418,6 +418,7 @@
     "THREADS_OUT_OF_RANGE": "Threads müssen zwischen 1 und 16 liegen.",
     "BANDWIDTH_OUT_OF_RANGE": "Das Bandbreitenlimit muss zwischen 0 und 1000 liegen.",
     "NO_SOURCE_PATHS": "Bitte wähle mindestens einen Quellpfad aus.",
+    "TOO_MANY_ACTIVE_MIGRATIONS": "Zu viele aktive Migrationen. Bitte warte, bis eine abgeschlossen ist, bevor du eine weitere startest.",
     "ENCRYPTION_FAILED": "Verschlüsselung fehlgeschlagen.",
     "INVALID_SCHEDULED_TIME": "Ungültiges Zeitformat. Bitte ISO 8601 verwenden (z. B. 2026-07-15T02:00:00Z).",
     "SCHEDULED_TIME_PAST": "Der geplante Zeitpunkt muss in der Zukunft liegen.",

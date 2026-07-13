@@ -29,6 +29,11 @@ type TOTPVerifyRequest struct {
 // the access + refresh tokens. Accepts either a TOTP code or a single-use
 // backup code. Enforces the failed-attempt lockout.
 func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), totpRateLimit, totpRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	var req TOTPVerifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
@@ -347,7 +352,7 @@ func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.Us
 		return
 	}
 
-	auth.SetRefreshTokenCookie(w, r, refreshToken, expiresAt)
+	auth.SetRefreshTokenCookie(w, r, refreshToken, expiresAt, s.isSecure(r))
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user":         userResponse(u),

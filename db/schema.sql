@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
     totp_backup_codes JSONB,
     totp_failed_attempts INTEGER NOT NULL DEFAULT 0,
     totp_locked_until TIMESTAMP WITH TIME ZONE,
+    login_failed_attempts INTEGER NOT NULL DEFAULT 0,
+    login_locked_until TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
