@@ -73,7 +73,7 @@ func (p *WebDAVProvider) Close() error {
 	return nil
 }
 
-func (p *WebDAVProvider) buildResourceURL(resourceType string, endpointPath string) string {
+func (p *WebDAVProvider) buildResourceURL(endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
 	if cleanPath == "" {
 		return p.BaseURL
@@ -95,7 +95,7 @@ func (p *WebDAVProvider) newRequest(method, urlStr string, body io.Reader) (*htt
 func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	u := p.buildResourceURL("files", "/")
+	u := p.buildResourceURL("/")
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:">
 			<d:prop>
@@ -130,7 +130,7 @@ func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
 func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, resourcePath)
+	u := p.buildResourceURL(resourcePath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:">
@@ -201,7 +201,7 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 }
 
 func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
-	u := p.buildResourceURL(resourceType, dirPath)
+	u := p.buildResourceURL(dirPath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:">
@@ -304,7 +304,7 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 }
 
 func (p *WebDAVProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.buildResourceURL(filePath)
 	req, err := p.newRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -329,7 +329,7 @@ func (p *WebDAVProvider) StreamDownload(ctx context.Context, resourceType, fileP
 }
 
 func (p *WebDAVProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.buildResourceURL(filePath)
 
 	err := p.CreateParentDirectories(ctx, resourceType, filePath)
 	if err != nil {
@@ -386,7 +386,7 @@ func (p *WebDAVProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.buildResourceURL(filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propfind xmlns:d="DAV:">
 	<d:prop>
@@ -448,7 +448,7 @@ func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath 
 func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.buildResourceURL(filePath)
 	req, err := p.newRequest("DELETE", u, nil)
 	if err != nil {
 		return err
@@ -473,13 +473,13 @@ func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 func (p *WebDAVProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, oldPath)
+	u := p.buildResourceURL(oldPath)
 	req, err := p.newRequest("MOVE", u, nil)
 	if err != nil {
 		return err
 	}
 	req = req.WithContext(ctx)
-	destURL := p.buildResourceURL(resourceType, newPath)
+	destURL := p.buildResourceURL(newPath)
 	req.Header.Set("Destination", destURL)
 	req.Header.Set("Overwrite", "T")
 
@@ -517,7 +517,7 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	currentPath := ""
 	for _, part := range parts {
 		currentPath = currentPath + "/" + part
-		u := p.buildResourceURL(resourceType, currentPath)
+		u := p.buildResourceURL(currentPath)
 
 		req, err := p.newRequest("MKCOL", u, nil)
 		if err != nil {
@@ -554,7 +554,7 @@ func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 	}
 
 	// MKCOL the target directory itself.
-	u := p.buildResourceURL(resourceType, dirPath)
+	u := p.buildResourceURL(dirPath)
 	req, err := p.newRequest("MKCOL", u, nil)
 	if err != nil {
 		return err
@@ -587,7 +587,7 @@ func (p *WebDAVProvider) ApplyMetadata(ctx context.Context, resourceType, filePa
 		return nil
 	}
 
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.buildResourceURL(filePath)
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propertyupdate xmlns:d="DAV:">
   <d:set>
