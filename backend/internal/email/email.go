@@ -63,15 +63,15 @@ func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 
 	switch strings.ToLower(cfg.Encryption) {
 	case "tls":
-		return sendWithTLS(addr, cfg, auth, from, to, msg)
+		return sendWithTLS(addr, cfg, auth, to, msg)
 	case "starttls":
-		return sendWithSTARTTLS(addr, cfg, auth, from, to, msg)
+		return sendWithSTARTTLS(addr, cfg, auth, to, msg)
 	default:
 		return smtp.SendMail(addr, auth, cfg.FromEmail, []string{to}, []byte(msg))
 	}
 }
 
-func sendWithTLS(addr string, cfg SMTPConfig, auth smtp.Auth, from, to, msg string) error {
+func sendWithTLS(addr string, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
 	tlsConfig := &tls.Config{
 		ServerName: cfg.Host,
 	}
@@ -94,7 +94,7 @@ func sendWithTLS(addr string, cfg SMTPConfig, auth smtp.Auth, from, to, msg stri
 		}
 	}
 
-	if err := client.Mail(from); err != nil {
+	if err := client.Mail(cfg.FromEmail); err != nil {
 		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
 	}
 	if err := client.Rcpt(to); err != nil {
@@ -116,7 +116,7 @@ func sendWithTLS(addr string, cfg SMTPConfig, auth smtp.Auth, from, to, msg stri
 	return client.Quit()
 }
 
-func sendWithSTARTTLS(addr string, cfg SMTPConfig, auth smtp.Auth, from, to, msg string) error {
+func sendWithSTARTTLS(addr string, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("dial failed: %w", err)
@@ -142,7 +142,7 @@ func sendWithSTARTTLS(addr string, cfg SMTPConfig, auth smtp.Auth, from, to, msg
 		}
 	}
 
-	if err := client.Mail(from); err != nil {
+	if err := client.Mail(cfg.FromEmail); err != nil {
 		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
 	}
 	if err := client.Rcpt(to); err != nil {
