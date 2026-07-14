@@ -2857,7 +2857,12 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 	}
 
 	var encryptedPassword string
-	if !req.PasswordChanged {
+	// A password is considered "changed" when the client explicitly flags it
+	// or when a non-empty password is supplied in the request body. This handles
+	// the common case where the frontend only sends smtp_password on first setup
+	// or when the user types a new password, without sending password_changed.
+	passwordProvided := req.PasswordChanged || req.SMTPPassword != ""
+	if !passwordProvided {
 		existing, err := db.GetUserSMTPSettings(s.db, userID)
 		if err != nil && err != sql.ErrNoRows {
 			log.Printf("handleUpdateSMTPSettings: error fetching existing settings: %v\n", err)
@@ -2871,6 +2876,10 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	} else {
+		if req.SMTPPassword == "" {
+			writeError(w, http.StatusBadRequest, ErrSmtpPasswordRequired)
+			return
+		}
 		enc, err := crypto.Encrypt(req.SMTPPassword, s.encryptionKey)
 		if err != nil {
 			log.Printf("handleUpdateSMTPSettings: error encrypting password: %v\n", err)
