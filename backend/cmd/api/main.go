@@ -2022,11 +2022,15 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate email shape so we do not persist malformed addresses that would
-	// later break notification/reset flows.
-	if _, err := mail.ParseAddress(req.Email); err != nil {
+	// later break notification/reset flows. Reject display-name forms
+	// (e.g. `"Foo" <a@b.com>`) and normalise to the bare addr-spec, so the
+	// stored value is always a plain address usable by SMTP/reset flows.
+	addr, err := mail.ParseAddress(req.Email)
+	if err != nil || addr.Address != strings.TrimSpace(req.Email) {
 		writeError(w, http.StatusBadRequest, ErrEmailInvalid)
 		return
 	}
+	req.Email = addr.Address
 
 	// Hash the password up front so both the "already registered" and the
 	// "freshly created" paths perform the (dominant) bcrypt work. This removes
@@ -3084,7 +3088,7 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 	}
 
 	tokenHash := hashToken(req.Token)
-	_, err = db.ClaimPasswordResetToken(s.db, tokenHash, newHash)
+	userID, err := db.ClaimPasswordResetToken(s.db, tokenHash, newHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusBadRequest, ErrResetTokenInvalid)
@@ -3093,6 +3097,13 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 		log.Printf("handleResetPassword: error claiming token: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+
+	// Clear any failed-login lockout so a victim of a lockout-DoS attack can
+	// self-service unlock by resetting their password (the attacker cannot
+	// satisfy the reset email, so only the real owner reaches this point).
+	if err := db.ResetLoginFailed(s.db, userID); err != nil {
+		log.Printf("handleResetPassword: failed to clear login lockout for user %s: %v\n", userID, err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})

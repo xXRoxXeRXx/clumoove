@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -145,7 +146,7 @@ type Task struct {
 }
 
 // dbHostFromConnStr extracts the host from either a postgres:// URL or a
-// keyword/value connection string, used to exempt localhost dev databases
+// keyword/value connection string, used to exempt localhost/dev databases
 // from the default-credential rejection in InitDB.
 func dbHostFromConnStr(connStr string) string {
 	if strings.HasPrefix(connStr, "postgres://") || strings.HasPrefix(connStr, "postgresql://") {
@@ -167,15 +168,51 @@ func dbHostFromConnStr(connStr string) string {
 	return ""
 }
 
+// isLocalOrPrivateHost reports whether the database host is loopback or a
+// private (RFC1918/ULA) address. The default-credential rejection must not
+// fire for these: local dev (localhost) and Docker-internal services (e.g.
+// the "postgres-db" container, which resolves to a 172.x/10.x private IP) are
+// not exposed to the public internet, so the well-known postgres/postgres
+// credentials are acceptable there. Only a *publicly reachable* database on
+// default credentials is the real risk.
+func isLocalOrPrivateHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	// Tolerate bracketed IPv6 literals (e.g. "[::1]") from URL-style DSNs.
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsPrivate()
+	}
+	// Hostname: resolve and inspect every address. If any resolved address is
+	// public, treat the host as public (do not exempt). If the name cannot be
+	// resolved, exempt it rather than refusing to start — a connection to an
+	// unresolvable host would fail at Ping() regardless, so there is no
+	// credential-exposure risk, and failing open here avoids a boot-time
+	// regression on transient DNS outages.
+	ips, err := net.LookupIP(host)
+	if err != nil || len(ips) == 0 {
+		return true
+	}
+	for _, ip := range ips {
+		if !ip.IsLoopback() && !ip.IsPrivate() {
+			return false
+		}
+	}
+	return true
+}
+
 // InitDB initializes the database connection with startup retries
 func InitDB(connStr string) (*sql.DB, error) {
 	// Reject the well-known postgres/postgres default credentials when the
-	// database is not on localhost (M-4). A deployment that forgets to set
-	// DB_PASSWORD would otherwise run with a publicly-known password. The
-	// localhost fallback in cmd/api and cmd/worker intentionally uses
-	// postgres:postgres for local dev and is therefore exempted.
-	if host := dbHostFromConnStr(connStr); host != "localhost" && host != "127.0.0.1" && strings.Contains(connStr, "postgres:postgres@") {
-		return nil, fmt.Errorf("insecure DATABASE_URL: the default 'postgres:postgres' credentials are only permitted for a localhost database. Set DB_PASSWORD to a strong, unique password for any non-local deployment.")
+	// database is publicly reachable (M-4). A deployment that forgets to set
+	// DB_PASSWORD would otherwise run with a publicly-known password. Local
+	// dev (localhost) and Docker-internal services (which resolve to private
+	// RFC1918/ULA addresses) are exempted — they are not exposed to the public
+	// internet, so the default credentials are acceptable there. Only a
+	// publicly-reachable database on default credentials is the real risk.
+	if host := dbHostFromConnStr(connStr); !isLocalOrPrivateHost(host) && strings.Contains(connStr, "postgres:postgres@") {
+		return nil, fmt.Errorf("insecure DATABASE_URL: the default 'postgres:postgres' credentials are only permitted for a localhost or private-network database. Set DB_PASSWORD to a strong, unique password for any publicly-reachable deployment.")
 	}
 
 	db, err := sql.Open("postgres", connStr)

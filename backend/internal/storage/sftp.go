@@ -131,11 +131,27 @@ func (p *SFTPProvider) ensureConnected(ctx context.Context) error {
 		Timeout:         15 * time.Second,
 	}
 
+	// Pin egress to a re-validated IP on every connection so a DNS rebind
+	// between the construction-time SSRF check (validateEgressURL, called from
+	// the factory) and the actual dial cannot reach internal/metadata
+	// addresses. Mirrors the WebDAV/Nextcloud/S3 egressDialer behaviour;
+	// without this, SFTP was the only provider still exposed to the
+	// DNS-rebinding (TOCTOU) SSRF window. ssh.Dial has no custom-dialer hook in
+	// this x/crypto version, so we dial the connection ourselves via
+	// egressDialer and hand it to NewClientConn.
 	addr := net.JoinHostPort(p.Host, p.Port)
-	sshClient, err := ssh.Dial("tcp", addr, config)
+	dialCtx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+	defer cancel()
+	conn, err := egressDialer(p.Host)(dialCtx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
 	}
+	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
+	}
+	sshClient := ssh.NewClient(sshConn, chans, reqs)
 
 	sftpClient, err := sftp.NewClient(sshClient)
 	if err != nil {
