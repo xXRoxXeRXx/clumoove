@@ -192,7 +192,7 @@ Anstehende Übertragungen werden atomar über die PostgreSQL-Queue auf alle Work
 | `DB_USER` / `DB_PASSWORD` | PostgreSQL-Credentials | `postgres` |
 | `DATABASE_URL` | Vollständige DB-Verbindungs-URL | localhost-Fallback |
 | `REDIS_URL` | Redis-Verbindung (`redis://:pw@host:6379`) | localhost |
-| `REDIS_PASSWORD` | Redis-Passwort | `dev_redis_secure_pass_999` |
+| `REDIS_PASSWORD` | Redis-Passwort. **Pflicht** — kein Default; der API/Worker-Start schlägt fehl bei leerem oder bekanntem Standard-Passwort. Starke, einzigartige Werte verwenden. | – |
 | `CORS_ALLOWED_ORIGIN` | Erlaubte CORS-Origin für Produktion | – |
 | `VITE_ALLOWED_HOSTS` | Erlaubte Hosts für Vite-Dev-Server | – |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2-Credentials | – |

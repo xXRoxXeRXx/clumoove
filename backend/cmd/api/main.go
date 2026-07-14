@@ -16,6 +16,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"os/signal"
@@ -1839,7 +1840,33 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, origin)
 }
 
+// stripScriptTerminator removes sequences that could prematurely close or open
+// a <script> element when a value is reflected into an inline script via %q
+// (which does not escape '<' or '>'). Case-insensitive to defeat casing tricks.
+func stripScriptTerminator(s string) string {
+	replacer := strings.NewReplacer(
+		"<script", "&#60;script",
+		"</script", "&#60;/script",
+		"<\\/script", "&#60;\\/script",
+	)
+	return replacer.Replace(s)
+}
+
 func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, targetOrigin string, errorMsg ...string) {
+	// Sanitize any value that is reflected into the inline <script> below.
+	// Go's %q escapes quotes and backslashes but NOT '<' or '>', so a
+	// malicious/compromised OAuth provider returning "</script>" in an error
+	// or username string could otherwise terminate the script element (L-2).
+	provider = stripScriptTerminator(provider)
+	token = stripScriptTerminator(token)
+	refreshToken = stripScriptTerminator(refreshToken)
+	username = stripScriptTerminator(username)
+
+	var errStr string
+	if len(errorMsg) > 0 {
+		errStr = stripScriptTerminator(errorMsg[0])
+	}
+
 	// Generate a CSP nonce and lock script execution to it. The inline script
 	// below is the only script on this page, so this prevents injection of
 	// arbitrary scripts even if a value were to be reflected unsafely.
@@ -1851,11 +1878,6 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 	nonce := base64.StdEncoding.EncodeToString(nonceBytes)
 	w.Header().Set("Content-Security-Policy", "script-src 'nonce-"+nonce+"'; frame-ancestors 'none'; object-src 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-
-	var errStr string
-	if len(errorMsg) > 0 {
-		errStr = errorMsg[0]
-	}
 
 	var script string
 	if errStr != "" {
@@ -1988,6 +2010,21 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || req.Password == "" || req.DisplayName == "" {
 		writeError(w, http.StatusBadRequest, ErrMissingRequiredFields)
+		return
+	}
+
+	// Enforce the same password policy as change/reset (M-1): signup must not
+	// be the weakest entry point. The actual strength is bounded by bcrypt; we
+	// reject trivially short passwords here.
+	if len(req.Password) < 8 {
+		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
+		return
+	}
+
+	// Validate email shape so we do not persist malformed addresses that would
+	// later break notification/reset flows.
+	if _, err := mail.ParseAddress(req.Email); err != nil {
+		writeError(w, http.StatusBadRequest, ErrEmailInvalid)
 		return
 	}
 

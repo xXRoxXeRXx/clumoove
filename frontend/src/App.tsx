@@ -12,6 +12,7 @@ import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon } from 'l
 import { ThemeProvider } from './contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
+import { listenForOAuthMessage } from './utils/oauth';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'reset-password' | 'confirm-email';
 
@@ -202,6 +203,38 @@ function App() {
     setUser(loggedUser);
     setStep('history');
   };
+
+  // OAuth callback page posts tokens to window.opener via postMessage. The
+  // receiver validates event.origin against the API origin (M-3) before
+  // trusting the token. Tokens are held in memory only, like the password flow.
+  useEffect(() => {
+    const expectedOrigin = new URL(API_URL).origin;
+    return listenForOAuthMessage(expectedOrigin, {
+      onSuccess: async (msg) => {
+        setToken(msg.token);
+        try {
+          const meRes = await fetch(`${API_URL}/api/auth/me`, {
+            headers: { 'Authorization': `Bearer ${msg.token}` },
+            credentials: 'include',
+          });
+          if (meRes.ok) {
+            const me = await meRes.json();
+            localStorage.setItem('has_session', 'true');
+            setUser(me);
+            setStep('history');
+            return;
+          }
+        } catch (e) {
+          console.error('OAuth login: failed to fetch user:', e);
+        }
+        handleLogout();
+      },
+      onError: (msg) => {
+        console.error('OAuth login failed:', msg.error);
+        setStep('login');
+      },
+    });
+  }, []);
 
   // Patch global fetch to handle 401 token refresh automatically (I4 frontend fix)
   useEffect(() => {

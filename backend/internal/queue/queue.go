@@ -50,6 +50,11 @@ func NewQueue(redisAddr string) (*Queue, error) {
 	if password == "redis_secret" {
 		return nil, fmt.Errorf("insecure REDIS_PASSWORD: 'redis_secret' is the default weak password. Please set a secure password in the environment variables.")
 	}
+	// Reject the docker-compose dev default so a deployment that forgets to set
+	// REDIS_PASSWORD cannot run with a widely-known password (M-4).
+	if password == "dev_redis_secure_pass_999" {
+		return nil, fmt.Errorf("insecure REDIS_PASSWORD: 'dev_redis_secure_pass_999' is the docker-compose dev default. Override REDIS_PASSWORD with a strong, unique password for any non-local deployment.")
+	}
 
 	// Ping test with retry loop (resilient to Docker startup order)
 	var pingErr error

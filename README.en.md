@@ -192,7 +192,7 @@ Pending transfers are distributed atomically across all workers via the PostgreS
 | `DB_USER` / `DB_PASSWORD` | PostgreSQL credentials | `postgres` |
 | `DATABASE_URL` | Full DB connection URL | localhost fallback |
 | `REDIS_URL` | Redis connection (`redis://:pw@host:6379`) | localhost |
-| `REDIS_PASSWORD` | Redis password | `dev_redis_secure_pass_999` |
+| `REDIS_PASSWORD` | Redis password. **Required** — no default; the API/worker refuse to start with an empty or known-default password. Use a strong, unique value. | – |
 | `CORS_ALLOWED_ORIGIN` | Allowed CORS origin for production | – |
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for Vite dev server | – |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials | – |

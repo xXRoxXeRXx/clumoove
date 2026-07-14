@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
@@ -142,8 +144,40 @@ type Task struct {
 	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
+// dbHostFromConnStr extracts the host from either a postgres:// URL or a
+// keyword/value connection string, used to exempt localhost dev databases
+// from the default-credential rejection in InitDB.
+func dbHostFromConnStr(connStr string) string {
+	if strings.HasPrefix(connStr, "postgres://") || strings.HasPrefix(connStr, "postgresql://") {
+		if u, err := url.Parse(connStr); err == nil {
+			return u.Hostname()
+		}
+		return ""
+	}
+	// keyword/value form: host=... or host=.../dbname
+	for _, part := range strings.Fields(connStr) {
+		if strings.HasPrefix(part, "host=") {
+			host := strings.TrimPrefix(part, "host=")
+			if idx := strings.IndexAny(host, "/ "); idx >= 0 {
+				host = host[:idx]
+			}
+			return host
+		}
+	}
+	return ""
+}
+
 // InitDB initializes the database connection with startup retries
 func InitDB(connStr string) (*sql.DB, error) {
+	// Reject the well-known postgres/postgres default credentials when the
+	// database is not on localhost (M-4). A deployment that forgets to set
+	// DB_PASSWORD would otherwise run with a publicly-known password. The
+	// localhost fallback in cmd/api and cmd/worker intentionally uses
+	// postgres:postgres for local dev and is therefore exempted.
+	if host := dbHostFromConnStr(connStr); host != "localhost" && host != "127.0.0.1" && strings.Contains(connStr, "postgres:postgres@") {
+		return nil, fmt.Errorf("insecure DATABASE_URL: the default 'postgres:postgres' credentials are only permitted for a localhost database. Set DB_PASSWORD to a strong, unique password for any non-local deployment.")
+	}
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
