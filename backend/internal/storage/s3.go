@@ -19,7 +19,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
+	tmtypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -388,7 +389,7 @@ func (p *S3Provider) StreamUpload(ctx context.Context, resourceType, filePath st
 
 	cleanPath := p.cleanKey(filePath)
 
-	uploader := manager.NewUploader(p.client, func(u *manager.Uploader) {
+	uploader := transfermanager.New(p.client, func(o *transfermanager.Options) {
 		partSize := int64(8 * 1024 * 1024) // 8MB default
 		if size > 0 {
 			calculated := size / 9000
@@ -396,15 +397,15 @@ func (p *S3Provider) StreamUpload(ctx context.Context, resourceType, filePath st
 				partSize = calculated
 			}
 		}
-		u.PartSize = partSize
-		u.Concurrency = 3
+		o.PartSizeBytes = partSize
+		o.Concurrency = 3
 	})
 
-	_, err := uploader.Upload(ctx, &s3.PutObjectInput{
+	_, err := uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket:            aws.String(p.bucket),
 		Key:               aws.String(cleanPath),
 		Body:              stream,
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+		ChecksumAlgorithm: tmtypes.ChecksumAlgorithmSha256,
 	})
 	if err != nil {
 		if isS3AuthError(err) {
