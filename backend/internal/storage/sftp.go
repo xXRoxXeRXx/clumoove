@@ -104,7 +104,7 @@ func (p *SFTPProvider) handleError(err error) error {
 // ensureConnected establishes the SSH and SFTP connections if not already connected.
 // Note: pkg/sftp does not support context propagation on individual operations
 // (no WithContext equivalent). The SSH dial uses a fixed 15s timeout.
-func (p *SFTPProvider) ensureConnected(ctx context.Context) error {
+func (p *SFTPProvider) ensureConnected() error {
 	if p.sftpClient != nil {
 		return nil
 	}
@@ -186,7 +186,7 @@ func (p *SFTPProvider) Connect(ctx context.Context) (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		if isSFTPAuthError(err) {
 			return false, fmt.Errorf("sftp connect: %w", ErrAuth)
 		}
@@ -214,7 +214,7 @@ func (p *SFTPProvider) GetDirectoryListing(ctx context.Context, resourceType, di
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return nil, p.handleError(err)
 	}
 
@@ -254,7 +254,7 @@ func (p *SFTPProvider) InspectResource(ctx context.Context, resourceType, filePa
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return CloudResource{}, p.handleError(err)
 	}
 
@@ -281,7 +281,7 @@ func (p *SFTPProvider) StreamDownload(ctx context.Context, resourceType, filePat
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return nil, p.handleError(err)
 	}
 
@@ -306,7 +306,7 @@ func (p *SFTPProvider) StreamUpload(ctx context.Context, resourceType, filePath 
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return p.handleError(err)
 	}
 
@@ -353,7 +353,7 @@ func (p *SFTPProvider) FileExists(ctx context.Context, resourceType, filePath st
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return false, 0, p.handleError(err)
 	}
 
@@ -377,7 +377,7 @@ func (p *SFTPProvider) DeleteFile(ctx context.Context, resourceType, filePath st
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return p.handleError(err)
 	}
 
@@ -401,7 +401,7 @@ func (p *SFTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return p.handleError(err)
 	}
 
@@ -423,7 +423,7 @@ func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath s
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return "", p.handleError(err)
 	}
 
@@ -472,7 +472,7 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return p.handleError(err)
 	}
 
@@ -496,7 +496,7 @@ func (p *SFTPProvider) ApplyMetadata(ctx context.Context, resourceType, filePath
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
+	if err := p.ensureConnected(); err != nil {
 		return nil
 	}
 
