@@ -1,8 +1,9 @@
 package storage
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -410,34 +411,29 @@ func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath s
 		return "", p.handleError(err)
 	}
 
-	if p.sshClient == nil {
+	if p.sshClient == nil || p.sftpClient == nil {
 		return "", nil
 	}
 
 	cleanPath := p.cleanPath(filePath)
 
-	session, err := p.sshClient.NewSession()
+	// Compute the SHA-1 in-process by streaming the remote file through the
+	// SFTP client instead of shelling out to `sha1sum` over an SSH session.
+	// This removes the only remote-shell dependency and any quoting concerns.
+	f, err := p.sftpClient.Open(cleanPath)
 	if err != nil {
+		// A missing/uned file is not a hash error; mirror the prior
+		// behaviour of returning an empty hash in that case.
 		return "", nil
 	}
-	defer session.Close()
+	defer f.Close()
 
-	var stdout bytes.Buffer
-	session.Stdout = &stdout
-
-	escaped := strings.ReplaceAll(cleanPath, "'", "'\\''")
-	err = session.Run(fmt.Sprintf("sha1sum '%s'", escaped))
-	if err != nil {
+	h := sha1.New()
+	if _, err := io.Copy(h, f); err != nil {
 		return "", nil
 	}
 
-	output := strings.TrimSpace(stdout.String())
-	parts := strings.Fields(output)
-	if len(parts) >= 1 {
-		return parts[0], nil
-	}
-
-	return "", nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (p *SFTPProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {

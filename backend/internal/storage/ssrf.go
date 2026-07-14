@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
@@ -20,8 +21,11 @@ var blockPrivateEgress = os.Getenv("MIGRATION_BLOCK_PRIVATE") == "1" ||
 // validateEgressURL rejects URLs whose host resolves to a blocked (internal)
 // address, defending the API server against Server-Side Request Forgery via the
 // connect/browse endpoints. Both literal IPs and hostnames are checked, and a
-// hostname is resolved and every returned IP is inspected (mitigating the
-// trivial DNS-rebinding case where the name points at an internal address).
+// hostname is resolved and every returned IP is inspected at provider-construction
+// time (defense in depth). The decisive check, however, happens per-connection
+// inside the transport's DialContext (see egressDialer), which re-resolves and
+// re-validates the address immediately before each dial — closing the
+// DNS-rebinding (TOCTOU) window that construction-time-only validation leaves open.
 func validateEgressURL(rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -35,12 +39,73 @@ func validateEgressURL(rawURL string) error {
 }
 
 // validateEgressHost is like validateEgressURL but takes a host/endpoint
-// directly (used for the S3 endpoint query parameter).
+// directly (used for the S3 endpoint query parameter). It is also exported so
+// other packages (e.g. the email package) can reuse the identical egress
+// policy for their own user-supplied hosts.
 func validateEgressHost(host string) error {
 	if host == "" {
 		return fmt.Errorf("empty host")
 	}
 	return checkHostEgress(host)
+}
+
+// ValidateEgressHost is the exported entry point for the egress policy. See
+// validateEgressHost.
+func ValidateEgressHost(host string) error {
+	return validateEgressHost(host)
+}
+
+// egressDialer returns a DialContext that pins egress to a validated address.
+// For a hostname it re-resolves on every connection and dials only an address
+// that passes the SSRF checks, closing the DNS-rebinding (TOCTOU) window: the
+// IP that is actually dialed is the one validated, immediately before the
+// connection is opened. (Construction-time validation alone is defeatable by
+// flipping the DNS record between validation and connect.)
+//
+// The original hostname MUST remain in the request URL so that net/http keeps
+// using it as the TLS ServerName (SNI) and certificate-validation target.
+// Because the transport derives ServerName from the request URL's host — not from
+// the address we dial — certificate verification still targets the real hostname
+// while the TCP connection goes to the validated IP.
+func egressDialer(host string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// Literal IP: already validated at construction; dial directly.
+		if net.ParseIP(host) != nil {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}
+
+		_, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			// addr unexpectedly lacked a port; fall back to the host directly.
+			port = ""
+		}
+
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			return nil, fmt.Errorf("egress: failed to resolve %q: %w", host, err)
+		}
+
+		var lastErr error
+		for _, ip := range ips {
+			if blocked, reason := isBlockedIP(ip); blocked {
+				lastErr = fmt.Errorf("egress to %s (%s) is not allowed (%s)", host, ip, reason)
+				continue
+			}
+			target := net.JoinHostPort(ip.String(), port)
+			var d net.Dialer
+			conn, err := d.DialContext(ctx, network, target)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			return conn, nil
+		}
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, fmt.Errorf("egress: host %q resolved to no dialable addresses", host)
+	}
 }
 
 func checkHostEgress(host string) error {
@@ -51,9 +116,8 @@ func checkHostEgress(host string) error {
 		return nil
 	}
 
-	// Hostname: resolve and inspect every address. A single internal resolution
-	// is enough to reject — that closes the obvious DNS-rebinding vector at
-	// construction time.
+	// Hostname: resolve and inspect every address. This is defense in
+	// depth alongside the per-connection re-validation in egressDialer.
 	ips, err := net.LookupIP(host)
 	if err != nil {
 		return fmt.Errorf("failed to resolve host %q: %w", host, err)

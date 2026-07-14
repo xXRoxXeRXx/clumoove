@@ -177,7 +177,12 @@ func main() {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=disable"
+		// No explicit DATABASE_URL: refuse to silently fall back to an
+		// unencrypted connection. Default to TLS-required; operators must set
+		// DATABASE_URL explicitly (e.g. with sslmode=disable) for trusted
+		// local/dev setups that lack a TLS-capable Postgres.
+		log.Println("WARNING: DATABASE_URL not set — defaulting to sslmode=require. Set DATABASE_URL explicitly to override (e.g. for a local dev database).")
+		dbURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=require"
 	}
 
 	redisURL := os.Getenv("REDIS_URL")
@@ -198,6 +203,12 @@ func main() {
 
 	if subtle.ConstantTimeCompare([]byte(encryptionKey), []byte(jwtSecret)) == 1 {
 		log.Fatal("ENCRYPTION_SECRET_KEY and JWT_SECRET_KEY must be different to maintain cryptographic key segregation.")
+	}
+
+	// Enforce a minimum entropy/length for the HMAC key. A short shared
+	// secret weakens HS256 and is brute-forceable offline from a leaked token.
+	if len(jwtSecret) < 32 {
+		log.Fatalf("JWT_SECRET_KEY must be at least 32 bytes long (got %d). Refusing to start with an insecure signing key.", len(jwtSecret))
 	}
 
 	port := os.Getenv("PORT")
@@ -228,6 +239,16 @@ func main() {
 	// for credential encryption. They must differ (enforced above).
 	trustedProxy := os.Getenv("TRUSTED_PROXY") == "1" ||
 		strings.EqualFold(os.Getenv("TRUSTED_PROXY"), "true")
+
+	if !trustedProxy {
+		// When the API is fronted by a reverse proxy (the documented
+		// deployment: app → api), every request's RemoteAddr is the proxy,
+		// so per-IP rate limiting collapses onto a single shared bucket and
+		// is effectively disabled. Operators MUST set TRUSTED_PROXY=1 (and
+		// ensure the proxy strips client-supplied X-Forwarded-For) so the
+		// real client IP is used. Fail loudly here rather than silently.
+		log.Println("WARNING: TRUSTED_PROXY is not set. If the API runs behind a reverse proxy, per-IP rate limiting and lockout accounting will be ineffective (all clients share the proxy's address). Set TRUSTED_PROXY=1 if a trusted proxy sits in front of the API.")
+	}
 
 	server := &APIServer{
 		db:            database,
@@ -1635,11 +1656,28 @@ func generateRandomString(n int) string {
 }
 
 func (s *APIServer) getRedirectURI(r *http.Request) string {
-	envRedirect := os.Getenv("OAUTH_REDIRECT_URI")
-	if envRedirect != "" {
+	// 1. Full override (highest precedence).
+	if envRedirect := os.Getenv("OAUTH_REDIRECT_URI"); envRedirect != "" {
 		return envRedirect
 	}
 
+	// 2. Base URL configured by the operator. Deriving the callback from a
+	// trusted, operator-controlled value (rather than the client-supplied
+	// Host header) prevents an attacker from steering the OAuth provider's
+	// redirect toward a host they control.
+	if envBase := os.Getenv("OAUTH_PUBLIC_BASE_URL"); envBase != "" {
+		// Honour an explicit scheme in the configured base URL; default to https.
+		scheme := "https"
+		if strings.HasPrefix(envBase, "http://") {
+			scheme = "http"
+		}
+		envBase = strings.TrimPrefix(strings.TrimPrefix(envBase, "https://"), "http://")
+		envBase = strings.TrimRight(envBase, "/")
+		return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, envBase)
+	}
+
+	// 3. Fallback to the request Host (acceptable only when the API is not
+	// fronted by a reverse proxy; the Host header is client-controlled).
 	scheme := "http"
 	if s.isSecure(r) {
 		scheme = "https"
@@ -2037,11 +2075,20 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !auth.CheckPasswordHash(req.Password, u.PasswordHash) {
+		// Lockout accounting is keyed by the victim's email, not the
+		// attacker's IP, so a bad actor who knows a user's address can
+		// trigger a denial-of-service lockout. The per-IP login rate limit
+		// (loginRateLimit, applied at the top of this handler) bounds how
+		// fast any single source can attempt this; operators should also
+		// monitor the warning below for signs of a distributed lockout
+		// attack and consider a CAPTCHA / proof-of-work step.
 		locked, lerr := db.IncrementLoginFailed(s.db, u.ID, loginMaxAttempts, loginLockDuration)
 		if lerr != nil {
 			log.Printf("Login error: failed to record failed attempt for user %s: %v\n", u.ID, lerr)
 		}
 		if locked {
+			log.Printf("Security: account %s locked for %v after reaching %d failed login attempts (source IP %s)",
+				u.ID, loginLockDuration, loginMaxAttempts, s.clientIP(r))
 			w.Header().Set("Retry-After", strconv.Itoa(int(loginLockDuration.Seconds())))
 			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 			return

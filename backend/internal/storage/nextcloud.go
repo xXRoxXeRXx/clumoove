@@ -63,6 +63,13 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 		baseURL = baseURL + "/remote.php/dav"
 	}
 
+	// Extract the host for the egress dialer (validates the resolved IP on
+	// every connection to defeat DNS rebinding).
+	host := rawURL
+	if parsed, err := url.Parse(rawURL); err == nil && parsed.Hostname() != "" {
+		host = parsed.Hostname()
+	}
+
 	tr := &http.Transport{
 		ForceAttemptHTTP2:     false,
 		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
@@ -71,6 +78,11 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Minute,
+		// Pin egress to a re-validated IP on every connection so a DNS
+		// rebind between validation and connect cannot reach internal/metadata
+		// addresses. The original hostname stays in the request URL, preserving
+		// SNI / certificate validation.
+		DialContext: egressDialer(host),
 	}
 
 	return &NextcloudProvider{

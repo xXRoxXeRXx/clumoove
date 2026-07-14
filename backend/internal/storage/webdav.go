@@ -50,6 +50,11 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Minute,
+		// Pin egress to a re-validated IP on every connection so a DNS
+		// rebind between validation and connect cannot reach internal/metadata
+		// addresses. The original hostname stays in the request URL, preserving
+		// SNI / certificate validation.
+		DialContext: egressDialer(parsed.Hostname()),
 	}
 
 	return &WebDAVProvider{

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -80,10 +81,29 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 		}
 	}
 
+	// Build an HTTP client that pins egress to a re-validated IP on every
+	// connection (closing the DNS-rebinding/TOCTOU window). The keep-alive
+	// pool limits how often DNS is actually hit.
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:       100,
+			IdleConnTimeout:    90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
+	if endpoint != "" {
+		if epURL, err := url.Parse(endpoint); err == nil && epURL.Hostname() != "" {
+			if tr, ok := httpClient.Transport.(*http.Transport); ok {
+				tr.DialContext = egressDialer(epURL.Hostname())
+			}
+		}
+	}
+
 	// Load default AWS SDK config.
 	cfg, err := config.LoadDefaultConfig(context.Background(),
 		config.WithRegion(region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
+		config.WithHTTPClient(httpClient),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)

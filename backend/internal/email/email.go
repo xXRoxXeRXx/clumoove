@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/smtp"
 	"strings"
+
+	"backend/internal/storage"
 )
 
 type SMTPConfig struct {
@@ -20,21 +22,26 @@ type SMTPConfig struct {
 }
 
 
-// ValidateSMTPHost checks that the SMTP host is not a private/internal IP address
-// to prevent SSRF attacks. Only public hostnames and IPs are allowed.
+// ValidateSMTPHost checks that the SMTP host is not a private/internal IP
+// address to prevent SSRF attacks. Literal internal IPs are rejected directly;
+// hostnames are resolved and every returned address is inspected (mirroring
+// storage.ValidateEgressHost), closing the DNS-rebinding case where a name
+// points at an internal/metadata address such as 169.254.169.254.
 func ValidateSMTPHost(host string) error {
 	if host == "" {
 		return fmt.Errorf("SMTP host is required")
 	}
-	// Allow public hostnames (will be resolved by SMTP dialer)
-	// but reject literal private/internal IPs
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Not an IP literal — hostname is fine (DNS resolved at dial time)
+
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return fmt.Errorf("SMTP host must not be a private or internal IP address")
+		}
 		return nil
 	}
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-		return fmt.Errorf("SMTP host must not be a private or internal IP address")
+
+	// Hostname: resolve and validate every address (SSRF / DNS-rebinding).
+	if err := storage.ValidateEgressHost(host); err != nil {
+		return fmt.Errorf("SMTP host must not resolve to a private or internal address")
 	}
 	return nil
 }

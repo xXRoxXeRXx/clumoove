@@ -19,7 +19,10 @@ func main() {
 	// Read environment variables
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=disable"
+		// No explicit DATABASE_URL: default to TLS-required rather than
+		// silently falling back to an unencrypted connection.
+		log.Println("WARNING: DATABASE_URL not set — defaulting to sslmode=require. Set DATABASE_URL explicitly to override (e.g. for a local dev database).")
+		dbURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=require"
 	}
 
 	redisURL := os.Getenv("REDIS_URL")
