@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"html"
+	"mime"
 	"net"
 	"net/smtp"
 	"strings"
@@ -166,14 +167,31 @@ func sendWithSTARTTLS(addr string, cfg SMTPConfig, auth smtp.Auth, to, msg strin
 
 func buildMessage(from, to, subject, htmlBody string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("From: %s\r\n", from))
+	b.WriteString(fmt.Sprintf("From: %s\r\n", encodeFromHeader(from)))
 	b.WriteString(fmt.Sprintf("To: %s\r\n", to))
-	b.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	b.WriteString(fmt.Sprintf("Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", subject)))
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
 	b.WriteString("\r\n")
 	b.WriteString(htmlBody)
 	return b.String()
+}
+
+// encodeFromHeader RFC 2047-encodes the display name portion of a
+// "Display Name <addr>" From header, leaving ASCII addresses untouched.
+func encodeFromHeader(from string) string {
+	if idx := strings.LastIndex(from, "<"); idx >= 0 {
+		display := strings.TrimSpace(from[:idx])
+		addr := strings.TrimSpace(from[idx:])
+		if display == "" {
+			return addr
+		}
+		return mime.QEncoding.Encode("UTF-8", display) + " " + addr
+	}
+	if strings.TrimSpace(from) == "" {
+		return from
+	}
+	return mime.QEncoding.Encode("UTF-8", from)
 }
 
 func BuildMigrationReportEmail(migrationID, status string, totalFiles, processedFiles, failedFiles, skippedFiles int, totalBytes, processedBytes int64, errorMessage string) string {
