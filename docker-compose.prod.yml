@@ -54,6 +54,13 @@ services:
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
       - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Clumove}
+      - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-starttls}
     depends_on:
       - postgres-db
       - redis-queue
