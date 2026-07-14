@@ -12,8 +12,8 @@ interface ResetPasswordFormProps {
 function getPasswordStrength(password: string): { score: number; label: string; color: string } {
   if (password.length === 0) return { score: 0, label: '', color: '' };
   let score = 0;
-  if (password.length >= 8) score++;
   if (password.length >= 12) score++;
+  if (password.length >= 16) score++;
   if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score++;
   if (/\d/.test(password)) score++;
   if (/[^A-Za-z0-9]/.test(password)) score++;
@@ -40,7 +40,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
     e.preventDefault();
     setError('');
 
-    if (password.length < 8) {
+    if (password.length < 12) {
       setError(t('reset.tooShort'));
       return;
     }
@@ -195,7 +195,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
           <button
             type="submit"
-            disabled={loading || password.length < 8 || password !== confirmPassword}
+            disabled={loading || password.length < 12 || password !== confirmPassword}
             className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
           >
               {loading ? (

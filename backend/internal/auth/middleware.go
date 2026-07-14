@@ -61,6 +61,43 @@ func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
 	}
 }
 
+// AuthMiddlewareAllowMustChange validates the JWT and allows must-change-password
+// temp tokens (used by the forced password-rotation flow) through to the
+// change-password route. It still rejects 2FA temp tokens, which are a distinct,
+// incomplete auth state that must never reach a protected route.
+func AuthMiddlewareAllowMustChange(secretKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				writeUnauthorized(w)
+				return
+			}
+
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+				writeUnauthorized(w)
+				return
+			}
+
+			claims, err := ValidateToken(parts[1], secretKey)
+			if err != nil {
+				writeUnauthorized(w)
+				return
+			}
+
+			// 2FA temp tokens are still rejected; only MustChangePassword is permitted.
+			if claims.TwoFAPending {
+				writeUnauthorized(w)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), ClaimsKey, claims)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
 // GetUserIDFromContext retrieves the authenticated user's ID from the context
 func GetUserIDFromContext(ctx context.Context) string {
 	if val := ctx.Value(ClaimsKey); val != nil {

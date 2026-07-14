@@ -8,7 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     display_name TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'USER', -- USER, AUDITOR, ADMIN
+    role TEXT NOT NULL DEFAULT 'USER', -- USER, ADMIN
+    active BOOLEAN NOT NULL DEFAULT TRUE, -- soft deactivation (suspend); blocks login
+    must_change_password BOOLEAN NOT NULL DEFAULT FALSE, -- forced rotation on first login
     avatar BYTEA,
     avatar_mime TEXT,
     totp_secret_encrypted TEXT,
@@ -203,3 +205,18 @@ CREATE TABLE IF NOT EXISTS indexing_errors (
 );
 
 CREATE INDEX IF NOT EXISTS idx_indexing_errors_migration_id ON indexing_errors(migration_id);
+
+-- Audit Log: immutable, instance-wide record of security-relevant events.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID,                  -- actor (NULL for failed logins)
+    action  TEXT NOT NULL,
+    target  TEXT,                  -- migration_id / user_id / email / setting key
+    ip      TEXT,
+    details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);

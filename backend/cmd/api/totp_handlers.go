@@ -256,6 +256,8 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.writeAudit(r, db.Audit2FAEnabled, userID, userID, nil)
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"success":      true,
 		"backup_codes": plainCodes,
@@ -304,6 +306,8 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+
+	s.writeAudit(r, db.Audit2FADisabled, userID, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }

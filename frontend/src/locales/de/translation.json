@@ -21,6 +21,7 @@
   },
   "nav": {
     "settings": "Einstellungen",
+    "admin": "Verwaltung",
     "logout": "Abmelden"
   },
   "footer": {
@@ -61,7 +62,12 @@
     "totpRequired": "Sicherheitscode erforderlich.",
     "totpLocked": "Zu viele Fehlversuche. Das Konto wurde für 15 Minuten gesperrt.",
     "lockedRetry": "Konto gesperrt. Erneuter Versuch in {{time}}",
-    "resetLinkSent": "Falls ein Konto mit dieser E-Mail-Adresse existiert, wurde ein Link gesendet."
+    "resetLinkSent": "Falls ein Konto mit dieser E-Mail-Adresse existiert, wurde ein Link gesendet.",
+    "mustChangePassword": "Neues Passwort festlegen",
+    "setNewPassword": "Aus Sicherheitsgründen lege bitte ein neues Passwort fest, um fortzufahren.",
+    "newPassword": "Neues Passwort",
+    "confirmPassword": "Neues Passwort bestätigen",
+    "changePassword": "Passwort ändern"
   },
   "connect": {
     "sourceTitle": "Quelle (Daten von hier kopieren)",
@@ -362,7 +368,7 @@
     "submit": "Passwort zurücksetzen",
     "changed": "Passwort geändert",
     "redirecting": "Du wirst zur Anmeldung weitergeleitet...",
-    "tooShort": "Das Passwort muss mindestens 8 Zeichen lang sein.",
+    "tooShort": "Das Passwort muss mindestens 12 Zeichen lang sein.",
     "mismatch": "Die Passwörter stimmen nicht überein.",
     "failed": "Das Zurücksetzen des Passworts ist fehlgeschlagen.",
     "networkError": "Verbindung zum Server fehlgeschlagen.",
@@ -440,7 +446,7 @@
     "OAUTH_GENERATION_FAILED": "Verbindung konnte nicht vorbereitet werden.",
     "DISPLAY_NAME_REQUIRED": "Der Anzeigename ist ein Pflichtfeld.",
     "PASSWORD_MISMATCH": "Die neuen Passwörter stimmen nicht überein.",
-    "PASSWORD_TOO_SHORT": "Das Passwort muss mindestens 8 Zeichen lang sein.",
+    "PASSWORD_TOO_SHORT": "Das Passwort muss mindestens 12 Zeichen lang sein.",
     "AVATAR_INVALID": "Ungültiges Bildformat.",
     "AVATAR_TYPE_UNSUPPORTED": "Nicht unterstütztes Bildformat. Bitte verwende PNG, JPEG, WebP oder GIF.",
     "AVATAR_TOO_LARGE": "Das Profilbild darf maximal 2 MB groß sein.",
@@ -466,6 +472,83 @@
     "WS_TOKEN_INSECURE": "Sicherheits-Codes dürfen nicht unverschlüsselt übertragen werden.",
     "WS_TOKEN_MISSING": "Sicherheits-Code fehlt.",
     "WS_TOKEN_INVALID": "Sicherheits-Code ungültig oder abgelaufen.",
-    "INTERNAL_ERROR": "Ein interner Serverfehler ist aufgetreten. Bitte versuche es später noch einmal."
+    "INTERNAL_ERROR": "Ein interner Serverfehler ist aufgetreten. Bitte versuche es später noch einmal.",
+    "USER_DISABLED": "Dieses Konto wurde gesperrt. Bitte wende dich an einen Administrator.",
+    "USER_NOT_FOUND": "Der angeforderte Benutzer wurde nicht gefunden.",
+    "CANNOT_MODIFY_SELF": "Du kannst diese Aktion nicht an deinem eigenen Konto ausführen.",
+    "LAST_ADMIN": "Der letzte aktive Administrator kann nicht entfernt werden.",
+    "INVALID_ROLE": "Ungültige Rolle angegeben.",
+    "PASSWORD_CHANGE_REQUIRED": "Du musst dein Passwort ändern, bevor du fortfahren kannst."
+  },
+  "admin": {
+    "title": "Verwaltung",
+    "tabs": {
+      "users": "Benutzer",
+      "migrations": "Übertragungen",
+      "stats": "Statistiken",
+      "audit": "Audit-Protokoll"
+    },
+    "users": {
+      "create": "Benutzer erstellen",
+      "created": "Benutzer erstellt.",
+      "allRoles": "Alle Rollen",
+      "allStates": "Alle Zustände",
+      "suspended": "Gesperrt",
+      "role": "Rolle",
+      "createdAt": "Erstellt",
+      "suspend": "Sperren",
+      "reactivate": "Reaktivieren",
+      "toggleRole": "Rolle wechseln",
+      "delete": "Löschen",
+      "deleteConfirm": "Diesen Benutzer und alle zugehörigen Daten unwiderruflich löschen?",
+      "forcePasswordChange": "Passwortänderung bei der ersten Anmeldung erzwingen",
+      "suspendedOk": "Benutzer gesperrt.",
+      "reactivatedOk": "Benutzer reaktiviert.",
+      "roleChanged": "Rolle aktualisiert.",
+      "deletedOk": "Benutzer gelöscht."
+    },
+    "migrations": {
+      "owner": "Besitzer",
+      "sourceTarget": "Quelle → Ziel",
+      "created": "Erstellt"
+    },
+    "stats": {
+      "totalUsers": "Benutzer",
+      "activeUsers": "Aktive Benutzer",
+      "totalMigrations": "Übertragungen",
+      "totalTasks": "Aufgaben",
+      "migrationsByStatus": "Übertragungen nach Status",
+      "tasksByStatus": "Aufgaben nach Status"
+    },
+    "audit": {
+      "allActions": "Alle Aktionen",
+      "userId": "Akteur / Benutzer-ID",
+      "when": "Wann",
+      "action": "Aktion",
+      "actor": "Akteur",
+      "target": "Ziel",
+      "ip": "IP",
+      "actions": {
+        "LOGIN_SUCCESS": "Anmeldung erfolgreich",
+        "LOGIN_FAILED": "Anmeldung fehlgeschlagen",
+        "REGISTRATION": "Registrierung",
+        "USER_CREATED": "Benutzer erstellt",
+        "USER_SUSPENDED": "Benutzer gesperrt",
+        "USER_REACTIVATED": "Benutzer reaktiviert",
+        "USER_DELETED": "Benutzer gelöscht",
+        "USER_ROLE_CHANGED": "Rolle geändert",
+        "MIGRATION_CREATED": "Übertragung erstellt",
+        "MIGRATION_STARTED": "Übertragung gestartet",
+        "MIGRATION_COMPLETED": "Übertragung abgeschlossen",
+        "MIGRATION_FAILED": "Übertragung fehlgeschlagen",
+        "MIGRATION_PAUSED": "Übertragung pausiert",
+        "MIGRATION_RESUMED": "Übertragung fortgesetzt",
+        "MIGRATION_CANCELLED": "Übertragung abgebrochen",
+        "MIGRATION_DELETED": "Übertragung gelöscht",
+        "SETTING_UPDATED": "Einstellung geändert",
+        "2FA_ENABLED": "2FA aktiviert",
+        "2FA_DISABLED": "2FA deaktiviert"
+      }
+    }
   }
 }

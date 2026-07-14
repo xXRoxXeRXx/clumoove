@@ -15,11 +15,12 @@ import (
 )
 
 type Claims struct {
-	UserID      string `json:"sub"`
-	Email       string `json:"email"`
-	DisplayName string `json:"name"`
-	Role        string `json:"role"`
-	TwoFAPending bool  `json:"2fa_pending"`
+	UserID           string `json:"sub"`
+	Email            string `json:"email"`
+	DisplayName      string `json:"name"`
+	Role             string `json:"role"`
+	TwoFAPending     bool   `json:"2fa_pending"`
+	MustChangePassword bool `json:"must_change_password"`
 	jwt.RegisteredClaims
 }
 
@@ -47,6 +48,7 @@ func GenerateAccessToken(user *db.User, secretKey string) (string, error) {
 		Email:       user.Email,
 		DisplayName: user.DisplayName,
 		Role:        user.Role,
+		MustChangePassword: user.MustChangePassword,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -132,15 +134,53 @@ func Validate2FATempToken(tokenStr, secretKey string) (*Claims, error) {
 	return claims, nil
 }
 
+// GenerateMustChangePasswordToken issues a short-lived (5 minutes) JWT carrying
+// the MustChangePassword marker. It is returned by the login endpoint when the
+// account must rotate its password before any other access is granted. Crucially
+// TwoFAPending is FALSE, so it is not mistaken for an incomplete 2FA auth state;
+// a dedicated middleware allowing must-change tokens is used for the password
+// rotation route.
+func GenerateMustChangePasswordToken(user *db.User, secretKey string) (string, error) {
+	if secretKey == "" {
+		return "", errors.New("empty JWT secret key")
+	}
+
+	expirationTime := time.Now().Add(5 * time.Minute)
+	claims := &Claims{
+		UserID:            user.ID,
+		Email:             user.Email,
+		DisplayName:       user.DisplayName,
+		Role:              user.Role,
+		MustChangePassword: true,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    "clumove-api",
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(secretKey))
+	if err != nil {
+		return "", err
+	}
+	return tokenString, nil
+}
+
 // RequireAuthenticated returns an error if the claims represent a token that is
-// not fully authenticated (e.g. a 2FA temp token still awaiting the second
-// factor). It must be called at every full-auth boundary after ValidateToken.
+// not fully authenticated. This rejects both 2FA temp tokens (awaiting the
+// second factor) and must-change-password tokens (awaiting password rotation).
+// Every full-auth boundary must call this after ValidateToken.
 func RequireAuthenticated(claims *Claims) error {
 	if claims == nil {
 		return errors.New("missing claims")
 	}
 	if claims.TwoFAPending {
 		return errors.New("second factor required")
+	}
+	if claims.MustChangePassword {
+		return errors.New("password change required")
 	}
 	return nil
 }

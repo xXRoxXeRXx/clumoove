@@ -29,6 +29,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   const [otpError, setOtpError] = useState<string>('');
   const [lockSeconds, setLockSeconds] = useState<number>(0);
 
+  const [mustChangeSession, setMustChangeSession] = useState<string>('');
+  const [newPassword, setNewPassword] = useState<string>('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState<string>('');
+  const [mustChangeError, setMustChangeError] = useState<string>('');
+
   useEffect(() => {
     fetch(`${apiUrl}/api/settings`)
       .then((res) => res.json())
@@ -140,6 +145,117 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       setLoading(false);
     }
   };
+
+  const handleMustChangeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setMustChangeError('');
+    setLoading(true);
+    if (newPassword.length < 12) {
+      setMustChangeError(t('reset.tooShort'));
+      setLoading(false);
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setMustChangeError(t('reset.mismatch'));
+      setLoading(false);
+      return;
+    }
+    try {
+      const response = await fetch(`${apiUrl}/api/auth/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${mustChangeSession}`,
+        },
+        credentials: 'include',
+        body: JSON.stringify({ new_password: newPassword, confirm_password: confirmNewPassword }),
+      });
+      if (!response.ok) {
+        const data = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(data.error_code));
+      }
+      const data = await response.json();
+      onAuthSuccess(data.access_token, data.user);
+    } catch (err: unknown) {
+      setMustChangeError(err instanceof Error ? err.message : t('reset.networkError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (mustChangeSession) {
+    return (
+      <div className="max-w-md w-full mx-auto my-8 px-4 relative">
+        <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
+
+          <div className="flex flex-col items-center mb-8">
+            <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
+              <Lock className="w-6 h-6 stroke-[2.5]" />
+            </div>
+            <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
+              {t('auth.mustChangePassword')}
+            </h2>
+            <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
+              {t('auth.setNewPassword')}
+            </p>
+          </div>
+
+          {mustChangeError && (
+            <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+              {mustChangeError}
+            </div>
+          )}
+
+          <form onSubmit={handleMustChangeSubmit} className="space-y-5">
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                {t('auth.newPassword')}
+              </label>
+              <input
+                type="password"
+                autoFocus
+                required
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                {t('auth.confirmPassword')}
+              </label>
+              <input
+                type="password"
+                required
+                value={confirmNewPassword}
+                onChange={(e) => setConfirmNewPassword(e.target.value)}
+                className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  {t('common.processing')}
+                </span>
+              ) : (
+                t('auth.changePassword')
+              )}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (totpSession) {
     return (
@@ -353,7 +469,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
       if (isLogin) {
         const data = await response.json();
-        if (data.totp_required && data.temp_session) {
+        if (data.must_change_password && data.temp_session) {
+          setMustChangeSession(data.temp_session);
+          setNewPassword('');
+          setConfirmNewPassword('');
+          setMustChangeError('');
+          setError('');
+        } else if (data.totp_required && data.temp_session) {
           setTotpSession(data.temp_session);
           setOtpCode('');
           setOtpError('');

@@ -8,13 +8,14 @@ import { ResetPasswordForm } from './components/ResetPasswordForm';
 import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
-import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
+import { AdminPanel } from './components/AdminPanel';
+import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon, Shield } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
 import { listenForOAuthMessage } from './utils/oauth';
 
-type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'reset-password' | 'confirm-email';
+type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'reset-password' | 'confirm-email';
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -403,6 +404,18 @@ function App() {
 
               {showUserMenu && (
                 <div className="absolute right-0 top-full mt-2 w-48 bg-[var(--color-bg-elevated)] backdrop-blur-md border border-[var(--color-border)] rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in">
+                  {user?.role === 'ADMIN' && (
+                    <button
+                      onClick={() => {
+                        setStep('admin');
+                        setShowUserMenu(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
+                    >
+                      <Shield className="w-4 h-4 text-[var(--color-text-muted)]" />
+                      {t('nav.admin')}
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setStep('settings');
@@ -503,6 +516,15 @@ function App() {
               user={user}
               onBack={() => setStep('history')}
               onUpdateUser={(updated) => setUser(updated)}
+            />
+          )}
+
+          {step === 'admin' && user?.role === 'ADMIN' && (
+            <AdminPanel
+              apiUrl={API_URL}
+              token={token}
+              user={user}
+              onBack={() => setStep('history')}
             />
           )}
         </div>

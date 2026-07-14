@@ -178,6 +178,14 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration completed: %v", err))
 			return
 		}
+		if owner, oerr := db.GetMigrationOwnerID(idx.db, migID); oerr == nil {
+			db.WriteAuditLog(idx.db, db.AuditEntry{
+				UserID: sql.NullString{String: owner, Valid: true},
+				Action: db.AuditMigrationCompleted,
+				Target: migID,
+				Details: json.RawMessage(`{"phase":"indexing","files":0}`),
+			})
+		}
 		log.Printf("Finished indexing migration %s. 0 files to migrate. Marked COMPLETED.\n", migID)
 		return
 	}
@@ -302,6 +310,21 @@ func failMigration(database *sql.DB, migID string, errMsg string) {
 	safe := sanitizeError(errMsg)
 	log.Printf("Migration %s failed during indexing: %s\n", migID, safe)
 	_ = db.UpdateMigrationStatus(database, migID, "FAILED", &safe)
+	if owner, oerr := db.GetMigrationOwnerID(database, migID); oerr == nil {
+		db.WriteAuditLog(database, db.AuditEntry{
+			UserID: sql.NullString{String: owner, Valid: true},
+			Action: db.AuditMigrationFailed,
+			Target: migID,
+			Details: json.RawMessage(fmt.Sprintf(`{"phase":"indexing","error":%s}`, marshalString(safe))),
+		})
+	}
+}
+
+// marshalString returns a JSON-encoded string literal (with quotes) so it can be
+// inlined into a hand-built JSON detail object.
+func marshalString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // credURLRe matches the userinfo portion of a URL (scheme://user:pass@host) so it

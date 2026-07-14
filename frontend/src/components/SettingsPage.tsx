@@ -446,7 +446,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       return;
     }
 
-    if (newPassword.length < 8) {
+    if (newPassword.length < 12) {
       setPasswordMessage({ text: t('settings.messages.passwordTooShort'), type: 'error' });
       return;
     }

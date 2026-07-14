@@ -21,6 +21,7 @@
   },
   "nav": {
     "settings": "Settings",
+    "admin": "Admin",
     "logout": "Log out"
   },
   "footer": {
@@ -61,7 +62,12 @@
     "totpRequired": "Security code required.",
     "totpLocked": "Too many failed attempts. The account has been locked for 15 minutes.",
     "lockedRetry": "Account locked. Try again in {{time}}",
-    "resetLinkSent": "If an account exists with this email address, a link has been sent."
+    "resetLinkSent": "If an account exists with this email address, a link has been sent.",
+    "mustChangePassword": "Set a new password",
+    "setNewPassword": "For your security, please set a new password to continue.",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "changePassword": "Change password"
   },
   "connect": {
     "sourceTitle": "Source (Copy data from here)",
@@ -362,7 +368,7 @@
     "submit": "Reset password",
     "changed": "Password changed",
     "redirecting": "Redirecting you to the log in page...",
-    "tooShort": "The password must be at least 8 characters long.",
+    "tooShort": "The password must be at least 12 characters long.",
     "mismatch": "The passwords do not match.",
     "failed": "Could not reset your password.",
     "networkError": "Could not connect to the server.",
@@ -440,7 +446,7 @@
     "OAUTH_GENERATION_FAILED": "Could not prepare the connection.",
     "DISPLAY_NAME_REQUIRED": "Display name is a required field.",
     "PASSWORD_MISMATCH": "The new passwords do not match.",
-    "PASSWORD_TOO_SHORT": "The password must be at least 8 characters long.",
+    "PASSWORD_TOO_SHORT": "The password must be at least 12 characters long.",
     "AVATAR_INVALID": "Invalid image format.",
     "AVATAR_TYPE_UNSUPPORTED": "Unsupported image type. Please use PNG, JPEG, WebP, or GIF.",
     "AVATAR_TOO_LARGE": "The profile picture must not exceed 2 MB.",
@@ -466,6 +472,83 @@
     "WS_TOKEN_INSECURE": "Security codes are not allowed to be sent over unencrypted connections.",
     "WS_TOKEN_MISSING": "Security code is missing.",
     "WS_TOKEN_INVALID": "The security code is invalid or has expired.",
-    "INTERNAL_ERROR": "An internal server error occurred. Please try again later."
+    "INTERNAL_ERROR": "An internal server error occurred. Please try again later.",
+    "USER_DISABLED": "This account has been suspended. Please contact an administrator.",
+    "USER_NOT_FOUND": "The requested user was not found.",
+    "CANNOT_MODIFY_SELF": "You cannot perform this action on your own account.",
+    "LAST_ADMIN": "Cannot remove the last active administrator.",
+    "INVALID_ROLE": "Invalid role specified.",
+    "PASSWORD_CHANGE_REQUIRED": "You must change your password before continuing."
+  },
+  "admin": {
+    "title": "Administration",
+    "tabs": {
+      "users": "Users",
+      "migrations": "Migrations",
+      "stats": "Statistics",
+      "audit": "Audit Log"
+    },
+    "users": {
+      "create": "Create user",
+      "created": "User created.",
+      "allRoles": "All roles",
+      "allStates": "All states",
+      "suspended": "Suspended",
+      "role": "Role",
+      "createdAt": "Created",
+      "suspend": "Suspend",
+      "reactivate": "Reactivate",
+      "toggleRole": "Toggle role",
+      "delete": "Delete",
+      "deleteConfirm": "Permanently delete this user and all their data? This cannot be undone.",
+      "forcePasswordChange": "Force password change on first login",
+      "suspendedOk": "User suspended.",
+      "reactivatedOk": "User reactivated.",
+      "roleChanged": "Role updated.",
+      "deletedOk": "User deleted."
+    },
+    "migrations": {
+      "owner": "Owner",
+      "sourceTarget": "Source → Target",
+      "created": "Created"
+    },
+    "stats": {
+      "totalUsers": "Users",
+      "activeUsers": "Active users",
+      "totalMigrations": "Migrations",
+      "totalTasks": "Tasks",
+      "migrationsByStatus": "Migrations by status",
+      "tasksByStatus": "Tasks by status"
+    },
+    "audit": {
+      "allActions": "All actions",
+      "userId": "Actor / user ID",
+      "when": "When",
+      "action": "Action",
+      "actor": "Actor",
+      "target": "Target",
+      "ip": "IP",
+      "actions": {
+        "LOGIN_SUCCESS": "Login success",
+        "LOGIN_FAILED": "Login failed",
+        "REGISTRATION": "Registration",
+        "USER_CREATED": "User created",
+        "USER_SUSPENDED": "User suspended",
+        "USER_REACTIVATED": "User reactivated",
+        "USER_DELETED": "User deleted",
+        "USER_ROLE_CHANGED": "Role changed",
+        "MIGRATION_CREATED": "Migration created",
+        "MIGRATION_STARTED": "Migration started",
+        "MIGRATION_COMPLETED": "Migration completed",
+        "MIGRATION_FAILED": "Migration failed",
+        "MIGRATION_PAUSED": "Migration paused",
+        "MIGRATION_RESUMED": "Migration resumed",
+        "MIGRATION_CANCELLED": "Migration cancelled",
+        "MIGRATION_DELETED": "Migration deleted",
+        "SETTING_UPDATED": "Setting updated",
+        "2FA_ENABLED": "2FA enabled",
+        "2FA_DISABLED": "2FA disabled"
+      }
+    }
   }
 }

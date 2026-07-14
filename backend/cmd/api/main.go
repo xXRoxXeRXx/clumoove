@@ -135,6 +135,11 @@ const (
 
 	// Per-user cap on simultaneously active (non-terminal) migrations.
 	maxActiveMigrations = 10
+
+	// minPasswordLength enforces ASVS V2.1.1 (≥ 12 characters). Every password
+	// entry point (register, admin create, change, reset) must use this so the
+	// policy stays consistent in one place.
+	minPasswordLength = 12
 )
 
 // clientIP returns a stable per-client key for rate limiting. When a trusted
@@ -142,20 +147,54 @@ const (
 // otherwise the connection's remote address (port stripped) is used. Trusting
 // X-Forwarded-For from an untrusted client would let the client spoof their key
 // and bypass the limiter, so it is only honoured behind a trusted proxy.
+//
+// The returned value is also written verbatim into audit_log.ip, so it is
+// stripped of CR/LF and other control characters to prevent log injection
+// (CWE-117 / ASVS A09). The leftmost XFF hop is attacker-influenced even behind
+// a trusted proxy, so the sanitizer additionally bounds the length and rejects
+// anything that cannot be represented as a sane token.
 func (s *APIServer) clientIP(r *http.Request) string {
+	var raw string
 	if s.trustedProxy {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			if idx := strings.IndexByte(xff, ','); idx >= 0 {
-				return strings.TrimSpace(xff[:idx])
+				raw = strings.TrimSpace(xff[:idx])
+			} else {
+				raw = strings.TrimSpace(xff)
 			}
-			return strings.TrimSpace(xff)
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	if raw == "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			raw = r.RemoteAddr
+		} else {
+			raw = host
+		}
 	}
-	return host
+	return sanitizeAuditToken(raw)
+}
+
+// sanitizeAuditToken removes CR/LF and all control characters (C0 + DEL) from a
+// value that will be persisted into structured/audit logs or used as a rate
+// limiting key. It bounds the length to avoid oversized keys and defends
+// against log forging (newline injection) from attacker-controlled headers such
+// as X-Forwarded-For. Printable text and real IPs pass through unchanged.
+func sanitizeAuditToken(s string) string {
+	const maxTokenLen = 254
+	if len(s) > maxTokenLen {
+		s = s[:maxTokenLen]
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		// Allow everything except control characters (U+0000-U+001F, U+007F).
+		if r <= 0x1f || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // isSecure reports whether the request arrived over HTTPS. Behind a trusted
@@ -225,6 +264,22 @@ func main() {
 	defer database.Close()
 	log.Println("Connected to PostgreSQL database.")
 
+	// Bootstrap the initial admin account from environment identity. A random,
+	// strong password is generated and printed exactly once to stdout; the admin
+	// must rotate it on first login (must_change_password = TRUE). If ADMIN_EMAIL
+	// is unset, no bootstrap account is created. Idempotent across restarts and
+	// instances for an account that is already an ADMIN (an existing non-admin
+	// account is never auto-promoted).
+	if adminEmail := os.Getenv("ADMIN_EMAIL"); adminEmail != "" {
+		adminName := os.Getenv("ADMIN_DISPLAY_NAME")
+		created, pw, err := db.EnsureAdminUser(database, adminEmail, adminName)
+		if err != nil {
+			log.Printf("WARNING: failed to bootstrap admin user %q: %v", adminEmail, err)
+		} else if created {
+			log.Printf("BOOTSTRAP ADMIN created — email=%s password=%s (rotate on first login)", adminEmail, pw)
+		}
+	}
+
 	// 2. Initialize Redis Queue
 	q, err := queue.NewQueue(redisURL)
 	if err != nil {
@@ -279,7 +334,7 @@ func main() {
 	jwtMiddleware := auth.AuthMiddleware(server.jwtSecret)
 	mux.Handle("GET /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleMe)))
 	mux.Handle("PUT /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleUpdateProfile)))
-	mux.Handle("POST /api/auth/change-password", jwtMiddleware(http.HandlerFunc(server.handleChangePassword)))
+	mux.Handle("POST /api/auth/change-password", auth.AuthMiddlewareAllowMustChange(server.jwtSecret)(http.HandlerFunc(server.handleChangePassword)))
 	mux.Handle("GET /api/auth/2fa/setup", jwtMiddleware(http.HandlerFunc(server.handle2FASetup)))
 	mux.Handle("POST /api/auth/2fa/enable", jwtMiddleware(http.HandlerFunc(server.handle2FAEnable)))
 	mux.Handle("POST /api/auth/2fa/disable", jwtMiddleware(http.HandlerFunc(server.handle2FADisable)))
@@ -320,6 +375,17 @@ func main() {
 	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
 	mux.Handle("GET /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSchedule)))
 	mux.Handle("DELETE /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSchedule)))
+
+	// Admin User-Management & Oversight (ADMIN-only, gated inside each handler)
+	mux.Handle("POST /api/admin/users", jwtMiddleware(http.HandlerFunc(server.handleAdminCreateUser)))
+	mux.Handle("POST /api/admin/users/{id}/suspend", jwtMiddleware(http.HandlerFunc(server.handleAdminSuspendUser)))
+	mux.Handle("POST /api/admin/users/{id}/reactivate", jwtMiddleware(http.HandlerFunc(server.handleAdminReactivateUser)))
+	mux.Handle("DELETE /api/admin/users/{id}", jwtMiddleware(http.HandlerFunc(server.handleAdminDeleteUser)))
+	mux.Handle("PUT /api/admin/users/{id}/role", jwtMiddleware(http.HandlerFunc(server.handleAdminUpdateRole)))
+	mux.Handle("GET /api/admin/users", jwtMiddleware(http.HandlerFunc(server.handleAdminListUsers)))
+	mux.Handle("GET /api/admin/stats", jwtMiddleware(http.HandlerFunc(server.handleAdminStats)))
+	mux.Handle("GET /api/admin/migrations", jwtMiddleware(http.HandlerFunc(server.handleAdminListMigrations)))
+	mux.Handle("GET /api/audit/log", jwtMiddleware(http.HandlerFunc(server.handleAdminAuditLog)))
 
 	// WebSockets & OAuth Callbacks (Require custom/token-based verification inside handler)
 	mux.HandleFunc("GET /api/migration/{id}/ws", server.handleWebSocket)
@@ -668,6 +734,8 @@ func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.writeAudit(r, db.AuditMigrationPaused, id, userID, nil)
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -700,6 +768,8 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+
+	s.writeAudit(r, db.AuditMigrationResumed, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
@@ -817,6 +887,8 @@ func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if err := s.queue.PublishCancelEvent(r.Context(), id); err != nil {
 		log.Printf("Warning: failed to publish cancel event for migration %s: %v — in-flight tasks will be aborted via DB status check", id, err)
 	}
+
+	s.writeAudit(r, db.AuditMigrationCancelled, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
@@ -1182,6 +1254,12 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+
+	s.writeAudit(r, db.AuditMigrationCreated, migrationID, userID, map[string]interface{}{
+		"source_provider": m.SourceProvider,
+		"target_provider": m.TargetProvider,
+		"scheduled":       req.ScheduledTime != "",
+	})
 
 	// If scheduled, create a schedule entry instead of starting immediately
 	if req.ScheduledTime != "" {
@@ -1632,6 +1710,14 @@ const (
 	ErrWsTokenMissing         APIErrorCode = "WS_TOKEN_MISSING"
 	ErrWsTokenInvalid         APIErrorCode = "WS_TOKEN_INVALID"
 	ErrInternalError          APIErrorCode = "INTERNAL_ERROR"
+
+	// Admin / user-management
+	ErrUserDisabled        APIErrorCode = "USER_DISABLED"
+	ErrUserNotFound        APIErrorCode = "USER_NOT_FOUND"
+	ErrCannotModifySelf    APIErrorCode = "CANNOT_MODIFY_SELF"
+	ErrLastAdmin           APIErrorCode = "LAST_ADMIN"
+	ErrInvalidRole         APIErrorCode = "INVALID_ROLE"
+	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
 )
 
 // writeError emits a structured error response carrying only a machine-readable
@@ -1646,6 +1732,29 @@ func writeValidationError(w http.ResponseWriter, code APIErrorCode) {
 
 func writeConflictError(w http.ResponseWriter, code APIErrorCode) {
 	writeError(w, http.StatusConflict, code)
+}
+
+// writeAudit appends an audit-log entry for the current request. actor is the
+// acting user id (may be empty for anonymous/failed events). details is an
+// optional structured payload; pass nil for none. Audit failures are non-fatal.
+func (s *APIServer) writeAudit(r *http.Request, action db.AuditAction, target string, actor string, details map[string]interface{}) {
+	var uid sql.NullString
+	if actor != "" {
+		uid = sql.NullString{String: actor, Valid: true}
+	}
+	var d json.RawMessage
+	if details != nil {
+		if b, err := json.Marshal(details); err == nil {
+			d = b
+		}
+	}
+	db.WriteAuditLog(s.db, db.AuditEntry{
+		UserID: uid,
+		Action: action,
+		Target: target,
+		IP:     s.clientIP(r),
+		Details: d,
+	})
 }
 
 func generateRandomString(n int) string {
@@ -2016,7 +2125,7 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Enforce the same password policy as change/reset (M-1): signup must not
 	// be the weakest entry point. The actual strength is bounded by bcrypt; we
 	// reject trivially short passwords here.
-	if len(req.Password) < 8 {
+	if len(req.Password) < minPasswordLength {
 		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
 		return
 	}
@@ -2058,7 +2167,8 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	// Create user. A unique-violation here means a concurrent registration won
 	// the race; treat it identically to "already exists" (generic success) to
 	// stay non-enumerable.
-	if _, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName); err != nil {
+	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName)
+	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 			return
@@ -2067,6 +2177,8 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+
+	s.writeAudit(r, db.AuditRegistration, req.Email, u.ID, map[string]interface{}{"email": req.Email})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
@@ -2097,10 +2209,20 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	u, err := db.GetUserByEmail(s.db, req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			s.writeAudit(r, db.AuditLoginFailed, req.Email, "", map[string]interface{}{"reason": "no_such_user"})
 			writeError(w, http.StatusUnauthorized, ErrCredentialsInvalid)
 		} else {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
+		return
+	}
+
+	// Reject logins for soft-deactivated (suspended) accounts. This is an
+	// intentional account-enumeration oracle (RISK accepted in plan) so the
+	// admin UX can clearly distinguish "disabled" from "bad password".
+	if !u.Active {
+		s.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "disabled"})
+		writeError(w, http.StatusForbidden, ErrUserDisabled)
 		return
 	}
 
@@ -2123,6 +2245,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// fast any single source can attempt this; operators should also
 		// monitor the warning below for signs of a distributed lockout
 		// attack and consider a CAPTCHA / proof-of-work step.
+		s.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "bad_password"})
 		locked, lerr := db.IncrementLoginFailed(s.db, u.ID, loginMaxAttempts, loginLockDuration)
 		if lerr != nil {
 			log.Printf("Login error: failed to record failed attempt for user %s: %v\n", u.ID, lerr)
@@ -2141,6 +2264,26 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Successful credential check: clear any failed-login lockout state.
 	if err := db.ResetLoginFailed(s.db, u.ID); err != nil {
 		log.Printf("Login error: failed to reset failed attempts for user %s: %v\n", u.ID, err)
+	}
+
+	s.writeAudit(r, db.AuditLoginSuccess, req.Email, u.ID, nil)
+
+	// Forced password rotation: a freshly provisioned/bootstrap account must
+	// change its password before any other access. Issue a short-lived
+	// must-change token and let the client show the rotation form. The token
+	// is rejected by every protected route (RequireAuthenticated) until rotated.
+	if u.MustChangePassword {
+		mustToken, err := auth.GenerateMustChangePasswordToken(u, s.jwtSecret)
+		if err != nil {
+			log.Printf("Login error: failed to generate must-change token for user %s: %v\n", u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{
+			"must_change_password": true,
+			"temp_session":         mustToken,
+		})
+		return
 	}
 
 	// If 2FA is enabled, issue only a short-lived temp token and require a
@@ -2416,11 +2559,13 @@ type ChangePasswordRequest struct {
 }
 
 func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
+	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
+	if !ok || claims == nil {
 		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
+	userID := claims.UserID
+	mustChange := claims.MustChangePassword
 
 	var req ChangePasswordRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2433,7 +2578,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
+	if len(req.NewPassword) < minPasswordLength {
 		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
 		return
 	}
@@ -2445,9 +2590,13 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !auth.CheckPasswordHash(req.CurrentPassword, u.PasswordHash) {
-		writeError(w, http.StatusUnauthorized, ErrPasswordInvalid)
-		return
+	// For a forced rotation (must-change token) the current password is not
+	// known/required; for a normal change the current password must verify.
+	if !mustChange {
+		if !auth.CheckPasswordHash(req.CurrentPassword, u.PasswordHash) {
+			writeError(w, http.StatusUnauthorized, ErrPasswordInvalid)
+			return
+		}
 	}
 
 	newHash, err := auth.HashPassword(req.NewPassword)
@@ -2457,7 +2606,8 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := db.UpdateUserPassword(s.db, userID, newHash); err != nil {
+	// Clear the forced-rotation flag together with the password.
+	if _, err := s.db.Exec(`UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, newHash, userID); err != nil {
 		log.Printf("handleChangePassword: update error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -2467,6 +2617,32 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 	// longer mint new access tokens after the password changed.
 	if err := db.DeleteAllRefreshTokensForUser(s.db, userID); err != nil {
 		log.Printf("handleChangePassword: failed to revoke refresh tokens for user %s: %v\n", userID, err)
+	}
+
+	s.writeAudit(r, db.AuditSettingUpdated, "password", userID, map[string]interface{}{"type": "password_change", "forced": mustChange})
+
+	// If this completed a forced rotation, issue a fresh full-auth JWT so the
+	// client can proceed without re-logging in.
+	if mustChange {
+		rotated, lerr := db.GetUserByID(s.db, userID)
+		if lerr != nil {
+			log.Printf("handleChangePassword: failed to load user for token rotation: %v\n", lerr)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		rotated.MustChangePassword = false
+		accessToken, terr := auth.GenerateAccessToken(rotated, s.jwtSecret)
+		if terr != nil {
+			log.Printf("handleChangePassword: failed to issue rotated token: %v\n", terr)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success":      true,
+			"access_token": accessToken,
+			"user":         userResponse(rotated),
+		})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -2614,6 +2790,8 @@ func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.writeAudit(r, db.AuditSettingUpdated, req.Key, claims.UserID, map[string]interface{}{"value": req.Value})
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -2664,7 +2842,431 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 		// Non-fatal: schedules will become orphaned but won't cause issues
 	}
 
+	s.writeAudit(r, db.AuditMigrationDeleted, id, userID, nil)
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// ============================================================================
+// Admin User-Management & Oversight Handlers (all ADMIN-only)
+// ============================================================================
+
+// adminActorID returns the caller's user id and rejects non-ADMIN callers.
+func (s *APIServer) adminActorID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
+	if !ok || claims == nil || claims.Role != "ADMIN" {
+		writeError(w, http.StatusForbidden, ErrAdminOnly)
+		return "", false
+	}
+	return claims.UserID, true
+}
+
+// lastActiveAdminCheck reports whether removing/downgrading the given user would
+// leave zero active ADMIN accounts (which would lock the instance out of admin).
+func (s *APIServer) wouldRemoveLastActiveAdmin(targetID string) (bool, error) {
+	u, err := db.GetUserByID(s.db, targetID)
+	if err != nil {
+		return false, err
+	}
+	if u.Role != "ADMIN" || !u.Active {
+		return false, nil
+	}
+	count, err := db.CountActiveAdmins(s.db)
+	if err != nil {
+		return false, err
+	}
+	return count <= 1, nil
+}
+
+type AdminCreateUserRequest struct {
+	Email             string `json:"email"`
+	DisplayName       string `json:"display_name"`
+	Password          string `json:"password"`
+	Role              string `json:"role"`
+	MustChangePassword *bool  `json:"must_change_password"`
+}
+
+func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.adminActorID(w, r)
+	if !ok {
+		return
+	}
+
+	if !s.rateLimiter.Allow(s.clientIP(r), registerRateLimit, registerRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	var req AdminCreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	if req.Email == "" || req.Password == "" || req.DisplayName == "" {
+		writeError(w, http.StatusBadRequest, ErrMissingRequiredFields)
+		return
+	}
+	if len(req.Password) < minPasswordLength {
+		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
+		return
+	}
+	addr, err := mail.ParseAddress(req.Email)
+	if err != nil || addr.Address != strings.TrimSpace(req.Email) {
+		writeError(w, http.StatusBadRequest, ErrEmailInvalid)
+		return
+	}
+	req.Email = addr.Address
+
+	role := req.Role
+	if role == "" {
+		role = "USER"
+	}
+	if !db.ValidRoles[role] {
+		writeError(w, http.StatusBadRequest, ErrInvalidRole)
+		return
+	}
+
+	passHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	mustChange := true
+	if req.MustChangePassword != nil {
+		mustChange = *req.MustChangePassword
+	}
+
+	// Anti-enumeration: a duplicate email returns a generic success so the
+	// endpoint cannot be used to confirm which addresses are registered.
+	if _, err := db.GetUserByEmail(s.db, req.Email); err == nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	} else if err != sql.ErrNoRows {
+		log.Printf("Admin create user: failed to check existing user: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, role, mustChange)
+	if err != nil {
+		if db.IsUniqueViolation(err) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+			return
+		}
+		log.Printf("Admin create user: failed to create user: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditUserCreated, u.ID, actor, map[string]interface{}{
+		"email":              req.Email,
+		"role":               role,
+		"must_change_password": mustChange,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":             true,
+		"id":                  u.ID,
+		"email":               req.Email,
+		"role":                role,
+		"active":              true,
+		"must_change_password": mustChange,
+	})
+}
+
+func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.adminActorID(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrUserNotFound)
+		return
+	}
+	if id == actor {
+		writeConflictError(w, ErrCannotModifySelf)
+		return
+	}
+
+	if _, err := db.GetUserByID(s.db, id); err != nil {
+		writeError(w, http.StatusNotFound, ErrUserNotFound)
+		return
+	}
+
+	if err := db.UpdateUserActive(s.db, id, false); err != nil {
+		log.Printf("Admin suspend user %s: %v\n", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditUserSuspended, id, actor, nil)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleAdminReactivateUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.adminActorID(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrUserNotFound)
+		return
+	}
+	if id == actor {
+		writeConflictError(w, ErrCannotModifySelf)
+		return
+	}
+
+	if _, err := db.GetUserByID(s.db, id); err != nil {
+		writeError(w, http.StatusNotFound, ErrUserNotFound)
+		return
+	}
+
+	if err := db.UpdateUserActive(s.db, id, true); err != nil {
+		log.Printf("Admin reactivate user %s: %v\n", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditUserReactivated, id, actor, nil)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.adminActorID(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrUserNotFound)
+		return
+	}
+	if id == actor {
+		writeConflictError(w, ErrCannotModifySelf)
+		return
+	}
+
+	target, err := db.GetUserByID(s.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrUserNotFound)
+		return
+	}
+
+	last, err := s.wouldRemoveLastActiveAdmin(id)
+	if err != nil {
+		log.Printf("Admin delete user %s: %v\n", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if last {
+		writeConflictError(w, ErrLastAdmin)
+		return
+	}
+
+	// Capture identifying info for the audit before the cascade wipes it.
+	targetEmail := target.Email
+	if err := db.DeleteUser(s.db, id); err != nil {
+		log.Printf("Admin delete user %s: %v\n", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditUserDeleted, id, actor, map[string]interface{}{"email": targetEmail})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+type AdminUpdateRoleRequest struct {
+	Role string `json:"role"`
+}
+
+func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request) {
+	actor, ok := s.adminActorID(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrUserNotFound)
+		return
+	}
+	if id == actor {
+		writeConflictError(w, ErrCannotModifySelf)
+		return
+	}
+
+	var req AdminUpdateRoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+	if !db.ValidRoles[req.Role] {
+		writeError(w, http.StatusBadRequest, ErrInvalidRole)
+		return
+	}
+
+	target, err := db.GetUserByID(s.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrUserNotFound)
+		return
+	}
+
+	// Downgrading the last active admin would lock everyone out of admin.
+	if target.Role == "ADMIN" && req.Role != "ADMIN" {
+		last, lerr := s.wouldRemoveLastActiveAdmin(id)
+		if lerr != nil {
+			log.Printf("Admin role change %s: %v\n", id, lerr)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		if last {
+			writeConflictError(w, ErrLastAdmin)
+			return
+		}
+	}
+
+	if err := db.UpdateUserRole(s.db, id, req.Role); err != nil {
+		log.Printf("Admin role change %s: %v\n", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditUserRoleChanged, id, actor, map[string]interface{}{
+		"from": target.Role,
+		"to":   req.Role,
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "role": req.Role})
+}
+
+func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.adminActorID(w, r); !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	role := q.Get("role")
+	var active *bool
+	if v := q.Get("active"); v != "" {
+		b := v == "true" || v == "1"
+		active = &b
+	}
+	search := strings.TrimSpace(q.Get("q"))
+
+	users, total, err := db.ListUsers(s.db, db.UserListParams{
+		Page:   page,
+		Limit:  limit,
+		Role:   role,
+		Active: active,
+		Query:  search,
+	})
+	if err != nil {
+		log.Printf("Admin list users: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"users":      users,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+	})
+}
+
+func (s *APIServer) handleAdminStats(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.adminActorID(w, r); !ok {
+		return
+	}
+
+	stats, err := db.GetGlobalStats(s.db)
+	if err != nil {
+		log.Printf("Admin stats: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (s *APIServer) handleAdminListMigrations(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.adminActorID(w, r); !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	migrations, total, err := db.ListAllMigrations(s.db, db.MigrationListParams{Page: page, Limit: limit})
+	if err != nil {
+		log.Printf("Admin list migrations: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"migrations": migrations,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+	})
+}
+
+func (s *APIServer) handleAdminAuditLog(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.adminActorID(w, r); !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	entries, total, err := db.ListAuditLog(s.db, db.AuditLogParams{
+		Page:   page,
+		Limit:  limit,
+		Action: q.Get("action"),
+		UserID: q.Get("user_id"),
+		Target: q.Get("target"),
+		From:   q.Get("from"),
+		To:     q.Get("to"),
+	})
+	if err != nil {
+		log.Printf("Admin audit log: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"entries": entries,
+		"total":   total,
+		"page":    page,
+		"limit":   limit,
+	})
 }
 
 // ============================================================================
@@ -3084,7 +3686,7 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if len(req.NewPassword) < 8 {
+	if len(req.NewPassword) < minPasswordLength {
 		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
 		return
 	}

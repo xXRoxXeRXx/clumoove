@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // StringArray is a []string that implements sql.Scanner and driver.Valuer
@@ -66,12 +68,22 @@ type MigrationResourceStats struct {
 	Contacts  ResourceStats `json:"contacts"`
 }
 
+// ValidRoles enumerates the roles a user may hold. There is no separate
+// read-only AUDITOR role; the instance-wide oversight (user list, all
+// migrations, audit log) is granted exclusively to ADMIN.
+var ValidRoles = map[string]bool{
+	"USER":  true,
+	"ADMIN": true,
+}
+
 type User struct {
 	ID                 string         `json:"id"`
 	Email              string         `json:"email"`
 	PasswordHash       string         `json:"-"`
 	DisplayName        string         `json:"display_name"`
 	Role               string         `json:"role"`
+	Active             bool           `json:"active"`
+	MustChangePassword bool           `json:"must_change_password"`
 	Avatar             []byte         `json:"-"`
 	AvatarMime         string         `json:"-"`
 	CreatedAt          time.Time      `json:"created_at"`
@@ -83,6 +95,41 @@ type User struct {
 	TotpLockedUntil    sql.NullTime   `json:"-"`
 	LoginFailedAttempts int           `json:"-"`
 	LoginLockedUntil   sql.NullTime   `json:"-"`
+}
+
+// AuditAction enumerates the canonical audit-log event types.
+type AuditAction string
+
+const (
+	AuditLoginSuccess      AuditAction = "LOGIN_SUCCESS"
+	AuditLoginFailed       AuditAction = "LOGIN_FAILED"
+	AuditRegistration      AuditAction = "REGISTRATION"
+	AuditUserCreated       AuditAction = "USER_CREATED"
+	AuditMigrationCreated  AuditAction = "MIGRATION_CREATED"
+	AuditMigrationStarted  AuditAction = "MIGRATION_STARTED"
+	AuditMigrationCompleted AuditAction = "MIGRATION_COMPLETED"
+	AuditMigrationFailed   AuditAction = "MIGRATION_FAILED"
+	AuditMigrationPaused   AuditAction = "MIGRATION_PAUSED"
+	AuditMigrationResumed  AuditAction = "MIGRATION_RESUMED"
+	AuditMigrationCancelled AuditAction = "MIGRATION_CANCELLED"
+	AuditMigrationDeleted  AuditAction = "MIGRATION_DELETED"
+	AuditSettingUpdated    AuditAction = "SETTING_UPDATED"
+	AuditUserSuspended     AuditAction = "USER_SUSPENDED"
+	AuditUserReactivated   AuditAction = "USER_REACTIVATED"
+	AuditUserDeleted       AuditAction = "USER_DELETED"
+	AuditUserRoleChanged   AuditAction = "USER_ROLE_CHANGED"
+	Audit2FAEnabled        AuditAction = "2FA_ENABLED"
+	Audit2FADisabled       AuditAction = "2FA_DISABLED"
+)
+
+// AuditEntry is a single audit-log record. UserID is the acting principal
+// (NULL for failed logins). Details is an arbitrary JSONB payload.
+type AuditEntry struct {
+	UserID sql.NullString
+	Action AuditAction
+	Target string
+	IP     string
+	Details json.RawMessage
 }
 
 type RefreshToken struct {
@@ -429,6 +476,45 @@ func InitDB(connStr string) (*sql.DB, error) {
 			log.Printf("Failed schema migration (login_locked_until): %v\n", err)
 		}
 
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE`)
+		if err != nil {
+			log.Printf("Failed schema migration (active): %v\n", err)
+		}
+
+		_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE`)
+		if err != nil {
+			log.Printf("Failed schema migration (must_change_password): %v\n", err)
+		}
+
+		// Audit Log table
+		_, err = db.Exec(`
+			CREATE TABLE IF NOT EXISTS audit_log (
+				id BIGSERIAL PRIMARY KEY,
+				user_id UUID,
+				action TEXT NOT NULL,
+				target TEXT,
+				ip TEXT,
+				details JSONB,
+				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+			)
+		`)
+		if err != nil {
+			log.Printf("Failed schema migration (create audit_log table): %v\n", err)
+		}
+
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)`)
+		if err != nil {
+			log.Printf("Failed schema migration (idx_audit_log_created_at): %v\n", err)
+		}
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)`)
+		if err != nil {
+			log.Printf("Failed schema migration (idx_audit_log_action): %v\n", err)
+		}
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)`)
+		if err != nil {
+			log.Printf("Failed schema migration (idx_audit_log_user_id): %v\n", err)
+		}
+
 			_, err = db.Exec(`
 				CREATE TABLE IF NOT EXISTS user_smtp_settings (
 					user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -719,9 +805,25 @@ func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelt
 			WHERE id = $3
 			  AND status IN ('RUNNING', 'INDEXING')
 		`
-		_, err = tx.Exec(statusQuery, finalStatus, errMessage, id)
+		res, err := tx.Exec(statusQuery, finalStatus, errMessage, id)
 		if err != nil {
 			return err
+		}
+		if rows, rerr := res.RowsAffected(); rerr == nil && rows > 0 {
+			// Migration just transitioned to a terminal state: record it in the
+			// audit log. Best-effort; ignore lookup failures.
+			if owner, oerr := GetMigrationOwnerID(tx, id); oerr == nil {
+				action := AuditMigrationCompleted
+				if finalStatus == "FAILED" {
+					action = AuditMigrationFailed
+				}
+				WriteAuditLog(tx, AuditEntry{
+					UserID: sql.NullString{String: owner, Valid: true},
+					Action: action,
+					Target: id,
+					Details: json.RawMessage(fmt.Sprintf(`{"phase":"transfer","all_failed":%t}`, failed == total)),
+				})
+			}
 		}
 	}
 
@@ -1055,14 +1157,14 @@ func CreateUser(db *sql.DB, email, passwordHash, displayName string) (*User, err
 // GetUserByEmail retrieves a user by email
 func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at,
+		SELECT id, email, password_hash, display_name, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 			totp_enabled, totp_secret_encrypted, totp_backup_codes, totp_failed_attempts, totp_locked_until
 		FROM users WHERE email = $1
 	`
 	var u User
 	var mime sql.NullString
 	var secret sql.NullString
-	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &secret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil)
 	if err != nil {
 		return nil, err
@@ -1075,7 +1177,7 @@ func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 // GetUserByID retrieves a user by UUID
 func GetUserByID(db *sql.DB, id string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, avatar, avatar_mime, created_at, updated_at,
+		SELECT id, email, password_hash, display_name, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 			totp_enabled, totp_secret_encrypted, totp_backup_codes, totp_failed_attempts, totp_locked_until,
 			login_failed_attempts, login_locked_until
 		FROM users WHERE id = $1
@@ -1083,7 +1185,7 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	var u User
 	var mime sql.NullString
 	var secret sql.NullString
-	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &secret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {
@@ -1224,6 +1326,485 @@ func DeleteUserAvatar(db *sql.DB, id string) error {
 	_, err := db.Exec(query, id)
 	return err
 }
+
+// generateRandomPassword returns a cryptographically random, URL-safe password of
+// the requested length (used for the bootstrap admin account).
+func generateRandomPassword(n int) (string, error) {
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	out := make([]byte, n)
+	for i, v := range b {
+		out[i] = alphabet[int(v)%len(alphabet)]
+	}
+	return string(out), nil
+}
+
+// queryExecer is satisfied by both *sql.DB and *sql.Tx, letting audit helpers run
+// inside or outside a transaction.
+type queryExecer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+}
+
+// WriteAuditLog appends a single audit record. It is best-effort: failures are
+// logged but never propagated, so auditing can never break the primary request.
+func WriteAuditLog(database queryExecer, e AuditEntry) {
+	details := "null"
+	if len(e.Details) > 0 {
+		details = string(e.Details)
+	}
+	_, err := database.Exec(
+		`INSERT INTO audit_log (user_id, action, target, ip, details) VALUES ($1, $2, $3, $4, $5::jsonb)`,
+		e.UserID, e.Action, e.Target, e.IP, details,
+	)
+	if err != nil {
+		log.Printf("WriteAuditLog failed (action=%s): %v\n", e.Action, err)
+	}
+}
+
+// GetMigrationOwnerID returns the owning user_id for a migration.
+func GetMigrationOwnerID(database queryExecer, migrationID string) (string, error) {
+	var owner sql.NullString
+	err := database.QueryRow(`SELECT user_id FROM migrations WHERE id = $1`, migrationID).Scan(&owner)
+	if err != nil {
+		return "", err
+	}
+	if !owner.Valid {
+		return "", fmt.Errorf("migration %s has no owner", migrationID)
+	}
+	return owner.String, nil
+}
+
+// CreateUserWithRole creates a user with an explicit role and optional
+// must-change-password flag (used by the admin provisioning endpoint and the
+// bootstrap admin). The caller is responsible for hashing the password.
+func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role string, mustChangePassword bool) (*User, error) {
+	if !ValidRoles[role] {
+		role = "USER"
+	}
+	query := `
+		INSERT INTO users (email, password_hash, display_name, role, active, must_change_password)
+		VALUES ($1, $2, $3, $4, TRUE, $5)
+		RETURNING id, role, active, must_change_password, created_at, updated_at
+	`
+	var u User
+	u.Email = email
+	u.DisplayName = displayName
+	err := database.QueryRow(query, email, passwordHash, displayName, role, mustChangePassword).
+		Scan(&u.ID, &u.Role, &u.Active, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// UpdateUserActive soft-activates or deactivates a user. On deactivation, any
+// RUNNING/INDEXING migrations are paused and all of the user's schedules are
+// disabled. On re-activation, the user's schedules are re-enabled.
+func UpdateUserActive(database *sql.DB, id string, active bool) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`UPDATE users SET active = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, active, id); err != nil {
+		return err
+	}
+
+	if !active {
+		// Pause in-flight migrations (the worker halts them on its next status check).
+		if _, err := tx.Exec(
+			`UPDATE migrations SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND status IN ('RUNNING', 'INDEXING')`,
+			id,
+		); err != nil {
+			return err
+		}
+		// Disable schedules so deferred jobs stop firing.
+		if _, err := tx.Exec(`UPDATE schedules SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`, id); err != nil {
+			return err
+		}
+	} else {
+		// Re-enable schedules on reactivation.
+		if _, err := tx.Exec(`UPDATE schedules SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// UpdateUserRole changes a user's role (must be a valid role).
+func UpdateUserRole(database *sql.DB, id, role string) error {
+	if !ValidRoles[role] {
+		return fmt.Errorf("invalid role %q", role)
+	}
+	_, err := database.Exec(`UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, role, id)
+	return err
+}
+
+// DeleteUser hard-deletes a user; dependent rows (migrations, tasks, schedules,
+// tokens) cascade via ON DELETE CASCADE.
+func DeleteUser(database *sql.DB, id string) error {
+	_, err := database.Exec(`DELETE FROM users WHERE id = $1`, id)
+	return err
+}
+
+// CountActiveAdmins returns the number of currently active ADMIN users.
+func CountActiveAdmins(database *sql.DB) (int, error) {
+	var n int
+	err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND active = TRUE`).Scan(&n)
+	return n, err
+}
+
+// EnsureAdminUser idempotently guarantees an ADMIN account exists for the given
+// email. If the email is absent, an ADMIN is created with a system-generated
+// random password and must_change_password = TRUE; the generated password is
+// returned so the caller can surface it exactly once (e.g. to stdout). If the
+// account already exists, its role is promoted to ADMIN (password untouched).
+func EnsureAdminUser(database *sql.DB, email, displayName string) (created bool, generatedPassword string, err error) {
+	var existingID string
+	var existingRole string
+	err = database.QueryRow(`SELECT id, role FROM users WHERE email = $1`, email).Scan(&existingID, &existingRole)
+	if err == sql.ErrNoRows {
+		// Generate a strong random password (>= 24 chars).
+		pass, genErr := generateRandomPassword(24)
+		if genErr != nil {
+			return false, "", genErr
+		}
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(pass), 12)
+		if hashErr != nil {
+			return false, "", hashErr
+		}
+		dn := displayName
+		if dn == "" {
+			dn = email
+		}
+		u, createErr := CreateUserWithRole(database, email, string(hash), dn, "ADMIN", true)
+		if createErr != nil {
+			return false, "", createErr
+		}
+		if u.ID == "" {
+			return false, "", fmt.Errorf("admin user creation returned empty id")
+		}
+		return true, pass, nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+
+	// Security: never silently promote an existing non-ADMIN account to ADMIN.
+	// Otherwise an attacker who pre-registers the configured ADMIN_EMAIL via open
+	// registration would be auto-escalated to ADMIN on the next bootstrap.
+	// Idempotency across restarts is preserved only for an account that is
+	// already an ADMIN (we just ensure it stays active).
+	if existingRole != "ADMIN" {
+		log.Printf("WARNING: bootstrap admin email %q already exists with role %q; refusing to auto-promote (possible pre-registration collision)", email, existingRole)
+		return false, "", nil
+	}
+	if _, err := database.Exec(`UPDATE users SET active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, existingID); err != nil {
+		return false, "", err
+	}
+	return false, "", nil
+}
+
+// UserListParams filters/paginates the admin user listing.
+type UserListParams struct {
+	Page    int
+	Limit   int
+	Role    string
+	Active  *bool
+	Query   string
+}
+
+// ListUsers returns a paginated, password-free view of all users.
+func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
+	where := "TRUE"
+	args := []interface{}{}
+	idx := 1
+	if p.Role != "" {
+		where += fmt.Sprintf(" AND role = $%d", idx)
+		args = append(args, p.Role)
+		idx++
+	}
+	if p.Active != nil {
+		where += fmt.Sprintf(" AND active = $%d", idx)
+		args = append(args, *p.Active)
+		idx++
+	}
+	if p.Query != "" {
+		where += fmt.Sprintf(" AND (email ILIKE $%d OR display_name ILIKE $%d)", idx, idx+1)
+		like := "%" + p.Query + "%"
+		args = append(args, like, like)
+		idx += 2
+	}
+
+	var total int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (p.Page - 1) * p.Limit
+	if offset < 0 {
+		offset = 0
+	}
+	listArgs := append(append([]interface{}{}, args...), p.Limit, offset)
+	query := `
+		SELECT id, email, display_name, role, active, must_change_password, totp_enabled, created_at, updated_at
+		FROM users WHERE ` + where + `
+		ORDER BY created_at DESC
+		LIMIT $` + fmt.Sprintf("%d", idx) + ` OFFSET $` + fmt.Sprintf("%d", idx+1)
+	rows, err := database.Query(query, listArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	users := []User{}
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.TotpEnabled, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, 0, err
+		}
+		users = append(users, u)
+	}
+	return users, total, nil
+}
+
+// GlobalStats aggregates instance-wide counts for the admin overview.
+type GlobalStats struct {
+	TotalUsers         int            `json:"total_users"`
+	ActiveUsers        int            `json:"active_users"`
+	MigrationsByStatus map[string]int `json:"migrations_by_status"`
+	TasksByStatus      map[string]int `json:"tasks_by_status"`
+}
+
+// GetGlobalStats computes the counts shown on the admin stats panel.
+func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
+	stats := &GlobalStats{
+		MigrationsByStatus: map[string]int{},
+		TasksByStatus:      map[string]int{},
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&stats.TotalUsers); err != nil {
+		return nil, err
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE active = TRUE`).Scan(&stats.ActiveUsers); err != nil {
+		return nil, err
+	}
+	rows, err := database.Query(`SELECT status, COUNT(*) FROM migrations GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		stats.MigrationsByStatus[status] = n
+	}
+	rows.Close()
+	rows, err = database.Query(`SELECT status, COUNT(*) FROM tasks GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		stats.TasksByStatus[status] = n
+	}
+	rows.Close()
+	return stats, nil
+}
+
+// AdminMigrationView is a migration row enriched with the owner's email for the
+// admin-wide oversight view.
+type AdminMigrationView struct {
+	Migration
+	OwnerEmail string `json:"owner_email"`
+}
+
+// MigrationListParams filters/paginates the admin-wide migration listing.
+type MigrationListParams struct {
+	Page  int
+	Limit int
+}
+
+// ListAllMigrations returns every migration across all users (read-only oversight).
+func ListAllMigrations(database *sql.DB, p MigrationListParams) ([]AdminMigrationView, int, error) {
+	var total int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM migrations`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (p.Page - 1) * p.Limit
+	if offset < 0 {
+		offset = 0
+	}
+	query := `
+		SELECT m.id, m.user_id, m.source_url, m.source_username, m.source_provider, m.target_url,
+		       m.target_username, m.target_provider, m.target_dir, m.status, m.conflict_strategy,
+		       m.total_files, m.total_bytes, m.processed_files, m.processed_bytes, m.skipped_files,
+		       m.failed_files, m.error_message, m.created_at, m.updated_at, m.threads,
+		       m.bandwidth_limit_mbps, COALESCE(u.email, ''),
+		       m.selected_paths, m.selected_calendars, m.selected_contacts
+		FROM migrations m
+		LEFT JOIN users u ON u.id = m.user_id
+		ORDER BY m.created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := database.Query(query, p.Limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	views := []AdminMigrationView{}
+	for rows.Next() {
+		var v AdminMigrationView
+		var uid sql.NullString
+		var errMsg sql.NullString
+		if err := rows.Scan(
+			&v.ID, &uid, &v.SourceURL, &v.SourceUsername, &v.SourceProvider, &v.TargetURL,
+			&v.TargetUsername, &v.TargetProvider, &v.TargetDir, &v.Status, &v.ConflictStrategy,
+			&v.TotalFiles, &v.TotalBytes, &v.ProcessedFiles, &v.ProcessedBytes, &v.SkippedFiles,
+			&v.FailedFiles, &errMsg, &v.CreatedAt, &v.UpdatedAt, &v.Threads,
+			&v.BandwidthLimitMbps, &v.OwnerEmail,
+			&v.SelectedPaths, &v.SelectedCalendars, &v.SelectedContacts,
+		); err != nil {
+			return nil, 0, err
+		}
+		v.UserID = uid
+		v.ErrorMessage = errMsg
+		views = append(views, v)
+	}
+	return views, total, nil
+}
+
+// AuditLogRow is a serialized audit-log entry for listing responses.
+type AuditLogRow struct {
+	ID        int64           `json:"id"`
+	UserID    string          `json:"user_id"`
+	Action    AuditAction     `json:"action"`
+	Target    string          `json:"target"`
+	IP        string          `json:"ip"`
+	Details   json.RawMessage `json:"details"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// AuditLogParams filters/paginates the audit-log listing.
+type AuditLogParams struct {
+	Page    int
+	Limit   int
+	Action  string
+	UserID  string
+	Target  string
+	From    string
+	To      string
+}
+
+// ListAuditLog returns a paginated, filtered view of the audit log.
+func ListAuditLog(database *sql.DB, p AuditLogParams) ([]AuditLogRow, int, error) {
+	where := "TRUE"
+	args := []interface{}{}
+	idx := 1
+	if p.Action != "" {
+		where += fmt.Sprintf(" AND action = $%d", idx)
+		args = append(args, p.Action)
+		idx++
+	}
+	if p.UserID != "" {
+		where += fmt.Sprintf(" AND user_id = $%d", idx)
+		args = append(args, p.UserID)
+		idx++
+	}
+	if p.Target != "" {
+		where += fmt.Sprintf(" AND target = $%d", idx)
+		args = append(args, p.Target)
+		idx++
+	}
+	if p.From != "" {
+		ft, ferr := parseAuditTime(p.From)
+		if ferr != nil {
+			return nil, 0, ferr
+		}
+		where += fmt.Sprintf(" AND created_at >= $%d", idx)
+		args = append(args, ft)
+		idx++
+	}
+	if p.To != "" {
+		tt, terr := parseAuditTime(p.To)
+		if terr != nil {
+			return nil, 0, terr
+		}
+		where += fmt.Sprintf(" AND created_at <= $%d", idx)
+		args = append(args, tt)
+		idx++
+	}
+
+	var total int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (p.Page - 1) * p.Limit
+	if offset < 0 {
+		offset = 0
+	}
+	listArgs := append(append([]interface{}{}, args...), p.Limit, offset)
+	query := `
+		SELECT id, user_id, action, target, ip, details, created_at
+		FROM audit_log WHERE ` + where + `
+		ORDER BY created_at DESC
+		LIMIT $` + fmt.Sprintf("%d", idx) + ` OFFSET $` + fmt.Sprintf("%d", idx+1)
+	rows, err := database.Query(query, listArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	entries := []AuditLogRow{}
+	for rows.Next() {
+		var e AuditLogRow
+		var uid sql.NullString
+		var details []byte
+		if err := rows.Scan(&e.ID, &uid, &e.Action, &e.Target, &e.IP, &details, &e.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		if uid.Valid {
+			e.UserID = uid.String
+		}
+		if len(details) > 0 {
+			e.Details = details
+		} else {
+			e.Details = json.RawMessage("null")
+		}
+		entries = append(entries, e)
+	}
+	return entries, total, nil
+}
+
+// parseAuditTime normalizes a caller-supplied timestamp filter into an RFC3339
+// string suitable for a Postgres timestamptz comparison. It accepts RFC3339 as
+// well as a plain date (YYYY-MM-DD) from the audit-log date inputs. Invalid
+// values are rejected so we never pass an unchecked string to the query.
+func parseAuditTime(s string) (string, error) {
+	for _, layout := range []string{time.RFC3339, "2006-01-02", "2006-01-02T15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC().Format(time.RFC3339), nil
+		}
+	}
+	return "", fmt.Errorf("invalid time filter value %q", s)
+}
+
 
 // GetSetting retrieves the setting value for the given key, returning empty string if it does not exist
 func GetSetting(db *sql.DB, key string) (string, error) {
