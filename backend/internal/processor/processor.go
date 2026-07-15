@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"log"
+	"math"
 	"net"
 	"os"
 	"path"
@@ -135,6 +136,28 @@ func transferTimeout(fileSize int64) time.Duration {
 		return transferTimeoutMax
 	}
 	return timeout
+}
+
+// retryBackoff returns the exponential-backoff delay for the given 1-based attempt,
+// using the standard 10×3^(attempt-1) schedule (10s, 30s, 90s), capped at 90s.
+// Centralising the schedule keeps the connection-loss and normal-failure retry
+// paths consistent (both previously inlined the same [10,30,90] table + clamp).
+func retryBackoff(attempt int) time.Duration {
+	sec := 10 * int(math.Pow(3, float64(attempt-1)))
+	if sec > 90 {
+		sec = 90
+	}
+	return time.Duration(sec) * time.Second
+}
+
+// queryTargetSize reports whether the target file exists and its size. When retry
+// is true, transient query errors are retried (used for integrity checks where a
+// transient Nextcloud 502/503/423 must not be mistaken for a corrupt transfer).
+func queryTargetSize(ctx context.Context, client storage.StorageProvider, resourceType, p string, retry bool) (exists bool, size int64, err error) {
+	if retry {
+		return verifyTargetSize(ctx, client, resourceType, p)
+	}
+	return client.FileExists(ctx, resourceType, p)
 }
 
 func (p *Processor) recordConnLoss(migrationID string) int {
@@ -1023,7 +1046,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 					// though the upload succeeded and the file is intact. The upload commit
 					// already verified the size, so fall back to a size comparison before
 					// declaring the transfer corrupt (prevents false "skipped" files).
-					existsOnTarget, targetSize, errExists := verifyTargetSize(ctx, targetClient, task.ResourceType, targetPath)
+					existsOnTarget, targetSize, errExists := queryTargetSize(ctx, targetClient, task.ResourceType, targetPath, true)
 					if errExists == nil && existsOnTarget {
 						if task.FileSize == 0 {
 							uploadOK = true
@@ -1046,7 +1069,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 				}
 			} else {
 				// Algorithm mismatch fallback: verify size
-				existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
+				existsOnTarget, targetSize, errExists := queryTargetSize(ctx, targetClient, task.ResourceType, targetPath, false)
 				if errExists == nil && existsOnTarget {
 					if task.FileSize == 0 {
 						uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
@@ -1065,7 +1088,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			}
 		} else {
 			// Fallback: Size verification
-			existsOnTarget, targetSize, errExists := targetClient.FileExists(ctx, task.ResourceType, targetPath)
+			existsOnTarget, targetSize, errExists := queryTargetSize(ctx, targetClient, task.ResourceType, targetPath, false)
 			if errExists == nil && existsOnTarget {
 				if task.FileSize == 0 {
 					uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
@@ -1176,23 +1199,13 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		// migration-wide streak (P1-4).
 		taskConnLoss := p.recordConnLossTask(task.ID)
 		if lossCount < connLossEscalationThreshold && taskConnLoss < maxConnLossTaskAttempts {
-			backoffTable := []int{10, 30, 90}
-			// Align the backoff index with the connection-loss retry path
-			// (taskConnLoss is the count after this failure was recorded), so the
-			// first connection-loss retry waits 10s, not 30s.
-			idx := taskConnLoss - 1
-			if idx < 0 {
-				idx = 0
-			} else if idx >= len(backoffTable) {
-				idx = len(backoffTable) - 1
-			}
-			backoffSec := backoffTable[idx]
-			nextRetry := time.Now().Add(time.Duration(backoffSec) * time.Second)
+			backoff := retryBackoff(taskConnLoss)
+			nextRetry := time.Now().Add(backoff)
 			task.Status = "FAILED"
 			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
 			log.Printf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task conn-loss attempts %d)\n",
-				p.workerID, payload.TaskID, payload.MigrationID, backoffSec,
+				p.workerID, payload.TaskID, payload.MigrationID, int(backoff.Seconds()),
 				lossCount, connLossEscalationThreshold, taskConnLoss)
 			return
 		}
@@ -1272,22 +1285,13 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 	// If it is a normal file transfer failure
 	if task.Attempts < 3 && !isPermanent {
-		// Exponential Backoff: 10s, 30s (Finding 10)
-		backoffTable := []int{10, 30, 90}
-		idx := task.Attempts - 1
-		if idx < 0 {
-			idx = 0
-		} else if idx >= len(backoffTable) {
-			idx = len(backoffTable) - 1
-		}
-		backoffSec := backoffTable[idx]
-
-		nextRetry := time.Now().Add(time.Duration(backoffSec) * time.Second)
+		backoff := retryBackoff(task.Attempts)
+		nextRetry := time.Now().Add(backoff)
 		task.Status = "FAILED" // Kept as failed until cron schedules retry
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 		_ = db.UpdateTaskStatus(p.db, task)
 
-		log.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, backoffSec, task.Attempts)
+		log.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, int(backoff.Seconds()), task.Attempts)
 	} else {
 		// Max retries reached, fail permanently
 		task.Status = "FAILED"
@@ -1353,15 +1357,33 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	var expiresAt sql.NullTime
 	var provider string
 
-	if role == "source" {
-		refreshTokenEnc = mig.SourceRefreshTokenEncrypted
-		expiresAt = mig.SourceTokenExpiresAt
-		provider = mig.SourceProvider
-	} else {
-		refreshTokenEnc = mig.TargetRefreshTokenEncrypted
-		expiresAt = mig.TargetTokenExpiresAt
-		provider = mig.TargetProvider
+	// tokenSet selects the role-specific encrypted tokens/expiry/provider from a
+	// migration row. Used both for the initial check and the post-lock re-read so
+	// the source/target branches are not duplicated.
+	tokenSet := func(m *db.Migration) struct {
+		refreshEnc sql.NullString
+		expiresAt  sql.NullTime
+		provider   string
+		accessEnc  string
+	} {
+		if role == "source" {
+			return struct {
+				refreshEnc sql.NullString
+				expiresAt  sql.NullTime
+				provider   string
+				accessEnc  string
+			}{m.SourceRefreshTokenEncrypted, m.SourceTokenExpiresAt, m.SourceProvider, m.SourcePasswordEncrypted}
+		}
+		return struct {
+			refreshEnc sql.NullString
+			expiresAt  sql.NullTime
+			provider   string
+			accessEnc  string
+		}{m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt, m.TargetProvider, m.TargetPasswordEncrypted}
 	}
+
+	initial := tokenSet(mig)
+	refreshTokenEnc, expiresAt, provider = initial.refreshEnc, initial.expiresAt, initial.provider
 
 	// No refresh token stored → not an OAuth provider, nothing to do.
 	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
@@ -1379,26 +1401,13 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 		return "", fmt.Errorf("failed to fetch latest migration details inside refresh lock: %w", err)
 	}
 
-	// Determine latest fields and decrypt updated access token if exists
-	if role == "source" {
-		refreshTokenEnc = latestMig.SourceRefreshTokenEncrypted
-		expiresAt = latestMig.SourceTokenExpiresAt
-		provider = latestMig.SourceProvider
-		latestAccessEnc := latestMig.SourcePasswordEncrypted
-		latestAccess, err := crypto.Decrypt(latestAccessEnc, p.secretKey)
-		if err == nil {
-			accessToken = latestAccess
-		}
-	} else {
-		refreshTokenEnc = latestMig.TargetRefreshTokenEncrypted
-		expiresAt = latestMig.TargetTokenExpiresAt
-		provider = latestMig.TargetProvider
-		latestAccessEnc := latestMig.TargetPasswordEncrypted
-		latestAccess, err := crypto.Decrypt(latestAccessEnc, p.secretKey)
-		if err == nil {
-			accessToken = latestAccess
-		}
+	// Adopt the latest access token (if it decrypts) and refresh/expiry/provider
+	// fields from the re-read row.
+	latest := tokenSet(latestMig)
+	if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+		accessToken = latestAccess
 	}
+	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
 
 	// Token still valid with >2 min margin (updated by a concurrent thread) → use as-is.
 	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
