@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"reflect"
+	"unsafe"
 )
 
 // deriveKey ensures the key is exactly 32 bytes using SHA-256
@@ -82,4 +84,28 @@ func Decrypt(cipherTextHex string, secretKey string) (string, error) {
 	}
 
 	return string(plainText), nil
+}
+
+// ZeroString overwrites the backing memory of s with zero bytes so that
+// decrypted plaintext credentials do not linger after they are no longer
+// needed (zero-plaintext-in-memory goal). It mutates the caller's string via
+// a pointer. The string must not be referenced elsewhere (e.g. a constant).
+// Best-effort: it does nothing if the string is empty or unexported internals
+// change across Go versions.
+func ZeroString(s *string) {
+	if s == nil || *s == "" {
+		return
+	}
+	// Convert the string header to a byte slice header and zero the bytes.
+	// This is safe because *s is an unaliased decrypted value owned by the
+	// caller, never a string literal from read-only memory.
+	sh := (*reflect.StringHeader)(unsafe.Pointer(s))
+	if sh.Len == 0 {
+		return
+	}
+	b := unsafe.Slice((*byte)(unsafe.Pointer(sh.Data)), sh.Len)
+	for i := range b {
+		b[i] = 0
+	}
+	*s = ""
 }
