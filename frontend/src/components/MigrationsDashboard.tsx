@@ -358,7 +358,7 @@ export function MigrationsDashboard({
           <button
             onClick={fetchMigrations}
             className="p-2.5 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)] transition-all focus:outline-none cursor-pointer"
-            title="Aktualisieren"
+            title={t('common.refresh')}
           >
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>

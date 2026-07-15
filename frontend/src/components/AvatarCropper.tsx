@@ -179,7 +179,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             className="cursor-move block touch-none"
           />
           <div className="absolute bottom-2 left-2 right-2 text-center text-[9px] font-mono text-[var(--color-text-inverse)]/50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-            Ziehen zum Bewegen | Mausrad zum Zoomen
+            {t('settings.avatarCropperHint')}
           </div>
         </div>
 

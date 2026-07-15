@@ -254,6 +254,15 @@ func escapeDriveQuery(s string) string {
 	return strings.ReplaceAll(s, "'", "\\'")
 }
 
+// driveFolderQuery builds a Drive folder lookup query for the given parent and
+// folder name. User-controlled names are escaped via escapeDriveQuery so a name
+// containing a single quote cannot break out of the query string. Centralised
+// here so every caller escapes input consistently (P1-8).
+func driveFolderQuery(parentID, name string) string {
+	return fmt.Sprintf("'%s' in parents and name = '%s' and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
+		parentID, escapeDriveQuery(name))
+}
+
 func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (string, error) {
 	cleanPath := strings.Trim(path, "/")
 	if cleanPath == "" {
@@ -286,8 +295,7 @@ func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (str
 		}
 
 		// If not cached, query Google Drive
-		query := fmt.Sprintf("'%s' in parents and name = '%s' and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
-			currentID, escapeDriveQuery(part))
+		query := driveFolderQuery(currentID, part)
 		res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
 		if err != nil {
 			return "", err
@@ -647,8 +655,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 		if part == "" {
 			continue
 		}
-		query := fmt.Sprintf("'%s' in parents and name = '%s' and trashed = false and mimeType = 'application/vnd.google-apps.folder'",
-			currentID, escapeDriveQuery(part))
+		query := driveFolderQuery(currentID, part)
 		res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
 		if err != nil {
 			return err

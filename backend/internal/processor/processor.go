@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/crypto"
@@ -44,6 +45,14 @@ type Processor struct {
 	activeTasks  sync.Map
 	refreshLocks sync.Map
 	throttlers   sync.Map
+	// connLossCounts tracks consecutive connection-loss events per migration so
+	// a single flaky task does not immediately pause the whole migration (P1-4).
+	connLossCounts sync.Map
+	// recoveryAttempts tracks, per paused migration, how many times connection
+	// recovery has been attempted and when, so P1-12 can apply increasing backoff
+	// instead of probing a server that is still down on every 60s tick. Keyed by
+	// migration id.
+	recoveryAttempts sync.Map
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
@@ -68,6 +77,39 @@ func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey s
 func (p *Processor) getOrCreateRefreshLock(migrationID string) *sync.Mutex {
 	actual, _ := p.refreshLocks.LoadOrStore(migrationID, &sync.Mutex{})
 	return actual.(*sync.Mutex)
+}
+
+// connLossEscalationThreshold is the number of consecutive connection-loss
+// events for a migration before we escalate from per-task retry to a full
+// PAUSED_CONNECTION_LOSS pause (which triggers the connection-recovery
+// scheduler). This prevents one flaky endpoint from pausing every other task
+// in flight (P1-4).
+const connLossEscalationThreshold = 3
+
+// maxConnLossTaskAttempts caps how many times a single task may be retried on
+// connection loss before the migration is paused. Without this cap a poisoned
+// endpoint whose transfers keep classifying as network errors would retry
+// forever, because every *other* successful task resets the migration-wide
+// connLossCounts streak (P1-4).
+const maxConnLossTaskAttempts = 3
+
+// taskHeartbeatGrace is the initial window during which a RUNNING task's
+// updated_at is heartbeated unconditionally, so a slow-starting or briefly
+// throttled large-file transfer is never reclaimed by the orphan watchdog.
+var taskHeartbeatGrace = 10 * time.Minute
+
+// taskHeartbeatByteStale is how long a past-grace task may go without moving any
+// bytes before its heartbeat is suppressed, allowing the orphan-recovery
+// watchdog to reclaim a genuinely hung transfer.
+var taskHeartbeatByteStale = 2 * time.Minute
+
+func (p *Processor) recordConnLoss(migrationID string) int {
+	actual, _ := p.connLossCounts.LoadOrStore(migrationID, new(int32))
+	return int(atomic.AddInt32(actual.(*int32), 1))
+}
+
+func (p *Processor) clearConnLoss(migrationID string) {
+	p.connLossCounts.Delete(migrationID)
 }
 
 // Start runs the worker dequeue loop and background schedulers
@@ -331,6 +373,28 @@ func (p *Processor) RunConnectionRecoveryScheduler(ctx context.Context) {
 	}
 }
 
+// recoveryState records the last connection-recovery attempt for a paused
+// migration so P1-12 can apply increasing backoff instead of probing a server
+// that is still down on every 60s tick.
+type recoveryState struct {
+	lastAttempt time.Time
+	attempts    int
+}
+
+// recoveryBackoff returns how long to wait after the most recent failed recovery
+// attempt before trying again. The first attempt is allowed immediately; a still-
+// down server is then probed at most once per 5 minutes (escalating 60s → 5min).
+func recoveryBackoff(attempts int) time.Duration {
+	switch {
+	case attempts <= 0:
+		return 0
+	case attempts == 1:
+		return 60 * time.Second
+	default:
+		return 5 * time.Minute
+	}
+}
+
 func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	query := `
 		SELECT id, source_url, source_username, source_password_encrypted,
@@ -348,6 +412,16 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	for rows.Next() {
 		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
 		if err := rows.Scan(&id, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
+			continue
+		}
+
+		// Apply increasing backoff so a server that is still down is not probed
+		// on every 60s tick (P1-12).
+		var ra recoveryState
+		if v, ok := p.recoveryAttempts.Load(id); ok {
+			ra = v.(recoveryState)
+		}
+		if backoff := recoveryBackoff(ra.attempts); backoff > 0 && time.Since(ra.lastAttempt) < backoff {
 			continue
 		}
 
@@ -388,6 +462,11 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 			if err != nil {
 				fmt.Printf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, err)
 			}
+			// Reset backoff tracking now that the migration has recovered.
+			p.recoveryAttempts.Delete(id)
+		} else {
+			// Still down: record the attempt so the next probe is backed off.
+			p.recoveryAttempts.Store(id, recoveryState{lastAttempt: time.Now(), attempts: ra.attempts + 1})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -569,7 +648,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 					task.Status = "SKIPPED"
 					task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 					_ = db.UpdateTaskStatus(p.db, task)
-					_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
+					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
 					return nil
 				}
 				// Partial/stale or size-unknown existing file -> overwrite instead of skip.
@@ -708,7 +787,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		defer ticker.Stop()
 
 		lastHeartbeat := time.Now()
-		var bytesSinceLastHeartbeat int64
+		taskStart := time.Now()
+		lastByteAt := time.Now()
 
 		for {
 			select {
@@ -716,27 +796,34 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 				if !ok {
 					// Final flush
 					if bufferedBytes > 0 {
-						_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, bufferedBytes, 0, 0)
+						_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 0, bufferedBytes, 0, 0)
 						totalBytesReported += bufferedBytes
 					}
 					return
 				}
 				bufferedBytes += bytes
-				bytesSinceLastHeartbeat += bytes
+				lastByteAt = time.Now()
 			case <-ticker.C:
 				if bufferedBytes > 0 {
-					_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, bufferedBytes, 0, 0)
+					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 0, bufferedBytes, 0, 0)
 					totalBytesReported += bufferedBytes
 					bufferedBytes = 0
 				}
-				// Heartbeat updated_at for this task to avoid triggering orphan recovery
-				// Only heartbeat if progress was made (data was actively moving)
+				// Heartbeat updated_at for this task to avoid triggering orphan
+				// recovery. We keep heartbeating while the task is genuinely active:
+				//   - unconditionally during an initial grace period, so a slow-start
+				//     or momentarily throttled large-file transfer is not reclaimed;
+				//   - afterwards only if bytes have actually moved recently.
+				// A transfer that is truly hung (no bytes for longer than the stale
+				// threshold, once past the grace period) stops heartbeating and is
+				// then reclaimed by the orphan-recovery watchdog — the unconditional
+				// heartbeat that predates this would have hidden such hangs forever.
 				if time.Since(lastHeartbeat) >= 30*time.Second {
-					if bytesSinceLastHeartbeat > 0 {
+					stale := time.Since(lastByteAt) > taskHeartbeatByteStale && time.Since(taskStart) > taskHeartbeatGrace
+					if !stale {
 						_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING'", task.ID)
-						bytesSinceLastHeartbeat = 0
+						lastHeartbeat = time.Now()
 					}
-					lastHeartbeat = time.Now()
 				}
 			}
 		}
@@ -749,7 +836,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		if err != nil {
 			// Rollback progress reported to DB during this failed run
 			if totalBytesReported > 0 {
-				_ = db.IncrementMigrationProgress(p.db, mig.ID, 0, -totalBytesReported, 0, 0)
+				_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 0, -totalBytesReported, 0, 0)
 			}
 		}
 	}()
@@ -791,7 +878,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			task.Status = "SKIPPED"
 			task.ErrorMessage = sql.NullString{String: "Sabredav: Calendar event UID already exists (SKIP)", Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
-			_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, task.FileSize, 1, 0)
+			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
 			return nil
 		}
 		return fmt.Errorf("upload to target failed: %w", err)
@@ -976,8 +1063,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	task.ErrorMessage = sql.NullString{}
 	_ = db.UpdateTaskStatus(p.db, task)
 
+	// A successful transfer breaks the "consecutive connection loss" streak (P1-4).
+	p.clearConnLoss(mig.ID)
+
 	// Increment processed files count (processed bytes already incremented by progress channel)
-	_ = db.IncrementMigrationProgress(p.db, mig.ID, 1, 0, 0, 0)
+	_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, 0, 0, 0)
 
 	return nil
 }
@@ -1017,9 +1107,44 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 	if isConnLoss {
 		fmt.Printf("[Worker %s] Connection loss detected: %v\n", p.workerID, procErr)
-		// Pause the migration
+		// Prefer per-task backoff: retry just this task instead of pausing the
+		// whole migration. Only escalate to PAUSED_CONNECTION_LOSS after several
+		// consecutive connection losses for the migration, so a single flaky task
+		// (e.g. one bad endpoint) does not stall every other task in flight (P1-4).
+		lossCount := p.recordConnLoss(payload.MigrationID)
+		// Per-task cap: a single task must never retry on connection loss forever.
+		// If the migration-level streak is still below the escalation threshold
+		// but THIS task has exhausted its own connection-loss retries, escalate to
+		// a pause so the connection-recovery scheduler can retry the whole
+		// migration — otherwise a poisoned endpoint would loop indefinitely even
+		// though other tasks keep resetting the migration-wide streak (P1-4).
+		if lossCount < connLossEscalationThreshold && task.Attempts < maxConnLossTaskAttempts {
+			backoffTable := []int{10, 30, 90}
+			// Align the backoff index with the normal retry path (task.Attempts is
+			// already incremented above), so the first connection-loss retry waits
+			// 10s, not 30s.
+			idx := task.Attempts - 1
+			if idx < 0 {
+				idx = 0
+			} else if idx >= len(backoffTable) {
+				idx = len(backoffTable) - 1
+			}
+			backoffSec := backoffTable[idx]
+			nextRetry := time.Now().Add(time.Duration(backoffSec) * time.Second)
+			task.Status = "FAILED"
+			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
+			_ = db.UpdateTaskStatus(p.db, task)
+			fmt.Printf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task attempts %d)\n",
+				p.workerID, payload.TaskID, payload.MigrationID, backoffSec,
+				lossCount, connLossEscalationThreshold, task.Attempts)
+			return
+		}
+		// Escalation: too many consecutive connection losses for the migration,
+		// or this single task exhausted its connection-loss retries — pause the
+		// migration so the connection-recovery scheduler can retry it.
 		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "PAUSED_CONNECTION_LOSS", nil)
-
+		p.clearConnLoss(payload.MigrationID)
+		p.recoveryAttempts.Delete(payload.MigrationID)
 		// Task is set back to PENDING so it can be retried immediately upon resume
 		task.Status = "PENDING"
 		_ = db.UpdateTaskStatus(p.db, task)
@@ -1055,11 +1180,26 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 			p.workerID, payload.TaskID, payload.MigrationID)
 		authErrMsg := fmt.Sprintf("Authentication failed — please check your credentials and start a new migration")
 		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "FAILED", &authErrMsg)
+		// Drop any connection-loss / recovery tracking for this migration now that
+		// it is terminal, so the in-memory maps do not leak across migrations.
+		p.clearConnLoss(payload.MigrationID)
+		p.recoveryAttempts.Delete(payload.MigrationID)
 		// Mark this individual task failed too so progress counters stay accurate
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
 		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, task.FileSize, 0, 1)
+		_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 1, task.FileSize, 0, 1)
+		// Cancel any remaining PENDING tasks so they are not orphaned: the dequeue
+		// query only selects PENDING while RUNNING/INDEXING, so they would otherwise
+		// stay stuck forever (processed_files never reaches total_files, WebSocket
+		// never closes, CSV report incomplete). Count them as FAILED (not processed)
+		// so the report does not understate how many files were not migrated.
+		cancelled, cerr := db.CancelRemainingPendingTasks(p.db, task.MigrationID)
+		if cerr != nil {
+			fmt.Printf("[Worker %s] Error cancelling remaining pending tasks for migration %s: %v\n", p.workerID, task.MigrationID, cerr)
+		} else if cancelled > 0 {
+			_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 0, 0, 0, cancelled)
+		}
 		if owner, oerr := db.GetMigrationOwnerID(p.db, payload.MigrationID); oerr == nil {
 			db.WriteAuditLog(p.db, db.AuditEntry{
 				UserID:  sql.NullString{String: owner, Valid: true},
@@ -1096,7 +1236,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		_ = db.UpdateTaskStatus(p.db, task)
 
 		// Increment migration failed files
-		_ = db.IncrementMigrationProgress(p.db, task.MigrationID, 1, task.FileSize, 0, 1)
+		_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 1, task.FileSize, 0, 1)
 		fmt.Printf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
 	}
 }
@@ -1302,40 +1442,57 @@ func (p *Processor) cleanupThrottlers() {
 }
 
 func (p *Processor) sendPendingCompletionEmails(ctx context.Context) {
-	notifications, err := db.ClaimPendingEmailNotifications(p.db, 10)
-	if err != nil {
-		fmt.Printf("[CompletionNotifier] Error claiming pending notifications: %v\n", err)
-		return
-	}
-
-	for _, n := range notifications {
-		p.sendCompletionEmail(ctx, n)
+	// Claim one notification at a time and hold its row lock only for the
+	// duration of a single send. This keeps the lock (and thus any blocked
+	// workers) short, and means a crash can only lose — and therefore retry —
+	// the one in-flight message instead of dropping a whole batch.
+	for claimed := 0; claimed < 10; claimed++ {
+		tx, notifs, err := db.LockPendingEmailNotifications(p.db, 1)
+		if err != nil {
+			fmt.Printf("[CompletionNotifier] Error claiming pending notification: %v\n", err)
+			return
+		}
+		if len(notifs) == 0 {
+			_ = tx.Rollback()
+			break
+		}
+		n := notifs[0]
+		// sendCompletionEmail marks the row sent (inside tx) on success or on an
+		// intentional skip and returns nil; on a transient error it leaves the row
+		// unmarked so the commit re-opens it for the next tick.
+		if err := p.sendCompletionEmail(tx, n); err != nil {
+			fmt.Printf("[CompletionNotifier] Transient failure for migration %s, will retry: %v\n", n.MigrationID, err)
+		}
+		if err := tx.Commit(); err != nil {
+			fmt.Printf("[CompletionNotifier] Error committing email claim for migration %s: %v\n", n.MigrationID, err)
+		}
 	}
 }
 
-func (p *Processor) sendCompletionEmail(ctx context.Context, n db.PendingEmailNotification) {
+// sendCompletionEmail sends the completion report for n. It marks the row sent
+// inside tx (via MarkMigrationEmailSentTx) on success or on an intentional skip,
+// and returns nil in those cases. On a transient failure (DB/SMTP) it leaves the
+// row unmarked and returns the error so the caller's commit re-opens it for retry.
+func (p *Processor) sendCompletionEmail(tx *sql.Tx, n db.PendingEmailNotification) error {
 	settings, err := db.GetUserSMTPSettings(p.db, n.UserID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			// User has no SMTP config: silently skip email
-			_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
-			return
+			// User has no SMTP config: nothing to send, mark as sent to avoid retry.
+			return db.MarkMigrationEmailSentTx(tx, n.MigrationID)
 		}
-		fmt.Printf("[CompletionNotifier] Error fetching SMTP settings for user %s: %v\n", n.UserID, err)
-		return
+		return err // transient DB error -> retry
 	}
 
 	if !settings.NotifyOnCompletion {
-		// User disabled completion notifications: silently skip
-		_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
-		return
+		// User disabled completion notifications: mark as sent, do not retry.
+		return db.MarkMigrationEmailSentTx(tx, n.MigrationID)
 	}
 
 	password, err := crypto.Decrypt(settings.SMTPPasswordEnc, p.secretKey)
 	if err != nil {
 		fmt.Printf("[CompletionNotifier] Error decrypting SMTP password for user %s: %v\n", n.UserID, err)
-		_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
-		return
+		// Permanent config error: skip this migration's mail rather than looping.
+		return db.MarkMigrationEmailSentTx(tx, n.MigrationID)
 	}
 
 	smtpCfg := email.SMTPConfig{
@@ -1350,9 +1507,7 @@ func (p *Processor) sendCompletionEmail(ctx context.Context, n db.PendingEmailNo
 
 	user, err := db.GetUserByID(p.db, n.UserID)
 	if err != nil {
-		fmt.Printf("[CompletionNotifier] Error fetching user %s: %v\n", n.UserID, err)
-		_ = db.MarkMigrationEmailSent(p.db, n.MigrationID)
-		return
+		return err // transient DB error -> retry
 	}
 
 	errMsg := ""
@@ -1367,14 +1522,12 @@ func (p *Processor) sendCompletionEmail(ctx context.Context, n db.PendingEmailNo
 	)
 
 	if err := email.SendMail(smtpCfg, user.Email, "Clumoove — Migrationsbericht", htmlBody); err != nil {
-		fmt.Printf("[CompletionNotifier] Error sending completion email for migration %s: %v\n", n.MigrationID, err)
-		// Leave email_sent = FALSE so it gets retried on the next tick
-		return
+		// Actual SMTP send failed: leave the row unmarked so it is retried on the
+		// next tick (the caller commits without marking).
+		return err
 	}
 
-	if err := db.MarkMigrationEmailSent(p.db, n.MigrationID); err != nil {
-		fmt.Printf("[CompletionNotifier] Error marking email sent for migration %s: %v\n", n.MigrationID, err)
-	}
+	return db.MarkMigrationEmailSentTx(tx, n.MigrationID)
 }
 
 // verifyTargetSize queries the target for existence and size, retrying on

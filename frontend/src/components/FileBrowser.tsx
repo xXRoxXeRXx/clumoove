@@ -116,7 +116,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }),
       });
 
-      if (!response.ok) throw new Error(t('fileBrowser.errors.loadTarget'));
+      if (!response.ok) {
+        const b = await response.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.loadTarget'));
+      }
 
       const data = await response.json();
       if (data.success) {
@@ -171,7 +174,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }),
       });
 
-      if (!response.ok) throw new Error(t('fileBrowser.errors.createFolder'));
+      if (!response.ok) {
+        const b = await response.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.createFolder'));
+      }
 
       const data = await response.json();
       if (data.success) {
@@ -220,7 +226,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           resource_type: 'calendars',
         }),
       });
-      if (!response.ok) throw new Error(t('fileBrowser.errors.loadCalendars'));
+      if (!response.ok) {
+        const b = await response.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.loadCalendars'));
+      }
       const data = await response.json();
       if (data.success) {
         const items = sortEntries(data.items || []);
@@ -258,7 +267,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           resource_type: 'contacts',
         }),
       });
-      if (!response.ok) throw new Error(t('fileBrowser.errors.loadContacts'));
+      if (!response.ok) {
+        const b = await response.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.loadContacts'));
+      }
       const data = await response.json();
       if (data.success) {
         const items = sortEntries(data.items || []);
@@ -305,7 +317,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }),
       });
 
-      if (!response.ok) throw new Error(t('fileBrowser.errors.loadDir'));
+      if (!response.ok) {
+        const b = await response.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.loadDir'));
+      }
 
       const data = await response.json();
       if (data.success) {
@@ -398,7 +413,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       });
 
       if (!response.ok) {
-        throw new Error(t('fileBrowser.errors.startFailed'));
+        const b = await response.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.startFailed'));
       }
 
       const data = await response.json();

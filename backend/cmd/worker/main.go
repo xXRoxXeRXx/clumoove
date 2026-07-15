@@ -9,12 +9,17 @@ import (
 	"syscall"
 
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/processor"
 	"backend/internal/queue"
 )
 
 func main() {
 	log.Println("Starting Migration Worker...")
+
+	// Initialize OAuth provider configs up front so any inline token refresh
+	// (Finding 9) has a populated configs map instead of failing silently.
+	oauth.InitConfigs()
 
 	// Read environment variables
 	dbURL := os.Getenv("DATABASE_URL")

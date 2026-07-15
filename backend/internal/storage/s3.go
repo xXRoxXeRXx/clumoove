@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -70,7 +69,7 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 				return nil, fmt.Errorf("insecure connection (HTTP) is not allowed for public endpoints")
 			}
 			host := epURL.Hostname()
-			if !isLocalOrPrivateHost(host) {
+			if !allowInsecureEgress(host) {
 				return nil, fmt.Errorf("insecure connection (HTTP) is only allowed for local or private endpoints")
 			}
 		}
@@ -121,38 +120,6 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 		client: client,
 		bucket: bucket,
 	}, nil
-}
-
-func isLocalOrPrivateHost(host string) bool {
-	if host == "localhost" || strings.HasSuffix(host, ".local") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	if ip.IsLoopback() {
-		return true
-	}
-	if ip4 := ip.To4(); ip4 != nil {
-		if ip4[0] == 10 {
-			return true
-		}
-		if ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 {
-			return true
-		}
-		if ip4[0] == 192 && ip4[1] == 168 {
-			return true
-		}
-	} else if ip6 := ip.To16(); ip6 != nil {
-		if ip6[0] == 0xfc || ip6[0] == 0xfd {
-			return true
-		}
-		if ip6[0] == 0xfe && (ip6[1]&0xc0) == 0x80 {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *S3Provider) cleanKey(filePath string) string {

@@ -35,9 +35,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   const [mustChangeError, setMustChangeError] = useState<string>('');
 
   useEffect(() => {
+    let cancelled = false;
     fetch(`${apiUrl}/api/settings`)
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         if (data && data.registrations_enabled === 'false') {
           setRegistrationsEnabled(false);
         }
@@ -45,12 +47,15 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       .catch((err) => {
         console.error('Failed to fetch settings:', err);
       });
+    return () => { cancelled = true; };
   }, [apiUrl]);
 
   useEffect(() => {
+    let cancelled = false;
     fetch(`${apiUrl}/api/auth/password-reset-available`)
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         if (data && data.available === true) {
           setPasswordResetAvailable(true);
         }
@@ -58,6 +63,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       .catch((err) => {
         console.error('Failed to fetch password reset availability:', err);
       });
+    return () => { cancelled = true; };
   }, [apiUrl]);
 
   useEffect(() => {
@@ -287,7 +293,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           <form onSubmit={handleOTPSubmit} className="space-y-5">
             <div className="space-y-1.5">
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                Authenticator-Code
+                {t('auth.authenticatorCode')}
               </label>
               <div className="relative group">
                 <input

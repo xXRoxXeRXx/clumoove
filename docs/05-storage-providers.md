@@ -95,9 +95,13 @@ the API against Server-Side Request Forgery through the connect/browse endpoints
 
 ### S3-specific SSRF
 
-`insecure=true` S3 endpoints check literal IPs or `*.local`/`localhost` **directly without DNS
-resolution** to prevent DNS-rebinding SSRF. Only literal loopback/private IPs or local domain names are
-permitted (see `s3.go`).
+`insecure=true` S3 endpoints permit only loopback, `*.local`/`localhost`, and RFC1918/ULA
+(private) hosts, evaluated **directly without DNS resolution** to prevent DNS-rebinding SSRF
+(see `allowInsecureEgress` in `ssrf.go`, the single source of truth also used by the S3
+provider). Link-local addresses — notably the cloud metadata endpoint `169.254.169.254` — are
+always rejected, and RFC1918/ULA ranges are additionally rejected when `MIGRATION_BLOCK_PRIVATE=1`.
+The actual TCP dial re-resolves and re-validates the address via `egressDialer`, so the
+construction-time check and the per-connection check agree.
 
 ---
 

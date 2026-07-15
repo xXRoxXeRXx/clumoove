@@ -6,6 +6,24 @@ import (
 	"net/url"
 )
 
+// ValidProviders is the canonical list of supported storage providers. It is
+// the single source of truth shared by the NewProvider switch below and any
+// request-time whitelist checks (e.g. main.go handleConnect), so adding a
+// provider only requires updating the switch — not every call site.
+var ValidProviders = []string{
+	"nextcloud", "webdav", "dropbox", "google", "smb", "s3", "sftp", "magentacloud",
+}
+
+// IsValidProvider reports whether p is a supported storage provider.
+func IsValidProvider(p string) bool {
+	for _, v := range ValidProviders {
+		if v == p {
+			return true
+		}
+	}
+	return false
+}
+
 func NewProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
 	// Sanitize URL credentials to prevent leakage in url.Error (Finding 2)
 	if providerType == "nextcloud" || providerType == "webdav" {
