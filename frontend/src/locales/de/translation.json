@@ -17,7 +17,8 @@
     "search": "Suchen",
     "required": "Erforderlich",
     "optional": "Optional",
-    "user": "Benutzer"
+    "user": "Benutzer",
+    "active": "Aktiv"
   },
   "nav": {
     "settings": "Einstellungen",
