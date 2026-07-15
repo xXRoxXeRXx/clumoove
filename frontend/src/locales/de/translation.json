@@ -17,7 +17,8 @@
     "search": "Suchen",
     "required": "Erforderlich",
     "optional": "Optional",
-    "user": "Benutzer"
+    "user": "Benutzer",
+    "active": "Aktiv"
   },
   "nav": {
     "settings": "Einstellungen",
@@ -482,15 +483,11 @@
   },
   "admin": {
     "title": "Verwaltung",
-    "system": {
-      "title": "Systemsteuerung"
-    },
     "tabs": {
       "users": "Benutzer",
       "migrations": "Übertragungen",
       "stats": "Statistiken",
-      "audit": "Audit-Protokoll",
-      "system": "System"
+      "audit": "Audit-Protokoll"
     },
     "users": {
       "create": "Benutzer erstellen",

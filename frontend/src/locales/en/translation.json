@@ -17,7 +17,8 @@
     "search": "Search",
     "required": "Required",
     "optional": "Optional",
-    "user": "User"
+    "user": "User",
+    "active": "Active"
   },
   "nav": {
     "settings": "Settings",
@@ -482,15 +483,11 @@
   },
   "admin": {
     "title": "Administration",
-    "system": {
-      "title": "System control"
-    },
     "tabs": {
       "users": "Users",
       "migrations": "Migrations",
       "stats": "Statistics",
-      "audit": "Audit Log",
-      "system": "System"
+      "audit": "Audit Log"
     },
     "users": {
       "create": "Create user",

@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Users as UsersIcon, Activity, BarChart3, ScrollText, UserPlus, Ban, CheckCircle2, Trash2, ShieldCheck, ShieldOff, RefreshCw, CloudSync, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Users as UsersIcon, Activity, BarChart3, ScrollText, UserPlus, Ban, CheckCircle2, Trash2, ShieldCheck, ShieldOff, RefreshCw } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
 import { adminApi, type AdminUser, type AdminStats, type AdminMigration, type AuditEntry, type ApiResult } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
-import { Toggle } from './Toggle';
-
-type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
+type Tab = 'users' | 'migrations' | 'stats' | 'audit';
 
 interface AdminPanelProps {
   apiUrl: string;
@@ -66,7 +64,6 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
     ['migrations', Activity, 'admin.tabs.migrations'],
     ['stats', BarChart3, 'admin.tabs.stats'],
     ['audit', ScrollText, 'admin.tabs.audit'],
-    ['system', SlidersHorizontal, 'admin.tabs.system'],
   ] as const;
 
   return (
@@ -113,7 +110,6 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
         {tab === 'migrations' && <MigrationsTab apiUrl={apiUrl} token={token} formatBytes={formatBytes} formatDateTime={formatDateTime} />}
         {tab === 'stats' && <StatsTab apiUrl={apiUrl} token={token} />}
         {tab === 'audit' && <AuditTab apiUrl={apiUrl} token={token} formatDateTime={formatDateTime} />}
-        {tab === 'system' && <SystemTab apiUrl={apiUrl} token={token} onMessage={setMessage} />}
       </div>
     </div>
   );
@@ -530,86 +526,6 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
       </div>
 
       <Pager page={page} pages={pages} onPage={setPage} />
-    </SectionCard>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// System tab
-// ---------------------------------------------------------------------------
-
-function SystemTab({ apiUrl, token, onMessage }: {
-  apiUrl: string; token: string;
-  onMessage: (m: { text: string; type: 'success' | 'error' } | null) => void;
-}) {
-  const { t } = useTranslation();
-  const translateApiError = useApiError();
-
-  const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-
-  useEffect(() => {
-    fetch(`${apiUrl}/api/settings`)
-      .then((res) => res.json())
-      .then((data) => {
-        setRegistrationsEnabled(data.registrations_enabled !== 'false');
-      })
-      .catch((err) => {
-        console.error('Failed to fetch settings:', err);
-      });
-  }, [apiUrl]);
-
-  const handleToggleRegistrations = async (checked: boolean) => {
-    setMessage(null);
-    setLoading(true);
-    try {
-      const res = await fetch(`${apiUrl}/api/settings`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          key: 'registrations_enabled',
-          value: checked ? 'true' : 'false',
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as { error_code?: string });
-        throw new Error(translateApiError(data.error_code));
-      }
-
-      setRegistrationsEnabled(checked);
-      onMessage({
-        text: checked ? t('settings.messages.adminSavedOn') : t('settings.messages.adminSavedOff'),
-        type: 'success',
-      });
-    } catch (err) {
-      setMessage({ text: (err as Error).message, type: 'error' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <SectionCard icon={CloudSync} title={t('admin.system.title')}>
-      <MessageBanner message={message} />
-
-      <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
-        <div className="text-left space-y-1 pr-4">
-          <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.allowRegistrations')}</h4>
-          <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
-            {t('settings.allowRegistrationsHint')}
-          </p>
-        </div>
-        <Toggle
-          checked={registrationsEnabled}
-          disabled={loading}
-          onChange={handleToggleRegistrations}
-        />
-      </div>
     </SectionCard>
   );
 }
