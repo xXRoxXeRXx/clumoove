@@ -62,7 +62,7 @@ File-scoped commands referenced in `AGENTS.md`:
 | :--- | :------ |
 | Go typecheck/lint | `go vet ./backend/...` |
 | TS typecheck | `npx tsc --noEmit --project frontend/tsconfig.app.json` |
-| JS/TS lint (example) | `npx eslint frontend/src/components/FileBrowser.tsx` |
+| JS/TS lint | `npx eslint frontend/src` |
 
 ---
 
