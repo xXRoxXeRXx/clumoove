@@ -56,7 +56,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 
-	// Decrypt source credentials at the last moment (Zero Plaintext rule)
+	// Decrypt source credentials at the last moment (Zero Plaintext rule).
+	// The plaintext is scoped to this block and zeroed immediately after the
+	// provider is constructed so it does not linger in memory during the
+	// (possibly long) BFS traversal.
 	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, idx.encryptionKey)
 	if err != nil {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to decrypt source password: %v", err))
@@ -65,14 +68,15 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
+		crypto.ZeroString(&sourcePass)
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to create storage provider: %v", err))
 		return
 	}
 	defer sourceClient.Close()
+	defer crypto.ZeroString(&sourcePass)
 
 	var totalFiles int
 	var totalBytes int64
-	var taskIDs []string
 	indexErrors := make([]db.IndexingErrorInput, 0)
 	indexedPaths := make(map[string]bool)
 
@@ -84,12 +88,20 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	for _, p := range paths {
 		res, err := sourceClient.InspectResource(ctx, "files", p)
 		if err != nil {
-			failMigration(idx.db, migID, fmt.Sprintf("Failed to inspect path %s: %v", p, err))
-			return
+			// A single bad file path must not abort the whole migration.
+			// Record it as a skipped indexing error and continue, consistent
+			// with the resilient-indexing philosophy used in indexFolder.
+			indexErrors = append(indexErrors, db.IndexingErrorInput{
+				Path:         p,
+				ResourceType: "files",
+				ErrorMessage: "failed to inspect path: " + sanitizeError(err.Error()),
+			})
+			log.Printf("Indexing: skipping path %s (failed to inspect): %v", p, err)
+			continue
 		}
 
 		if res.IsDir {
-			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths, &indexErrors)
+			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, &totalFiles, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
 				return
@@ -102,10 +114,13 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			}
 			indexedPaths[key] = true
 			hashVal := res.Hash
-			metaJSON, _ := json.Marshal(storage.FileMetadata{
+			metaJSON, err := json.Marshal(storage.FileMetadata{
 				ModifiedTime: res.LastModified,
 				Description:  res.Metadata.Description,
 			})
+			if err != nil {
+				metaJSON = []byte("{}")
+			}
 			task := &db.Task{
 				MigrationID:  migID,
 				ResourceType: "files",
@@ -115,12 +130,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				Status:       "PENDING",
 				Metadata:     metaJSON,
 			}
-			taskID, err := db.CreateTask(idx.db, task)
-			if err != nil {
+			if _, err := db.CreateTask(idx.db, task); err != nil {
 				failMigration(idx.db, migID, fmt.Sprintf("Failed to create task in DB: %v", err))
 				return
 			}
-			taskIDs = append(taskIDs, taskID)
 			totalFiles++
 			totalBytes += res.Size
 		}
@@ -128,7 +141,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	// 2. Index calendars
 	for _, p := range calendars {
-		err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths, &indexErrors)
+		err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, &totalFiles, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
 			return
@@ -137,7 +150,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	// 3. Index contacts
 	for _, p := range contacts {
-		err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, &totalFiles, &totalBytes, &taskIDs, indexedPaths, &indexErrors)
+		err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, &totalFiles, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
 			return
@@ -153,16 +166,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		}
 	}
 
-	// If nothing at all was indexed (e.g. root path unreachable or every folder
-	// failed), mark the migration FAILED so the user can re-index.
-	if totalFiles == 0 && len(indexErrors) > 0 {
-		failMigration(idx.db, migID, fmt.Sprintf("Indexing failed: %d folder(s) could not be read. First error: %s", len(indexErrors), indexErrors[0].ErrorMessage))
-		return
-	}
-
-	// Update Totals and status to RUNNING in PostgreSQL
-	err = db.UpdateMigrationTotals(idx.db, migID, totalFiles, totalBytes)
-	if err != nil {
+	// Terminal decision: write totals, then decide the final outcome in one place.
+	// This avoids two separate totalFiles == 0 branches split by the totals write.
+	if err := db.UpdateMigrationTotals(idx.db, migID, totalFiles, totalBytes); err != nil {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to update migration totals: %v", err))
 		return
 	}
@@ -172,17 +178,24 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		log.Printf("Warning: zero-delta progress check after indexing failed for %s: %v\n", migID, err)
 	}
 
-	if totalFiles == 0 {
-		err = db.UpdateMigrationStatus(idx.db, migID, "COMPLETED", nil)
-		if err != nil {
+	switch {
+	case totalFiles == 0 && len(indexErrors) > 0:
+		// Nothing was indexed but some folders/paths failed: mark FAILED so the
+		// user can re-index (orphaned PENDING tasks are not possible here since
+		// none were created; the worker dequeue also filters on migration status).
+		failMigration(idx.db, migID, fmt.Sprintf("Indexing failed: %d path(s) could not be read. First error: %s", len(indexErrors), indexErrors[0].ErrorMessage))
+		return
+	case totalFiles == 0:
+		// Every selected path was an empty folder / empty calendar / skipped file.
+		if err := db.UpdateMigrationStatus(idx.db, migID, "COMPLETED", nil); err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration completed: %v", err))
 			return
 		}
 		if owner, oerr := db.GetMigrationOwnerID(idx.db, migID); oerr == nil {
 			db.WriteAuditLog(idx.db, db.AuditEntry{
-				UserID: sql.NullString{String: owner, Valid: true},
-				Action: db.AuditMigrationCompleted,
-				Target: migID,
+				UserID:  sql.NullString{String: owner, Valid: true},
+				Action:  db.AuditMigrationCompleted,
+				Target:  migID,
 				Details: json.RawMessage(`{"phase":"indexing","files":0}`),
 			})
 		}
@@ -210,7 +223,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 // and skipped, so the rest of the tree keeps being indexed instead of aborting
 // the whole migration. If the overall indexing context is cancelled (deadline or
 // shutdown) traversal stops gracefully after recording a single interrupted error.
-func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, taskIDs *[]string, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	queue := []string{startPath}
 	visited := make(map[string]bool)
 	visited[startPath] = true
@@ -257,10 +270,13 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					continue
 				}
 				indexedPaths[key] = true
-				metaJSON, _ := json.Marshal(storage.FileMetadata{
+				metaJSON, err := json.Marshal(storage.FileMetadata{
 					ModifiedTime: file.LastModified,
 					Description:  file.Metadata.Description,
 				})
+				if err != nil {
+					metaJSON = []byte("{}")
+				}
 				task := &db.Task{
 					MigrationID:  migID,
 					ResourceType: resourceType,
@@ -270,8 +286,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					Status:       "PENDING",
 					Metadata:     metaJSON,
 				}
-				taskID, err := db.CreateTask(database, task)
-				if err != nil {
+				if _, err := db.CreateTask(database, task); err != nil {
 					// A single DB hiccup must not abort the whole index: record and skip.
 					*indexErrors = append(*indexErrors, db.IndexingErrorInput{
 						Path:         file.Path,
@@ -281,7 +296,6 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					log.Printf("Indexing: skipping file %s (failed to create task): %v", file.Path, err)
 					continue
 				}
-				*taskIDs = append(*taskIDs, taskID)
 				*totalFiles++
 				*totalBytes += file.Size
 			}
@@ -312,9 +326,9 @@ func failMigration(database *sql.DB, migID string, errMsg string) {
 	_ = db.UpdateMigrationStatus(database, migID, "FAILED", &safe)
 	if owner, oerr := db.GetMigrationOwnerID(database, migID); oerr == nil {
 		db.WriteAuditLog(database, db.AuditEntry{
-			UserID: sql.NullString{String: owner, Valid: true},
-			Action: db.AuditMigrationFailed,
-			Target: migID,
+			UserID:  sql.NullString{String: owner, Valid: true},
+			Action:  db.AuditMigrationFailed,
+			Target:  migID,
 			Details: json.RawMessage(fmt.Sprintf(`{"phase":"indexing","error":%s}`, marshalString(safe))),
 		})
 	}
