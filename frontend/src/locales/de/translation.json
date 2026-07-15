@@ -248,7 +248,6 @@
     "noMigrations": "Keine Übertragungen gefunden",
     "dbEmpty": "Keine Einträge vorhanden",
     "startFirst": "Erste Übertragung starten",
-    "infoDelete": "Hinweis: Um sensible Verbindungsdaten und Berichte vollständig zu bereinigen, nutze bitte das Lösch-Symbol.",
     "createdAt": "Erstellt am",
     "sourceTarget": "Quelle / Ziel",
     "status": "Status",

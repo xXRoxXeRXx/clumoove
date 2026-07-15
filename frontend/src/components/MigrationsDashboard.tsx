@@ -507,16 +507,6 @@ export function MigrationsDashboard({
           </div>
         )}
 
-        {/* Dashboard hints */}
-        {!loading && migrations.length > 0 && (
-          <div className="mt-6 border-t border-[var(--color-border)]/40 pt-4 flex items-center gap-2 text-[10px] font-mono text-[var(--color-text-muted)]">
-            <HardDrive className="w-3.5 h-3.5 shrink-0" />
-            <span>
-              {t('migrations.infoDelete')}
-            </span>
-          </div>
-        )}
-
       </div>
     </div>
   );

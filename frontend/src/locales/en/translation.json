@@ -248,7 +248,6 @@
     "noMigrations": "No transfers found",
     "dbEmpty": "No entries found",
     "startFirst": "Start your first transfer",
-    "infoDelete": "Note: To completely clean up sensitive connection details and reports, please use the delete icon.",
     "createdAt": "Created on",
     "sourceTarget": "Source / Target",
     "status": "Status",
