@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { ConnectForm } from './components/ConnectForm';
 import { FileBrowser } from './components/FileBrowser';
 import { Dashboard } from './components/Dashboard';
@@ -111,7 +111,7 @@ function App() {
 
   // Replace the current history entry (no new navigable entry). Used for
   // post-auth / deep-link restores where browser-back should leave intentionally.
-  const replaceNav = (nextStep: Step, migId: string = '') => applyHistory(nextStep, migId, true);
+  const replaceNav = useCallback((nextStep: Step, migId: string = '') => applyHistory(nextStep, migId, true), []);
 
   // Forward in-app navigation: push a new history entry.
   const navigate = (nextStep: Step, migId?: string) => {
@@ -133,7 +133,7 @@ function App() {
     window.history.back();
   };
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
     } catch (e) {
@@ -146,7 +146,7 @@ function App() {
     setInitialFiles([]);
     setMigrationId('');
     replaceNav('login', '');
-  };
+  }, [replaceNav]);
 
   // Click outside to close user menu
   useEffect(() => {
@@ -295,7 +295,7 @@ function App() {
     }, 14 * 60 * 1000); // 14 minutes
 
     return () => clearInterval(interval);
-  }, [token]);
+  }, [token, handleLogout]);
 
   const handleAuthSuccess = (accessToken: string, loggedUser: User) => {
     localStorage.setItem('has_session', 'true');
@@ -393,7 +393,7 @@ function App() {
     return () => {
       window.fetch = originalFetch;
     };
-  }, [token]);
+  }, [token, handleLogout]);
 
   const handleConnectSuccess = (config: MigrationConfig, files: CloudFile[]) => {
     setCredentials(config);

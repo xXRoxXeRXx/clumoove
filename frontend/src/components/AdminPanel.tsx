@@ -140,23 +140,39 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ email: '', display_name: '', password: '', role: 'USER', must_change_password: true });
 
-  const load = useCallback(async () => {
+  const load = async () => {
     setLoading(true);
     const res = await adminApi.listUsers(apiUrl, token, {
       page, limit: LIMIT, role: roleFilter || undefined, active: activeFilter || undefined, q: q || undefined,
     });
     setLoading(false);
     if (res.ok) {
-      setUsers(res.data.users || []);
-      setTotal(res.data.total || 0);
+      setUsers(res.data?.users ?? []);
+      setTotal(res.data?.total ?? 0);
     } else {
       onError(res.errorCode);
     }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const res = await adminApi.listUsers(apiUrl, token, {
+        page, limit: LIMIT, role: roleFilter || undefined, active: activeFilter || undefined, q: q || undefined,
+      });
+      setLoading(false);
+      if (res.ok && !cancelled) {
+        setUsers(res.data?.users ?? []);
+        setTotal(res.data?.total ?? 0);
+      } else if (!cancelled) {
+        onError(res.errorCode);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [apiUrl, token, page, roleFilter, activeFilter, q, onError]);
 
-  useEffect(() => { load(); }, [load]);
-
-  const act = async (fn: () => Promise<ApiResult>, successKey: string) => {
+  const act = async <T,>(fn: () => Promise<ApiResult<T>>, successKey: string) => {
     const res = await fn();
     if (res.ok) {
       onMessage({ text: t(successKey), type: 'success' });
@@ -321,8 +337,8 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
       const res = await adminApi.listMigrations(apiUrl, token, { page, limit: LIMIT });
       setLoading(false);
       if (res.ok && !cancelled) {
-        setItems(res.data.migrations || []);
-        setTotal(res.data.total || 0);
+        setItems(res.data?.migrations ?? []);
+        setTotal(res.data?.total ?? 0);
       }
     })();
     return () => { cancelled = true; };
@@ -391,7 +407,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
   useEffect(() => {
     (async () => {
       const res = await adminApi.stats(apiUrl, token);
-      if (res.ok) setStats(res.data);
+      if (res.ok) setStats(res.data ?? null);
     })();
   }, [apiUrl, token]);
 
@@ -469,8 +485,8 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
       });
       setLoading(false);
       if (res.ok && !cancelled) {
-        setEntries(res.data.entries || []);
-        setTotal(res.data.total || 0);
+        setEntries(res.data?.entries ?? []);
+        setTotal(res.data?.total ?? 0);
       }
     })();
     return () => { cancelled = true; };
