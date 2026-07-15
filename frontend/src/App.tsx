@@ -384,12 +384,9 @@ function App() {
             <div className="relative" ref={userMenuRef}>
               <div 
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2.5 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] pl-4 pr-2.5 py-1.5 rounded-full shadow-xs cursor-pointer select-none transition-colors"
+                className="flex items-center gap-2.5 pl-4 pr-2.5 py-1.5 rounded-full shadow-xs cursor-pointer select-none transition-colors"
               >
-                <div className="flex flex-col text-right">
-                  <span className="font-bold text-[var(--color-text-primary)] leading-tight">{user.display_name}</span>
-                  <span className="text-[9px] text-[var(--color-text-muted)] font-mono leading-none mt-0.5">{user.email}</span>
-                </div>
+                <span className="font-bold text-[var(--color-text-primary)] leading-tight">{user.display_name}</span>
                 {user.avatar ? (
                   <img 
                     src={user.avatar} 
