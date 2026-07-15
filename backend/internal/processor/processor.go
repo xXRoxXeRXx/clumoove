@@ -53,6 +53,12 @@ type Processor struct {
 	// instead of probing a server that is still down on every 60s tick. Keyed by
 	// migration id.
 	recoveryAttempts sync.Map
+	// connLossTaskAttempts tracks, per task, how many consecutive connection-loss
+	// failures it has seen. This lets the per-task connection-loss cap
+	// (maxConnLossTaskAttempts) count only network errors, not unrelated failures,
+	// so a task that failed twice for non-network reasons is not wrongly escalated
+	// to a full migration pause on its next (first) connection loss (P1-4).
+	connLossTaskAttempts sync.Map
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
@@ -103,6 +109,34 @@ var taskHeartbeatGrace = 10 * time.Minute
 // watchdog to reclaim a genuinely hung transfer.
 var taskHeartbeatByteStale = 2 * time.Minute
 
+// chunkedUploadThreshold is the file size (50 MiB) above which transfers use
+// chunked upload. Kept as a single source of truth so the download/upload
+// timeout policy below stays in sync with the chunking decision.
+const chunkedUploadThreshold int64 = 50 * 1024 * 1024
+
+// transferTimeoutBase / transferTimeoutPerChunk scale the per-request timeout by
+// file size: every 50 MiB of content adds one minute, capped at 12h. Applied
+// identically to the download and upload phases so neither side times out before
+// the other for a given file size.
+const (
+	transferTimeoutBase     = 5 * time.Minute
+	transferTimeoutPerChunk = 1 * time.Minute
+	transferTimeoutMax      = 12 * time.Hour
+)
+
+// transferTimeout returns a file-size-scaled transfer timeout. It is deterministic
+// (no clock dependency) so the download and upload phases use the same deadline.
+func transferTimeout(fileSize int64) time.Duration {
+	if fileSize <= 0 {
+		return transferTimeoutBase
+	}
+	timeout := transferTimeoutBase + time.Duration(fileSize/chunkedUploadThreshold)*transferTimeoutPerChunk
+	if timeout > transferTimeoutMax {
+		return transferTimeoutMax
+	}
+	return timeout
+}
+
 func (p *Processor) recordConnLoss(migrationID string) int {
 	actual, _ := p.connLossCounts.LoadOrStore(migrationID, new(int32))
 	return int(atomic.AddInt32(actual.(*int32), 1))
@@ -112,13 +146,26 @@ func (p *Processor) clearConnLoss(migrationID string) {
 	p.connLossCounts.Delete(migrationID)
 }
 
+// recordConnLossTask increments and returns the per-task connection-loss attempt
+// count. It is reset via clearConnLossTask whenever a task succeeds or the
+// migration-wide streak is cleared, so it only reflects consecutive network
+// failures for that specific task (P1-4).
+func (p *Processor) recordConnLossTask(taskID string) int {
+	actual, _ := p.connLossTaskAttempts.LoadOrStore(taskID, new(int32))
+	return int(atomic.AddInt32(actual.(*int32), 1))
+}
+
+func (p *Processor) clearConnLossTask(taskID string) {
+	p.connLossTaskAttempts.Delete(taskID)
+}
+
 // Start runs the worker dequeue loop and background schedulers
 func (p *Processor) Start(ctx context.Context) {
-	fmt.Printf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
+	log.Printf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
 
 	// Recover any abandoned tasks on startup
 	if err := p.queue.RecoverAbandonedTasks(ctx, p.db, p.workerID); err != nil {
-		fmt.Printf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
+		log.Printf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
 	}
 
 	// Spawn background schedulers
@@ -130,11 +177,11 @@ func (p *Processor) Start(ctx context.Context) {
 
 	// Start Cancel Listener
 	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {
-		fmt.Printf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
+		log.Printf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
 		p.activeTasks.Range(func(key, value interface{}) bool {
 			info, ok := value.(activeTaskInfo)
 			if ok && info.migrationID == migrationID {
-				fmt.Printf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
+				log.Printf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
 				info.cancel()
 			}
 			return true
@@ -166,7 +213,7 @@ func (p *Processor) Start(ctx context.Context) {
 						if ctx.Err() != nil {
 							return
 						}
-						fmt.Printf("[Worker %s] Thread %d dequeue error: %v. Sleeping...\n", p.workerID, threadID, err)
+						log.Printf("[Worker %s] Thread %d dequeue error: %v. Sleeping...\n", p.workerID, threadID, err)
 						time.Sleep(2 * time.Second)
 						continue
 					}
@@ -176,14 +223,14 @@ func (p *Processor) Start(ctx context.Context) {
 						continue                    // No task in queue
 					}
 
-					fmt.Printf("[Worker %s] Thread %d processing task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
+					log.Printf("[Worker %s] Thread %d processing task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
 
 					err = p.processTask(ctx, payload)
 					if err != nil {
-						fmt.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
+						log.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
 						p.handleTaskFailure(ctx, payload, err)
 					} else {
-						fmt.Printf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
+						log.Printf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
 					}
 				}
 			}
@@ -192,9 +239,9 @@ func (p *Processor) Start(ctx context.Context) {
 
 	// Wait for shutdown signal
 	<-ctx.Done()
-	fmt.Printf("[Worker %s] Shutdown signal received. Waiting for active tasks to finish...\n", p.workerID)
+	log.Printf("[Worker %s] Shutdown signal received. Waiting for active tasks to finish...\n", p.workerID)
 	wg.Wait()
-	fmt.Printf("[Worker %s] Worker loop stopped.\n", p.workerID)
+	log.Printf("[Worker %s] Worker loop stopped.\n", p.workerID)
 }
 
 // RunWorkerLiveness periodically registers this worker as active and recovers abandoned tasks
@@ -216,12 +263,12 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 		case <-ticker.C:
 			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 120*time.Second)
 			if err != nil {
-				fmt.Printf("[Liveness] Error registering active worker: %v\n", err)
+				log.Printf("[Liveness] Error registering active worker: %v\n", err)
 			}
 		case <-cleanupTicker.C:
 			deadWorkers, err := p.queue.GetAbandonedWorkerQueues(ctx, p.db)
 			if err != nil {
-				fmt.Printf("[Liveness] Error scanning for dead workers: %v\n", err)
+				log.Printf("[Liveness] Error scanning for dead workers: %v\n", err)
 				continue
 			}
 			for _, deadWorkerID := range deadWorkers {
@@ -235,9 +282,9 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 				if lockErr != nil || !claimed {
 					continue // Another instance is already handling recovery for this worker
 				}
-				fmt.Printf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
+				log.Printf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
 				if err := p.queue.RecoverAbandonedTasks(ctx, p.db, deadWorkerID); err != nil {
-					fmt.Printf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
+					log.Printf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
 				}
 			}
 		}
@@ -290,10 +337,10 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 			continue
 		}
 
-		fmt.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
+		log.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
 	}
 	if err := rows.Err(); err != nil {
-		fmt.Printf("[RetryScheduler] rows error: %v\n", err)
+		log.Printf("[RetryScheduler] rows error: %v\n", err)
 	}
 }
 
@@ -333,7 +380,7 @@ func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 	`
 	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
-		fmt.Printf("[OrphanedTaskRecovery] DB query error: %v\n", err)
+		log.Printf("[OrphanedTaskRecovery] DB query error: %v\n", err)
 		return
 	}
 	defer rows.Close()
@@ -346,16 +393,16 @@ func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 		}
 		_, err := p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL, updated_at=NOW() WHERE id=$1 AND status='RUNNING'", taskID)
 		if err != nil {
-			fmt.Printf("[OrphanedTaskRecovery] Error resetting task %s: %v\n", taskID, err)
+			log.Printf("[OrphanedTaskRecovery] Error resetting task %s: %v\n", taskID, err)
 		} else {
 			count++
 		}
 	}
 	if err := rows.Err(); err != nil {
-		fmt.Printf("[OrphanedTaskRecovery] rows error: %v\n", err)
+		log.Printf("[OrphanedTaskRecovery] rows error: %v\n", err)
 	}
 	if count > 0 {
-		fmt.Printf("[OrphanedTaskRecovery] Re-enqueued %d orphaned RUNNING tasks\n", count)
+		log.Printf("[OrphanedTaskRecovery] Re-enqueued %d orphaned RUNNING tasks\n", count)
 	}
 }
 
@@ -452,7 +499,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		tClient.Close()
 
 		if sOK && tOK {
-			fmt.Printf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
+			log.Printf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
 			updateQuery := `
 				UPDATE migrations
 				SET status = 'RUNNING'
@@ -460,7 +507,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 			`
 			_, err = p.db.ExecContext(ctx, updateQuery, id)
 			if err != nil {
-				fmt.Printf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, err)
+				log.Printf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, err)
 			}
 			// Reset backoff tracking now that the migration has recovered.
 			p.recoveryAttempts.Delete(id)
@@ -470,7 +517,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		fmt.Printf("[RecoveryScheduler] rows error: %v\n", err)
+		log.Printf("[RecoveryScheduler] rows error: %v\n", err)
 	}
 }
 
@@ -642,7 +689,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 				//   an incomplete file behind and miscount it as "skipped".
 				if task.Attempts > 0 {
 					deleteAfterUpload = true
-					break
 				}
 				if exists && existingSize == task.FileSize {
 					task.Status = "SKIPPED"
@@ -653,7 +699,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 				}
 				// Partial/stale or size-unknown existing file -> overwrite instead of skip.
 				deleteAfterUpload = true
-				break
 
 			case "OVERWRITE":
 				// Do NOT delete before upload — if upload fails, the original would be lost.
@@ -693,15 +738,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		uploadPath = targetPath + ".tmp"
 	}
 
-	// Apply a dynamic per-request timeout scaled by file size (same policy as uploads)
-	downloadTimeout := 5 * time.Minute
-	if task.FileSize > 0 {
-		downloadTimeout += time.Duration(task.FileSize/(50*1024*1024)) * time.Minute
-	}
-	if downloadTimeout > 12*time.Hour {
-		downloadTimeout = 12 * time.Hour
-	}
-	downloadCtx, downloadCancel := context.WithTimeout(ctx, downloadTimeout)
+	// Per-request timeout scaled by file size (same policy as uploads, see
+	// transferTimeout). Computed once and applied to both the download and
+	// upload phases so the two phases share a single, consistent deadline.
+	transferDeadline := transferTimeout(task.FileSize)
+	downloadCtx, downloadCancel := context.WithTimeout(ctx, transferDeadline)
 	defer downloadCancel()
 
 	downloadStream, err := sourceClient.StreamDownload(downloadCtx, task.ResourceType, task.FilePath)
@@ -778,6 +819,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	progressDone := make(chan struct{})
 	var totalBytesReported int64
 
+	// lastByteNano tracks the most recent monotonic clock time that any byte was
+	// reported for this task. It is shared with the heartbeat goroutine via the
+	// atomic so the heartbeat can tell whether the transfer is genuinely
+	// progressing or hung (no bytes for a long stretch).
+	var lastByteNano = time.Now().UnixNano()
+	taskStart := time.Now()
+
 	go func() {
 		defer close(progressDone)
 		// This goroutine updates progress of migration in the DB
@@ -785,10 +833,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		var bufferedBytes int64
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
-
-		lastHeartbeat := time.Now()
-		taskStart := time.Now()
-		lastByteAt := time.Now()
 
 		for {
 			select {
@@ -802,28 +846,37 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 					return
 				}
 				bufferedBytes += bytes
-				lastByteAt = time.Now()
+				atomic.StoreInt64(&lastByteNano, time.Now().UnixNano())
 			case <-ticker.C:
 				if bufferedBytes > 0 {
 					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 0, bufferedBytes, 0, 0)
 					totalBytesReported += bufferedBytes
 					bufferedBytes = 0
 				}
-				// Heartbeat updated_at for this task to avoid triggering orphan
-				// recovery. We keep heartbeating while the task is genuinely active:
-				//   - unconditionally during an initial grace period, so a slow-start
-				//     or momentarily throttled large-file transfer is not reclaimed;
-				//   - afterwards only if bytes have actually moved recently.
-				// A transfer that is truly hung (no bytes for longer than the stale
-				// threshold, once past the grace period) stops heartbeating and is
-				// then reclaimed by the orphan-recovery watchdog — the unconditional
-				// heartbeat that predates this would have hidden such hangs forever.
-				if time.Since(lastHeartbeat) >= 30*time.Second {
-					stale := time.Since(lastByteAt) > taskHeartbeatByteStale && time.Since(taskStart) > taskHeartbeatGrace
-					if !stale {
-						_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING'", task.ID)
-						lastHeartbeat = time.Now()
-					}
+			}
+		}
+	}()
+
+	// Heartbeat goroutine: keeps the task's updated_at fresh so the orphan-recovery
+	// watchdog does not reclaim an in-flight transfer. It runs for the *entire*
+	// task lifetime — including the post-upload verification/hash-query phase,
+	// during which no bytes flow on the progress channel but the task is still
+	// legitimately working. A truly hung transfer (no bytes for longer than
+	// taskHeartbeatByteStale once past the initial grace period) stops
+	// heartbeating and is then reclaimed by the watchdog.
+	heartbeatStop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-ticker.C:
+				stale := time.Since(taskStart) > taskHeartbeatGrace &&
+					time.Now().UnixNano()-atomic.LoadInt64(&lastByteNano) > int64(taskHeartbeatByteStale)
+				if !stale {
+					_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING'", task.ID)
 				}
 			}
 		}
@@ -833,6 +886,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	defer func() {
 		close(progressChan)
 		<-progressDone
+		close(heartbeatStop)
 		if err != nil {
 			// Rollback progress reported to DB during this failed run
 			if totalBytesReported > 0 {
@@ -845,19 +899,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	hashingReader := io.TeeReader(throttledDownloadStream, activeWriter)
 
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
-	// Apply a dynamic per-request timeout scaled by file size (same policy as downloads)
-	uploadTimeout := 5 * time.Minute
-	if task.FileSize > 0 {
-		uploadTimeout += time.Duration(task.FileSize/(50*1024*1024)) * time.Minute
-	}
-	if uploadTimeout > 12*time.Hour {
-		uploadTimeout = 12 * time.Hour
-	}
-	uploadCtx, uploadCancel := context.WithTimeout(ctx, uploadTimeout)
+	// Use the same file-size-scaled deadline as the download phase so neither
+	// times out before the other for a given file size.
+	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
 	defer uploadCancel()
 
-	// If size > 50MB, do chunked upload
-	if task.FileSize > 50*1024*1024 {
+	// If size > chunkedUploadThreshold (50 MiB), do chunked upload
+	if task.FileSize > chunkedUploadThreshold {
 		// Wrap hashingReader with upload throttling
 		throttledHashingReader := throttle.NewUploadThrottledReader(hashingReader, migrationThrottler, uploadCtx)
 		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, task.FileSize, progressChan)
@@ -885,10 +933,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	}
 
 	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
+	// If the upload succeeded but rename/metadata fails, the .tmp file must be cleaned up so it
+	// does not leak on the target and is not mistaken for a partial upload on the next retry.
 	if deleteAfterUpload {
 		// Attempt to delete original. Ignore not found error if it's already gone.
 		_ = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 		if renameErr := targetClient.RenameFile(ctx, task.ResourceType, uploadPath, targetPath); renameErr != nil {
+			_ = targetClient.DeleteFile(ctx, task.ResourceType, uploadPath)
 			return fmt.Errorf("failed to rename temp file to target path: %w", renameErr)
 		}
 	}
@@ -1065,6 +1116,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 
 	// A successful transfer breaks the "consecutive connection loss" streak (P1-4).
 	p.clearConnLoss(mig.ID)
+	p.clearConnLossTask(task.ID)
 
 	// Increment processed files count (processed bytes already incremented by progress channel)
 	_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, 0, 0, 0)
@@ -1076,14 +1128,14 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	// 1. Fetch Task
 	task, err := db.GetTask(p.db, payload.TaskID)
 	if err != nil {
-		fmt.Printf("Error fetching task on failure handler: %v\n", err)
+		log.Printf("Error fetching task on failure handler: %v\n", err)
 		return
 	}
 
 	// Check if migration was manually cancelled
 	mig, migErr := db.GetMigration(p.db, payload.MigrationID)
 	if migErr == nil && mig.Status == "CANCELLED" {
-		fmt.Printf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
+		log.Printf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
 		task.Status = "CANCELLED"
 		_ = db.UpdateTaskStatus(p.db, task)
 		return
@@ -1092,7 +1144,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	// Check if context is cancelled (graceful shutdown)
 	isShutdown := errors.Is(procErr, context.Canceled) || ctx.Err() != nil
 	if isShutdown {
-		fmt.Printf("[Worker %s] Shutdown detected. Requeueing task %s...\n", p.workerID, payload.TaskID)
+		log.Printf("[Worker %s] Shutdown detected. Requeueing task %s...\n", p.workerID, payload.TaskID)
 
 		task.Status = "PENDING"
 		_ = db.UpdateTaskStatus(p.db, task)
@@ -1106,24 +1158,29 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	isConnLoss := isNetworkError(procErr)
 
 	if isConnLoss {
-		fmt.Printf("[Worker %s] Connection loss detected: %v\n", p.workerID, procErr)
+		log.Printf("[Worker %s] Connection loss detected: %v\n", p.workerID, procErr)
 		// Prefer per-task backoff: retry just this task instead of pausing the
 		// whole migration. Only escalate to PAUSED_CONNECTION_LOSS after several
 		// consecutive connection losses for the migration, so a single flaky task
 		// (e.g. one bad endpoint) does not stall every other task in flight (P1-4).
 		lossCount := p.recordConnLoss(payload.MigrationID)
 		// Per-task cap: a single task must never retry on connection loss forever.
-		// If the migration-level streak is still below the escalation threshold
-		// but THIS task has exhausted its own connection-loss retries, escalate to
-		// a pause so the connection-recovery scheduler can retry the whole
-		// migration — otherwise a poisoned endpoint would loop indefinitely even
-		// though other tasks keep resetting the migration-wide streak (P1-4).
-		if lossCount < connLossEscalationThreshold && task.Attempts < maxConnLossTaskAttempts {
+		// We count only this task's connection-loss attempts (not total attempts,
+		// which also include unrelated failures) so a task that previously failed
+		// for non-network reasons is not wrongly escalated to a full migration
+		// pause on its first connection loss. If the migration-level streak is
+		// still below the escalation threshold but THIS task has exhausted its own
+		// connection-loss retries, escalate to a pause so the connection-recovery
+		// scheduler can retry the whole migration — otherwise a poisoned endpoint
+		// would loop indefinitely even though other tasks keep resetting the
+		// migration-wide streak (P1-4).
+		taskConnLoss := p.recordConnLossTask(task.ID)
+		if lossCount < connLossEscalationThreshold && taskConnLoss < maxConnLossTaskAttempts {
 			backoffTable := []int{10, 30, 90}
-			// Align the backoff index with the normal retry path (task.Attempts is
-			// already incremented above), so the first connection-loss retry waits
-			// 10s, not 30s.
-			idx := task.Attempts - 1
+			// Align the backoff index with the connection-loss retry path
+			// (taskConnLoss is the count after this failure was recorded), so the
+			// first connection-loss retry waits 10s, not 30s.
+			idx := taskConnLoss - 1
 			if idx < 0 {
 				idx = 0
 			} else if idx >= len(backoffTable) {
@@ -1134,9 +1191,9 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 			task.Status = "FAILED"
 			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
-			fmt.Printf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task attempts %d)\n",
+			log.Printf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task conn-loss attempts %d)\n",
 				p.workerID, payload.TaskID, payload.MigrationID, backoffSec,
-				lossCount, connLossEscalationThreshold, task.Attempts)
+				lossCount, connLossEscalationThreshold, taskConnLoss)
 			return
 		}
 		// Escalation: too many consecutive connection losses for the migration,
@@ -1144,6 +1201,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		// migration so the connection-recovery scheduler can retry it.
 		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "PAUSED_CONNECTION_LOSS", nil)
 		p.clearConnLoss(payload.MigrationID)
+		p.clearConnLossTask(task.ID)
 		p.recoveryAttempts.Delete(payload.MigrationID)
 		// Task is set back to PENDING so it can be retried immediately upon resume
 		task.Status = "PENDING"
@@ -1176,13 +1234,14 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		strings.Contains(errStr, "invalid authentication credentials")
 
 	if isAuthError {
-		fmt.Printf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n",
+		log.Printf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n",
 			p.workerID, payload.TaskID, payload.MigrationID)
-		authErrMsg := fmt.Sprintf("Authentication failed — please check your credentials and start a new migration")
+		authErrMsg := "Authentication failed — please check your credentials and start a new migration"
 		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "FAILED", &authErrMsg)
 		// Drop any connection-loss / recovery tracking for this migration now that
 		// it is terminal, so the in-memory maps do not leak across migrations.
 		p.clearConnLoss(payload.MigrationID)
+		p.clearConnLossTask(payload.TaskID)
 		p.recoveryAttempts.Delete(payload.MigrationID)
 		// Mark this individual task failed too so progress counters stay accurate
 		task.Status = "FAILED"
@@ -1196,7 +1255,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		// so the report does not understate how many files were not migrated.
 		cancelled, cerr := db.CancelRemainingPendingTasks(p.db, task.MigrationID)
 		if cerr != nil {
-			fmt.Printf("[Worker %s] Error cancelling remaining pending tasks for migration %s: %v\n", p.workerID, task.MigrationID, cerr)
+			log.Printf("[Worker %s] Error cancelling remaining pending tasks for migration %s: %v\n", p.workerID, task.MigrationID, cerr)
 		} else if cancelled > 0 {
 			_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 0, 0, 0, cancelled)
 		}
@@ -1228,16 +1287,19 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 		_ = db.UpdateTaskStatus(p.db, task)
 
-		fmt.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, backoffSec, task.Attempts)
+		log.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, backoffSec, task.Attempts)
 	} else {
 		// Max retries reached, fail permanently
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
 		_ = db.UpdateTaskStatus(p.db, task)
+		// Task is now terminal: drop its per-task connection-loss counter so the
+		// in-memory map does not grow unbounded across a long-running worker.
+		p.clearConnLossTask(task.ID)
 
 		// Increment migration failed files
 		_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 1, task.FileSize, 0, 1)
-		fmt.Printf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
+		log.Printf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
 	}
 }
 
@@ -1343,7 +1405,7 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 		return accessToken, nil
 	}
 
-	fmt.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
+	log.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
 		p.workerID, role, mig.ID)
 
 	// Decrypt refresh token immediately before use (Zero Plaintext rule from PRD-12)
@@ -1410,10 +1472,10 @@ func (p *Processor) RunCompletionNotifier(ctx context.Context) {
 			p.sendPendingCompletionEmails(ctx)
 		case <-cleanupTicker.C:
 			if err := db.DeleteExpiredPasswordResetTokens(p.db); err != nil {
-				fmt.Printf("[CompletionNotifier] Error cleaning up expired reset tokens: %v\n", err)
+				log.Printf("[CompletionNotifier] Error cleaning up expired reset tokens: %v\n", err)
 			}
 			if err := db.DeleteExpiredEmailChangeTokens(p.db); err != nil {
-				fmt.Printf("[CompletionNotifier] Error cleaning up expired email change tokens: %v\n", err)
+				log.Printf("[CompletionNotifier] Error cleaning up expired email change tokens: %v\n", err)
 			}
 		case <-throttleCleanupTicker.C:
 			p.cleanupThrottlers()
@@ -1449,7 +1511,7 @@ func (p *Processor) sendPendingCompletionEmails(ctx context.Context) {
 	for claimed := 0; claimed < 10; claimed++ {
 		tx, notifs, err := db.LockPendingEmailNotifications(p.db, 1)
 		if err != nil {
-			fmt.Printf("[CompletionNotifier] Error claiming pending notification: %v\n", err)
+			log.Printf("[CompletionNotifier] Error claiming pending notification: %v\n", err)
 			return
 		}
 		if len(notifs) == 0 {
@@ -1461,10 +1523,10 @@ func (p *Processor) sendPendingCompletionEmails(ctx context.Context) {
 		// intentional skip and returns nil; on a transient error it leaves the row
 		// unmarked so the commit re-opens it for the next tick.
 		if err := p.sendCompletionEmail(tx, n); err != nil {
-			fmt.Printf("[CompletionNotifier] Transient failure for migration %s, will retry: %v\n", n.MigrationID, err)
+			log.Printf("[CompletionNotifier] Transient failure for migration %s, will retry: %v\n", n.MigrationID, err)
 		}
 		if err := tx.Commit(); err != nil {
-			fmt.Printf("[CompletionNotifier] Error committing email claim for migration %s: %v\n", n.MigrationID, err)
+			log.Printf("[CompletionNotifier] Error committing email claim for migration %s: %v\n", n.MigrationID, err)
 		}
 	}
 }
@@ -1490,7 +1552,7 @@ func (p *Processor) sendCompletionEmail(tx *sql.Tx, n db.PendingEmailNotificatio
 
 	password, err := crypto.Decrypt(settings.SMTPPasswordEnc, p.secretKey)
 	if err != nil {
-		fmt.Printf("[CompletionNotifier] Error decrypting SMTP password for user %s: %v\n", n.UserID, err)
+		log.Printf("[CompletionNotifier] Error decrypting SMTP password for user %s: %v\n", n.UserID, err)
 		// Permanent config error: skip this migration's mail rather than looping.
 		return db.MarkMigrationEmailSentTx(tx, n.MigrationID)
 	}
