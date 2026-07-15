@@ -84,19 +84,21 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
   // Fetch 2FA status on mount
   useEffect(() => {
+    let cancelled = false;
     fetch(`${apiUrl}/api/auth/2fa/status`, {
       headers: { 'Authorization': `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((data) => {
-        setTotpEnabled(Boolean(data.totp_enabled));
+        if (!cancelled) setTotpEnabled(Boolean(data.totp_enabled));
       })
       .catch(() => {
-        setTotpEnabled(false);
+        if (!cancelled) setTotpEnabled(false);
       })
       .finally(() => {
-        setTotpStatusLoading(false);
+        if (!cancelled) setTotpStatusLoading(false);
       });
+    return () => { cancelled = true; };
   }, [apiUrl, token]);
 
   const handle2FASetup = async () => {
@@ -190,14 +192,16 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
   // Fetch whether the system mail service allows email changes
   useEffect(() => {
+    let cancelled = false;
     fetch(`${apiUrl}/api/auth/email-change-available`)
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((data) => {
-        setEmailChangeAvailable(Boolean(data.available));
+        if (!cancelled) setEmailChangeAvailable(Boolean(data.available));
       })
       .catch(() => {
-        setEmailChangeAvailable(false);
+        if (!cancelled) setEmailChangeAvailable(false);
       });
+    return () => { cancelled = true; };
   }, [apiUrl]);
 
   // SMTP settings state
@@ -215,6 +219,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
 
   // Fetch SMTP settings
   useEffect(() => {
+    let cancelled = false;
     fetch(`${apiUrl}/api/settings/smtp`, {
       headers: { 'Authorization': `Bearer ${token}` },
     })
@@ -223,6 +228,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
         throw new Error('no-smtp');
       })
       .then((data) => {
+        if (cancelled) return;
         setSmtpHasConfig(true);
         setSmtpHost(data.smtp_host || '');
         setSmtpPort(String(data.smtp_port || '587'));
@@ -233,8 +239,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
         setSmtpNotify(data.notify_on_completion !== false);
       })
       .catch(() => {
-        setSmtpHasConfig(false);
+        if (!cancelled) setSmtpHasConfig(false);
       });
+    return () => { cancelled = true; };
   }, [apiUrl, token]);
 
   const handleSaveSMTP = async (e: React.FormEvent) => {
@@ -812,7 +819,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 </div>
                 <button
                   type="button"
-                  onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')); setTotpMessage({ text: t('settings.copied'), type: 'success' }); }}
+                  onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')).catch(() => {}); setTotpMessage({ text: t('settings.copied'), type: 'success' }); }}
                   className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer"
                 >
                   {t('settings.copyCodes')}

@@ -237,7 +237,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       });
 
       if (!response.ok) {
-        throw new Error(t('connect.errors.connectionFailed'));
+        const body = await response.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(translateApiError(body.error_code));
       }
 
       const data = await response.json() as ConnectResponse;

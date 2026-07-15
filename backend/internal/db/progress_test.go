@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -91,7 +92,7 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 
 	t.Run("failed==0 -> COMPLETED", func(t *testing.T) {
 		insertProgressMigration(t, db, "m-completed", "u1", 100, 99, 0)
-		if err := IncrementMigrationProgress(db, "m-completed", 1, 0, 0, 0); err != nil {
+		if err := IncrementMigrationProgress(db, context.Background(), "m-completed", 1, 0, 0, 0); err != nil {
 			t.Fatalf("IncrementMigrationProgress: %v", err)
 		}
 		if got := migrationStatus(t, db, "m-completed"); got != "COMPLETED" {
@@ -101,7 +102,7 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 
 	t.Run("0<failed<total -> COMPLETED_WITH_ERRORS", func(t *testing.T) {
 		insertProgressMigration(t, db, "m-partial", "u1", 100, 99, 20)
-		if err := IncrementMigrationProgress(db, "m-partial", 1, 0, 0, 0); err != nil {
+		if err := IncrementMigrationProgress(db, context.Background(), "m-partial", 1, 0, 0, 0); err != nil {
 			t.Fatalf("IncrementMigrationProgress: %v", err)
 		}
 		if got := migrationStatus(t, db, "m-partial"); got != "COMPLETED_WITH_ERRORS" {
@@ -111,7 +112,7 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 
 	t.Run("failed==total -> FAILED", func(t *testing.T) {
 		insertProgressMigration(t, db, "m-failed", "u1", 100, 99, 100)
-		if err := IncrementMigrationProgress(db, "m-failed", 1, 0, 0, 0); err != nil {
+		if err := IncrementMigrationProgress(db, context.Background(), "m-failed", 1, 0, 0, 0); err != nil {
 			t.Fatalf("IncrementMigrationProgress: %v", err)
 		}
 		if got := migrationStatus(t, db, "m-failed"); got != "FAILED" {

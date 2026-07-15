@@ -566,14 +566,16 @@ function SystemTab({ apiUrl, token, onMessage }: {
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetch(`${apiUrl}/api/settings`)
       .then((res) => res.json())
       .then((data) => {
-        setRegistrationsEnabled(data.registrations_enabled !== 'false');
+        if (!cancelled) setRegistrationsEnabled(data.registrations_enabled !== 'false');
       })
       .catch((err) => {
         console.error('Failed to fetch settings:', err);
       });
+    return () => { cancelled = true; };
   }, [apiUrl]);
 
   const handleToggleRegistrations = async (checked: boolean) => {
