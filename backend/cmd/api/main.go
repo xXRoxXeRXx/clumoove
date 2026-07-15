@@ -1832,6 +1832,11 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("handleOAuthAuth: final origin set to %q", origin)
 
+	purpose := r.URL.Query().Get("purpose")
+	if purpose == "" {
+		purpose = "login"
+	}
+
 	stateToken := generateRandomString(16)
 	if stateToken == "" {
 		log.Printf("handleOAuthAuth: Failed to generate state token")
@@ -1856,7 +1861,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, cookie)
 
-	stateParam := fmt.Sprintf("%s:%s:%s", stateToken, provider, origin)
+	stateParam := fmt.Sprintf("%s:%s:%s:%s", stateToken, provider, purpose, origin)
 
 	redirectURI := s.getRedirectURI(r)
 	log.Printf("handleOAuthAuth: constructing authURL with redirectURI=%s", redirectURI)
@@ -1879,32 +1884,36 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if code == "" || state == "" {
 		log.Printf("handleOAuthCallback: Missing code or state")
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "http://localhost:5173", "Authorization code or state missing")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", "Authorization code or state missing")
 		return
 	}
 
-	parts := strings.SplitN(state, ":", 3)
+	parts := strings.SplitN(state, ":", 4)
 	if len(parts) < 3 {
 		log.Printf("handleOAuthCallback: Invalid state format (length %d)", len(parts))
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "http://localhost:5173", "Invalid state parameter format")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", "Invalid state parameter format")
 		return
 	}
 	stateToken := parts[0]
 	provider := parts[1]
-	origin := parts[2]
+	origin := parts[len(parts)-1]
+	purpose := "login"
+	if len(parts) >= 4 {
+		purpose = parts[2]
+	}
 
-	log.Printf("handleOAuthCallback: parsed provider=%s, origin=%s", provider, origin)
+	log.Printf("handleOAuthCallback: parsed provider=%s, origin=%s, purpose=%s", provider, origin, purpose)
 
 	if !allowedOrigins[origin] {
 		log.Printf("handleOAuthCallback: rejected untrusted origin %q in state", origin)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", origin, "CSRF verification failed: untrusted origin")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, "CSRF verification failed: untrusted origin")
 		return
 	}
 
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
 		log.Printf("handleOAuthCallback: CSRF check failed. Cookie err: %v, stateToken: %q", err, stateToken)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", origin, "CSRF verification failed: state mismatch")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, "CSRF verification failed: state mismatch")
 		return
 	}
 
@@ -1934,7 +1943,7 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	tokenResp, err := oauth.ExchangeCode(ctx, provider, code, redirectURI)
 	if err != nil {
 		log.Printf("handleOAuthCallback: ExchangeCode failed: %v", err)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", origin, fmt.Sprintf("Failed to exchange code: %v", err))
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, fmt.Sprintf("Failed to exchange code: %v", err))
 		return
 	}
 
@@ -1946,7 +1955,7 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	}
 
 	log.Printf("handleOAuthCallback: rendering successful login for user %q", username)
-	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, origin)
+	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, purpose, origin)
 }
 
 // stripScriptTerminator removes sequences that could prematurely close or open
@@ -1961,7 +1970,7 @@ func stripScriptTerminator(s string) string {
 	return replacer.Replace(s)
 }
 
-func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, targetOrigin string, errorMsg ...string) {
+func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, purpose, targetOrigin string, errorMsg ...string) {
 	// Sanitize any value that is reflected into the inline <script> below.
 	// Go's %q escapes quotes and backslashes but NOT '<' or '>', so a
 	// malicious/compromised OAuth provider returning "</script>" in an error
@@ -2023,6 +2032,7 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 					window.opener.postMessage({
 						type: "oauth-success",
 						provider: %q,
+						purpose: %q,
 						token: %q,
 						refreshToken: %q,
 						expiresIn: %d,
@@ -2038,7 +2048,7 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 				errMsg.innerText = "Fehler beim Senden der Anmeldedaten: " + e.message;
 				document.querySelector(".card").appendChild(errMsg);
 			}
-		`, targetOrigin, provider, token, refreshToken, expiresIn, username, targetOrigin)
+		`, targetOrigin, provider, purpose, token, refreshToken, expiresIn, username, targetOrigin)
 	}
 
 	fmt.Fprintf(w, `
@@ -2073,12 +2083,12 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 			<script nonce="%s">%s</script>
 		</body>
 		</html>
-	`, nonce, func() string {
+	`, func() string {
 		if errStr != "" {
 			return fmt.Sprintf("<h3 style='color: #ef4444;'>Authorization Failed</h3><p>%s</p>", html.EscapeString(errStr))
 		}
 		return "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
-	}(), script)
+	}(), nonce, script)
 }
 
 func hashToken(token string) string {

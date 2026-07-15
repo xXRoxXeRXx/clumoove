@@ -75,7 +75,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     const targetOrigin = new URL(apiUrl, window.location.origin).origin;
 
     const popup = window.open(
-      `${apiUrl}/api/oauth/auth?provider=${provider}&origin=${encodeURIComponent(window.location.origin)}`,
+      `${apiUrl}/api/oauth/auth?provider=${provider}&purpose=connect&origin=${encodeURIComponent(window.location.origin)}`,
       'OAuth',
       `width=${width},height=${height},left=${left},top=${top}`
     );
@@ -92,7 +92,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       if (event.source !== popup) {
         return; // Ensure the event was posted from our specific popup window (I7 fix)
       }
-      if (event.data && event.data.type === 'oauth-success' && event.data.provider === provider) {
+      if (event.data && event.data.type === 'oauth-success' && event.data.provider === provider && event.data.purpose === 'connect') {
         if (type === 'source') {
           setSourceOAuthUser(event.data.username || provider);
           setSourceUrl(`https://api.${provider}.com`);

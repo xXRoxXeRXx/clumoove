@@ -10,6 +10,7 @@
 export interface OAuthSuccessMessage {
   type: 'oauth-success';
   provider: string;
+  purpose: string;
   token: string;
   refreshToken: string;
   expiresIn: number;
@@ -37,6 +38,7 @@ export function listenForOAuthMessage(
   handlers: {
     onSuccess: (msg: OAuthSuccessMessage) => void;
     onError: (msg: OAuthErrorMessage) => void;
+    expectedPurpose?: string;
   }
 ): () => void {
   const listener = (event: MessageEvent) => {
@@ -50,6 +52,12 @@ export function listenForOAuthMessage(
     }
     const data = event.data as OAuthMessage | undefined;
     if (!data || (data.type !== 'oauth-success' && data.type !== 'oauth-error')) {
+      return;
+    }
+
+    // 3. Scope the message to its intended purpose so the account-connect
+    //    flow and the (separate) OAuth-login flow don't cross-fire.
+    if (data.type === 'oauth-success' && handlers.expectedPurpose !== undefined && data.purpose !== handlers.expectedPurpose) {
       return;
     }
 

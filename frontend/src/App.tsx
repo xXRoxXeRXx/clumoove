@@ -211,6 +211,7 @@ function App() {
   useEffect(() => {
     const expectedOrigin = new URL(API_URL).origin;
     return listenForOAuthMessage(expectedOrigin, {
+      expectedPurpose: 'login',
       onSuccess: async (msg) => {
         setToken(msg.token);
         try {
