@@ -390,6 +390,7 @@
   },
   "status": {
     "completed": "ABGESCHLOSSEN",
+    "completedWithErrors": "ABGESCHLOSSEN MIT FEHLERN",
     "failed": "FEHLGESCHLAGEN",
     "cancelled": "ABGEBROCHEN",
     "running": "AKTIV",

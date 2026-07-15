@@ -200,6 +200,9 @@ func BuildMigrationReportEmail(migrationID, status string, totalFiles, processed
 	if status == "FAILED" {
 		statusColor = "#ef4444"
 		statusLabel = "Fehlgeschlagen"
+	} else if status == "COMPLETED_WITH_ERRORS" {
+		statusColor = "#f59e0b"
+		statusLabel = "Abgeschlossen mit Fehlern"
 	}
 
 	errorSection := ""

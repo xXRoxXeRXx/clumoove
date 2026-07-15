@@ -819,7 +819,7 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if mig.Status != "COMPLETED" && mig.Status != "FAILED" {
+	if mig.Status != "COMPLETED" && mig.Status != "COMPLETED_WITH_ERRORS" && mig.Status != "FAILED" {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
@@ -858,7 +858,7 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if mig.Status != "FAILED" {
+	if mig.Status != "FAILED" && mig.Status != "COMPLETED_WITH_ERRORS" {
 		writeError(w, http.StatusConflict, ErrMigrationInvalidState)
 		return
 	}
@@ -1000,7 +1000,7 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 	mig, err := db.GetMigration(s.db, id)
 	if err == nil {
 		switch mig.Status {
-		case "COMPLETED", "FAILED", "CANCELLED":
+		case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 			return
 		}
@@ -1634,8 +1634,8 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return // Client disconnected
 			}
 
-			// If migration is in a terminal state (COMPLETED or FAILED) and all tasks finished, close socket after final state
-			if (mig.Status == "COMPLETED" || mig.Status == "FAILED") && mig.ProcessedFiles >= mig.TotalFiles {
+			// If migration is in a terminal state (COMPLETED, COMPLETED_WITH_ERRORS or FAILED) and all tasks finished, close socket after final state
+			if (mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED") && mig.ProcessedFiles >= mig.TotalFiles {
 				// Pause a bit to let client read the final completed status
 				time.Sleep(1 * time.Second)
 				return

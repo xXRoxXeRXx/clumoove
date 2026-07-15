@@ -285,7 +285,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       prevStatusRef.current = payload.status;
 
       // Speed and ETA calculation
-      if (payload.status === 'COMPLETED') {
+      if (payload.status === 'COMPLETED' || payload.status === 'COMPLETED_WITH_ERRORS') {
         setSpeed(0);
         setEta(t('dashboard.eta.done'));
       } else if (payload.status === 'FAILED') {
@@ -365,7 +365,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     let reconnectTimeout: ReturnType<typeof setTimeout>;
     ws.onclose = () => {
       if (!isMounted) return;
-      if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'FAILED') {
+      if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'COMPLETED_WITH_ERRORS' || prevStatusRef.current === 'FAILED') {
         return;
       }
 
@@ -542,6 +542,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
                 {t('status.failed')}
               </div>
+            ) : data.status === 'COMPLETED_WITH_ERRORS' ? (
+              <div className="bg-amber-50 text-amber-700 border border-amber-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
+                {t('status.completedWithErrors')}
+              </div>
             ) : data.status === 'PAUSED_CONNECTION_LOSS' || data.status === 'PAUSED' ? (
               <div className="bg-amber-50 text-amber-750 border border-amber-250 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
                 {t('status.paused')}
@@ -680,7 +684,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             )}
 
             {/* Retry Failed Elements */}
-            {(data.status === 'COMPLETED' || data.status === 'FAILED') && data.failed_files > 0 && (
+            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED') && data.failed_files > 0 && (
               <button
                 onClick={handleRetryFailed}
                 disabled={controlLoading !== null}
@@ -730,7 +734,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             )}
 
             {/* Reset Button */}
-            {(data.status === 'COMPLETED' || data.status === 'FAILED' || data.status === 'CANCELLED') && (
+            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED' || data.status === 'CANCELLED') && (
               <button
                 onClick={onReset}
                 className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-portal-orange to-orange-500 text-white rounded-2xl font-mono text-[11px] font-bold uppercase tracking-wider shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-99 transition-all cursor-pointer"
