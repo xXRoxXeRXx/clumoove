@@ -168,3 +168,7 @@ migration/
 | [`docs/07-security.md`](./docs/07-security.md) | Key segregation, encryption, OAuth, CORS, rate limiting |
 | [`docs/08-deployment.md`](./docs/08-deployment.md) | Docker Compose, env vars, scaling, ops |
 | [`docs/09-development.md`](./docs/09-development.md) | Local setup, code quality, conventions |
+
+## License
+
+Released under the [MIT License](./LICENSE).
