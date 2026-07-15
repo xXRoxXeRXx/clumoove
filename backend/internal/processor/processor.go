@@ -428,8 +428,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		return nil
 	}
 
-	// If migration is in a terminal state (COMPLETED or FAILED), mark task as skipped/failed
-	if mig.Status == "COMPLETED" || mig.Status == "FAILED" {
+	// If migration is in a terminal state (COMPLETED, COMPLETED_WITH_ERRORS or FAILED), mark task as skipped/failed
+	if mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" {
 		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='SKIPPED', worker_hash=NULL WHERE id=$1", payload.TaskID)
 		return nil
 	}
@@ -1294,7 +1294,7 @@ func (p *Processor) cleanupThrottlers() {
 			return true
 		}
 		switch mig.Status {
-		case "COMPLETED", "FAILED", "CANCELLED":
+		case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
 			p.throttlers.Delete(migrationID)
 		}
 		return true

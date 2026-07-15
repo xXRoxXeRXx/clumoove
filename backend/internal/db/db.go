@@ -155,7 +155,7 @@ type Migration struct {
 	SourceProvider              string                  `json:"source_provider"`
 	TargetProvider              string                  `json:"target_provider"`
 	TargetDir                   string                  `json:"target_dir"`
-	Status                      string                  `json:"status"`            // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED, SCHEDULED
+	Status                      string                  `json:"status"`            // PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, COMPLETED_WITH_ERRORS, FAILED, SCHEDULED
 	ConflictStrategy            string                  `json:"conflict_strategy"` // SKIP, OVERWRITE, RENAME
 	SelectedPaths               StringArray             `json:"selected_paths,omitempty"`
 	SelectedCalendars           StringArray             `json:"selected_calendars,omitempty"`
@@ -766,7 +766,7 @@ func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]
 }
 
 // IncrementMigrationProgress increments the counters of a migration in the database
-// and transitions the migration to COMPLETED or FAILED once all files are processed.
+// and transitions the migration to COMPLETED, COMPLETED_WITH_ERRORS or FAILED once all files are processed.
 func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelta int64, skippedDelta int, failedDelta int) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -796,6 +796,8 @@ func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelt
 		if failed == total {
 			finalStatus = "FAILED"
 			errMessage = sql.NullString{String: "All file transfers failed", Valid: true}
+		} else if failed > 0 {
+			finalStatus = "COMPLETED_WITH_ERRORS"
 		}
 
 		statusQuery := `
@@ -821,7 +823,7 @@ func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelt
 					UserID: sql.NullString{String: owner, Valid: true},
 					Action: action,
 					Target: id,
-					Details: json.RawMessage(fmt.Sprintf(`{"phase":"transfer","all_failed":%t}`, failed == total)),
+					Details: json.RawMessage(fmt.Sprintf(`{"phase":"transfer","all_failed":%t,"partial":%t}`, failed == total, failed > 0 && failed < total)),
 				})
 			}
 		}
@@ -1010,13 +1012,14 @@ func DeleteIndexingErrors(db *sql.DB, migrationID string) error {
 }
 
 // ErrMigrationNotFailed is returned by ResetMigrationForReindex when the migration
-// is not in FAILED state (e.g. already re-indexing, or finished). It lets the API
+// is not in a re-indexable terminal state (FAILED or COMPLETED_WITH_ERRORS, e.g. already re-indexing, or finished). It lets the API
 // distinguish a benign concurrent re-trigger from a real error.
 var ErrMigrationNotFailed = errors.New("migration is not in FAILED state")
 
 // ResetMigrationForReindex clears tasks and indexing errors and resets counters so the
-// shared indexer can re-run indexing for an existing FAILED migration. The status flip
-// to INDEXING is guarded by `WHERE status = 'FAILED'`, which also prevents a second
+// shared indexer can re-run indexing for an existing FAILED or COMPLETED_WITH_ERRORS
+// migration. The status flip to INDEXING is guarded by
+// `WHERE status IN ('FAILED','COMPLETED_WITH_ERRORS')`, which also prevents a second
 // concurrent re-index request from spawning a duplicate indexer (TOCTOU safe).
 func ResetMigrationForReindex(db *sql.DB, migrationID string) error {
 	tx, err := db.Begin()
@@ -1039,7 +1042,7 @@ func ResetMigrationForReindex(db *sql.DB, migrationID string) error {
 		    skipped_files = 0, failed_files = 0,
 		    error_message = NULL,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status = 'FAILED'
+		WHERE id = $1 AND status IN ('FAILED', 'COMPLETED_WITH_ERRORS')
 	`, migrationID)
 	if err != nil {
 		return err
@@ -2122,7 +2125,7 @@ func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
 		    status = 'RUNNING', 
 		    error_message = NULL, 
 		    updated_at = CURRENT_TIMESTAMP 
-		WHERE id = $3 AND status IN ('COMPLETED', 'FAILED')
+		WHERE id = $3 AND status IN ('COMPLETED', 'FAILED', 'COMPLETED_WITH_ERRORS')
 	`, count, bytesSum, migrationID)
 	if err != nil {
 		return 0, err
@@ -2584,7 +2587,7 @@ func ClaimPendingEmailNotifications(db *sql.DB, limit int) ([]PendingEmailNotifi
 		SELECT m.id, m.user_id, m.status, m.total_files, m.processed_files,
 		       m.failed_files, m.skipped_files, m.total_bytes, m.processed_bytes, m.error_message
 		FROM migrations m
-		WHERE m.status IN ('COMPLETED', 'FAILED')
+		WHERE m.status IN ('COMPLETED', 'FAILED', 'COMPLETED_WITH_ERRORS')
 		  AND m.email_sent = FALSE
 		  AND m.user_id IS NOT NULL
 		ORDER BY m.id

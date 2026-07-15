@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import type { User, Migration } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -200,6 +200,13 @@ export function MigrationsDashboard({
             {t('status.failed')}
           </span>
         );
+      case 'COMPLETED_WITH_ERRORS':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {t('status.completedWithErrors')}
+          </span>
+        );
       case 'CANCELLED':
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
@@ -240,7 +247,7 @@ export function MigrationsDashboard({
   // Calculate Stats
   const totalMigrations = migrations.length;
   const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING').length;
-  const completedMigrations = migrations.filter(m => m.status === 'COMPLETED').length;
+  const completedMigrations = migrations.filter(m => m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS').length;
   const failedMigrations = migrations.filter(m => m.status === 'FAILED' || m.status === 'CANCELLED').length;
   
   const successRate = (completedMigrations + failedMigrations) > 0 
@@ -459,6 +466,8 @@ export function MigrationsDashboard({
                               className={`h-full rounded-full transition-all duration-500 ${
                                 mig.status === 'FAILED'
                                   ? 'bg-[var(--color-error-bg)]'
+                                  : mig.status === 'COMPLETED_WITH_ERRORS'
+                                  ? 'bg-amber-500'
                                   : mig.status === 'COMPLETED'
                                   ? 'bg-emerald-500'
                                   : 'bg-portal-orange'
