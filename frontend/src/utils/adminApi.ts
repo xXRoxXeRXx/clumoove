@@ -47,12 +47,27 @@ export interface Paged<T> {
   limit: number;
 }
 
-export type ApiResult = {
+export interface ApiResult<T = Record<string, unknown>> {
   ok: boolean;
-  data?: any;
+  data?: T;
   errorCode?: string;
   status?: number;
-};
+}
+
+export interface ListUsersResult {
+  users: AdminUser[];
+  total: number;
+}
+
+export interface ListMigrationsResult {
+  migrations: AdminMigration[];
+  total: number;
+}
+
+export interface AuditLogResult {
+  entries: AuditEntry[];
+  total: number;
+}
 
 function buildQuery(params: Record<string, string | number | undefined | null>): string {
   const sp = new URLSearchParams();
@@ -65,13 +80,13 @@ function buildQuery(params: Record<string, string | number | undefined | null>):
   return s ? `?${s}` : '';
 }
 
-async function call(
+async function call<T = Record<string, unknown>>(
   apiUrl: string,
   token: string,
   method: string,
   path: string,
   body?: unknown,
-): Promise<ApiResult> {
+): Promise<ApiResult<T>> {
   const res = await fetch(`${apiUrl}${path}`, {
     method,
     headers: {
@@ -81,18 +96,19 @@ async function call(
     credentials: 'include',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => ({})) as { error_code?: unknown };
   if (!res.ok) {
-    return { ok: false, errorCode: (data && data.error_code) || 'UNKNOWN', status: res.status };
+    const errorCode = typeof data.error_code === 'string' ? data.error_code : 'UNKNOWN';
+    return { ok: false, errorCode, status: res.status };
   }
-  return { ok: true, data };
+  return { ok: true, data: data as T };
 }
 
 export const adminApi = {
   listUsers: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
-    call(apiUrl, token, 'GET', `/api/admin/users${buildQuery(params)}`),
+    call<ListUsersResult>(apiUrl, token, 'GET', `/api/admin/users${buildQuery(params)}`),
   createUser: (apiUrl: string, token: string, body: { email: string; display_name: string; password: string; role?: string; must_change_password?: boolean }) =>
-    call(apiUrl, token, 'POST', '/api/admin/users', body),
+    call<AdminUser>(apiUrl, token, 'POST', '/api/admin/users', body),
   suspendUser: (apiUrl: string, token: string, id: string) =>
     call(apiUrl, token, 'POST', `/api/admin/users/${id}/suspend`),
   reactivateUser: (apiUrl: string, token: string, id: string) =>
@@ -101,9 +117,9 @@ export const adminApi = {
     call(apiUrl, token, 'DELETE', `/api/admin/users/${id}`),
   updateRole: (apiUrl: string, token: string, id: string, role: string) =>
     call(apiUrl, token, 'PUT', `/api/admin/users/${id}/role`, { role }),
-  stats: (apiUrl: string, token: string) => call(apiUrl, token, 'GET', '/api/admin/stats'),
+  stats: (apiUrl: string, token: string) => call<AdminStats>(apiUrl, token, 'GET', '/api/admin/stats'),
   listMigrations: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
-    call(apiUrl, token, 'GET', `/api/admin/migrations${buildQuery(params)}`),
+    call<ListMigrationsResult>(apiUrl, token, 'GET', `/api/admin/migrations${buildQuery(params)}`),
   auditLog: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
-    call(apiUrl, token, 'GET', `/api/audit/log${buildQuery(params)}`),
+    call<AuditLogResult>(apiUrl, token, 'GET', `/api/audit/log${buildQuery(params)}`),
 };
