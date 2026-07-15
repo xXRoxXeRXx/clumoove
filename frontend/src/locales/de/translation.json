@@ -309,7 +309,6 @@
     "currentTheme": "Aktuell: {{theme}} (Systemeinstellung)",
     "systemLight": "Hell",
     "systemDark": "Dunkel",
-    "systemControl": "Systemsteuerung",
     "allowRegistrations": "Registrierungen erlauben",
     "allowRegistrationsHint": "Deaktivieren, um neue Registrierungen zu sperren. Bestehende Konten können sich weiterhin anmelden.",
     "emailNotifications": "E-Mail-Benachrichtigungen",

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudSync, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail } from 'lucide-react';
+import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
-import { Toggle } from './Toggle';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useApiError } from '../utils/apiError';
 
@@ -201,11 +200,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       });
   }, [apiUrl]);
 
-  // Admin settings state
-  const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
-  const [adminLoading, setAdminLoading] = useState<boolean>(false);
-  const [adminMessage, setAdminMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-
   // SMTP settings state
   const [smtpHost, setSmtpHost] = useState<string>('');
   const [smtpPort, setSmtpPort] = useState<string>('587');
@@ -313,20 +307,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       setSmtpLoading(false);
     }
   };
-
-  // Fetch admin settings if admin
-  useEffect(() => {
-    if (user?.role !== 'ADMIN') return;
-
-    fetch(`${apiUrl}/api/settings`)
-      .then((res) => res.json())
-      .then((data) => {
-        setRegistrationsEnabled(data.registrations_enabled !== 'false');
-      })
-      .catch((err) => {
-        console.error('Failed to fetch settings:', err);
-      });
-  }, [apiUrl, user]);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -481,40 +461,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
       setPasswordMessage({ text: (err as Error).message, type: 'error' });
     } finally {
       setPasswordLoading(false);
-    }
-  };
-
-  const handleToggleRegistrations = async (checked: boolean) => {
-    setAdminMessage(null);
-    setAdminLoading(true);
-
-    try {
-      const res = await fetch(`${apiUrl}/api/settings`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          key: 'registrations_enabled',
-          value: checked ? 'true' : 'false',
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
-      }
-
-      setRegistrationsEnabled(checked);
-      setAdminMessage({
-        text: checked ? t('settings.messages.adminSavedOn') : t('settings.messages.adminSavedOff'),
-        type: 'success',
-      });
-    } catch (err) {
-      setAdminMessage({ text: (err as Error).message, type: 'error' });
-    } finally {
-      setAdminLoading(false);
     }
   };
 
@@ -1028,33 +974,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
               </p>
             )}
           </div>
-
-{/* Section 5: System control (only visible for ADMIN role) */}
-          {user?.role === 'ADMIN' && (
-            <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
-              <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-                <CloudSync className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.systemControl')}</h3>
-              </div>
-
-              <MessageBanner message={adminMessage} />
-
-              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
-                <div className="text-left space-y-1 pr-4">
-                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.allowRegistrations')}</h4>
-                  <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
-                    {t('settings.allowRegistrationsHint')}
-                  </p>
-                </div>
-                
-                <Toggle
-                  checked={registrationsEnabled}
-                  disabled={adminLoading}
-                  onChange={handleToggleRegistrations}
-                />
-              </div>
-            </div>
-          )}
 
 {/* Section 6: Email notifications (SMTP) */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">

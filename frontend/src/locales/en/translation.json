@@ -309,7 +309,6 @@
     "currentTheme": "Current: {{theme}} (system setting)",
     "systemLight": "Light",
     "systemDark": "Dark",
-    "systemControl": "System control",
     "allowRegistrations": "Allow registrations",
     "allowRegistrationsHint": "Disable this to block new user registrations. Existing accounts will still be able to log in.",
     "emailNotifications": "Email notifications",
