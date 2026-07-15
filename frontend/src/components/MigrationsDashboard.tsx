@@ -58,12 +58,96 @@ export function MigrationsDashboard({
   }, [apiUrl, token, t, translateApiError]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchMigrations();
-    // Poll every 10 seconds for active updates in the table
-    const interval = setInterval(fetchMigrations, 10000);
-    return () => clearInterval(interval);
-  }, [fetchMigrations]);
+    let cancelled = false;
+    let retryDelay = 2000;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+
+    const connect = async () => {
+      if (cancelled) return;
+      try {
+        const response = await fetch(`${apiUrl}/api/migration/stream`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) {
+          throw new Error('stream_unavailable');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let received = false;
+
+        const read = async () => {
+          while (!cancelled) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            let idx: number;
+            while ((idx = buffer.indexOf('\n\n')) !== -1) {
+              const frame = buffer.slice(0, idx);
+              buffer = buffer.slice(idx + 2);
+
+              let event = 'message';
+              let data = '';
+              for (const line of frame.split('\n')) {
+                if (line.startsWith('event:')) {
+                  event = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                  // SSE joins repeated data lines with newlines; preserve them.
+                  data += (data ? '\n' : '') + line.slice(5).trim();
+                }
+              }
+
+              if (event === 'migrations' && data) {
+                try {
+                  setMigrations(JSON.parse(data) || []);
+                  setError('');
+                  setLoading(false);
+                  received = true;
+                } catch {
+                  /* ignore malformed frame */
+                }
+              } else if (event === 'error') {
+                setError(t('migrations.connectionError'));
+                setLoading(false);
+              }
+            }
+          }
+        };
+
+        await read();
+        reader.releaseLock();
+
+        // Server closed a healthy stream (e.g. idle timeout) — reset the
+        // backoff so the reconnect starts immediately rather than waiting.
+        if (received) {
+          retryDelay = 2000;
+          setError('');
+        }
+      } catch {
+        if (cancelled || controller.signal.aborted) return;
+        setError(t('migrations.connectionError'));
+        setLoading(false);
+      }
+
+      // Reconnect with capped exponential backoff (2/4/8… ≤ 30 s)
+      if (!cancelled) {
+        retryTimer = setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 30000);
+      }
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      controller.abort();
+    };
+  }, [apiUrl, token, t]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Avoid triggering row selection click

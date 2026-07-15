@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -60,6 +61,11 @@ type APIServer struct {
 	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
 	ctx           context.Context
 	rateLimiter   ipRateLimiter
+	// activeStreams tracks the number of open SSE migration-stream connections
+	// per user so we can cap concurrent streams (each polls the DB on an
+	// interval) and prevent resource exhaustion via connection flooding.
+	streamMu      sync.Mutex
+	activeStreams map[string]int
 	// trustedProxy, when true, lets the server derive the real client IP and
 	// HTTPS state from X-Forwarded-For / X-Forwarded-Proto. Only enable this
 	// when a trusted reverse proxy (that strips client-supplied copies of these
@@ -120,14 +126,20 @@ func (rl *ipRateLimiter) evictExpired(ctx context.Context, interval time.Duratio
 
 // Rate-limit and quota configuration for the public / sensitive endpoints.
 const (
-	loginRateLimit    = 10
-	loginRateWindow   = 1 * time.Minute
-	registerRateLimit = 5
+	loginRateLimit     = 10
+	loginRateWindow    = 1 * time.Minute
+	registerRateLimit  = 5
 	registerRateWindow = 5 * time.Minute
-	connectRateLimit  = 30
-	connectRateWindow = 1 * time.Minute
-	totpRateLimit     = 10
-	totpRateWindow    = 1 * time.Minute
+	connectRateLimit   = 30
+	connectRateWindow  = 1 * time.Minute
+	totpRateLimit      = 10
+	totpRateWindow     = 1 * time.Minute
+	streamRateLimit    = 10
+	streamRateWindow   = 1 * time.Minute
+	// maxStreamsPerUser caps concurrent SSE migration-stream connections per
+	// user. Each stream polls the DB on an interval, so this bounds the
+	// per-user goroutine / query footprint against connection flooding.
+	maxStreamsPerUser = 5
 
 	// Account lockout after repeated failed logins (mirrors the TOTP lockout).
 	loginMaxAttempts  = 5
@@ -314,6 +326,7 @@ func main() {
 		jwtSecret:     jwtSecret,
 		ctx:           ctx,
 		rateLimiter:   ipRateLimiter{visitors: make(map[string]*rateVisitor)},
+		activeStreams: make(map[string]int),
 		trustedProxy:  trustedProxy,
 	}
 	// Start Garbage Collector (GC) is removed as per requirements (permanent history until manual deletion)
@@ -355,6 +368,7 @@ func main() {
 	mux.HandleFunc("POST /api/auth/confirm-email-change", server.handleConfirmEmailChange)
 
 	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
+	mux.Handle("GET /api/migration/stream", jwtMiddleware(http.HandlerFunc(server.handleMigrationStream)))
 	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
 	mux.Handle("POST /api/migration/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowse)))
 	mux.Handle("POST /api/migration/target/browse", jwtMiddleware(http.HandlerFunc(server.handleTargetBrowse)))
@@ -563,7 +577,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, req.SourceProvider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"success": false,
+			"success":    false,
 			"error_code": ErrListFailed,
 		})
 		return
@@ -1636,87 +1650,87 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 type APIErrorCode string
 
 const (
-	ErrInvalidBody            APIErrorCode = "INVALID_BODY"
-	ErrUnauthorized           APIErrorCode = "UNAUTHORIZED"
-	ErrForbidden              APIErrorCode = "FORBIDDEN"
-	ErrCredentialsInvalid     APIErrorCode = "CREDENTIALS_INVALID"
-	ErrRefreshTokenMissing    APIErrorCode = "REFRESH_TOKEN_MISSING"
-	ErrRefreshTokenInvalid    APIErrorCode = "REFRESH_TOKEN_INVALID"
-	ErrRegistrationDisabled   APIErrorCode = "REGISTRATION_DISABLED"
-	ErrMissingRequiredFields  APIErrorCode = "MISSING_REQUIRED_FIELDS"
-	ErrEmailAlreadyExists     APIErrorCode = "EMAIL_ALREADY_EXISTS"
-	ErrRateLimited            APIErrorCode = "RATE_LIMITED"
-	ErrTotpRequired           APIErrorCode = "TOTP_REQUIRED"
-	ErrTotpCodeRequired       APIErrorCode = "TOTP_CODE_REQUIRED"
-	ErrTotpSessionInvalid     APIErrorCode = "TOTP_SESSION_INVALID"
-	ErrTotpNotEnabled         APIErrorCode = "TOTP_NOT_ENABLED"
-	ErrTotpInvalidCode        APIErrorCode = "TOTP_INVALID_CODE"
-	ErrTotpAlreadyEnabled     APIErrorCode = "TOTP_ALREADY_ENABLED"
-	ErrTotpNoPendingSetup     APIErrorCode = "TOTP_NO_PENDING_SETUP"
-	ErrPasswordRequired       APIErrorCode = "PASSWORD_REQUIRED"
-	ErrPasswordInvalid        APIErrorCode = "PASSWORD_INVALID"
-	ErrMigrationIdMissing     APIErrorCode = "MIGRATION_ID_MISSING"
-	ErrMigrationNotOwned      APIErrorCode = "MIGRATION_NOT_OWNED"
-	ErrMigrationInvalidState  APIErrorCode = "MIGRATION_INVALID_STATE"
+	ErrInvalidBody              APIErrorCode = "INVALID_BODY"
+	ErrUnauthorized             APIErrorCode = "UNAUTHORIZED"
+	ErrForbidden                APIErrorCode = "FORBIDDEN"
+	ErrCredentialsInvalid       APIErrorCode = "CREDENTIALS_INVALID"
+	ErrRefreshTokenMissing      APIErrorCode = "REFRESH_TOKEN_MISSING"
+	ErrRefreshTokenInvalid      APIErrorCode = "REFRESH_TOKEN_INVALID"
+	ErrRegistrationDisabled     APIErrorCode = "REGISTRATION_DISABLED"
+	ErrMissingRequiredFields    APIErrorCode = "MISSING_REQUIRED_FIELDS"
+	ErrEmailAlreadyExists       APIErrorCode = "EMAIL_ALREADY_EXISTS"
+	ErrRateLimited              APIErrorCode = "RATE_LIMITED"
+	ErrTotpRequired             APIErrorCode = "TOTP_REQUIRED"
+	ErrTotpCodeRequired         APIErrorCode = "TOTP_CODE_REQUIRED"
+	ErrTotpSessionInvalid       APIErrorCode = "TOTP_SESSION_INVALID"
+	ErrTotpNotEnabled           APIErrorCode = "TOTP_NOT_ENABLED"
+	ErrTotpInvalidCode          APIErrorCode = "TOTP_INVALID_CODE"
+	ErrTotpAlreadyEnabled       APIErrorCode = "TOTP_ALREADY_ENABLED"
+	ErrTotpNoPendingSetup       APIErrorCode = "TOTP_NO_PENDING_SETUP"
+	ErrPasswordRequired         APIErrorCode = "PASSWORD_REQUIRED"
+	ErrPasswordInvalid          APIErrorCode = "PASSWORD_INVALID"
+	ErrMigrationIdMissing       APIErrorCode = "MIGRATION_ID_MISSING"
+	ErrMigrationNotOwned        APIErrorCode = "MIGRATION_NOT_OWNED"
+	ErrMigrationInvalidState    APIErrorCode = "MIGRATION_INVALID_STATE"
 	ErrMigrationReindexConflict APIErrorCode = "MIGRATION_REINDEX_CONFLICT"
-	ErrTooManyActiveMigrations APIErrorCode = "TOO_MANY_ACTIVE_MIGRATIONS"
-	ErrMigrationNotFound      APIErrorCode = "MIGRATION_NOT_FOUND"
-	ErrThreadsOutOfRange      APIErrorCode = "THREADS_OUT_OF_RANGE"
-	ErrBandwidthOutOfRange    APIErrorCode = "BANDWIDTH_OUT_OF_RANGE"
-	ErrNoSourcePaths          APIErrorCode = "NO_SOURCE_PATHS"
-	ErrEncryptionFailed       APIErrorCode = "ENCRYPTION_FAILED"
-	ErrInvalidScheduledTime   APIErrorCode = "INVALID_SCHEDULED_TIME"
-	ErrScheduledTimePast      APIErrorCode = "SCHEDULED_TIME_PAST"
-	ErrSourceUrlInvalid       APIErrorCode = "SOURCE_URL_INVALID"
-	ErrTargetUrlInvalid       APIErrorCode = "TARGET_URL_INVALID"
-	ErrSourceConnectionFailed APIErrorCode = "SOURCE_CONNECTION_FAILED"
-	ErrTargetConnectionFailed APIErrorCode = "TARGET_CONNECTION_FAILED"
-	ErrListFailed             APIErrorCode = "LIST_FAILED"
-	ErrProviderUnsupported    APIErrorCode = "PROVIDER_UNSUPPORTED"
-	ErrFolderPathInvalid      APIErrorCode = "FOLDER_PATH_INVALID"
-	ErrFolderCreateFailed     APIErrorCode = "FOLDER_CREATE_FAILED"
-	ErrInvalidResourceType    APIErrorCode = "INVALID_RESOURCE_TYPE"
-	ErrOauthProviderMissing   APIErrorCode = "OAUTH_PROVIDER_MISSING"
-	ErrOauthOriginMissing     APIErrorCode = "OAUTH_ORIGIN_MISSING"
-	ErrOauthOriginInvalid     APIErrorCode = "OAUTH_ORIGIN_INVALID"
-	ErrOauthOriginUntrusted   APIErrorCode = "OAUTH_ORIGIN_UNTRUSTED"
-	ErrOauthGenerationFailed  APIErrorCode = "OAUTH_GENERATION_FAILED"
-	ErrDisplayNameRequired    APIErrorCode = "DISPLAY_NAME_REQUIRED"
-	ErrPasswordMismatch       APIErrorCode = "PASSWORD_MISMATCH"
-	ErrPasswordTooShort       APIErrorCode = "PASSWORD_TOO_SHORT"
-	ErrAvatarInvalid          APIErrorCode = "AVATAR_INVALID"
-	ErrAvatarTypeUnsupported  APIErrorCode = "AVATAR_TYPE_UNSUPPORTED"
-	ErrAvatarTooLarge         APIErrorCode = "AVATAR_TOO_LARGE"
-	ErrAdminOnly              APIErrorCode = "ADMIN_ONLY"
-	ErrSettingForbidden       APIErrorCode = "SETTING_FORBIDDEN"
-	ErrSettingInvalid         APIErrorCode = "SETTING_INVALID"
-	ErrScheduleIdMissing      APIErrorCode = "SCHEDULE_ID_MISSING"
-	ErrScheduleNotFound       APIErrorCode = "SCHEDULE_NOT_FOUND"
-	ErrSmtpConfigIncomplete   APIErrorCode = "SMTP_CONFIG_INCOMPLETE"
-	ErrSmtpPortInvalid        APIErrorCode = "SMTP_PORT_INVALID"
-	ErrSmtpEncryptionInvalid  APIErrorCode = "SMTP_ENCRYPTION_INVALID"
-	ErrSmtpPasswordRequired   APIErrorCode = "SMTP_PASSWORD_REQUIRED"
-	ErrMailNotConfigured      APIErrorCode = "MAIL_NOT_CONFIGURED"
-	ErrSmtpNotConfigured      APIErrorCode = "SMTP_NOT_CONFIGURED"
-	ErrSmtpDecryptFailed      APIErrorCode = "SMTP_DECRYPT_FAILED"
-	ErrSmtpTestFailed         APIErrorCode = "SMTP_TEST_FAILED"
-	ErrResetFieldsRequired    APIErrorCode = "RESET_FIELDS_REQUIRED"
-	ErrResetTokenInvalid      APIErrorCode = "RESET_TOKEN_INVALID"
-	ErrEmailInvalid           APIErrorCode = "EMAIL_INVALID"
-	ErrEmailUnchanged         APIErrorCode = "EMAIL_UNCHANGED"
-	ErrEmailChangeTokenInvalid APIErrorCode = "EMAIL_CHANGE_TOKEN_INVALID"
-	ErrCorsOriginUntrusted    APIErrorCode = "CORS_ORIGIN_UNTRUSTED"
-	ErrWsTokenInsecure        APIErrorCode = "WS_TOKEN_INSECURE"
-	ErrWsTokenMissing         APIErrorCode = "WS_TOKEN_MISSING"
-	ErrWsTokenInvalid         APIErrorCode = "WS_TOKEN_INVALID"
-	ErrInternalError          APIErrorCode = "INTERNAL_ERROR"
+	ErrTooManyActiveMigrations  APIErrorCode = "TOO_MANY_ACTIVE_MIGRATIONS"
+	ErrMigrationNotFound        APIErrorCode = "MIGRATION_NOT_FOUND"
+	ErrThreadsOutOfRange        APIErrorCode = "THREADS_OUT_OF_RANGE"
+	ErrBandwidthOutOfRange      APIErrorCode = "BANDWIDTH_OUT_OF_RANGE"
+	ErrNoSourcePaths            APIErrorCode = "NO_SOURCE_PATHS"
+	ErrEncryptionFailed         APIErrorCode = "ENCRYPTION_FAILED"
+	ErrInvalidScheduledTime     APIErrorCode = "INVALID_SCHEDULED_TIME"
+	ErrScheduledTimePast        APIErrorCode = "SCHEDULED_TIME_PAST"
+	ErrSourceUrlInvalid         APIErrorCode = "SOURCE_URL_INVALID"
+	ErrTargetUrlInvalid         APIErrorCode = "TARGET_URL_INVALID"
+	ErrSourceConnectionFailed   APIErrorCode = "SOURCE_CONNECTION_FAILED"
+	ErrTargetConnectionFailed   APIErrorCode = "TARGET_CONNECTION_FAILED"
+	ErrListFailed               APIErrorCode = "LIST_FAILED"
+	ErrProviderUnsupported      APIErrorCode = "PROVIDER_UNSUPPORTED"
+	ErrFolderPathInvalid        APIErrorCode = "FOLDER_PATH_INVALID"
+	ErrFolderCreateFailed       APIErrorCode = "FOLDER_CREATE_FAILED"
+	ErrInvalidResourceType      APIErrorCode = "INVALID_RESOURCE_TYPE"
+	ErrOauthProviderMissing     APIErrorCode = "OAUTH_PROVIDER_MISSING"
+	ErrOauthOriginMissing       APIErrorCode = "OAUTH_ORIGIN_MISSING"
+	ErrOauthOriginInvalid       APIErrorCode = "OAUTH_ORIGIN_INVALID"
+	ErrOauthOriginUntrusted     APIErrorCode = "OAUTH_ORIGIN_UNTRUSTED"
+	ErrOauthGenerationFailed    APIErrorCode = "OAUTH_GENERATION_FAILED"
+	ErrDisplayNameRequired      APIErrorCode = "DISPLAY_NAME_REQUIRED"
+	ErrPasswordMismatch         APIErrorCode = "PASSWORD_MISMATCH"
+	ErrPasswordTooShort         APIErrorCode = "PASSWORD_TOO_SHORT"
+	ErrAvatarInvalid            APIErrorCode = "AVATAR_INVALID"
+	ErrAvatarTypeUnsupported    APIErrorCode = "AVATAR_TYPE_UNSUPPORTED"
+	ErrAvatarTooLarge           APIErrorCode = "AVATAR_TOO_LARGE"
+	ErrAdminOnly                APIErrorCode = "ADMIN_ONLY"
+	ErrSettingForbidden         APIErrorCode = "SETTING_FORBIDDEN"
+	ErrSettingInvalid           APIErrorCode = "SETTING_INVALID"
+	ErrScheduleIdMissing        APIErrorCode = "SCHEDULE_ID_MISSING"
+	ErrScheduleNotFound         APIErrorCode = "SCHEDULE_NOT_FOUND"
+	ErrSmtpConfigIncomplete     APIErrorCode = "SMTP_CONFIG_INCOMPLETE"
+	ErrSmtpPortInvalid          APIErrorCode = "SMTP_PORT_INVALID"
+	ErrSmtpEncryptionInvalid    APIErrorCode = "SMTP_ENCRYPTION_INVALID"
+	ErrSmtpPasswordRequired     APIErrorCode = "SMTP_PASSWORD_REQUIRED"
+	ErrMailNotConfigured        APIErrorCode = "MAIL_NOT_CONFIGURED"
+	ErrSmtpNotConfigured        APIErrorCode = "SMTP_NOT_CONFIGURED"
+	ErrSmtpDecryptFailed        APIErrorCode = "SMTP_DECRYPT_FAILED"
+	ErrSmtpTestFailed           APIErrorCode = "SMTP_TEST_FAILED"
+	ErrResetFieldsRequired      APIErrorCode = "RESET_FIELDS_REQUIRED"
+	ErrResetTokenInvalid        APIErrorCode = "RESET_TOKEN_INVALID"
+	ErrEmailInvalid             APIErrorCode = "EMAIL_INVALID"
+	ErrEmailUnchanged           APIErrorCode = "EMAIL_UNCHANGED"
+	ErrEmailChangeTokenInvalid  APIErrorCode = "EMAIL_CHANGE_TOKEN_INVALID"
+	ErrCorsOriginUntrusted      APIErrorCode = "CORS_ORIGIN_UNTRUSTED"
+	ErrWsTokenInsecure          APIErrorCode = "WS_TOKEN_INSECURE"
+	ErrWsTokenMissing           APIErrorCode = "WS_TOKEN_MISSING"
+	ErrWsTokenInvalid           APIErrorCode = "WS_TOKEN_INVALID"
+	ErrInternalError            APIErrorCode = "INTERNAL_ERROR"
 
 	// Admin / user-management
-	ErrUserDisabled        APIErrorCode = "USER_DISABLED"
-	ErrUserNotFound        APIErrorCode = "USER_NOT_FOUND"
-	ErrCannotModifySelf    APIErrorCode = "CANNOT_MODIFY_SELF"
-	ErrLastAdmin           APIErrorCode = "LAST_ADMIN"
-	ErrInvalidRole         APIErrorCode = "INVALID_ROLE"
+	ErrUserDisabled           APIErrorCode = "USER_DISABLED"
+	ErrUserNotFound           APIErrorCode = "USER_NOT_FOUND"
+	ErrCannotModifySelf       APIErrorCode = "CANNOT_MODIFY_SELF"
+	ErrLastAdmin              APIErrorCode = "LAST_ADMIN"
+	ErrInvalidRole            APIErrorCode = "INVALID_ROLE"
 	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
 )
 
@@ -1749,10 +1763,10 @@ func (s *APIServer) writeAudit(r *http.Request, action db.AuditAction, target st
 		}
 	}
 	db.WriteAuditLog(s.db, db.AuditEntry{
-		UserID: uid,
-		Action: action,
-		Target: target,
-		IP:     s.clientIP(r),
+		UserID:  uid,
+		Action:  action,
+		Target:  target,
+		IP:      s.clientIP(r),
 		Details: d,
 	})
 }
@@ -2816,6 +2830,128 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, list)
 }
 
+// handleMigrationStream pushes the user's migration list over Server-Sent Events.
+// It sends an initial snapshot once, then re-polls every 3 seconds and only emits
+// a new event when the marshaled payload actually changes (diff-on-change), keeping
+// idle traffic to a keepalive comment every 20 seconds.
+func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+
+	// Rate-limit connection attempts to prevent stream flooding / abuse.
+	if !s.rateLimiter.Allow(s.clientIP(r), streamRateLimit, streamRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	// Cap concurrent streams per user so a single client cannot open unlimited
+	// long-lived DB-polling goroutines.
+	s.streamMu.Lock()
+	if s.activeStreams[userID] >= maxStreamsPerUser {
+		s.streamMu.Unlock()
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	s.activeStreams[userID]++
+	s.streamMu.Unlock()
+	defer func() {
+		s.streamMu.Lock()
+		s.activeStreams[userID]--
+		if s.activeStreams[userID] <= 0 {
+			delete(s.activeStreams, userID)
+		}
+		s.streamMu.Unlock()
+	}()
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	// The server enforces a global WriteTimeout that would otherwise kill this
+	// long-lived response after 60s. Disable the write deadline for this
+	// connection (ReadTimeout still protects the request read).
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	writeEvent := func(payload []byte) error {
+		if _, err := fmt.Fprintf(w, "event: migrations\ndata: %s\n\n", payload); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+	writeErrorEvent := func(code APIErrorCode) error {
+		if _, err := fmt.Fprintf(w, "event: error\ndata: %s\n\n", code); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	// Initial snapshot
+	initial, err := db.GetMigrationsForUser(s.db, userID)
+	if err != nil {
+		log.Printf("Migration stream initial load error for user %s: %v\n", userID, err)
+		writeErrorEvent(ErrInternalError)
+		return
+	}
+	prev, err := json.Marshal(initial)
+	if err != nil {
+		log.Printf("Migration stream initial marshal error for user %s: %v\n", userID, err)
+		writeErrorEvent(ErrInternalError)
+		return
+	}
+	if err := writeEvent(prev); err != nil {
+		log.Printf("Migration stream initial write error for user %s: %v\n", userID, err)
+		return
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	keepaliveTicker := time.NewTicker(20 * time.Second)
+	defer keepaliveTicker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-keepaliveTicker.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			list, err := db.GetMigrationsForUser(s.db, userID)
+			if err != nil {
+				log.Printf("Migration stream reload error for user %s: %v\n", userID, err)
+				return
+			}
+			cur, err := json.Marshal(list)
+			if err != nil {
+				log.Printf("Migration stream marshal error for user %s: %v\n", userID, err)
+				return
+			}
+			if !bytes.Equal(cur, prev) {
+				if err := writeEvent(cur); err != nil {
+					log.Printf("Migration stream write error for user %s: %v\n", userID, err)
+					return
+				}
+				prev = cur
+			}
+		}
+	}
+}
+
 func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -2889,10 +3025,10 @@ func (s *APIServer) wouldRemoveLastActiveAdmin(targetID string) (bool, error) {
 }
 
 type AdminCreateUserRequest struct {
-	Email             string `json:"email"`
-	DisplayName       string `json:"display_name"`
-	Password          string `json:"password"`
-	Role              string `json:"role"`
+	Email              string `json:"email"`
+	DisplayName        string `json:"display_name"`
+	Password           string `json:"password"`
+	Role               string `json:"role"`
 	MustChangePassword *bool  `json:"must_change_password"`
 }
 
@@ -2973,17 +3109,17 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 	}
 
 	s.writeAudit(r, db.AuditUserCreated, u.ID, actor, map[string]interface{}{
-		"email":              req.Email,
-		"role":               role,
+		"email":                req.Email,
+		"role":                 role,
 		"must_change_password": mustChange,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success":             true,
-		"id":                  u.ID,
-		"email":               req.Email,
-		"role":                role,
-		"active":              true,
+		"success":              true,
+		"id":                   u.ID,
+		"email":                req.Email,
+		"role":                 role,
+		"active":               true,
 		"must_change_password": mustChange,
 	})
 }
@@ -3190,10 +3326,10 @@ func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"users":      users,
-		"total":      total,
-		"page":       page,
-		"limit":      limit,
+		"users": users,
+		"total": total,
+		"page":  page,
+		"limit": limit,
 	})
 }
 
