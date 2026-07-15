@@ -46,16 +46,6 @@ if (API_URL.startsWith('http://') && !/(localhost|127\.0\.0\.1)/.test(new URL(AP
 
 let refreshPromise: Promise<string> | null = null;
 
-const setMigrationInUrl = (id: string) => {
-  const url = new URL(window.location.href);
-  if (id) {
-    url.searchParams.set('migration', id);
-  } else {
-    url.searchParams.delete('migration');
-  }
-  window.history.replaceState({}, '', url.toString());
-};
-
 function App() {
   const { t } = useTranslation();
   const resetTokenFromUrl = typeof window !== 'undefined'
@@ -66,9 +56,8 @@ function App() {
     ? new URLSearchParams(window.location.search).get('email-change-token')
     : null;
 
-  const [step, setStep] = useState<Step>(() =>
-    emailChangeTokenFromUrl ? 'confirm-email' : resetTokenFromUrl ? 'reset-password' : 'login'
-  );
+  const initialStep: Step = emailChangeTokenFromUrl ? 'confirm-email' : resetTokenFromUrl ? 'reset-password' : 'login';
+  const [step, setStep] = useState<Step>(initialStep);
   const [token, setToken] = useState<string>('');
   const [user, setUser] = useState<User | null>(null);
   const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
@@ -81,6 +70,68 @@ function App() {
   const [resetToken, setResetToken] = useState<string>(resetTokenFromUrl || '');
   const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
   const userMenuRef = useRef<HTMLDivElement>(null);
+  // Tracks how many app-pushed history entries sit above the seeded top-level
+  // entry, so "back to overview" can pop deterministically instead of using a
+  // one-way latch that never resets.
+  const historyDepth = useRef(0);
+  // Whether the entry we are currently sitting on was pushed by the app
+  // (vs. a seeded/replaced baseline or an external entry). Used by popstate to
+  // decide whether leaving it should decrement historyDepth.
+  const currentAppEntry = useRef(false);
+  // Tracks history length so popstate can tell back (length shrinks) from
+  // forward (length grows) and keep historyDepth in sync for both directions.
+  const prevHistoryLen = useRef(window.history.length);
+
+  const urlMigId = new URLSearchParams(window.location.search).get('migration') ?? '';
+
+  // Build the URL (keeping the ?migration= param) and push/replace a history entry
+  // carrying the in-app navigation state, then sync React state.
+  const applyHistory = (nextStep: Step, migId: string, replace: boolean) => {
+    const url = new URL(window.location.href);
+    if (migId) {
+      url.searchParams.set('migration', migId);
+    } else {
+      url.searchParams.delete('migration');
+    }
+    const state = { step: nextStep, migration: migId, appEntry: !replace };
+    if (replace) {
+      // A replace establishes a fresh baseline: forget any pushed entries.
+      window.history.replaceState(state, '', url.toString());
+      historyDepth.current = 0;
+      currentAppEntry.current = false;
+    } else {
+      historyDepth.current += 1;
+      currentAppEntry.current = true;
+      window.history.pushState(state, '', url.toString());
+      prevHistoryLen.current = window.history.length;
+    }
+    setStep(nextStep);
+    setMigrationId(migId);
+  };
+
+  // Replace the current history entry (no new navigable entry). Used for
+  // post-auth / deep-link restores where browser-back should leave intentionally.
+  const replaceNav = (nextStep: Step, migId: string = '') => applyHistory(nextStep, migId, true);
+
+  // Forward in-app navigation: push a new history entry.
+  const navigate = (nextStep: Step, migId?: string) => {
+    applyHistory(nextStep, migId ?? migrationId, false);
+  };
+
+  // "Back to migration overview": pops app entries until the seeded top-level
+  // overview is reached; only pushes a fresh overview when no app entries exist.
+  const goToOverview = () => {
+    if (historyDepth.current > 0) {
+      window.history.back();
+    } else {
+      navigate('history');
+    }
+  };
+
+  // In-app back (FileBrowser / Settings / Admin).
+  const goBack = () => {
+    window.history.back();
+  };
 
   const handleLogout = async () => {
     try {
@@ -94,8 +145,7 @@ function App() {
     setCredentials(null);
     setInitialFiles([]);
     setMigrationId('');
-    setMigrationInUrl('');
-    setStep('login');
+    replaceNav('login', '');
   };
 
   // Click outside to close user menu
@@ -112,6 +162,55 @@ function App() {
       document.removeEventListener('mousedown', handleOutsideClick);
     };
   }, [showUserMenu]);
+
+  // Seed the initial history entry with the current step/migration so the very
+  // first entry carries navigable state (replace, not push).
+  useEffect(() => {
+    // Seeding history state on mount is intentional; ignore set-state-in-effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    applyHistory(initialStep, urlMigId, true);
+  }, [initialStep, urlMigId]);
+
+  // Handle browser back/forward between in-app screens.
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const s = e.state as { step?: Step; migration?: string; appEntry?: boolean } | null;
+      // Keep historyDepth in sync for both back (length shrinks) and forward
+      // (length grows) so the seeded top-level overview remains the back target.
+      const newLen = window.history.length;
+      if (newLen < prevHistoryLen.current && currentAppEntry.current) {
+        historyDepth.current = Math.max(0, historyDepth.current - 1);
+      } else if (newLen > prevHistoryLen.current && s?.appEntry) {
+        historyDepth.current += 1;
+      }
+      currentAppEntry.current = s?.appEntry ?? false;
+      prevHistoryLen.current = newLen;
+      if (s?.step) {
+        setStep(s.step);
+        setMigrationId(s.migration ?? new URLSearchParams(window.location.search).get('migration') ?? '');
+        // Credentials/initialFiles are only needed by `select`; clear them when
+        // navigating to an unrelated screen to avoid stale secrets in memory.
+        if (s.step !== 'dashboard' && s.step !== 'select') {
+          setCredentials(null);
+          setInitialFiles([]);
+        }
+      } else {
+        // Pre-app / external entry: re-derive step from session like initial load.
+        const params = new URLSearchParams(window.location.search);
+        const mig = params.get('migration');
+        if (localStorage.getItem('has_session') === 'true' && mig) {
+          setMigrationId(mig);
+          setStep('dashboard');
+        } else if (localStorage.getItem('has_session') === 'true') {
+          setStep('history');
+        } else {
+          setStep('login');
+        }
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   // 1. Silent login / Refresh Token check on load
   useEffect(() => {
@@ -149,32 +248,32 @@ function App() {
                 headers: { 'Authorization': `Bearer ${data.access_token}` },
               });
               if (migRes.ok) {
-                setMigrationId(urlMigId);
-                setStep('dashboard');
+                replaceNav('dashboard', urlMigId);
               } else {
-                setMigrationInUrl('');
-                setStep('history');
+                replaceNav('history', '');
               }
             } else {
-              setStep('history');
+              replaceNav('history', '');
             }
           } else {
             localStorage.removeItem('has_session');
-            setStep('login');
+            replaceNav('login', '');
           }
         } else {
           localStorage.removeItem('has_session');
-          setStep('login');
+          replaceNav('login', '');
         }
       })
       .catch((err) => {
         console.error('Silent login error:', err);
         localStorage.removeItem('has_session');
-        setStep('login');
+        replaceNav('login', '');
       })
       .finally(() => {
         setIsValidating(false);
       });
+    // replaceNav / applyHistory are stable in intent; intentionally not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resetTokenFromUrl, emailChangeTokenFromUrl]);
 
   // 2. Silent JWT refresh (every 14 minutes)
@@ -202,7 +301,7 @@ function App() {
     localStorage.setItem('has_session', 'true');
     setToken(accessToken);
     setUser(loggedUser);
-    setStep('history');
+    replaceNav('history', '');
   };
 
   // OAuth callback page posts tokens to window.opener via postMessage. The
@@ -223,7 +322,7 @@ function App() {
             const me = await meRes.json();
             localStorage.setItem('has_session', 'true');
             setUser(me);
-            setStep('history');
+            replaceNav('history', '');
             return;
           }
         } catch (e) {
@@ -233,9 +332,11 @@ function App() {
       },
       onError: (msg) => {
         console.error('OAuth login failed:', msg.error);
-        setStep('login');
+        replaceNav('login', '');
       },
     });
+    // handleLogout / replaceNav are stable in intent; intentionally not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Patch global fetch to handle 401 token refresh automatically (I4 frontend fix)
@@ -297,17 +398,15 @@ function App() {
   const handleConnectSuccess = (config: MigrationConfig, files: CloudFile[]) => {
     setCredentials(config);
     setInitialFiles(files);
-    setStep('select');
+    navigate('select');
   };
 
   const handleStartSuccess = (id: string) => {
-    setMigrationId(id);
-    setMigrationInUrl(id);
     // Secrets (source/target passwords, OAuth tokens, SFTP keys) are no longer
     // needed once the migration is created — drop them from memory.
     setCredentials(null);
     setInitialFiles([]);
-    setStep('dashboard');
+    navigate('dashboard', id);
   };
 
   const handleResetPasswordSuccess = () => {
@@ -316,7 +415,7 @@ function App() {
     url.searchParams.delete('reset-token');
     window.history.replaceState({}, '', url.toString());
     setResetToken('');
-    setStep('login');
+    replaceNav('login', '');
   };
 
   const handleConfirmEmailChangeSuccess = () => {
@@ -331,9 +430,7 @@ function App() {
   const handleReset = () => {
     setCredentials(null);
     setInitialFiles([]);
-    setMigrationId('');
-    setMigrationInUrl('');
-    setStep('history');
+    goToOverview();
   };
 
   if (isValidating) {
@@ -368,7 +465,7 @@ function App() {
         <div className="max-w-6xl mx-auto px-6 h-18 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div 
-              onClick={() => step !== 'login' && setStep('history')}
+              onClick={() => step !== 'login' && goToOverview()}
               className="group w-10 h-10 flex items-center justify-center bg-gradient-to-tr from-portal-orange to-orange-500 rounded-xl text-white shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer hover:-translate-y-0.5"
             >
               <CloudSync className="w-5 h-5 stroke-[2.5] group-hover:rotate-12 transition-transform duration-300" />
@@ -405,7 +502,7 @@ function App() {
                   {user?.role === 'ADMIN' && (
                     <button
                       onClick={() => {
-                        setStep('admin');
+                        navigate('admin');
                         setShowUserMenu(false);
                       }}
                       className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
@@ -414,11 +511,11 @@ function App() {
                       {t('nav.admin')}
                     </button>
                   )}
-                  <button
-                    onClick={() => {
-                      setStep('settings');
-                      setShowUserMenu(false);
-                    }}
+                    <button
+                      onClick={() => {
+                        navigate('settings');
+                        setShowUserMenu(false);
+                      }}
                     className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
                   >
                     <SettingsIcon className="w-4 h-4 text-[var(--color-text-muted)]" />
@@ -469,11 +566,9 @@ function App() {
               apiUrl={API_URL}
               token={token}
               user={user}
-              onStartNewMigration={() => setStep('connect')}
+              onStartNewMigration={() => navigate('connect')}
               onSelectActiveMigration={(id) => {
-                setMigrationId(id);
-                setMigrationInUrl(id);
-                setStep('dashboard');
+                navigate('dashboard', id);
               }}
             />
           )}
@@ -491,7 +586,7 @@ function App() {
               initialFiles={initialFiles}
               credentials={credentials}
               apiUrl={API_URL}
-              onBack={() => setStep('connect')}
+              onBack={() => goBack()}
               onStartSuccess={handleStartSuccess}
               token={token}
             />
@@ -512,7 +607,7 @@ function App() {
               apiUrl={API_URL}
               token={token}
               user={user}
-              onBack={() => setStep('history')}
+              onBack={() => goBack()}
               onUpdateUser={(updated) => setUser(updated)}
             />
           )}
@@ -522,7 +617,7 @@ function App() {
               apiUrl={API_URL}
               token={token}
               user={user}
-              onBack={() => setStep('history')}
+              onBack={() => goBack()}
             />
           )}
         </div>
