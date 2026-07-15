@@ -1,7 +1,7 @@
 # Clumoove – Documentation
 
 Welcome to the technical documentation for **Clumoove**, the multi-cloud migration platform.
-This documentation complements the main [README](../README.md) (and [README.en.md](../README.en.md))
+This documentation complements the main [README](../README.md) (English)
 and describes the system in detail for developers, operators, and architects.
 
 > **Note on language & code:** All explanatory text is written in English. Code identifiers,
