@@ -259,7 +259,7 @@ export function MigrationsDashboard({
         
         <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
           <div className="space-y-2">
-            <p className="text-[9px] font-mono tracking-widest text-[var(--color-portal-orange-themed)] font-bold uppercase">// SAAS migrations-system</p>
+            <p className="text-[9px] font-mono tracking-widest text-[var(--color-portal-orange-themed)] font-bold uppercase">{t('migrations.tagline')}</p>
             <h1 className="font-display font-extrabold text-3xl tracking-tight">
               {t('migrations.welcome', { name: user?.display_name || t('common.user') })}
             </h1>
