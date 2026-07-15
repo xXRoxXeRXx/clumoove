@@ -57,13 +57,13 @@ its own container.
 
 ```mermaid
 graph TD
-  FE[React SPA] <-->|REST + WebSocket| API[Go API Gateway]
-  API <-->|CRUD, auth, indexing| DB[(PostgreSQL)]
-  Worker[Go Worker Engine] <-->|Dequeue via SELECT … FOR UPDATE SKIP LOCKED| DB
-  API <-->|heartbeats, locks, events| Redis[(Redis)]
-  Worker <-->|heartbeats, locks| Redis
-  Worker <-->|stream download| SRC[Source storage]
-  Worker <-->|stream upload| DST[Target storage]
+    FE[React SPA] <-->|REST + WebSocket| API[Go API Gateway]
+    API <-->|CRUD, auth, indexing| DB[(PostgreSQL)]
+    Worker[Go Worker Engine] <-->|Dequeue via SELECT FOR UPDATE SKIP LOCKED| DB
+    API <-->|heartbeats, locks, events| Redis[(Redis)]
+    Worker <-->|heartbeats, locks| Redis
+    Worker <-->|stream download| SRC[Source storage]
+    Worker <-->|stream upload| DST[Target storage]
 ```
 
 > [!IMPORTANT]
