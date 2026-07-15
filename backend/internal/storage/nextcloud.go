@@ -16,12 +16,44 @@ import (
 	"time"
 )
 
-type NextcloudProvider struct {
-	BaseURL    string
-	Username   string
-	Password   string
-	HTTPClient *http.Client
-	Threads    int
+// pathBuilder abstracts the per-provider WebDAV path scheme so the shared
+// davProvider protocol logic can serve multiple providers without embedding
+// (which would break Go's method dispatch). Nextcloud appends
+// /files/<user>, /calendars/<user>, ... segments; MagentaCLOUD exposes the
+// WebDAV root directly and needs none of that.
+type pathBuilder interface {
+	resourceURL(baseURL, username, resourceType, p string) string
+	uploadsURL(baseURL, username, p string) string
+	listingPrefix(basePath, username, resourceType string) string
+}
+
+// davProvider holds the shared WebDAV/Nextcloud protocol implementation.
+// Concrete providers (NextcloudProvider, MagentacloudProvider) embed it and
+// supply a pathBuilder plus transport configuration. Behaviour of
+// NextcloudProvider is unchanged by this extraction.
+type davProvider struct {
+	BaseURL              string
+	Username             string
+	Password             string
+	HTTPClient           *http.Client
+	Threads              int
+	UserAgent            string
+	pb                   pathBuilder
+	disableChunkedUpload bool
+	// supportedResourceTypes lists the resource types the provider can handle.
+	// Nextcloud supports files/calendars/contacts; files-only providers (e.g.
+	// MagentaCLOUD) declare only "files".
+	supportedResourceTypes map[string]bool
+}
+
+// assertResourceType returns an error if the provider does not support the
+// given resource type (e.g. calendars/contacts on a files-only provider such
+// as MagentaCLOUD).
+func (p *davProvider) assertResourceType(resourceType string) error {
+	if p.supportedResourceTypes != nil && p.supportedResourceTypes[resourceType] {
+		return nil
+	}
+	return fmt.Errorf("resource type %q not supported by provider", resourceType)
 }
 
 // XML structures for PROPFIND
@@ -57,20 +89,8 @@ type XMLChecksums struct {
 	Checksum []string `xml:"checksum"`
 }
 
-func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider, error) {
-	baseURL := strings.TrimSuffix(rawURL, "/")
-	if !strings.Contains(baseURL, "/remote.php/dav") {
-		baseURL = baseURL + "/remote.php/dav"
-	}
-
-	// Extract the host for the egress dialer (validates the resolved IP on
-	// every connection to defeat DNS rebinding).
-	host := rawURL
-	if parsed, err := url.Parse(rawURL); err == nil && parsed.Hostname() != "" {
-		host = parsed.Hostname()
-	}
-
-	tr := &http.Transport{
+func newDAVTransport(host string) *http.Transport {
+	return &http.Transport{
 		ForceAttemptHTTP2:     false,
 		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
 		MaxIdleConns:          100,
@@ -84,61 +104,58 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 		// SNI / certificate validation.
 		DialContext: egressDialer(host),
 	}
+}
+
+func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider, error) {
+	baseURL := strings.TrimSuffix(rawURL, "/")
+	if !strings.Contains(baseURL, "/remote.php/dav") {
+		baseURL = baseURL + "/remote.php/dav"
+	}
+
+	// Extract the host for the egress dialer (validates the resolved IP on
+	// every connection to defeat DNS rebinding).
+	host := rawURL
+	if parsed, err := url.Parse(rawURL); err == nil && parsed.Hostname() != "" {
+		host = parsed.Hostname()
+	}
 
 	return &NextcloudProvider{
-		BaseURL:  baseURL,
-		Username: username,
-		Password: password,
-		HTTPClient: &http.Client{
-			Transport: tr,
-			Timeout:   0,
+		davProvider: &davProvider{
+			BaseURL:  baseURL,
+			Username: username,
+			Password: password,
+			HTTPClient: &http.Client{
+				Transport: newDAVTransport(host),
+				Timeout:   0,
+			},
+			Threads:   4,
+			UserAgent: "Nextcloud-Migration-Worker/1.0",
+			pb:        nextcloudPaths{},
+			supportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
 		},
-		Threads: 4,
 	}, nil
 }
 
-func (p *NextcloudProvider) Close() error {
+func (p *davProvider) Close() error {
 	p.HTTPClient.CloseIdleConnections()
 	return nil
 }
 
-func (p *NextcloudProvider) buildResourceURL(resourceType string, endpointPath string) string {
-	cleanPath := strings.TrimPrefix(endpointPath, "/")
-	escapedPath := &url.URL{Path: cleanPath}
-	escapedUser := url.PathEscape(p.Username)
-
-	switch resourceType {
-	case "calendars":
-		return fmt.Sprintf("%s/calendars/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
-	case "contacts":
-		return fmt.Sprintf("%s/addressbooks/users/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
-	default: // "files"
-		return fmt.Sprintf("%s/files/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
-	}
-}
-
-func (p *NextcloudProvider) buildUploadsURL(endpointPath string) string {
-	cleanPath := strings.TrimPrefix(endpointPath, "/")
-	escapedPath := &url.URL{Path: cleanPath}
-	escapedUser := url.PathEscape(p.Username)
-	return fmt.Sprintf("%s/uploads/%s/%s", p.BaseURL, escapedUser, escapedPath.String())
-}
-
-func (p *NextcloudProvider) newRequest(method, urlStr string, body io.Reader) (*http.Request, error) {
+func (p *davProvider) newRequest(method, urlStr string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequest(method, urlStr, body)
 	if err != nil {
 		return nil, err
 	}
 	req.SetBasicAuth(p.Username, p.Password)
-	req.Header.Set("User-Agent", "Nextcloud-Migration-Worker/1.0")
+	req.Header.Set("User-Agent", p.UserAgent)
 	return req, nil
 }
 
-func (p *NextcloudProvider) Connect(ctx context.Context) (bool, error) {
+func (p *davProvider) Connect(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	// Query root folders via PROPFIND to test credentials
-	u := p.buildResourceURL("files", "/")
+	u := p.pb.resourceURL(p.BaseURL, p.Username, "files", "/")
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:">
 			<d:prop>
@@ -170,10 +187,13 @@ func (p *NextcloudProvider) Connect(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
+func (p *davProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return CloudResource{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, resourcePath)
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, resourcePath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
@@ -254,8 +274,11 @@ func (p *NextcloudProvider) InspectResource(ctx context.Context, resourceType, r
 	return res, nil
 }
 
-func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
-	u := p.buildResourceURL(resourceType, dirPath)
+func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return nil, err
+	}
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, dirPath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
@@ -303,15 +326,7 @@ func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceTyp
 		basePath = "/remote.php/dav"
 	}
 
-	var prefixPath string
-	switch resourceType {
-	case "calendars":
-		prefixPath = fmt.Sprintf("%s/calendars/%s", basePath, p.Username)
-	case "contacts":
-		prefixPath = fmt.Sprintf("%s/addressbooks/users/%s", basePath, p.Username)
-	default:
-		prefixPath = fmt.Sprintf("%s/files/%s", basePath, p.Username)
-	}
+	prefixPath := p.pb.listingPrefix(basePath, p.Username, resourceType)
 
 	for _, r := range multistatus.Responses {
 		decodedHref, err := url.PathUnescape(r.Href)
@@ -375,8 +390,11 @@ func (p *NextcloudProvider) GetDirectoryListing(ctx context.Context, resourceTyp
 	return resources, nil
 }
 
-func (p *NextcloudProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
-	u := p.buildResourceURL(resourceType, filePath)
+func (p *davProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return nil, err
+	}
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 	req, err := p.newRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -400,8 +418,11 @@ func (p *NextcloudProvider) StreamDownload(ctx context.Context, resourceType, fi
 	return resp.Body, nil
 }
 
-func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
-	u := p.buildResourceURL(resourceType, filePath)
+func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return err
+	}
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 
 	err := p.CreateParentDirectories(ctx, resourceType, filePath)
 	if err != nil {
@@ -470,14 +491,27 @@ func (p *NextcloudProvider) StreamUpload(ctx context.Context, resourceType, file
 	return nil
 }
 
-func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, fileSize int64, progressChan chan<- int64) error {
+func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, fileSize int64, progressChan chan<- int64) error {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return err
+	}
+	// Some providers (e.g. MagentaCLOUD) do not support Nextcloud's /uploads
+	// chunked-upload API. Fall back to a plain PUT so the transfer still works
+	// over standard WebDAV; wrap the stream to keep progress reporting alive.
+	if p.disableChunkedUpload {
+		if progressChan != nil {
+			stream = &webdavProgressReader{reader: stream, progressChan: progressChan}
+		}
+		return p.StreamUpload(ctx, resourceType, filePath, stream, fileSize)
+	}
+
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
 		return fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
 	transferID := fmt.Sprintf("upload-%x", time.Now().UnixNano())
-	uploadsFolderURL := p.buildUploadsURL("/" + transferID)
-	destURL := p.buildResourceURL(resourceType, filePath)
+	uploadsFolderURL := p.pb.uploadsURL(p.BaseURL, p.Username, "/"+transferID)
+	destURL := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 
 	req, err := p.newRequest("MKCOL", uploadsFolderURL, nil)
 	if err != nil {
@@ -589,7 +623,7 @@ func (p *NextcloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 	return fmt.Errorf("failed to commit chunked upload, status: %d", resp.StatusCode)
 }
 
-func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte, destURL string, totalSize int64) error {
+func (p *davProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string, data []byte, destURL string, totalSize int64) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		req, err := p.newRequest("PUT", chunkURL, bytes.NewReader(data))
@@ -622,7 +656,10 @@ func (p *NextcloudProvider) uploadChunkWithRetry(ctx context.Context, chunkURL s
 	return lastErr
 }
 
-func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	dir := path.Dir(filePath)
@@ -641,7 +678,7 @@ func (p *NextcloudProvider) CreateParentDirectories(ctx context.Context, resourc
 	currentPath := ""
 	for i, part := range parts {
 		currentPath = currentPath + "/" + part
-		u := p.buildResourceURL(resourceType, currentPath)
+		u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, currentPath)
 
 		var req *http.Request
 		var err error
@@ -701,8 +738,8 @@ func cardDAVMkcolBody() []byte {
 // mkcolRequest builds the correct MKCOL/MKCALENDAR request for dirPath based on resourceType.
 // For calendars the first (and only) segment uses MKCALENDAR; for contacts it uses a
 // CardDAV-typed MKCOL body; everything else uses a plain MKCOL.
-func (p *NextcloudProvider) mkcolRequest(ctx context.Context, resourceType, dirPath string) (*http.Request, error) {
-	u := p.buildResourceURL(resourceType, dirPath)
+func (p *davProvider) mkcolRequest(ctx context.Context, resourceType, dirPath string) (*http.Request, error) {
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, dirPath)
 	var req *http.Request
 	var err error
 	switch resourceType {
@@ -725,7 +762,10 @@ func (p *NextcloudProvider) mkcolRequest(ctx context.Context, resourceType, dirP
 // CreateDirectory creates the given directory path and all intermediate parent directories.
 // Uses the correct method per resource type (MKCALENDAR, CardDAV MKCOL, or plain MKCOL).
 // 405 Method Not Allowed (already exists) is treated as success.
-func (p *NextcloudProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+func (p *davProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	// Ensure all ancestor directories exist first.
@@ -755,10 +795,13 @@ func (p *NextcloudProvider) CreateDirectory(ctx context.Context, resourceType, d
 	return nil
 }
 
-func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
 			<d:prop>
@@ -825,10 +868,13 @@ func (p *NextcloudProvider) GetFileHash(ctx context.Context, resourceType, fileP
 	return "", fmt.Errorf("checksum not available")
 }
 
-func (p *NextcloudProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return false, 0, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propfind xmlns:d="DAV:">
 	<d:prop>
@@ -887,10 +933,13 @@ func (p *NextcloudProvider) FileExists(ctx context.Context, resourceType, filePa
 	return false, 0, nil
 }
 
-func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+func (p *davProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 	req, err := p.newRequest("DELETE", u, nil)
 	if err != nil {
 		return err
@@ -912,16 +961,19 @@ func (p *NextcloudProvider) DeleteFile(ctx context.Context, resourceType, filePa
 	return nil
 }
 
-func (p *NextcloudProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+func (p *davProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.buildResourceURL(resourceType, oldPath)
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, oldPath)
 	req, err := p.newRequest("MOVE", u, nil)
 	if err != nil {
 		return err
 	}
 	req = req.WithContext(ctx)
-	destURL := p.buildResourceURL(resourceType, newPath)
+	destURL := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, newPath)
 	req.Header.Set("Destination", destURL)
 	req.Header.Set("Overwrite", "T")
 
@@ -940,12 +992,15 @@ func (p *NextcloudProvider) RenameFile(ctx context.Context, resourceType, oldPat
 	return nil
 }
 
-func (p *NextcloudProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+	if err := p.assertResourceType(resourceType); err != nil {
+		return err
+	}
 	if resourceType != "files" || meta.ModifiedTime.IsZero() {
 		return nil
 	}
 
-	u := p.buildResourceURL(resourceType, filePath)
+	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propertyupdate xmlns:d="DAV:">
   <d:set>
@@ -969,6 +1024,50 @@ func (p *NextcloudProvider) ApplyMetadata(ctx context.Context, resourceType, fil
 	defer resp.Body.Close()
 
 	return nil
+}
+
+// nextcloudPaths implements pathBuilder for a standard Nextcloud instance,
+// appending /files/<user>, /calendars/<user>, /addressbooks/users/<user>
+// resource-type segments.
+type nextcloudPaths struct{}
+
+func (nextcloudPaths) resourceURL(baseURL, username, resourceType, endpointPath string) string {
+	cleanPath := strings.TrimPrefix(endpointPath, "/")
+	escapedPath := (&url.URL{Path: cleanPath}).String()
+	escapedUser := url.PathEscape(username)
+
+	switch resourceType {
+	case "calendars":
+		return fmt.Sprintf("%s/calendars/%s/%s", baseURL, escapedUser, escapedPath)
+	case "contacts":
+		return fmt.Sprintf("%s/addressbooks/users/%s/%s", baseURL, escapedUser, escapedPath)
+	default: // "files"
+		return fmt.Sprintf("%s/files/%s/%s", baseURL, escapedUser, escapedPath)
+	}
+}
+
+func (nextcloudPaths) uploadsURL(baseURL, username, endpointPath string) string {
+	cleanPath := strings.TrimPrefix(endpointPath, "/")
+	escapedPath := (&url.URL{Path: cleanPath}).String()
+	escapedUser := url.PathEscape(username)
+	return fmt.Sprintf("%s/uploads/%s/%s", baseURL, escapedUser, escapedPath)
+}
+
+func (nextcloudPaths) listingPrefix(basePath, username, resourceType string) string {
+	switch resourceType {
+	case "calendars":
+		return fmt.Sprintf("%s/calendars/%s", basePath, username)
+	case "contacts":
+		return fmt.Sprintf("%s/addressbooks/users/%s", basePath, username)
+	default:
+		return fmt.Sprintf("%s/files/%s", basePath, username)
+	}
+}
+
+// NextcloudProvider is a thin wrapper around the shared davProvider protocol
+// implementation, configured with the Nextcloud path scheme.
+type NextcloudProvider struct {
+	*davProvider
 }
 
 var hexRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")

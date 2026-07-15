@@ -11,6 +11,7 @@ export type Provider =
   | 'nextcloud'
   | 'dropbox'
   | 'webdav'
+  | 'magentacloud'
   | 'google'
   | 'smb'
   | 's3'

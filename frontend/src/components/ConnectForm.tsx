@@ -24,8 +24,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetPass, setTargetPass] = useState('');
   const [targetRefreshToken, setTargetRefreshToken] = useState('');
   const [targetTokenExpiresIn, setTargetTokenExpiresIn] = useState(0);
-  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp'>('nextcloud');
-  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp'>('nextcloud');
+  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp'>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp'>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
 
@@ -133,6 +133,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
       : sourceProvider === 'sftp'
       ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
+      : sourceProvider === 'magentacloud'
+      ? ''
       : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl);
     const finalSourceUser = (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser;
     const finalSourcePass = sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass;
@@ -142,6 +144,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
       : targetProvider === 'sftp'
       ? `sftp://${targetSftpHost}:${targetSftpPort}`
+      : targetProvider === 'magentacloud'
+      ? ''
       : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl);
     const finalTargetUser = (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser;
     const finalTargetPass = targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass;
@@ -191,7 +195,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     }
 
-    if (!finalSourceUrl || !finalSourceUser || !finalSourcePass || !finalTargetUrl || !finalTargetUser || !finalTargetPass) {
+    const sourceUrlRequired = sourceProvider !== 'magentacloud';
+    const targetUrlRequired = targetProvider !== 'magentacloud';
+
+    if (
+      (sourceUrlRequired && !finalSourceUrl) ||
+      !finalSourceUser ||
+      !finalSourcePass ||
+      (targetUrlRequired && !finalTargetUrl) ||
+      !finalTargetUser ||
+      !finalTargetPass
+    ) {
       setError(t('connect.errors.missingFields'));
       return;
     }
@@ -254,7 +268,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setLoading(false);
     }
   };
-  const handleSourceProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp') => {
+  const handleSourceProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp') => {
     setSourceProvider(val);
     if (val === 'dropbox' || val === 'google') {
       setSourceUrl(`https://api.${val}.com`);
@@ -292,7 +306,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
 
-  const handleTargetProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp') => {
+  const handleTargetProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp') => {
     setTargetProvider(val);
     if (val === 'dropbox' || val === 'google') {
       setTargetUrl(`https://api.${val}.com`);
@@ -330,9 +344,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
 
-  const providerOptions: { id: 'nextcloud' | 'dropbox' | 'webdav' | 'google' | 'smb' | 's3' | 'sftp'; name: string }[] = [
+  const providerOptions: { id: 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp'; name: string }[] = [
     { id: 'nextcloud', name: 'Nextcloud' },
     { id: 'webdav', name: 'WebDAV' },
+    { id: 'magentacloud', name: 'MagentaCLOUD' },
     { id: 'smb', name: 'SMB/CIFS' },
     { id: 's3', name: 'S3' },
     { id: 'sftp', name: 'SFTP' },
@@ -665,6 +680,37 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                          <HelpCircle className="w-3.5 h-3.5" /> {t('connect.helpGuide')}
                       </button>
                     </div>
+                    <input
+                      type="password"
+                      placeholder="•••• •••• •••• ••••"
+                      value={sourcePass}
+                      onChange={(e) => setSourcePass(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      required
+                    />
+                  </div>
+                </>
+              ) : sourceProvider === 'magentacloud' ? (
+                <>
+                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.magentacloudInfo')}</p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <input
+                      type="text"
+                      placeholder="benutzername"
+                      value={sourceUser}
+                      onChange={(e) => setSourceUser(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
                       placeholder="•••• •••• •••• ••••"
@@ -1030,6 +1076,37 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                          <HelpCircle className="w-3.5 h-3.5" /> {t('connect.helpGuide')}
                       </button>
                     </div>
+                    <input
+                      type="password"
+                      placeholder="•••• •••• •••• ••••"
+                      value={targetPass}
+                      onChange={(e) => setTargetPass(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      required
+                    />
+                  </div>
+                </>
+              ) : targetProvider === 'magentacloud' ? (
+                <>
+                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.magentacloudInfo')}</p>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <input
+                      type="text"
+                      placeholder="benutzername"
+                      value={targetUser}
+                      onChange={(e) => setTargetUser(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
                       placeholder="•••• •••• •••• ••••"

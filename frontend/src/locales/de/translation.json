@@ -97,6 +97,7 @@
     "secretKey": "Geheimer Schlüssel",
     "nextcloudUrl": "Nextcloud WebDAV-Adresse",
     "webdavUrl": "WebDAV-Adresse",
+    "magentacloudInfo": "Verbindung mit magentacloud.de (WebDAV). Verwenden Sie das separat festgelegte WebDAV-Passwort aus Ihren MagentaCLOUD-Kontoeinstellungen — NICHT Ihr normales Kontopasswort.",
     "googleConnect": "Google Verbindung",
     "dropboxConnect": "Dropbox Verbindung",
     "googleAccount": "Google-Konto",

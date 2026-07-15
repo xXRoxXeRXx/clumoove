@@ -25,6 +25,7 @@ var providerForbiddenChars = map[string][]rune{
 	"dropbox":  {'/'},
 	"google":   {'/'},
 	"nextcloud": {'/'},
+	"magentacloud": {'/'},
 	"webdav":   {'/'},
 	"sftp":     {'/'},
 }
@@ -34,6 +35,7 @@ var providerMaxLength = map[string]int{
 	"dropbox":   255,
 	"google":    255,
 	"nextcloud": 255,
+	"magentacloud": 255,
 	"webdav":    255,
 	"sftp":      255,
 	"s3":        1024,

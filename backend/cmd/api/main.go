@@ -528,6 +528,17 @@ type BrowseRequest struct {
 	Path           string `json:"path"`
 }
 
+// normalizeProviderURL returns the canonical URL for providers that have a
+// fixed, hardcoded endpoint (currently MagentaCLOUD). The frontend sends an
+// empty URL for these; the factory ignores the URL anyway, but persisting the
+// constant keeps migration records consistent and avoids leaking internal state.
+func normalizeProviderURL(provider, urlStr string) string {
+	if provider == "magentacloud" {
+		return "https://magentacloud.de/remote.php/webdav"
+	}
+	return urlStr
+}
+
 // handleBrowse lists the top-level calendar collections or addressbooks, or files/directories on the source server.
 // It contacts only the source, avoiding the two extra round-trips that reusing handleConnect would cause.
 func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
@@ -545,6 +556,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	if req.SourceProvider == "" {
 		req.SourceProvider = "nextcloud"
 	}
+	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
 	if req.ResourceType != "calendars" && req.ResourceType != "contacts" && req.ResourceType != "files" {
 		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
 		return
@@ -1039,12 +1051,14 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if req.TargetProvider == "" {
 		req.TargetProvider = "nextcloud"
 	}
+	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
+	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
 	if req.ResourceType == "" {
 		req.ResourceType = "files"
 	}
 
 	// Whitelist provider values to fail fast with a clear error
-	validProviders := map[string]bool{"nextcloud": true, "webdav": true, "dropbox": true, "google": true, "smb": true, "s3": true, "sftp": true}
+	validProviders := map[string]bool{"nextcloud": true, "webdav": true, "dropbox": true, "google": true, "smb": true, "s3": true, "sftp": true, "magentacloud": true}
 	if !validProviders[req.SourceProvider] {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
 		return
@@ -1135,6 +1149,19 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetProvider == "" {
 		req.TargetProvider = "nextcloud"
+	}
+	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
+	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
+
+	// MagentaCLOUD is files-only (CalDAV/CardDAV are on a separate service), so
+	// it cannot migrate calendars or contacts.
+	if req.SourceProvider == "magentacloud" && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
+		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
+		return
+	}
+	if req.TargetProvider == "magentacloud" && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
+		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
+		return
 	}
 
 	targetDir := req.TargetDir

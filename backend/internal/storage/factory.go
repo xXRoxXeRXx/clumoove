@@ -36,6 +36,9 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	switch providerType {
 	case "nextcloud":
 		return NewNextcloudProvider(urlStr, username, password)
+	case "magentacloud":
+		// MagentaCLOUD has a fixed public WebDAV endpoint, so urlStr is ignored.
+		return NewMagentacloudProvider(username, password)
 	case "webdav":
 		return NewWebDAVProvider(urlStr, username, password)
 	case "dropbox":
