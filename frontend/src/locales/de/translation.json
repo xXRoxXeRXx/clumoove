@@ -482,11 +482,15 @@
   },
   "admin": {
     "title": "Verwaltung",
+    "system": {
+      "title": "Systemsteuerung"
+    },
     "tabs": {
       "users": "Benutzer",
       "migrations": "Übertragungen",
       "stats": "Statistiken",
-      "audit": "Audit-Protokoll"
+      "audit": "Audit-Protokoll",
+      "system": "System"
     },
     "users": {
       "create": "Benutzer erstellen",

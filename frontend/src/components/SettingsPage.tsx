@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, CloudSync, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
+import { Toggle } from './Toggle';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useApiError } from '../utils/apiError';
 
@@ -1046,16 +1047,11 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                   </p>
                 </div>
                 
-                <label className="relative inline-flex items-center cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={registrationsEnabled}
-                    disabled={adminLoading}
-                    onChange={(e) => handleToggleRegistrations(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
-                </label>
+                <Toggle
+                  checked={registrationsEnabled}
+                  disabled={adminLoading}
+                  onChange={handleToggleRegistrations}
+                />
               </div>
             </div>
           )}
