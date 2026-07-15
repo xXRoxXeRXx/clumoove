@@ -19,7 +19,10 @@ desktop.ini
 *.njsproj
 *.sln
 *.sw?
+
+# Agent-specific files
 .kilo/*
+.agents/*
 
 # Ignore backend build binaries
 backend/bin/
@@ -38,6 +41,3 @@ frontend/*.local
 # Logs
 *.log
 logs/
-
-# Local planning documents
-plans/
