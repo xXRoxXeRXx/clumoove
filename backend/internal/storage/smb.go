@@ -116,8 +116,7 @@ func (p *SMBProvider) ensureConnected(ctx context.Context) error {
 	}
 
 	addr := net.JoinHostPort(p.Host, p.Port)
-	var d net.Dialer
-	conn, err := d.DialContext(ctx, "tcp", addr)
+	conn, err := egressDialer(p.Host)(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
 	}

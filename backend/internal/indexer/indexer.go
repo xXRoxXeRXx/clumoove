@@ -148,7 +148,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// Resilient indexing keeps the migration running (partial success) instead of
 	// failing the whole migration on a single bad folder.
 	if len(indexErrors) > 0 {
-		if err := db.RecordIndexingErrors(idx.db, migID, indexErrors); err != nil {
+		if err := db.RecordIndexingErrors(idx.db, ctx, migID, indexErrors); err != nil {
 			log.Printf("Warning: failed to record indexing errors for %s: %v\n", migID, err)
 		}
 	}
@@ -168,7 +168,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 
 	// Re-evaluate completion: tasks may have all finished before totals were written
-	if err := db.IncrementMigrationProgress(idx.db, migID, 0, 0, 0, 0); err != nil {
+	if err := db.IncrementMigrationProgress(idx.db, ctx, migID, 0, 0, 0, 0); err != nil {
 		log.Printf("Warning: zero-delta progress check after indexing failed for %s: %v\n", migID, err)
 	}
 
@@ -299,7 +299,7 @@ func indexingTimeout() time.Duration {
 			return time.Duration(mins) * time.Minute
 		}
 	}
-	return 60 * time.Minute
+	return 20 * time.Minute
 }
 
 // failMigration marks a migration as FAILED with the given error message.

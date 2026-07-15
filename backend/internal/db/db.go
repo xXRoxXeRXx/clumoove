@@ -239,7 +239,17 @@ func isLocalOrPrivateHost(host string) bool {
 	// regression on transient DNS outages.
 	ips, err := net.LookupIP(host)
 	if err != nil || len(ips) == 0 {
-		return true
+		// Fail closed: an unresolvable DB host is treated as public so the
+		// default-credential refusal triggers, rather than being silently
+		// exempted. The connection would fail at Ping() anyway, so there is no
+		// credential-exposure risk — only the boot-time default-credential guard
+		// is made stricter. Restore the old fail-open behaviour for known-broken
+		// DNS setups with ALLOW_UNRESOLVED_DB_HOST=1.
+		if os.Getenv("ALLOW_UNRESOLVED_DB_HOST") == "1" {
+			log.Printf("WARN: could not resolve DB host %q; treating as private per ALLOW_UNRESOLVED_DB_HOST", host)
+			return true
+		}
+		return false
 	}
 	for _, ip := range ips {
 		if !ip.IsLoopback() && !ip.IsPrivate() {
@@ -767,8 +777,30 @@ func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]
 
 // IncrementMigrationProgress increments the counters of a migration in the database
 // and transitions the migration to COMPLETED, COMPLETED_WITH_ERRORS or FAILED once all files are processed.
-func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelta int64, skippedDelta int, failedDelta int) error {
-	tx, err := db.Begin()
+// CancelRemainingPendingTasks marks all still-PENDING tasks of a migration as
+// CANCELLED (terminal) and returns the number cancelled. This is used when a
+// migration transitions to a terminal state (e.g. auth failure) so that
+// dequeue can never pick up those tasks again — otherwise they would stay
+// PENDING forever (the dequeue query only releases PENDING tasks while the
+// migration is RUNNING/INDEXING), leaving processed_files < total_files and
+// preventing the WebSocket stream / report from completing.
+func CancelRemainingPendingTasks(dbsql *sql.DB, migrationID string) (int, error) {
+	res, err := dbsql.Exec(
+		`UPDATE tasks SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE migration_id = $1 AND status = 'PENDING'`,
+		migrationID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
+func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, filesDelta int, bytesDelta int64, skippedDelta int, failedDelta int) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -782,15 +814,20 @@ func IncrementMigrationProgress(db *sql.DB, id string, filesDelta int, bytesDelt
 		    failed_files = failed_files + $4,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $5
-		RETURNING processed_files, total_files, failed_files
+		RETURNING processed_files, total_files, failed_files, skipped_files
 	`
-	var processed, total, failed int
-	err = tx.QueryRow(query, filesDelta, bytesDelta, skippedDelta, failedDelta, id).Scan(&processed, &total, &failed)
+	var processed, total, failed, skipped int
+	err = tx.QueryRow(query, filesDelta, bytesDelta, skippedDelta, failedDelta, id).Scan(&processed, &total, &failed, &skipped)
 	if err != nil {
 		return err
 	}
 
-	if total > 0 && processed >= total {
+	// A migration is only finished once every task is in a terminal state
+	// (success / skip / fail / cancelled). Counting processed alone misses
+	// skipped/failed/cancelled tasks, which would otherwise leave the
+	// migration stuck in RUNNING with processed < total (see CancelRemaining-
+	// PendingTasks, which records cancelled tasks as failed).
+	if total > 0 && processed+failed+skipped >= total {
 		finalStatus := "COMPLETED"
 		var errMessage sql.NullString
 		if failed == total {
@@ -950,11 +987,11 @@ type IndexingErrorInput struct {
 
 // RecordIndexingErrors persists a batch of indexing errors for a migration in a
 // single transaction so a mid-batch failure cannot leave a partial error set.
-func RecordIndexingErrors(db *sql.DB, migrationID string, errors []IndexingErrorInput) error {
+func RecordIndexingErrors(db *sql.DB, ctx context.Context, migrationID string, errors []IndexingErrorInput) error {
 	if len(errors) == 0 {
 		return nil
 	}
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -1021,8 +1058,8 @@ var ErrMigrationNotFailed = errors.New("migration is not in FAILED state")
 // migration. The status flip to INDEXING is guarded by
 // `WHERE status IN ('FAILED','COMPLETED_WITH_ERRORS')`, which also prevents a second
 // concurrent re-index request from spawning a duplicate indexer (TOCTOU safe).
-func ResetMigrationForReindex(db *sql.DB, migrationID string) error {
-	tx, err := db.Begin()
+func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID string) error {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -1960,6 +1997,9 @@ type OAuthTokenUpdate struct {
 // Implements the Token Rotation Constraint from PRD-12 (F-03): the old refresh
 // token is overwritten in the same transaction that writes the new token pair.
 func UpdateMigrationOAuthTokens(db *sql.DB, u OAuthTokenUpdate) error {
+	if u.Role != "source" && u.Role != "target" {
+		return fmt.Errorf("invalid oauth token role %q", u.Role)
+	}
 	var query string
 	if u.Role == "source" {
 		query = `
@@ -2082,14 +2122,14 @@ func CancelPendingTasks(db *sql.DB, migrationID string) error {
 
 // ResetFailedTasksForRetry resets failed tasks for a migration to PENDING, resets their attempts,
 // and updates the migration status back to RUNNING, returning the number of reset tasks.
-func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
-	tx, err := db.Begin()
+func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID string) (int, error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
 
-	// 1. Zähle FAILED Tasks und summiere ihre Dateigröße
+	// 1. Count FAILED tasks and sum their file sizes
 	// In terminal states, status='FAILED' tasks are permanent failures and match failed_files.
 	var count int
 	var bytesSum int64
@@ -2106,7 +2146,7 @@ func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
 		return 0, nil
 	}
 
-	// 2. Setze diese Tasks zurück
+	// 2. Reset these tasks
 	_, err = tx.Exec(`
 		UPDATE tasks 
 		SET status = 'PENDING', attempts = 0, next_retry_at = NULL, worker_hash = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP
@@ -2116,7 +2156,7 @@ func ResetFailedTasksForRetry(db *sql.DB, migrationID string) (int, error) {
 		return 0, err
 	}
 
-	// 3. Passe die Migration an (nur in terminalem Zustand)
+	// 3. Adjust the migration (only in a terminal state)
 	res, err := tx.Exec(`
 		UPDATE migrations 
 		SET failed_files = failed_files - $1, 
@@ -2434,8 +2474,8 @@ func GetPasswordResetToken(db *sql.DB, tokenHash string) (*PasswordResetToken, e
 // It checks that the token exists, is not used, and is not expired, then marks it used
 // and updates the user's password in a single transaction to prevent TOCTOU races.
 // Returns the user ID on success, or sql.ErrNoRows if the token is invalid/expired/used.
-func ClaimPasswordResetToken(db *sql.DB, tokenHash, newPasswordHash string) (string, error) {
-	tx, err := db.Begin()
+func ClaimPasswordResetToken(db *sql.DB, ctx context.Context, tokenHash, newPasswordHash string) (string, error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
@@ -2505,8 +2545,8 @@ var ErrEmailTaken = errors.New("email already taken")
 // all refresh tokens for the user (forces re-login, like password reset).
 // Returns the new email on success, ErrEmailTaken if the address is taken, or
 // sql.ErrNoRows if the token is invalid/expired/used.
-func ClaimEmailChangeToken(db *sql.DB, tokenHash string) (userID, newEmail string, err error) {
-	tx, err := db.Begin()
+func ClaimEmailChangeToken(db *sql.DB, ctx context.Context, tokenHash string) (userID, newEmail string, err error) {
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -2580,9 +2620,27 @@ type PendingEmailNotification struct {
 	ErrorMessage   sql.NullString
 }
 
-// ClaimPendingEmailNotifications atomically claims up to limit pending email notifications
-// using SELECT ... FOR UPDATE SKIP LOCKED to prevent duplicate sends across workers.
-func ClaimPendingEmailNotifications(db *sql.DB, limit int) ([]PendingEmailNotification, error) {
+// LockPendingEmailNotifications claims a single pending completion-email
+// notification and returns it together with the open *sql.Tx that holds the
+// SELECT ... FOR UPDATE SKIP LOCKED row lock. The caller is responsible for
+// sending the mail and then either marking it sent (MarkMigrationEmailSentTx)
+// and committing, or rolling back on a transient failure so the row is retried
+// on the next tick.
+//
+// Holding the row lock across the claim→send window gives two guarantees:
+//   - No two workers can ever claim the same migration's mail (SKIP LOCKED),
+//     so there are no duplicate sends.
+//   - If this worker crashes after the claim but before the send completes,
+//     the database releases the lock on connection drop and the row stays
+//     email_sent = FALSE, so it is retried instead of being silently lost
+//     (the previous design marked the row sent inside the claim transaction
+//     and could lose a mail on a crash between commit and SMTP).
+func LockPendingEmailNotifications(dbsql *sql.DB, limit int) (*sql.Tx, []PendingEmailNotification, error) {
+	tx, err := dbsql.Begin()
+	if err != nil {
+		return nil, nil, err
+	}
+
 	query := `
 		SELECT m.id, m.user_id, m.status, m.total_files, m.processed_files,
 		       m.failed_files, m.skipped_files, m.total_bytes, m.processed_bytes, m.error_message
@@ -2594,11 +2652,11 @@ func ClaimPendingEmailNotifications(db *sql.DB, limit int) ([]PendingEmailNotifi
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
 	`
-	rows, err := db.Query(query, limit)
+	rows, err := tx.Query(query, limit)
 	if err != nil {
-		return nil, err
+		_ = tx.Rollback()
+		return nil, nil, err
 	}
-	defer rows.Close()
 
 	var notifications []PendingEmailNotification
 	for rows.Next() {
@@ -2606,11 +2664,31 @@ func ClaimPendingEmailNotifications(db *sql.DB, limit int) ([]PendingEmailNotifi
 		err := rows.Scan(&n.MigrationID, &n.UserID, &n.Status, &n.TotalFiles, &n.ProcessedFiles,
 			&n.FailedFiles, &n.SkippedFiles, &n.TotalBytes, &n.ProcessedBytes, &n.ErrorMessage)
 		if err != nil {
-			return nil, err
+			rows.Close()
+			_ = tx.Rollback()
+			return nil, nil, err
 		}
 		notifications = append(notifications, n)
 	}
-	return notifications, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		_ = tx.Rollback()
+		return nil, nil, err
+	}
+	rows.Close()
+
+	return tx, notifications, nil
+}
+
+// MarkMigrationEmailSentTx marks a migration's completion email as sent inside
+// the transaction returned by LockPendingEmailNotifications, so the mark is
+// atomic with the (successful) send that the caller performs beforehand.
+func MarkMigrationEmailSentTx(tx *sql.Tx, migrationID string) error {
+	_, err := tx.Exec(
+		`UPDATE migrations SET email_sent = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+		migrationID,
+	)
+	return err
 }
 
 func MarkMigrationEmailSent(db *sql.DB, migrationID string) error {

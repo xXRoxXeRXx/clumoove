@@ -824,7 +824,7 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	count, err := db.ResetFailedTasksForRetry(s.db, id)
+	count, err := db.ResetFailedTasksForRetry(s.db, r.Context(), id)
 	if err != nil {
 		log.Printf("Error resetting failed tasks for retry: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -863,7 +863,7 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.ResetMigrationForReindex(s.db, id); err != nil {
+	if err := db.ResetMigrationForReindex(s.db, r.Context(), id); err != nil {
 		if errors.Is(err, db.ErrMigrationNotFailed) {
 			// Already re-indexing or no longer FAILED (e.g. a concurrent re-trigger).
 			// Treat as a benign conflict rather than a server error.
@@ -1057,13 +1057,13 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		req.ResourceType = "files"
 	}
 
-	// Whitelist provider values to fail fast with a clear error
-	validProviders := map[string]bool{"nextcloud": true, "webdav": true, "dropbox": true, "google": true, "smb": true, "s3": true, "sftp": true, "magentacloud": true}
-	if !validProviders[req.SourceProvider] {
+	// Whitelist provider values to fail fast with a clear error (single source of
+	// truth: storage.IsValidProvider / storage.ValidProviders).
+	if !storage.IsValidProvider(req.SourceProvider) {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
 		return
 	}
-	if !validProviders[req.TargetProvider] {
+	if !storage.IsValidProvider(req.TargetProvider) {
 		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
 		return
 	}
@@ -3872,7 +3872,7 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 	}
 
 	tokenHash := hashToken(req.Token)
-	userID, err := db.ClaimPasswordResetToken(s.db, tokenHash, newHash)
+	userID, err := db.ClaimPasswordResetToken(s.db, r.Context(), tokenHash, newHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusBadRequest, ErrResetTokenInvalid)
@@ -4031,7 +4031,7 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 	}
 
 	tokenHash := hashToken(req.Token)
-	userID, newEmail, err := db.ClaimEmailChangeToken(s.db, tokenHash)
+	userID, newEmail, err := db.ClaimEmailChangeToken(s.db, r.Context(), tokenHash)
 	if err != nil {
 		if errors.Is(err, db.ErrEmailTaken) {
 			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
