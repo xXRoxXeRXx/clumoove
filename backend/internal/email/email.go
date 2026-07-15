@@ -216,7 +216,7 @@ func BuildMigrationReportEmail(migrationID, status string, totalFiles, processed
 <body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
 	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
 		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumove</h1>
+			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
 			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Migrationsbericht</p>
 		</div>
 		<div style="padding:30px;">
@@ -233,7 +233,7 @@ func BuildMigrationReportEmail(migrationID, status string, totalFiles, processed
 			%s
 		</div>
 		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumove generiert.</p>
+			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
 		</div>
 	</div>
 </body>
@@ -249,7 +249,7 @@ func BuildEmailChangeEmail(confirmURL, newEmail string) string {
 <body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
 	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
 		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumove</h1>
+			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
 			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">E-Mail-Adresse ändern</p>
 		</div>
 		<div style="padding:30px;">
@@ -270,7 +270,7 @@ func BuildEmailChangeEmail(confirmURL, newEmail string) string {
 			</div>
 		</div>
 		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumove generiert.</p>
+			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
 		</div>
 	</div>
 </body>
@@ -284,7 +284,7 @@ func BuildEmailChangedNotificationEmail(newEmail string) string {
 <body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
 	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
 		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumove</h1>
+			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
 			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">E-Mail-Adresse geändert</p>
 		</div>
 		<div style="padding:30px;text-align:center;">
@@ -293,11 +293,11 @@ func BuildEmailChangedNotificationEmail(newEmail string) string {
 			</div>
 			<h2 style="color:#065f46;margin:0 0 10px;">Änderung erfolgreich!</h2>
 			<p style="color:#6b7280;font-size:14px;line-height:1.6;">
-				Deine Clumove-Konto-E-Mail-Adresse ist nun <strong>%s</strong>. Du wirst bei künftigen Anmeldungen diese Adresse verwenden müssen.
+				Deine Clumoove-Konto-E-Mail-Adresse ist nun <strong>%s</strong>. Du wirst bei künftigen Anmeldungen diese Adresse verwenden müssen.
 			</p>
 		</div>
 		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumove generiert.</p>
+			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
 		</div>
 	</div>
 </body>
@@ -311,7 +311,7 @@ func BuildPasswordResetEmail(resetURL string) string {
 <body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
 	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
 		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumove</h1>
+			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
 			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Passwort zurücksetzen</p>
 		</div>
 		<div style="padding:30px;">
@@ -332,7 +332,7 @@ func BuildPasswordResetEmail(resetURL string) string {
 			</div>
 		</div>
 		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumove generiert.</p>
+			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
 		</div>
 	</div>
 </body>
@@ -345,7 +345,7 @@ func BuildTestEmail() string {
 <body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
 	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
 		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumove</h1>
+			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
 			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">SMTP-Test</p>
 		</div>
 		<div style="padding:30px;text-align:center;">
@@ -356,7 +356,7 @@ func BuildTestEmail() string {
 			<p style="color:#6b7280;font-size:14px;">Deine SMTP-Einstellungen sind korrekt konfiguriert. Du wirst bei Abschluss von Migrationen per E-Mail benachrichtigt.</p>
 		</div>
 		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumove generiert.</p>
+			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
 		</div>
 	</div>
 </body>

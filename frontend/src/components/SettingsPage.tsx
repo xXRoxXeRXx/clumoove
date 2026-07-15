@@ -1153,7 +1153,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                     type="text"
                     value={smtpFromName}
                     onChange={(e) => setSmtpFromName(e.target.value)}
-                    placeholder="Clumove"
+                    placeholder="Clumoove"
                     className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
                   />
                 </div>

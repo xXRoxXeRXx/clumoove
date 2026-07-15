@@ -1,7 +1,7 @@
-# Clumove – Multi-Cloud Migrations-Plattform (Phase 2 – Multi-Tenancy)
+# Clumoove – Multi-Cloud Migrations-Plattform (Phase 2 – Multi-Tenancy)
 
 <p align="center">
-  <img src="frontend/public/logo.png" alt="Clumove Logo" width="200" />
+  <img src="frontend/public/logo.png" alt="Clumoove Logo" width="200" />
 </p>
 
 Eine hochperformante, resiliente und datenschutzfreundliche Plattform für den verlustfreien Datenumzug zwischen Cloud-Speichern, NAS-Systemen und Servern. Das System ist strikt modular aufgebaut und unterstützt derzeit **sieben Storage-Anbieter** (Nextcloud, generisches WebDAV, Dropbox, Google Drive, S3-kompatibel, SMB und SFTP) als Quell- und Zielkombination – ergänzt durch Multi-Tenancy, Zwei-Faktor-Authentifizierung (TOTP), eine Scheduler-Engine für geplante/periodische Migrationen und hohe Sicherheitsstandards.
@@ -29,7 +29,7 @@ graph TD
 > **Wichtig:** Die Aufgaben-Queue läuft **nativ in PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`). Redis wird **ausschließlich** für Worker-Heartbeats, verteilte Recovery-Locks (`SET NX`) sowie Cancel-/Bandwidth-Pub/Sub-Events genutzt – nicht als Queue-Broker.
 
 ### Der Migrations-Ablauf Schritt-für-Schritt
-1. **Registrierung & Login:** Benutzer erstellen ein Konto (`POST /api/auth/register`) und authentifizieren sich (`POST /api/auth/login`). Sie erhalten einen kurzlebigen JWT-Access-Token (HS256, Issuer `clumove-api`) sowie einen langlebigeren Refresh-Token in einem sicheren HTTP-Only-Cookie. Optional kann eine TOTP-Zwei-Faktor-Authentifizierung aktiviert werden. Für OAuth2-Anbieter (Dropbox, Google) steht ein separater Flow via `GET /api/oauth/auth` und `GET /api/oauth/callback` bereit.
+1. **Registrierung & Login:** Benutzer erstellen ein Konto (`POST /api/auth/register`) und authentifizieren sich (`POST /api/auth/login`). Sie erhalten einen kurzlebigen JWT-Access-Token (HS256, Issuer `clumoove-api`) sowie einen langlebigeren Refresh-Token in einem sicheren HTTP-Only-Cookie. Optional kann eine TOTP-Zwei-Faktor-Authentifizierung aktiviert werden. Für OAuth2-Anbieter (Dropbox, Google) steht ein separater Flow via `GET /api/oauth/auth` und `GET /api/oauth/callback` bereit.
 2. **Verbindungsprüfung:** Der Benutzer gibt die Quell- und Zielzugangsdaten im Frontend ein. Die API führt über den jeweiligen Provider-Client einen Verbindungstest durch (`POST /api/migration/connect`). Für OAuth-Anbieter wird der gespeicherte Token verwendet.
 3. **Datei-Browser:** Vor der Indexierung kann der Benutzer Quell- (`POST /api/migration/browse`) und Zielverzeichnisse (`POST /api/migration/target/browse`) erkunden sowie Zielverzeichnisse anlegen (`POST /api/migration/target/mkdir`).
 4. **Indexierung (Inventur):** Nach der Verbindungsauswahl scannt das API-Gateway rekursiv die selektierten Quellpfade per Queue-BFS (besuchsgeschützt, verhindert Endlosschleifen bei Symlink-Cycles). Jeder gefundene Eintrag (Datei, Kalender, Kontakt) wird als einzelner Task mit Metadaten (Pfad, Größe, Ressourcentyp, Quell-Hash) in PostgreSQL angelegt.

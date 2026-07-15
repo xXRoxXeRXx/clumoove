@@ -1,6 +1,6 @@
-# Clumove Frontend
+# Clumoove Frontend
 
-React-19-SPA (TypeScript 6) für die [Multi-Cloud-Migrationsplattform Clumove](../../README.md). Gebündelt mit Vite 8, gestylt mit Tailwind CSS v4, internationalisiert mit `i18next` (`de` / `en`).
+React-19-SPA (TypeScript 6) für die [Multi-Cloud-Migrationsplattform Clumoove](../../README.md). Gebündelt mit Vite 8, gestylt mit Tailwind CSS v4, internationalisiert mit `i18next` (`de` / `en`).
 
 > 📘 **English:** [README.en.md](./README.en.md)
 

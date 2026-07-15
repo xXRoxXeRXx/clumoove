@@ -3563,7 +3563,7 @@ func (s *APIServer) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 		Encryption: settings.SMTPEncryption,
 	}
 
-	if err := email.SendMail(smtpCfg, user.Email, "Clumove — SMTP-Test erfolgreich", email.BuildTestEmail()); err != nil {
+	if err := email.SendMail(smtpCfg, user.Email, "Clumoove — SMTP-Test erfolgreich", email.BuildTestEmail()); err != nil {
 		log.Printf("handleTestSMTP: send failed: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSmtpTestFailed})
 		return
@@ -3660,11 +3660,11 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 		smtpCfg.Port = "587"
 	}
 	if smtpCfg.FromName == "" {
-		smtpCfg.FromName = "Clumove"
+		smtpCfg.FromName = "Clumoove"
 	}
 
 	htmlBody := email.BuildPasswordResetEmail(resetURL)
-	if err := email.SendMail(smtpCfg, u.Email, "Clumove — Passwort zurücksetzen", htmlBody); err != nil {
+	if err := email.SendMail(smtpCfg, u.Email, "Clumoove — Passwort zurücksetzen", htmlBody); err != nil {
 		log.Printf("handleForgotPassword: error sending email: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
@@ -3832,11 +3832,11 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 		smtpCfg.Port = "587"
 	}
 	if smtpCfg.FromName == "" {
-		smtpCfg.FromName = "Clumove"
+		smtpCfg.FromName = "Clumoove"
 	}
 
 	htmlBody := email.BuildEmailChangeEmail(confirmURL, req.NewEmail)
-	if err := email.SendMail(smtpCfg, u.Email, "Clumove — E-Mail-Adresse ändern", htmlBody); err != nil {
+	if err := email.SendMail(smtpCfg, u.Email, "Clumoove — E-Mail-Adresse ändern", htmlBody); err != nil {
 		log.Printf("handleChangeEmail: error sending email: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -3909,11 +3909,11 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 			smtpCfg.Port = "587"
 		}
 		if smtpCfg.FromName == "" {
-			smtpCfg.FromName = "Clumove"
+			smtpCfg.FromName = "Clumoove"
 		}
 
 		htmlBody := email.BuildEmailChangedNotificationEmail(newEmail)
-		if err := email.SendMail(smtpCfg, newEmail, "Clumove — E-Mail-Adresse geändert", htmlBody); err != nil {
+		if err := email.SendMail(smtpCfg, newEmail, "Clumoove — E-Mail-Adresse geändert", htmlBody); err != nil {
 			log.Printf("handleConfirmEmailChange: error sending notification to new email (user %s): %v\n", userID, err)
 		}
 	}

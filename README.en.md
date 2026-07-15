@@ -1,7 +1,7 @@
-# Clumove – Multi-Cloud Migration Platform (Phase 2 – Multi-Tenancy)
+# Clumoove – Multi-Cloud Migration Platform (Phase 2 – Multi-Tenancy)
 
 <p align="center">
-  <img src="frontend/public/logo.png" alt="Clumove Logo" width="200" />
+  <img src="frontend/public/logo.png" alt="Clumoove Logo" width="200" />
 </p>
 
 A high-performance, resilient and privacy-friendly platform for lossless data migration between cloud storage, NAS systems and servers. The system is strictly modular and currently supports **seven storage providers** (Nextcloud, generic WebDAV, Dropbox, Google Drive, S3-compatible, SMB and SFTP) as source/target combinations – complemented by multi-tenancy, TOTP two-factor authentication, a scheduler engine for deferred/recurring migrations, and high security standards.
@@ -29,7 +29,7 @@ graph TD
 > **Important:** The task queue runs **natively in PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`). Redis is used **exclusively** for worker heartbeats, distributed recovery locks (`SET NX`), and cancel/bandwidth Pub/Sub events – not as a queue broker.
 
 ### Migration Flow Step-by-Step
-1. **Registration & Login:** Users create an account (`POST /api/auth/register`) and authenticate (`POST /api/auth/login`). They receive a short-lived JWT access token (HS256, issuer `clumove-api`) plus a longer-lived refresh token in a secure HTTP-only cookie. TOTP two-factor authentication can optionally be enabled. For OAuth2 providers (Dropbox, Google) a separate flow is available via `GET /api/oauth/auth` and `GET /api/oauth/callback`.
+1. **Registration & Login:** Users create an account (`POST /api/auth/register`) and authenticate (`POST /api/auth/login`). They receive a short-lived JWT access token (HS256, issuer `clumoove-api`) plus a longer-lived refresh token in a secure HTTP-only cookie. TOTP two-factor authentication can optionally be enabled. For OAuth2 providers (Dropbox, Google) a separate flow is available via `GET /api/oauth/auth` and `GET /api/oauth/callback`.
 2. **Connection Test:** The user enters source and target credentials in the frontend. The API performs a connection test through the respective provider client (`POST /api/migration/connect`). For OAuth providers the stored token is used.
 3. **File Browser:** Before indexing, the user can explore source (`POST /api/migration/browse`) and target directories (`POST /api/migration/target/browse`) and create target directories (`POST /api/migration/target/mkdir`).
 4. **Indexing (Inventory):** After connection selection, the API gateway recursively scans the selected source paths using a queue-based BFS (cycle-protected, prevents infinite loops on symlink cycles). Every entry found (file, calendar, contact) is created as an individual task with metadata (path, size, resource type, source hash) in PostgreSQL.

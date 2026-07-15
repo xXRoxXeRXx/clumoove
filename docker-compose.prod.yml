@@ -62,7 +62,7 @@ services:
       - SMTP_USERNAME=${SMTP_USERNAME}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL}
-      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Clumove}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Clumoove}
       - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-starttls}
     depends_on:
       - postgres-db

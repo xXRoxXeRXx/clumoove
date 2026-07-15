@@ -53,7 +53,7 @@ func GenerateAccessToken(user *db.User, secretKey string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "clumove-api",
+			Issuer:    "clumoove-api",
 		},
 	}
 
@@ -109,7 +109,7 @@ func Generate2FATempToken(user *db.User, secretKey string) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "clumove-api",
+			Issuer:    "clumoove-api",
 		},
 	}
 
@@ -156,7 +156,7 @@ func GenerateMustChangePasswordToken(user *db.User, secretKey string) (string, e
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "clumove-api",
+			Issuer:    "clumoove-api",
 		},
 	}
 

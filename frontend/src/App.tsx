@@ -347,7 +347,7 @@ function App() {
             </div>
           </div>
           <div className="space-y-2">
-            <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)]">Clumove Portal</h3>
+            <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)]">Clumoove Portal</h3>
             <div className="flex items-center justify-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.3s]" />
               <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.15s]" />
@@ -375,7 +375,7 @@ function App() {
             </div>
             
             <span className="font-display font-extrabold text-xl tracking-tight leading-none text-[var(--color-portal-navy-themed)] select-none">
-              Clumove
+              Clumoove
             </span>
           </div>
 

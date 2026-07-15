@@ -1366,7 +1366,7 @@ func (p *Processor) sendCompletionEmail(ctx context.Context, n db.PendingEmailNo
 		n.TotalBytes, n.ProcessedBytes, errMsg,
 	)
 
-	if err := email.SendMail(smtpCfg, user.Email, "Clumove — Migrationsbericht", htmlBody); err != nil {
+	if err := email.SendMail(smtpCfg, user.Email, "Clumoove — Migrationsbericht", htmlBody); err != nil {
 		fmt.Printf("[CompletionNotifier] Error sending completion email for migration %s: %v\n", n.MigrationID, err)
 		// Leave email_sent = FALSE so it gets retried on the next tick
 		return

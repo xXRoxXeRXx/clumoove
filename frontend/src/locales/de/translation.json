@@ -25,7 +25,7 @@
     "logout": "Abmelden"
   },
   "footer": {
-    "title": "Clumove Migrations-Plattform",
+    "title": "Clumoove Migrations-Plattform",
     "copyright": "© 2026 Alle Rechte vorbehalten. Schnelle und sichere Transfers für Cloud-Infrastrukturen.",
     "bufferTitle": "Sicherheits-Zwischenspeicher",
     "bufferText": "Die Datenübertragung erfolgt verschlüsselt und flüchtig direkt über den Arbeitsspeicher des Servers. Es findet keine dauerhafte Speicherung deiner Daten statt."
@@ -36,7 +36,7 @@
   "auth": {
     "welcomeBack": "Willkommen zurück",
     "createAccount": "Konto erstellen",
-    "portalLogin": "Clumove Anmeldung",
+    "portalLogin": "Clumoove Anmeldung",
     "portalRegister": "Konto-Registrierung",
     "name": "Name",
     "email": "E-Mail-Adresse",
@@ -111,7 +111,7 @@
       "step2": "Klicke oben rechts auf dein Profilbild und wähle 'Einstellungen'.",
       "step3": "Gehe im linken Menü auf den Bereich 'Sicherheit'.",
       "step4": "Scrolle ganz nach unten zu 'Geräte & Anwendungen'.",
-      "step5": "Gib einen Namen ein (z. B. 'Clumove') und klicke auf 'Neues Passwort erstellen'.",
+      "step5": "Gib einen Namen ein (z. B. 'Clumoove') und klicke auf 'Neues Passwort erstellen'.",
       "step6": "Kopiere das erstellte Passwort und füge es oben ein (dein normales Hauptpasswort funktioniert aus Sicherheitsgründen oft nicht)."
     },
     "errors": {
@@ -364,7 +364,7 @@
   },
   "reset": {
     "title": "Neues Passwort",
-    "portal": "Clumove Anmeldung",
+    "portal": "Clumoove Anmeldung",
     "submit": "Passwort zurücksetzen",
     "changed": "Passwort geändert",
     "redirecting": "Du wirst zur Anmeldung weitergeleitet...",

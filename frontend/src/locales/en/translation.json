@@ -25,7 +25,7 @@
     "logout": "Log out"
   },
   "footer": {
-    "title": "Clumove Migration Platform",
+    "title": "Clumoove Migration Platform",
     "copyright": "© 2026 All rights reserved. Fast and secure transfers for cloud infrastructures.",
     "bufferTitle": "Secure Temporary Storage",
     "bufferText": "The data transfer is encrypted and temporarily processed directly in the server's memory. Your transferred data is never permanently stored."
@@ -36,7 +36,7 @@
   "auth": {
     "welcomeBack": "Welcome back",
     "createAccount": "Create account",
-    "portalLogin": "Clumove Log In",
+    "portalLogin": "Clumoove Log In",
     "portalRegister": "Account Registration",
     "name": "Name",
     "email": "Email address",
@@ -111,7 +111,7 @@
       "step2": "Click on your profile picture in the top right corner and select 'Settings'.",
       "step3": "Go to the 'Security' section in the left-hand menu.",
       "step4": "Scroll all the way down to 'Devices & applications'.",
-      "step5": "Enter a name (e.g., 'Clumove') and click 'Create new app password'.",
+      "step5": "Enter a name (e.g., 'Clumoove') and click 'Create new app password'.",
       "step6": "Copy the generated password and paste it above (for security reasons, your normal main password often will not work)."
     },
     "errors": {
@@ -364,7 +364,7 @@
   },
   "reset": {
     "title": "New Password",
-    "portal": "Clumove Log In",
+    "portal": "Clumoove Log In",
     "submit": "Reset password",
     "changed": "Password changed",
     "redirecting": "Redirecting you to the log in page...",

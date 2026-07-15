@@ -12,7 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const issuer = "Clumove"
+const issuer = "Clumoove"
 
 // GenerateProvisioning creates a new TOTP secret for the given user email,
 // returns the base32 secret, the otpauth URI, and a base64 PNG data URL of the

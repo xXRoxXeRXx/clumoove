@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 export type ThemePreference = 'light' | 'dark' | 'auto';
 export type EffectiveTheme = 'light' | 'dark';
 
-const THEME_STORAGE_KEY = 'clumove-theme-preference';
+const THEME_STORAGE_KEY = 'clumoove-theme-preference';
 
 /**
  * Custom hook for managing theme preference (light/dark/auto)
