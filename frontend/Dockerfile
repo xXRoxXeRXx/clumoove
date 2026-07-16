@@ -11,9 +11,9 @@ CMD ["npm", "run", "dev", "--", "--host"]
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY . .
-RUN npm run build
+RUN chmod -R +x node_modules/.bin/ && npm run build
 
 # --- Production Stage ---
 FROM nginx:alpine AS prod

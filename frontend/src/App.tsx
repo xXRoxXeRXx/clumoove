@@ -82,7 +82,11 @@ function App() {
   // forward (length grows) and keep historyDepth in sync for both directions.
   const prevHistoryLen = useRef(window.history.length);
 
-  const urlMigId = new URLSearchParams(window.location.search).get('migration') ?? '';
+  // Capture the migration ID from the initial URL once on mount. Using a ref
+  // prevents re-renders (caused by in-app navigation changing window.location.search)
+  // from re-triggering the seed effect and resetting the step to 'login'.
+  const initialUrlMigIdRef = useRef(new URLSearchParams(window.location.search).get('migration') ?? '');
+  const urlMigId = initialUrlMigIdRef.current;
 
   // Build the URL (keeping the ?migration= param) and push/replace a history entry
   // carrying the in-app navigation state, then sync React state.
@@ -164,12 +168,15 @@ function App() {
   }, [showUserMenu]);
 
   // Seed the initial history entry with the current step/migration so the very
-  // first entry carries navigable state (replace, not push).
+  // first entry carries navigable state (replace, not push). Depends only on
+  // initialStep (which is also stable) so this runs exactly once on mount.
   useEffect(() => {
     // Seeding history state on mount is intentional; ignore set-state-in-effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     applyHistory(initialStep, urlMigId, true);
-  }, [initialStep, urlMigId]);
+  // urlMigId is stable (backed by a ref), so this is effectively [initialStep].
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialStep]);
 
   // Handle browser back/forward between in-app screens.
   useEffect(() => {
