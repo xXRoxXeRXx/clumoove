@@ -756,24 +756,31 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			switch mig.ConflictStrategy {
 			case "SKIP":
 				// Decide whether to skip or overwrite:
-				// - A retry (attempts > 0) means the existing file is the leftover of a
-				//   previous failed attempt -> overwrite it.
-				// - If the existing target file's size already matches the source size, it
-				//   is complete and correct (pre-existing or already-migrated) -> safe to skip.
+				// - A retry (attempts > 0) means the existing target file is a leftover of
+				//   a previously failed upload (e.g. a 423 FileLocked error aborted the
+				//   transfer after the file was already created in the target). The file may
+				//   be partial/corrupt, so it MUST be re-transferred and verified by the
+				//   3-way hash check below — never skipped. Skipping it here would also
+				//   miscount a failed-then-retried file as "skipped" instead of "transferred".
+				// - If the existing target file's size already matches the source size AND
+				//   this is the first attempt, it is complete and correct (pre-existing or
+				//   already-migrated) -> safe to skip.
 				// - Otherwise the existing file is partial/stale (e.g. an interrupted upload
 				//   from a worker restart left a partial file) -> overwrite so we never leave
 				//   an incomplete file behind and miscount it as "skipped".
 				if task.Attempts > 0 {
+					// Retry of a previously failed transfer: always overwrite and let the
+					// downstream hash verification confirm integrity.
 					deleteAfterUpload = true
-				}
-				if exists && existingSize == task.FileSize {
+				} else if exists && existingSize == task.FileSize {
 					task.Status = "SKIPPED"
 					task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 					_ = db.UpdateTaskStatus(p.db, task)
 					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
 					return nil
 				}
-				// Partial/stale or size-unknown existing file -> overwrite instead of skip.
+				// Partial/stale or size-unknown existing file, or a retry -> overwrite
+				// instead of skip.
 				deleteAfterUpload = true
 
 			case "OVERWRITE":
