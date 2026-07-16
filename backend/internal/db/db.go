@@ -827,31 +827,170 @@ func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, file
 	// skipped/failed/cancelled tasks, which would otherwise leave the
 	// migration stuck in RUNNING with processed < total (see CancelRemaining-
 	// PendingTasks, which records cancelled tasks as failed).
+	//
+	// To avoid marking a migration COMPLETED/FAILED while open (PENDING/RUNNING)
+	// tasks still exist — which previously produced a "99% but FERTIG" state —
+	// we additionally require that no task is left in an open state. This is a
+	// belt-and-suspenders guard; ReconcileMigrationProgress is the authoritative
+	// repair path, but checking here prevents the race at the source.
 	if total > 0 && processed+failed+skipped >= total {
+		var openTasks int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE migration_id = $1 AND status IN ('PENDING','RUNNING')`,
+			id,
+		).Scan(&openTasks); err != nil {
+			return err
+		}
+		if openTasks == 0 {
+			finalStatus := "COMPLETED"
+			var errMessage sql.NullString
+			if failed == total {
+				finalStatus = "FAILED"
+				errMessage = sql.NullString{String: "All file transfers failed", Valid: true}
+			} else if failed > 0 {
+				finalStatus = "COMPLETED_WITH_ERRORS"
+			}
+
+			statusQuery := `
+				UPDATE migrations
+				SET status = $1,
+				    error_message = COALESCE($2, error_message)
+				WHERE id = $3
+				  AND status IN ('RUNNING', 'INDEXING')
+			`
+			res, err := tx.Exec(statusQuery, finalStatus, errMessage, id)
+			if err != nil {
+				return err
+			}
+			if rows, rerr := res.RowsAffected(); rerr == nil && rows > 0 {
+				// Migration just transitioned to a terminal state: record it in the
+				// audit log. Best-effort; ignore lookup failures.
+				if owner, oerr := GetMigrationOwnerID(tx, id); oerr == nil {
+					action := AuditMigrationCompleted
+					if finalStatus == "FAILED" {
+						action = AuditMigrationFailed
+					}
+					WriteAuditLog(tx, AuditEntry{
+						UserID: sql.NullString{String: owner, Valid: true},
+						Action: action,
+						Target: id,
+						Details: json.RawMessage(fmt.Sprintf(`{"phase":"transfer","all_failed":%t,"partial":%t}`, failed == total, failed > 0 && failed < total)),
+					})
+				}
+			}
+		}
+	}
+
+	return tx.Commit()
+}
+
+// ReconcileMigrationProgress repairs counter drift between the cached
+// processed_files/skipped_files/failed_files/total_files columns on a migration
+// and the actual task rows. It is idempotent and safe to call repeatedly.
+//
+// Why this exists: IncrementMigrationProgress updates the counters with delta
+// increments that are best-effort (callers ignore the returned error). Under
+// load, worker crashes between a task's status write and its counter increment,
+// or tasks flipped to SKIPPED after the migration already transitioned to a
+// terminal state, can leave the counters out of sync with the real task rows.
+// That drift previously caused two visible bugs:
+//   - A migration stuck in RUNNING forever with 100% byte progress because
+//     processed+skipped+failed never reached total_files.
+//   - A migration marked COMPLETED while PENDING tasks were still left behind,
+//     so total_files > processed+skipped+failed.
+//
+// Reconciliation counts the real terminal task states and only transitions the
+// migration to a terminal status when there are genuinely no open (PENDING/
+// RUNNING) tasks left. It never resets or re-queues already-finished migrations
+// — it only fixes the cached counters and, if appropriate, advances a stalled
+// RUNNING/INDEXING migration to its correct terminal state.
+func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
+	tx, err := dbsql.BeginTx(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Count real task states and capture the cached migration columns.
+	var (
+		completedTasks, skippedTasks, failedTasks, cancelledTasks int
+		openTasks                                                 int
+		totalFiles, processedFiles, skippedFiles, failedFiles    int
+		status                                                    string
+	)
+	countQuery := `
+		SELECT
+			COUNT(*) FILTER (WHERE t.status = 'COMPLETED')  AS completed,
+			COUNT(*) FILTER (WHERE t.status = 'SKIPPED')    AS skipped,
+			COUNT(*) FILTER (WHERE t.status = 'FAILED')     AS failed,
+			COUNT(*) FILTER (WHERE t.status = 'CANCELLED')  AS cancelled,
+			COUNT(*) FILTER (WHERE t.status IN ('PENDING','RUNNING')) AS open,
+			m.total_files, m.processed_files, m.skipped_files, m.failed_files, m.status
+		FROM migrations m
+		JOIN tasks t ON t.migration_id = m.id
+		WHERE m.id = $1
+		GROUP BY m.total_files, m.processed_files, m.skipped_files, m.failed_files, m.status
+	`
+	err = tx.QueryRow(countQuery, migrationID).Scan(
+		&completedTasks, &skippedTasks, &failedTasks, &cancelledTasks, &openTasks,
+		&totalFiles, &processedFiles, &skippedFiles, &failedFiles, &status,
+	)
+	if err == sql.ErrNoRows {
+		return nil // no such migration; nothing to do
+	}
+	if err != nil {
+		return err
+	}
+
+	// Recompute the cached counters from the authoritative task rows. Tasks that
+	// were CANCELLED during a terminal transition are counted as failed (matching
+	// CancelRemainingPendingTasks' behaviour so reports stay consistent).
+	newProcessed := completedTasks
+	newSkipped := skippedTasks
+	newFailed := failedTasks + cancelledTasks
+	newTotal := completedTasks + skippedTasks + failedTasks + cancelledTasks + openTasks
+
+	// Only write when something actually drifted, to avoid needless writes/lock
+	// contention on every tick.
+	if newProcessed != processedFiles || newSkipped != skippedFiles ||
+		newFailed != failedFiles || newTotal != totalFiles {
+		if _, err := tx.Exec(`
+			UPDATE migrations
+			SET processed_files = $1,
+			    skipped_files   = $2,
+			    failed_files    = $3,
+			    total_files     = $4,
+			    updated_at      = CURRENT_TIMESTAMP
+			WHERE id = $5
+		`, newProcessed, newSkipped, newFailed, newTotal, migrationID); err != nil {
+			return err
+		}
+	}
+
+	// Advance a stalled active migration to its terminal state only when no open
+	// tasks remain. This is the guard that prevents both bugs above: a migration
+	// can never become COMPLETED/FAILED while PENDING/RUNNING tasks still exist.
+	if (status == "RUNNING" || status == "INDEXING") && openTasks == 0 && newTotal > 0 {
 		finalStatus := "COMPLETED"
 		var errMessage sql.NullString
-		if failed == total {
+		if newFailed == newTotal {
 			finalStatus = "FAILED"
 			errMessage = sql.NullString{String: "All file transfers failed", Valid: true}
-		} else if failed > 0 {
+		} else if newFailed > 0 {
 			finalStatus = "COMPLETED_WITH_ERRORS"
 		}
-
-		statusQuery := `
+		res, err := tx.Exec(`
 			UPDATE migrations
 			SET status = $1,
 			    error_message = COALESCE($2, error_message)
 			WHERE id = $3
 			  AND status IN ('RUNNING', 'INDEXING')
-		`
-		res, err := tx.Exec(statusQuery, finalStatus, errMessage, id)
+		`, finalStatus, errMessage, migrationID)
 		if err != nil {
 			return err
 		}
 		if rows, rerr := res.RowsAffected(); rerr == nil && rows > 0 {
-			// Migration just transitioned to a terminal state: record it in the
-			// audit log. Best-effort; ignore lookup failures.
-			if owner, oerr := GetMigrationOwnerID(tx, id); oerr == nil {
+			if owner, oerr := GetMigrationOwnerID(tx, migrationID); oerr == nil {
 				action := AuditMigrationCompleted
 				if finalStatus == "FAILED" {
 					action = AuditMigrationFailed
@@ -859,8 +998,8 @@ func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, file
 				WriteAuditLog(tx, AuditEntry{
 					UserID: sql.NullString{String: owner, Valid: true},
 					Action: action,
-					Target: id,
-					Details: json.RawMessage(fmt.Sprintf(`{"phase":"transfer","all_failed":%t,"partial":%t}`, failed == total, failed > 0 && failed < total)),
+					Target: migrationID,
+					Details: json.RawMessage(fmt.Sprintf(`{"phase":"transfer","reconciled":true,"all_failed":%t,"partial":%t}`, newFailed == newTotal, newFailed > 0 && newFailed < newTotal)),
 				})
 			}
 		}

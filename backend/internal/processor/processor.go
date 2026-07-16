@@ -197,6 +197,7 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunConnectionRecoveryScheduler(ctx)
 	go p.RunOrphanedRunningTasksRecovery(ctx)
 	go p.RunCompletionNotifier(ctx)
+	go p.RunProgressReconciler(ctx)
 
 	// Start Cancel Listener
 	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {
@@ -364,6 +365,58 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[RetryScheduler] rows error: %v\n", err)
+	}
+}
+
+// RunProgressReconciler periodically repairs counter drift between the cached
+// migration progress columns and the real task rows (see ReconcileMigrationProgress
+// in db for the rationale). It advances a stalled RUNNING/INDEXING migration to its
+// terminal state only once no open (PENDING/RUNNING) tasks remain, so a migration
+// can never again show "100% but RUNNING" or "COMPLETED but 99%".
+func (p *Processor) RunProgressReconciler(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.reconcileActiveMigrations(ctx)
+		}
+	}
+}
+
+// reconcileActiveMigrations scans RUNNING/INDEXING migrations and reconciles their
+// progress counters against the authoritative task rows.
+func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT DISTINCT m.id
+		FROM migrations m
+		WHERE m.status IN ('RUNNING', 'INDEXING')
+	`)
+	if err != nil {
+		log.Printf("[ProgressReconciler] DB query error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[ProgressReconciler] rows error: %v\n", err)
+		return
+	}
+
+	for _, id := range ids {
+		if err := db.ReconcileMigrationProgress(p.db, id); err != nil {
+			log.Printf("[ProgressReconciler] error reconciling migration %s: %v\n", id, err)
+		}
 	}
 }
 
