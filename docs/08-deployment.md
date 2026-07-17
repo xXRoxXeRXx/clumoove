@@ -42,7 +42,20 @@ configuration, scaling, and routine operational tasks.
 
 ---
 
-## 3. Port Allocation & Network Routing
+## 3. Compose Files
+
+| File | Use | Build | Notes |
+| :--- | :--- | :--- | :--- |
+| `docker-compose.yml` | Production | Pulls GHCR images (`ghcr.io/xxroxxerxx/clumoove-*:0.8.0`) | No local build context, no source mounts. Run as-is behind a reverse proxy. |
+| `docker-compose.dev.yml` | Development | Local multi-stage build (`target: dev`) + source mounts | Live-reload backend/frontend, mounts `./backend` and `./frontend`. |
+| `docker-compose.prod.yml` | Production (advanced) | Pulls GHCR images | Hardened production variant with extra ops settings. |
+
+> The default `docker-compose.yml` now runs the **prebuilt production images** from GHCR. Use
+> `docker-compose.dev.yml` for local development with source mounts and live reload.
+
+---
+
+## 4. Port Allocation & Network Routing
 
 | Service | Container | Internal port | External port | Notes |
 | :------ | :-------- | :----------- | :----------- | :---- |
@@ -59,25 +72,31 @@ configuration, scaling, and routine operational tasks.
 
 ## 4. Starting the Stack
 
-### Development
+### Development (local build)
 
 ```bash
 cp .env.example .env   # fill ENCRYPTION_SECRET_KEY / JWT_SECRET_KEY / REDIS_PASSWORD
-docker compose up --build -d
+docker compose -f docker-compose.dev.yml up --build -d
 ```
 
-This builds the containers, installs dependencies, initializes the PostgreSQL schema from
-`db/schema.sql`, and starts all services in the background.
+This builds local images, installs dependencies, mounts `./backend` and `./frontend` for live reload,
+initializes the PostgreSQL schema from `db/schema.sql`, and starts all services in the background.
 
-### Production
+### Production (prebuilt GHCR images)
 
 ```bash
-docker compose -f docker-compose.prod.yml up --build -d
+docker compose up -d
 ```
 
-Optimized multi-stage builds, `MAX_THREADS` applied, suitable for running behind a reverse proxy with
-HTTPS. The API auto-detects proxied CORS/hosts; set `CORS_ALLOWED_ORIGIN`, `FRONTEND_URL`, and
-`TRUSTED_PROXY=1` as needed.
+The default `docker-compose.yml` pulls the prebuilt `ghcr.io/xxroxxerxx/clumoove-*:0.8.0` images — no
+local build needed. Suitable for running behind a reverse proxy with HTTPS. The API auto-detects proxied
+CORS/hosts; set `CORS_ALLOWED_ORIGIN`, `FRONTEND_URL`, and `TRUSTED_PROXY=1` as needed.
+
+For the hardened production variant, use:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
 
 ---
 
@@ -99,7 +118,8 @@ This ensures correct resolution in dev (`:8001`), behind a reverse proxy (no por
 Stateless workers can be scaled horizontally at runtime:
 
 ```bash
-docker compose up --scale migration-worker=4 -d
+docker compose up --scale migration-worker=4 -d        # production (docker-compose.yml)
+docker compose -f docker-compose.dev.yml up --scale migration-worker=4 -d   # development
 ```
 
 Pending transfers are distributed atomically across workers via the PostgreSQL `SKIP LOCKED` queue.
