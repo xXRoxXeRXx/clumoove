@@ -28,6 +28,7 @@ configuration, scaling, and routine operational tasks.
 | `CORS_ALLOWED_ORIGIN` | Allowed CORS origin for production. | – |
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for the Vite dev server. | – |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials. | – |
+| `GOOGLE_PHOTOS_CLIENT_ID` / `GOOGLE_PHOTOS_CLIENT_SECRET` | Google **Photos** OAuth2 credentials (distinct client, `photoslibrary` scope). | – |
 | `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. | – |
 | `OAUTH_REDIRECT_URI` | Optional OAuth redirect override (auto-detected otherwise). | auto |
 | `ADMIN_EMAIL` / `ADMIN_DISPLAY_NAME` | Optional initial admin bootstrap. | – |

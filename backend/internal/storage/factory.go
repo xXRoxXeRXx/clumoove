@@ -11,7 +11,7 @@ import (
 // request-time whitelist checks (e.g. main.go handleConnect), so adding a
 // provider only requires updating the switch — not every call site.
 var ValidProviders = []string{
-	"nextcloud", "webdav", "dropbox", "google", "smb", "s3", "sftp", "magentacloud",
+	"nextcloud", "webdav", "dropbox", "google", "googlephotos", "smb", "s3", "sftp", "magentacloud",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
@@ -64,6 +64,9 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	case "google":
 		// The OAuth token is passed in the password field for OAuth providers
 		return NewGoogleProvider(ctx, password)
+	case "googlephotos":
+		// The OAuth token is passed in the password field for OAuth providers
+		return NewGooglePhotosProvider(ctx, password)
 	case "smb":
 		return NewSMBProvider(urlStr, username, password)
 	case "s3":

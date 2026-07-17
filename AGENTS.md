@@ -19,7 +19,7 @@
   - `RunRetryScheduler` — re-enqueues tasks whose `next_retry_at <= NOW()` every 10 s
   - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s
   - `RunOrphanedRunningTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
-- **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google refresh tokens before expiry.
+- **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google/Google Photos refresh tokens before expiry.
 - **Core Scheduler Engine**: A background daemon in `cmd/api` (`scheduler.Run`) checks for due schedules every minute and triggers the linked job (migration/sync/backup). It uses `github.com/robfig/cron/v3` for cron parsing/next-run calculation. Schedules live in the `schedules` table; a Redis `SET NX` lock (`schedule:lock:{id}`, 2-min TTL) ensures only one API instance triggers a given schedule in a multi-instance deployment.
 - **Indexer package**: `backend/internal/indexer` holds the shared indexing logic (`Indexer.Start`). Both the immediate `handleStart` path and the scheduler's `triggerMigration` call it, so scheduled migrations actually create PENDING tasks. Selected paths/calendars/contacts are persisted on the `migrations` row (`selected_paths`/`selected_calendars`/`selected_contacts` JSONB) and read at trigger time.
 - **WebSocket auth**: The `/api/migration/{id}/ws` endpoint is **not** behind `AuthMiddleware`. It authenticates via a `?token=<jwt>` query parameter and performs ownership validation manually inside the handler. The handler **rejects 2FA temp tokens** (`2fa_pending` claim) — they cannot open a migration socket.
@@ -35,9 +35,10 @@
 
 ### Storage Providers
 - Every provider must implement the `StorageProvider` interface in [provider.go](backend/internal/storage/provider.go) and be registered in [factory.go](backend/internal/storage/factory.go).
-- Valid provider values: `nextcloud`, `webdav`, `dropbox`, `google`, `smb`, `s3`, `sftp`, `magentacloud`. Whitelist these explicitly — never pass unvalidated provider strings to `NewProvider`.
+- Valid provider values: `nextcloud`, `webdav`, `dropbox`, `google`, `googlephotos`, `smb`, `s3`, `sftp`, `magentacloud`. Whitelist these explicitly — never pass unvalidated provider strings to `NewProvider`. `googlephotos` is a **distinct** provider from `google` (own OAuth client with the `photoslibrary` scope); albums map to directories and media items to files.
 - Resource types: `files`, `calendars`, `contacts`. Calendars/contacts are always overwritten on conflict (dynamic data — SKIP would silently leave stale entries).
 - S3 Insecure HTTP endpoints (`insecure=true`) check literal IPs or `*.local`/`localhost` directly without DNS resolution to prevent DNS-rebinding SSRF. Users must use literal loopback/private IPs or local domain names.
+- `googlephotos` (Google Photos Library API): albums = directories, media items = files. Photos exposes no content hash (`GetFileHash` returns empty → processor falls back to size comparison); `InspectResource` populates `Size` via a `HEAD` on the download `baseUrl`. Uploads use `mediaItems:upload` + `mediaItems:batchCreate`; the album is created on demand and deduplicated via an in-memory `title ↔ ID` cache. `DeleteFile`/`RenameFile` return "not supported". Credentials env: `GOOGLE_PHOTOS_CLIENT_ID` / `GOOGLE_PHOTOS_CLIENT_SECRET` (separate client from `GOOGLE_*`, scope `photoslibrary`).
 
 ### Security
 - **Credential handling**: Never pass plaintext credentials to background goroutines. Query from database by `MigrationID` and decrypt at the last moment using `crypto.Decrypt`.
