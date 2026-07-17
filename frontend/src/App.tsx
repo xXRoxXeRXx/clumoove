@@ -70,6 +70,7 @@ function App() {
   const [resetToken, setResetToken] = useState<string>(resetTokenFromUrl || '');
   const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
   const [localStorageEnabled, setLocalStorageEnabled] = useState<boolean>(false);
+  const [oauthProviders, setOauthProviders] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetch(`${API_URL}/api/settings`)
@@ -77,6 +78,9 @@ function App() {
       .then((data) => {
         if (data && data.local_storage_enabled === true) {
           setLocalStorageEnabled(true);
+        }
+        if (data && data.oauth_providers && typeof data.oauth_providers === 'object') {
+          setOauthProviders(data.oauth_providers);
         }
       })
       .catch(() => {});
@@ -598,6 +602,7 @@ function App() {
               apiUrl={API_URL} 
               token={token}
               localStorageEnabled={localStorageEnabled}
+              oauthProviders={oauthProviders}
             />
           )}
           
