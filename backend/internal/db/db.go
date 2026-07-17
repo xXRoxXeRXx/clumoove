@@ -1,4 +1,4 @@
-package db
+﻿package db
 
 import (
 	"context"
@@ -164,6 +164,13 @@ type Migration struct {
 	TotalBytes                  int64                   `json:"total_bytes"`
 	ProcessedFiles              int                     `json:"processed_files"`
 	ProcessedBytes              int64                   `json:"processed_bytes"`
+	// LiveBytes is a frequently-updated, non-cumulative counter fed by the
+	// streaming progress channel. It is used ONLY for the transfer-speed / ETA
+	// display and may transiently exceed TotalBytes (e.g. on a retried upload).
+	// The authoritative, never-overflowing progress for the "X / Y" byte display
+	// is ProcessedBytes, which is booked exactly once per file at verified
+	// completion. See processor.go.
+	LiveBytes                   int64                   `json:"live_bytes"`
 	SkippedFiles                int                     `json:"skipped_files"`
 	FailedFiles                 int                     `json:"failed_files"`
 	ErrorMessage                sql.NullString          `json:"error_message"`
@@ -455,6 +462,12 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (bandwidth_limit_mbps): %v\n", err)
 			}
 
+			// live_bytes: non-cumulative counter for transfer-speed/ETA display.
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS live_bytes BIGINT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (live_bytes): %v\n", err)
+			}
+
 			// TOTP 2FA columns
 			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret_encrypted TEXT`)
 			if err != nil {
@@ -658,7 +671,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		       target_url, target_username, target_password_encrypted,
 		       target_refresh_token_encrypted, target_token_expires_at,
 		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
-		       processed_files, processed_bytes, skipped_files, failed_files,
+		       processed_files, processed_bytes, live_bytes, skipped_files, failed_files,
 		       error_message, created_at, updated_at, target_dir, threads,
 		       selected_paths, selected_calendars, selected_contacts, bandwidth_limit_mbps
 		FROM migrations WHERE id = $1
@@ -670,7 +683,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted,
 		&m.TargetRefreshTokenEncrypted, &m.TargetTokenExpiresAt,
 		&m.SourceProvider, &m.TargetProvider, &m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes,
-		&m.ProcessedFiles, &m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles,
+		&m.ProcessedFiles, &m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles,
 		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
 		&m.SelectedPaths, &m.SelectedCalendars, &m.SelectedContacts, &m.BandwidthLimitMbps,
 	)
@@ -882,6 +895,30 @@ func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, file
 	}
 
 	return tx.Commit()
+}
+
+// AddLiveBytes adds bytes to the non-cumulative live_bytes counter used only
+// for the transfer-speed / ETA display. It deliberately does NOT touch
+// processed_bytes (which is booked exactly once per file at verified
+// completion) so that processed_bytes can never exceed total_bytes due to
+// retried uploads. See processor.go.
+func AddLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
+	if bytesDelta == 0 {
+		return nil
+	}
+	_, err := db.ExecContext(ctx,
+		`UPDATE migrations SET live_bytes = live_bytes + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+		bytesDelta, id)
+	return err
+}
+
+// ResetLiveBytes sets live_bytes back to the authoritative processed_bytes
+// value. Called when a migration reaches a terminal state so the speed display
+// does not keep showing stale/transient values.
+func ResetLiveBytes(db *sql.DB, ctx context.Context, id string) error {
+	_, err := db.ExecContext(ctx,
+		`UPDATE migrations SET live_bytes = GREATEST(live_bytes, processed_bytes) WHERE id = $1`, id)
+	return err
 }
 
 // ReconcileMigrationProgress repairs counter drift between the cached
@@ -1215,6 +1252,7 @@ func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID strin
 		SET status = 'INDEXING',
 		    total_files = 0, total_bytes = 0,
 		    processed_files = 0, processed_bytes = 0,
+		    live_bytes = 0,
 		    skipped_files = 0, failed_files = 0,
 		    error_message = NULL,
 		    updated_at = CURRENT_TIMESTAMP
@@ -2215,7 +2253,7 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 		SELECT id, user_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, status,
 		       conflict_strategy, total_files, total_bytes, processed_files,
-		       processed_bytes, skipped_files, failed_files, error_message,
+		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
 		       created_at, updated_at, target_dir, threads
 		FROM migrations
 		WHERE user_id = $1
@@ -2234,7 +2272,7 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 			&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourceProvider,
 			&m.TargetURL, &m.TargetUsername, &m.TargetProvider, &m.Status,
 			&m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
-			&m.ProcessedBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
+			&m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
 			&m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
 		)
 		if err != nil {
@@ -2301,6 +2339,7 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 		SET failed_files = failed_files - $1, 
 		    processed_files = processed_files - $1, 
 		    processed_bytes = processed_bytes - $2, 
+		    live_bytes = processed_bytes,
 		    status = 'RUNNING', 
 		    error_message = NULL, 
 		    updated_at = CURRENT_TIMESTAMP 

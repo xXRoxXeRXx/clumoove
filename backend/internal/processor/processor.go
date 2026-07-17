@@ -1,4 +1,4 @@
-package processor
+﻿package processor
 
 import (
 	"context"
@@ -777,6 +777,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 					task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 					_ = db.UpdateTaskStatus(p.db, task)
 					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
+					_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
 					return nil
 				}
 				// Partial/stale or size-unknown existing file, or a retry -> overwrite
@@ -900,7 +901,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	// Setup progress notification channel
 	progressChan := make(chan int64, 10)
 	progressDone := make(chan struct{})
-	var totalBytesReported int64
 
 	// lastByteNano tracks the most recent monotonic clock time that any byte was
 	// reported for this task. It is shared with the heartbeat goroutine via the
@@ -911,8 +911,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 
 	go func() {
 		defer close(progressDone)
-		// This goroutine updates progress of migration in the DB
-		// Buffer progress updates to reduce database load
+		// This goroutine drains the progress channel and feeds the non-cumulative
+		// live_bytes counter (used only for the transfer-speed / ETA display).
+		// Cumulative processed_bytes are booked exactly once at verified
+		// completion (see below), so we must NOT add streamed bytes to it here —
+		// doing so previously caused processed_bytes to exceed total_bytes when a
+		// file was retried (e.g. after a hash mismatch re-ran the whole upload).
 		var bufferedBytes int64
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
@@ -921,10 +925,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			select {
 			case bytes, ok := <-progressChan:
 				if !ok {
-					// Final flush
+					// Final flush of any buffered live bytes.
 					if bufferedBytes > 0 {
-						_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 0, bufferedBytes, 0, 0)
-						totalBytesReported += bufferedBytes
+						_ = db.AddLiveBytes(p.db, ctx, mig.ID, bufferedBytes)
+						bufferedBytes = 0
 					}
 					return
 				}
@@ -932,8 +936,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 				atomic.StoreInt64(&lastByteNano, time.Now().UnixNano())
 			case <-ticker.C:
 				if bufferedBytes > 0 {
-					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 0, bufferedBytes, 0, 0)
-					totalBytesReported += bufferedBytes
+					_ = db.AddLiveBytes(p.db, ctx, mig.ID, bufferedBytes)
 					bufferedBytes = 0
 				}
 			}
@@ -965,17 +968,26 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		}
 	}()
 
-	// Defer cleanup of progress channel and progress rollback on failure (Nitpick fix)
+	// Defer cleanup of progress channel.
+	//
+	// IMPORTANT: The progress channel is used ONLY for the live transfer-speed
+	// display (the "5,5 MB/s" value). It does NOT book cumulative bytes into the
+	// DB. Cumulative processed_bytes are incremented exactly once, when the file
+	// is verified COMPLETED (see the IncrementMigrationProgress call below).
+	//
+	// Previously the channel added every streamed byte to processed_bytes here,
+	// and a failed run rolled it back via a defer. That produced two bugs:
+	//   1. On a retry (e.g. a post-upload hash mismatch that re-runs the whole
+	//      upload) the same file's bytes were streamed and counted a second time,
+	//      while total_bytes stayed at the single indexed value -> "transferred
+	//      > total" (44,8 GB / 42,9 GB).
+	//   2. Any non-zero rounding left processed_bytes permanently above total.
+	// Booking once at verified completion keeps processed_bytes <= total_bytes
+	// and in lockstep with processed_files.
 	defer func() {
 		close(progressChan)
 		<-progressDone
 		close(heartbeatStop)
-		if err != nil {
-			// Rollback progress reported to DB during this failed run
-			if totalBytesReported > 0 {
-				_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 0, -totalBytesReported, 0, 0)
-			}
-		}
 	}()
 
 	// io.TeeReader writes all data read from the download stream to the hasher in-memory
@@ -1010,6 +1022,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			task.ErrorMessage = sql.NullString{String: "Sabredav: Calendar event UID already exists (SKIP)", Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
 			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
+			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
 			return nil
 		}
 		return fmt.Errorf("upload to target failed: %w", err)
@@ -1201,8 +1214,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	p.clearConnLoss(mig.ID)
 	p.clearConnLossTask(task.ID)
 
-	// Increment processed files count (processed bytes already incremented by progress channel)
-	_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, 0, 0, 0)
+	// Increment processed files AND bytes count exactly once, at verified
+	// completion. Bytes are booked here (not via the progress channel) so that a
+	// retried upload (hash mismatch etc.) cannot double-count the same file and
+	// push processed_bytes above total_bytes.
+	_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 0, 0)
+	// Re-sync the live counter to the now-authoritative processed_bytes so the
+	// speed/ETA display cannot stay above total_bytes after a retried upload.
+	_ = db.ResetLiveBytes(p.db, ctx, mig.ID)
 
 	return nil
 }
