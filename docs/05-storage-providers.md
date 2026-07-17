@@ -56,6 +56,7 @@ time, description, tags, etc.) after a successful upload.
 | `webdav` | `webdav.go` (+ `propfind.go`) | generic WebDAV | user/pass | files |
 | `dropbox` | `dropbox.go` | Dropbox API v2 | OAuth2 (access token in `password` field) | files |
 | `google` | `google.go` | Drive API v3 / Calendar / People | OAuth2 | files, calendars, contacts |
+| `googlephotos` | `googlephotos.go` | Google Photos Library API (`photoslibrary.googleapis.com/v1`) | OAuth2 (access token in `password` field) | files (albums = directories, media = files) |
 | `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, …) | access key / secret key | files |
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
 | `sftp` | `sftp.go` | SSH SFTP (`pkg/sftp`) | user/pass (or key) | files |
@@ -75,6 +76,37 @@ time, description, tags, etc.) after a successful upload.
 
 Provider URL normalization: `normalizeProviderURL` substitutes the constant MagentaCLOUD URL when the
 provider is `magentacloud` (the frontend sends an empty URL).
+
+---
+
+## 3.1. Google Photos (`googlephotos`)
+
+`googlephotos` is a **separate provider** from `google` (it uses its own OAuth client with the
+`photoslibrary` scope). Albums are mapped to directories (`IsDir = true`) and media items to files
+(`resourceType = "files"`); no new `resourceType` values are introduced, so the existing `files`
+pipeline (indexer, transfer, integrity) runs unchanged.
+
+- **Auth:** OAuth2 access token passed in the `password` field (like `google`/`dropbox`). Credentials
+  env: `GOOGLE_PHOTOS_CLIENT_ID` / `GOOGLE_PHOTOS_CLIENT_SECRET`.
+- **Listing:**
+  - `/` → all albums as `is_dir=true` entries (`Path = /<albumId>`).
+  - `/<albumId>` → media items via `mediaItems:search`; each becomes `Path = /<albumId>/<mediaId>`.
+- **Download:** re-fetches a fresh `baseUrl` (short-lived, ~1h) and appends `=d` for original bytes.
+- **Upload:** `mediaItems:upload` (multipart/related bytes → `uploadToken`), then
+  `mediaItems:batchCreate` into the album resolved from the path's first segment. The album is
+  created on demand and **deduplicated** via an in-memory `title ↔ ID` cache so repeated uploads
+  into the same album reuse it instead of creating duplicates (the Photos API does **not** dedupe
+  albums by title). A Photos→Photos upload whose path carries the source album **id** is mapped onto
+  the already-existing target album (keeping its original title) rather than creating a new album
+  named after the id.
+- **No rename / delete / folder semantics:** `DeleteFile` and `RenameFile` return "not supported".
+  `CreateDirectory`/`CreateParentDirectories` create the (target) album.
+- **Integrity:** Photos exposes **no content hash**; `GetFileHash` returns empty and the processor
+  falls back to size comparison. `InspectResource` populates `Size` via a `HEAD` on `baseUrl`
+  (`Content-Length`) so the size fallback is meaningful instead of always `0`.
+- **`.tmp` suffix:** the processor's atomic-rename pattern appends `.tmp` to the upload path; the
+  provider strips it from both the album segment and the filename, because Photos has no rename
+  operation (otherwise the media would be left with a `.tmp` name / orphaned).
 
 ---
 
