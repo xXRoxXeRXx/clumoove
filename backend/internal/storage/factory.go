@@ -11,7 +11,7 @@ import (
 // request-time whitelist checks (e.g. main.go handleConnect), so adding a
 // provider only requires updating the switch — not every call site.
 var ValidProviders = []string{
-	"nextcloud", "webdav", "dropbox", "google", "googlephotos", "smb", "s3", "sftp", "magentacloud",
+	"nextcloud", "webdav", "dropbox", "google", "googlephotos", "smb", "s3", "sftp", "magentacloud", "local",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
@@ -71,6 +71,10 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 		return NewSMBProvider(urlStr, username, password)
 	case "s3":
 		return NewS3Provider(urlStr, username, password)
+	case "local":
+		// Local reads/writes files inside LOCAL_STORAGE_ROOT. It takes no URL,
+		// username, or password and performs no network egress (SSRF guard skipped).
+		return NewLocalProvider()
 	case "sftp":
 		return NewSFTPProvider(urlStr, username, password)
 	default:

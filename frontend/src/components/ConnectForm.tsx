@@ -10,9 +10,12 @@ interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
   apiUrl: string;
   token: string;
+  localStorageEnabled?: boolean;
 }
 
-export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token }) => {
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'local';
+
+export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false }) => {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
   const [sourcePass, setSourcePass] = useState('');
@@ -24,8 +27,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetPass, setTargetPass] = useState('');
   const [targetRefreshToken, setTargetRefreshToken] = useState('');
   const [targetTokenExpiresIn, setTargetTokenExpiresIn] = useState(0);
-  const [sourceProvider, setSourceProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp'>('nextcloud');
-  const [targetProvider, setTargetProvider] = useState<'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp'>('nextcloud');
+  const [sourceProvider, setSourceProvider] = useState<ProviderId>('nextcloud');
+  const [targetProvider, setTargetProvider] = useState<ProviderId>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
 
@@ -133,22 +136,30 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
       : sourceProvider === 'sftp'
       ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
-      : sourceProvider === 'magentacloud'
+      : sourceProvider === 'magentacloud' || sourceProvider === 'local'
       ? ''
       : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? `https://api.${sourceProvider}.com` : sourceUrl);
-    const finalSourceUser = (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? (sourceOAuthUser || sourceProvider) : sourceUser;
-    const finalSourcePass = sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass;
+    const finalSourceUser = sourceProvider === 'local'
+      ? ''
+      : (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? (sourceOAuthUser || sourceProvider) : sourceUser;
+    const finalSourcePass = sourceProvider === 'local'
+      ? ''
+      : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass;
     const finalTargetUrl = targetProvider === 'smb'
       ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
       : targetProvider === 's3'
       ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
       : targetProvider === 'sftp'
       ? `sftp://${targetSftpHost}:${targetSftpPort}`
-      : targetProvider === 'magentacloud'
+      : targetProvider === 'magentacloud' || targetProvider === 'local'
       ? ''
       : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? `https://api.${targetProvider}.com` : targetUrl);
-    const finalTargetUser = (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? (targetOAuthUser || targetProvider) : targetUser;
-    const finalTargetPass = targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass;
+    const finalTargetUser = targetProvider === 'local'
+      ? ''
+      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? (targetOAuthUser || targetProvider) : targetUser;
+    const finalTargetPass = targetProvider === 'local'
+      ? ''
+      : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass;
 
     if (sourceProvider === 'sftp') {
       if (!sourceSftpHost.trim()) {
@@ -195,16 +206,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     }
 
-    const sourceUrlRequired = sourceProvider !== 'magentacloud';
-    const targetUrlRequired = targetProvider !== 'magentacloud';
+    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local';
+    const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'local';
 
     if (
       (sourceUrlRequired && !finalSourceUrl) ||
-      !finalSourceUser ||
-      !finalSourcePass ||
+      (sourceProvider !== 'local' && !finalSourceUser) ||
+      (sourceProvider !== 'local' && !finalSourcePass) ||
       (targetUrlRequired && !finalTargetUrl) ||
-      !finalTargetUser ||
-      !finalTargetPass
+      (targetProvider !== 'local' && !finalTargetUser) ||
+      (targetProvider !== 'local' && !finalTargetPass)
     ) {
       setError(t('connect.errors.missingFields'));
       return;
@@ -269,7 +280,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setLoading(false);
     }
   };
-  const handleSourceProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp') => {
+  const handleSourceProviderSelect = (val: ProviderId) => {
     setSourceProvider(val);
     if (val === 'dropbox' || val === 'google' || val === 'googlephotos') {
       setSourceUrl(`https://api.${val}.com`);
@@ -300,6 +311,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setSourceSftpPort('22');
       setSourceSftpAuthMode('password');
       setSourceSftpPrivateKey('');
+    } else if (val === 'local') {
+      setSourceUrl('');
+      setSourceUser('');
+      setSourcePass('');
     } else {
       setSourceUrl('');
       setSourceUser('');
@@ -307,7 +322,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
 
-  const handleTargetProviderSelect = (val: 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp') => {
+  const handleTargetProviderSelect = (val: ProviderId) => {
     setTargetProvider(val);
     if (val === 'dropbox' || val === 'google' || val === 'googlephotos') {
       setTargetUrl(`https://api.${val}.com`);
@@ -338,6 +353,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setTargetSftpPort('22');
       setTargetSftpAuthMode('password');
       setTargetSftpPrivateKey('');
+    } else if (val === 'local') {
+      setTargetUrl('');
+      setTargetUser('');
+      setTargetPass('');
     } else {
       setTargetUrl('');
       setTargetUser('');
@@ -345,7 +364,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
 
-  const providerOptions: { id: 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp'; name: string }[] = [
+  const providerOptions: { id: ProviderId; name: string }[] = [
     { id: 'nextcloud', name: 'Nextcloud' },
     { id: 'webdav', name: 'WebDAV' },
     { id: 'magentacloud', name: 'MagentaCLOUD' },
@@ -354,7 +373,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 'sftp', name: 'SFTP' },
     { id: 'dropbox', name: 'Dropbox' },
     { id: 'google', name: 'Google' },
-    { id: 'googlephotos', name: 'Google Photos' }
+    { id: 'googlephotos', name: 'Google Photos' },
+    ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
   ];
 
   return (
@@ -690,6 +710,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
                       required
                     />
+                  </div>
+                </>
+              ) : sourceProvider === 'local' ? (
+                <>
+                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
                   </div>
                 </>
               ) : sourceProvider === 'magentacloud' ? (
@@ -1086,6 +1113,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
                       required
                     />
+                  </div>
+                </>
+              ) : targetProvider === 'local' ? (
+                <>
+                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
                   </div>
                 </>
               ) : targetProvider === 'magentacloud' ? (

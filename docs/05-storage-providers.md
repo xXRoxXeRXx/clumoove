@@ -60,8 +60,23 @@ time, description, tags, etc.) after a successful upload.
 | `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, …) | access key / secret key | files |
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
 | `sftp` | `sftp.go` | SSH SFTP (`pkg/sftp`) | user/pass (or key) | files |
+| `local` | `local.go` | Local filesystem (server-side sandbox) | none (no URL/user/pass) | files only |
 
 ---
+
+## 2.1. Local Storage Provider (`local`)
+
+`local` reads and writes files directly from a server-side sandbox directory defined by the
+`LOCAL_STORAGE_ROOT` environment variable. It carries **no credentials** (no URL, no username, no
+password). All access is rooted at `LOCAL_STORAGE_ROOT`; user-supplied relative paths are joined to the
+root and verified to stay within it — `..` traversal and symlinked intermediate directories that escape
+the root are rejected. It supports only the `files` resource type; calendars/contacts are not applicable.
+
+The `Local` option appears in the UI **only** when `LOCAL_STORAGE_ROOT` is configured (`local_storage_enabled`
+in `GET /api/settings`). `NewProvider("local")` returns an error if the variable is unset or not a
+directory. `LOCAL_STORAGE_ROOT` must be set on **both** the api-backend and the worker (the worker
+performs the actual file I/O). `local` is exempt from the SSRF egress validation (no network host is
+contacted). `GetFileHash` returns a `SHA1:` hash, enabling the standard 3-way hash check.
 
 ## 3. Factory & Validation (`factory.go`)
 
