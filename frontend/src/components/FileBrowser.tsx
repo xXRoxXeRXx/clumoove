@@ -95,7 +95,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     toLocalInputValue(new Date(Date.now() + 60000))
   );
 
-  const fetchTargetChildren = async (folderPath: string) => {
+  const fetchTargetChildren = async (folderPath: string, depth: number = 0) => {
     if (targetDirectoryContents[folderPath] || targetLoadingPaths[folderPath]) return;
 
     setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
@@ -123,8 +123,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       const data = await response.json();
       if (data.success) {
-        const foldersOnly = (data.files || []).filter((f: CloudFile) => f.is_dir);
+        const foldersOnly = sortEntries((data.files || []).filter((f: CloudFile) => f.is_dir));
         setTargetDirectoryContents((prev) => ({ ...prev, [folderPath]: foldersOnly }));
+        // When opening the browser, eagerly expand and load the first few
+        // levels of the folder tree so all subfolders are visible at once.
+        if (depth < 3) {
+          setTargetExpandedPaths((prev) => ({ ...prev, [folderPath]: true }));
+          for (const child of foldersOnly) {
+            fetchTargetChildren(child.path, depth + 1);
+          }
+        }
       } else {
         setTargetError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.loadTarget'));
       }
@@ -183,7 +191,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       if (data.success) {
         setNewFolderName('');
         setIsCreatingFolder(false);
-        
+
+        setTargetDir(fullNewPath);
+        setTargetExpandedPaths((prev) => ({ ...prev, [parentPath]: true }));
+
         setTargetDirectoryContents((prev) => {
           const next = { ...prev };
           delete next[parentPath];
@@ -203,9 +214,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const openTargetBrowser = () => {
     setIsTargetBrowserOpen(true);
-    if (!targetDirectoryContents['/']) {
-      fetchTargetChildren('/');
-    }
+    setTargetExpandedPaths((prev) => ({ ...prev, '/': true }));
+    fetchTargetChildren('/');
   };
 
   const fetchCalendars = async (force?: boolean) => {
