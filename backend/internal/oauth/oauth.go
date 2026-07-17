@@ -62,6 +62,16 @@ func InitConfigs() {
 	}
 }
 
+// ConfiguredProviders returns the set of OAuth provider keys that have both a
+// client ID and secret configured.
+func ConfiguredProviders() map[string]bool {
+	result := make(map[string]bool, len(configs))
+	for name, config := range configs {
+		result[name] = config.ClientID != "" && config.ClientSecret != ""
+	}
+	return result
+}
+
 func GetAuthURL(provider, redirectURI, state string) (string, error) {
 	config, ok := configs[provider]
 	if !ok {

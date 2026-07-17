@@ -11,11 +11,12 @@ interface ConnectFormProps {
   apiUrl: string;
   token: string;
   localStorageEnabled?: boolean;
+  oauthProviders?: Record<string, boolean>;
 }
 
 type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'local';
 
-export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false }) => {
+export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {} }) => {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
   const [sourcePass, setSourcePass] = useState('');
@@ -371,9 +372,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 'smb', name: 'SMB/CIFS' },
     { id: 's3', name: 'S3' },
     { id: 'sftp', name: 'SFTP' },
-    { id: 'dropbox', name: 'Dropbox' },
-    { id: 'google', name: 'Google' },
-    { id: 'googlephotos', name: 'Google Photos' },
+    ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
+    ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+    ...(oauthProviders.googlephotos ? [{ id: 'googlephotos' as const, name: 'Google Photos' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
   ];
 
