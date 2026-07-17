@@ -44,6 +44,7 @@ interface ProgressData {
   total_bytes: number;
   processed_files: number;
   processed_bytes: number;
+  live_bytes?: number;
   skipped_files: number;
   failed_files: number;
   error_message: string;
@@ -301,9 +302,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         setSpeed(0);
         setEta(t('dashboard.eta.waitingConn'));
       } else {
-        // RUNNING or other states
+        // RUNNING or other states.
+        // Speed/ETA use the frequent live_bytes counter (driven by the
+        // streaming progress channel); the "transferred X / Y" byte display
+        // uses processed_bytes, which can never exceed total_bytes.
+        const liveBytes = typeof payload.live_bytes === 'number' ? payload.live_bytes : payload.processed_bytes;
         const now = Date.now();
-        progressHistory.current.push({ timestamp: now, bytes: payload.processed_bytes });
+        progressHistory.current.push({ timestamp: now, bytes: liveBytes });
 
         // Keep last 15 seconds of history to smooth speed
         const windowLimit = now - 15000;

@@ -13,6 +13,7 @@ export type Provider =
   | 'webdav'
   | 'magentacloud'
   | 'google'
+  | 'googlephotos'
   | 'smb'
   | 's3'
   | 'sftp';
@@ -51,6 +52,7 @@ export interface Migration {
   processed_files: number;
   total_files: number;
   processed_bytes: number;
+  live_bytes?: number;
   total_bytes: number;
   created_at: string;
 }
