@@ -150,8 +150,11 @@ backend/cmd/{api,worker}   entrypoints
 backend/internal/{auth,crypto,db,email,indexer,oauth,processor,queue,sanitize,scheduler,storage,throttle,totp2fa}
 frontend/src/{components,contexts,hooks,locales,utils}
 db/schema.sql
-docker-compose.yml / docker-compose.prod.yml
+docker-compose.yml / docker-compose.dev.yml / docker-compose.prod.yml
 .env.example
 ```
+
+`docker-compose.yml` runs the production stack pulled from GHCR; `docker-compose.dev.yml` builds
+all images locally for development. See [Deployment §4](./08-deployment.md#4-starting-the-stack).
 
 See [Architecture §8](./01-architecture.md#8-project-layout) for the full tree.

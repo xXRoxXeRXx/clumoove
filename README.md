@@ -88,16 +88,21 @@ live progress → CSV report. The full lifecycle and resilience model are descri
 
 ```bash
 cp .env.example .env   # fill ENCRYPTION_SECRET_KEY / JWT_SECRET_KEY
-docker compose up --build -d
+docker compose -f docker-compose.dev.yml up --build -d
 ```
 
 Frontend: http://localhost:3001 · API: http://localhost:8001
 
+> [!NOTE]
+> `docker-compose.dev.yml` builds all images locally with source mounts for live reload. For production,
+> the default `docker-compose.yml` pulls prebuilt GHCR images (`ghcr.io/xxroxxerxx/clumoove-*:0.8.0`) —
+> just run `docker compose up -d`.
+
 > [!TIP]
-> Scale workers horizontally at runtime: `docker compose up --scale migration-worker=4 -d`. Pending transfers are
+> Scale workers horizontally at runtime: `docker compose -f docker-compose.dev.yml up --scale migration-worker=4 -d`. Pending transfers are
 > distributed atomically across all workers via the PostgreSQL queue.
 
-For production deployment (`docker-compose.prod.yml`, `MAX_THREADS`, HTTPS behind a reverse proxy) and operations
+For production deployment (prebuilt GHCR images via `docker-compose.yml`, hardened `docker-compose.prod.yml`, `MAX_THREADS`, HTTPS behind a reverse proxy) and operations
 tasks, see [`docs/08-deployment.md`](./docs/08-deployment.md).
 
 ## Configuration
@@ -152,8 +157,9 @@ clumoove/
 │   └── internal/            # auth, crypto, db, indexer, processor, scheduler, storage, queue
 ├── frontend/                # React 19 SPA (Vite, Tailwind v4, i18n)
 ├── db/schema.sql            # DDL (also inline in db.go for auto-migration)
-├── docker-compose.yml       # Development stack
-├── docker-compose.prod.yml  # Production stack
+├── docker-compose.yml       # Production stack (GHCR images)
+├── docker-compose.dev.yml   # Development stack (local build)
+├── docker-compose.prod.yml  # Production stack (hardened)
 └── .env.example             # Environment variable template
 ```
 
