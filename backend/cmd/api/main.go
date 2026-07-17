@@ -1841,6 +1841,7 @@ func (s *APIServer) getRedirectURI(r *http.Request) string {
 	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
 }
 
+// handleOAuthAuth handles the OAuth authorization redirect.
 func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
 	log.Printf("handleOAuthAuth: Hit with provider=%q", provider)
@@ -2805,6 +2806,7 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"registrations_enabled": val,
 		"local_storage_enabled": os.Getenv("LOCAL_STORAGE_ROOT") != "",
+		"oauth_providers":       oauth.ConfiguredProviders(),
 	})
 }
 
