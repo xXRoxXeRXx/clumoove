@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     total_bytes BIGINT NOT NULL DEFAULT 0,
     processed_files INT NOT NULL DEFAULT 0,
     processed_bytes BIGINT NOT NULL DEFAULT 0,
+    live_bytes BIGINT NOT NULL DEFAULT 0,
     skipped_files INT NOT NULL DEFAULT 0,
     failed_files INT NOT NULL DEFAULT 0,
     error_message TEXT,

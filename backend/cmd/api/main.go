@@ -1602,6 +1602,11 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				"total_bytes":          mig.TotalBytes,
 				"processed_files":      mig.ProcessedFiles,
 				"processed_bytes":      mig.ProcessedBytes,
+				// live_bytes feeds the transfer-speed / ETA display and may
+				// transiently exceed total_bytes on retried uploads. The
+				// authoritative "transferred X / Y" byte display uses
+				// processed_bytes, which can never exceed total_bytes.
+				"live_bytes":           mig.LiveBytes,
 				"skipped_files":        mig.SkippedFiles,
 				"failed_files":         mig.FailedFiles,
 				"error_message":        "",
