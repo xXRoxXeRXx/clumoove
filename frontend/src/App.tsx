@@ -69,6 +69,18 @@ function App() {
   const [showUserMenu, setShowUserMenu] = useState<boolean>(false);
   const [resetToken, setResetToken] = useState<string>(resetTokenFromUrl || '');
   const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
+  const [localStorageEnabled, setLocalStorageEnabled] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/settings`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.local_storage_enabled === true) {
+          setLocalStorageEnabled(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
   const userMenuRef = useRef<HTMLDivElement>(null);
   // Tracks how many app-pushed history entries sit above the seeded top-level
   // entry, so "back to overview" can pop deterministically instead of using a
@@ -585,6 +597,7 @@ function App() {
               onConnectSuccess={handleConnectSuccess} 
               apiUrl={API_URL} 
               token={token}
+              localStorageEnabled={localStorageEnabled}
             />
           )}
           

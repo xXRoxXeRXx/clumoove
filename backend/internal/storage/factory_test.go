@@ -11,7 +11,7 @@ func TestIsValidProvider(t *testing.T) {
 			t.Errorf("IsValidProvider(%q) = false, want true", p)
 		}
 	}
-	invalid := []string{"", "ftp", "local", "NEXTCLOUD", "Dropbox", "s3 "}
+	invalid := []string{"", "ftp", "NEXTCLOUD", "Dropbox", "s3 "}
 	for _, p := range invalid {
 		if IsValidProvider(p) {
 			t.Errorf("IsValidProvider(%q) = true, want false", p)

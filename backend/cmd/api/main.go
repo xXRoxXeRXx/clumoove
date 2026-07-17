@@ -2802,8 +2802,9 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		val = "true"
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"registrations_enabled": val,
+		"local_storage_enabled": os.Getenv("LOCAL_STORAGE_ROOT") != "",
 	})
 }
 
