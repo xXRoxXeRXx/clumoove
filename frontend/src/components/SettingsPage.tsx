@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail } from 'lucide-react';
+import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail, Info } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useApiError } from '../utils/apiError';
@@ -1136,6 +1136,20 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
                 </button>
               </div>
             </form>
+          </div>
+
+          {/* Section 7: About */}
+          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+              <Info className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
+              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.about')}</h3>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                {t('settings.version')}
+              </span>
+              <span className="text-sm font-mono text-[var(--color-portal-navy-themed)]">v{__APP_VERSION__}</span>
+            </div>
           </div>
 
         </div>

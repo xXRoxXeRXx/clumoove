@@ -275,6 +275,8 @@
   "settings": {
     "back": "Back",
     "title": "Settings",
+    "about": "About",
+    "version": "Version",
     "profilePicture": "Profile picture",
     "avatarHint": "Upload a new profile picture. Supported formats: PNG, JPEG, WebP, and GIF up to 2 MB.",
     "avatarCropperHint": "Drag to move | Scroll to zoom",
@@ -320,6 +322,8 @@
     "systemDark": "Dark",
     "allowRegistrations": "Allow registrations",
     "allowRegistrationsHint": "Disable this to block new user registrations. Existing accounts will still be able to log in.",
+    "about": "About",
+    "version": "Version",
     "emailNotifications": "Email notifications",
     "smtpHost": "Email server address",
     "smtpPort": "Connection port",

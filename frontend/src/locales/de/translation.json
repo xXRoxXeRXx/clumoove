@@ -275,6 +275,8 @@
   "settings": {
     "back": "Zurück",
     "title": "Einstellungen",
+    "about": "Über",
+    "version": "Version",
     "profilePicture": "Profilbild",
     "avatarHint": "Lade ein neues Profilbild hoch. Unterstützt werden PNG, JPEG, WebP und GIF bis max. 2 MB.",
     "avatarCropperHint": "Ziehen zum Bewegen | Mausrad zum Zoomen",
@@ -320,6 +322,8 @@
     "systemDark": "Dunkel",
     "allowRegistrations": "Registrierungen erlauben",
     "allowRegistrationsHint": "Deaktivieren, um neue Registrierungen zu sperren. Bestehende Konten können sich weiterhin anmelden.",
+    "about": "Über",
+    "version": "Version",
     "emailNotifications": "E-Mail-Benachrichtigungen",
     "smtpHost": "E-Mail-Server Adresse",
     "smtpPort": "Anschluss (Port)",
