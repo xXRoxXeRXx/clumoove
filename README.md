@@ -145,7 +145,7 @@ See [`docs/09-development.md`](./docs/09-development.md) for conventions and the
 ## Project structure
 
 ```
-migration/
+clumoove/
 ├── backend/                 # Go module (cmd/api, cmd/worker)
 │   ├── cmd/api/             # HTTP gateway, auth, WebSocket, OAuth, scheduler trigger
 │   ├── cmd/worker/          # Migration engine (processor, recovery schedulers)
