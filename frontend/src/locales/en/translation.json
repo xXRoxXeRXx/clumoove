@@ -99,6 +99,8 @@
     "nextcloudUrl": "Nextcloud WebDAV address",
     "webdavUrl": "WebDAV address",
     "magentacloudInfo": "Connects to magentacloud.de (WebDAV). Use the dedicated WebDAV password from your MagentaCLOUD account settings — NOT your regular account password.",
+    "localInfo": "Local storage. Files are read from and written to the server-configured LOCAL_STORAGE_ROOT directory. Enter only a relative path inside that directory — no URL, username, or password is required.",
+    "localInfo": "Reads and writes files directly on the server inside the configured LOCAL_STORAGE_ROOT directory. No credentials are required — only enter a relative path within that sandbox (no absolute paths or \"..\" traversal).",
     "googleConnect": "Google Connection",
     "dropboxConnect": "Dropbox Connection",
     "googlePhotosConnect": "Google Photos Connection",

@@ -16,7 +16,8 @@ export type Provider =
   | 'googlephotos'
   | 'smb'
   | 's3'
-  | 'sftp';
+  | 'sftp'
+  | 'local';
 
 export interface MigrationConfig {
   source_url: string;
