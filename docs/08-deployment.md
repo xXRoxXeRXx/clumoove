@@ -141,7 +141,11 @@ running several migrations concurrently.
 - **Audit log:** accessible to ADMIN via `GET /api/audit/log` (filterable by action/user/target/time).
 - **Health/availability:** if PostgreSQL or Redis is down at startup, both API and worker retry for ~10
   attempts (2s backoff) before failing.
-- **Secrets in logs:** bootstrap admin password is printed once; rotate on first login.
+- **Secrets in logs:** on first boot the API generates a random admin password and prints it **once** to
+  stdout (the process/container logs): `BOOTSTRAP ADMIN created — email=… password=… (rotate on first
+  login)`. The plaintext password is never stored and is not recoverable afterwards — capture it from the
+  startup logs, log in, and change it immediately (`must_change_password=TRUE` forces this). See
+  `07-security.md` §11 for the full bootstrap flow and operator checklist.
 
 ---
 
