@@ -597,6 +597,17 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	}
 }
 
+// useTempThenRename reports whether the processor should use the
+// "upload to <path>.tmp then atomically rename" overwrite pattern for the
+// given target. It is only safe when (a) an overwrite/retry actually requires
+// the temp file and (b) the target provider supports a rename operation.
+// Providers without atomic-rename support (e.g. Google Photos) write the file
+// to its final name during upload, so the temp-file + rename dance must be
+// skipped — otherwise the always-failing RenameFile would abort the upload.
+func useTempThenRename(target storage.StorageProvider, deleteAfterUpload bool) bool {
+	return deleteAfterUpload && target.SupportsAtomicRename()
+}
+
 func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (err error) {
 	// Shadow ctx with a cancelable one
 	ctx, cancel := context.WithCancel(ctx)
@@ -817,8 +828,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	}
 
 	// 4. Download and Upload stream
+	// Providers without atomic-rename support (e.g. Google Photos) write the
+	// file to its final name during upload, so the ".tmp" suffix must never be
+	// applied — otherwise the provider has to strip it itself and the rename
+	// step below is skipped anyway. Centralising this here avoids leaking the
+	// ".tmp" artefact into logs/task bookkeeping for those providers.
 	uploadPath := targetPath
-	if deleteAfterUpload {
+	if useTempThenRename(targetClient, deleteAfterUpload) {
 		uploadPath = targetPath + ".tmp"
 	}
 
@@ -1031,7 +1047,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
 	// If the upload succeeded but rename/metadata fails, the .tmp file must be cleaned up so it
 	// does not leak on the target and is not mistaken for a partial upload on the next retry.
-	if deleteAfterUpload {
+	//
+	// Providers without atomic-rename support (e.g. Google Photos: no rename/delete
+	// operation) write the file to its final name during upload (the processor's
+	// ".tmp" suffix is stripped by the provider itself), so the rename step must be
+	// skipped entirely — attempting it would always fail the upload.
+	if useTempThenRename(targetClient, deleteAfterUpload) {
 		// Attempt to delete original. Ignore not found error if it's already gone.
 		_ = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 		if renameErr := targetClient.RenameFile(ctx, task.ResourceType, uploadPath, targetPath); renameErr != nil {

@@ -498,6 +498,11 @@ func (p *WebDAVProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 	return nil
 }
 
+// SupportsAtomicRename is true: WebDAV MOVE is supported.
+func (p *WebDAVProvider) SupportsAtomicRename() bool {
+	return true
+}
+
 func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()

@@ -616,6 +616,11 @@ func (p *GoogleProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 	return err
 }
 
+// SupportsAtomicRename is true: Google Drive supports file rename.
+func (p *GoogleProvider) SupportsAtomicRename() bool {
+	return true
+}
+
 func (p *GoogleProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
