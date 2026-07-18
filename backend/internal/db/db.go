@@ -12,12 +12,15 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+
+	"backend/internal/storage"
 )
 
 // StringArray is a []string that implements sql.Scanner and driver.Valuer
@@ -787,7 +790,7 @@ func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (str
 // GetActiveTaskPaths returns the file_paths of all tasks currently in RUNNING state
 // for the given migration.
 func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]string, error) {
-	query := `SELECT file_path FROM tasks WHERE migration_id = $1 AND status = 'RUNNING' ORDER BY updated_at DESC`
+	query := `SELECT file_path, metadata FROM tasks WHERE migration_id = $1 AND status = 'RUNNING' ORDER BY updated_at DESC`
 	rows, err := db.QueryContext(ctx, query, migrationID)
 	if err != nil {
 		return nil, err
@@ -797,15 +800,34 @@ func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]
 	var paths []string
 	for rows.Next() {
 		var path string
-		if err := rows.Scan(&path); err != nil {
+		var meta json.RawMessage
+		if err := rows.Scan(&path, &meta); err != nil {
 			return nil, err
 		}
-		paths = append(paths, path)
+		paths = append(paths, displayTaskName(path, meta))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return paths, nil
+}
+
+// displayTaskName returns a user-visible name for a task. Google Photos Picker
+// tasks carry a self-describing transport handle in file_path (a "/picker/<id>
+// ?base_url=…" path); the real media name lives in the task metadata, so we
+// surface that instead of the raw transport path. For all other tasks we fall
+// back to the path basename.
+func displayTaskName(filePath string, meta json.RawMessage) string {
+	if storage.IsPickerPath(filePath) {
+		if handle, ok := storage.PickerHandleFromMetadata(meta); ok && handle.Name != "" {
+			return handle.Name
+		}
+	}
+	base := path.Base(filePath)
+	if base == "." || base == "/" || base == "" {
+		return filePath
+	}
+	return base
 }
 
 // IncrementMigrationProgress increments the counters of a migration in the database
