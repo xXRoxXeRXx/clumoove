@@ -34,10 +34,7 @@ services:
 
   # Go API Gateway & Backend Control (Production Binary)
   api-backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      target: prod
+    image: ghcr.io/xxroxxerxx/clumoove-api:0.10.2
     container_name: migration-api
     restart: always
     ports:
@@ -77,10 +74,7 @@ services:
 
   # Core Migration Engine Worker (Production Binary)
   migration-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-      target: prod
+    image: ghcr.io/xxroxxerxx/clumoove-worker:0.10.2
     container_name: migration-worker-1
     restart: always
     command: ["/app/worker"]
@@ -106,10 +100,7 @@ services:
 
   # Web-Frontend (Production Nginx serving static files)
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      target: prod
+    image: ghcr.io/xxroxxerxx/clumoove-frontend:0.10.2
     container_name: migration-frontend
     restart: always
     ports:
