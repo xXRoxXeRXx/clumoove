@@ -66,6 +66,9 @@ services:
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL}
       - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Clumoove}
       - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-starttls}
+      - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
       - redis-queue
@@ -92,6 +95,9 @@ services:
       - GOOGLE_PHOTOS_CLIENT_SECRET=${GOOGLE_PHOTOS_CLIENT_SECRET}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
+      - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
       - redis-queue
