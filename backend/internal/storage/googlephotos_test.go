@@ -415,9 +415,9 @@ func TestPickerPathRoundTrip(t *testing.T) {
 		t.Fatalf("PickerPath did not produce a /picker/ path: %q", path)
 	}
 
-	mediaID, baseURL, err := parsePickerPath(path)
+	mediaID, baseURL, err := ParsePickerPath(path)
 	if err != nil {
-		t.Fatalf("parsePickerPath error: %v", err)
+		t.Fatalf("ParsePickerPath error: %v", err)
 	}
 	if mediaID != item.ID {
 		t.Errorf("mediaID = %q, want %q", mediaID, item.ID)
@@ -426,8 +426,8 @@ func TestPickerPathRoundTrip(t *testing.T) {
 		t.Errorf("baseURL = %q, want %q", baseURL, item.BaseURL)
 	}
 
-	if got := pickerMimeFromPath(path); got != item.MimeType {
-		t.Errorf("pickerMimeFromPath = %q, want %q", got, item.MimeType)
+	if got := PickerMimeFromPath(path); got != item.MimeType {
+		t.Errorf("PickerMimeFromPath = %q, want %q", got, item.MimeType)
 	}
 
 	// The target name must be a clean basename (no /picker/ prefix, no query).
@@ -451,9 +451,9 @@ func TestPickerPathRoundTripVideo(t *testing.T) {
 		MimeType: "video/mp4",
 	}
 	path := PickerPath(item)
-	mediaID, baseURL, err := parsePickerPath(path)
+	mediaID, baseURL, err := ParsePickerPath(path)
 	if err != nil {
-		t.Fatalf("parsePickerPath error: %v", err)
+		t.Fatalf("ParsePickerPath error: %v", err)
 	}
 	if mediaID != item.ID || baseURL != item.BaseURL {
 		t.Errorf("round-trip mismatch: id=%q url=%q", mediaID, baseURL)
@@ -466,7 +466,7 @@ func TestPickerPathRoundTripVideo(t *testing.T) {
 
 func TestPickerPathInvalid(t *testing.T) {
 	for _, bad := range []string{"", "/notpicker/x", "/picker/id", "/picker/id.jpg"} {
-		if _, _, err := parsePickerPath(bad); err == nil {
+		if _, _, err := ParsePickerPath(bad); err == nil {
 			t.Errorf("expected error for %q, got nil", bad)
 		}
 	}
