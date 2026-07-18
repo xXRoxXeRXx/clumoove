@@ -351,11 +351,15 @@ func TestGooglePhotosBatchCreateUsesFileName(t *testing.T) {
 }
 
 func TestGooglePhotosStreamDownloadVideoSuffix(t *testing.T) {
-	if got := downloadSuffix("video/mp4"); got != "=dv" {
-		t.Errorf("downloadSuffix(video/mp4) = %q, want =dv", got)
+	if got := downloadSuffix("video/mp4", 0, 0); got != "=dv" {
+		t.Errorf("downloadSuffix(video/mp4,0,0) = %q, want =dv", got)
 	}
-	if got := downloadSuffix("image/jpeg"); got != "=d" {
-		t.Errorf("downloadSuffix(image/jpeg) = %q, want =d", got)
+	if got := downloadSuffix("image/jpeg", 0, 0); got != "=d" {
+		t.Errorf("downloadSuffix(image/jpeg,0,0) = %q, want =d", got)
+	}
+	// With dimensions, images must request the full original pixel resolution.
+	if got := downloadSuffix("image/jpeg", 4032, 3024); got != "=w4032-h3024" {
+		t.Errorf("downloadSuffix(image/jpeg,4032,3024) = %q, want =w4032-h3024", got)
 	}
 }
 
@@ -382,6 +386,57 @@ func TestGooglePhotosStreamDownloadSuffixApplied(t *testing.T) {
 			}
 			w.Header().Set("Content-Length", "12345")
 			w.Write([]byte("videodata-bytes"))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer vs.Close()
+	serverURL = vs.URL
+
+	p2 := &GooglePhotosProvider{
+		AccessToken:    "test-token",
+		HTTPClient:     vs.Client(),
+		BaseURL:        vs.URL,
+		albumTitleToID: make(map[string]string),
+		albumIDToTitle: make(map[string]string),
+	}
+	rc, err := p2.StreamDownload(context.Background(), "files", "/album1/media1")
+	if err != nil {
+		t.Fatalf("StreamDownload error: %v", err)
+	}
+	defer rc.Close()
+}
+
+func TestGooglePhotosStreamDownloadImageMaxResolution(t *testing.T) {
+	var serverURL string
+	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/mediaItems/"):
+			if r.Method == http.MethodHead {
+				w.Header().Set("Content-Length", "12345")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			json.NewEncoder(w).Encode(googlePhotosMediaItem{
+				ID:       "media1",
+				Filename: "photo.jpg",
+				MimeType: "image/jpeg",
+				BaseURL:  serverURL + "/base/media1",
+				MediaMetadata: struct {
+					CreationTime string                 `json:"creationTime"`
+					Width        string                 `json:"width"`
+					Height       string                 `json:"height"`
+					Photo        map[string]interface{} `json:"photo"`
+					Video        map[string]interface{} `json:"video"`
+				}{Width: "4032", Height: "3024"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/base/media1"):
+			if !strings.HasSuffix(r.URL.String(), "=w4032-h3024") {
+				t.Errorf("image download must request full original resolution, got %q", r.URL.String())
+			}
+			w.Header().Set("Content-Length", "12345")
+			w.Write([]byte("imagedata-bytes"))
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
