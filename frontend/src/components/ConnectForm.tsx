@@ -13,12 +13,11 @@ interface ConnectFormProps {
   token: string;
   localStorageEnabled?: boolean;
   oauthProviders?: Record<string, boolean>;
-  googlePhotosPickerDeveloperKey?: string;
 }
 
 type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'local';
 
-export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {}, googlePhotosPickerDeveloperKey = '' }) => {
+export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {} }) => {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
   const [sourcePass, setSourcePass] = useState('');
@@ -36,6 +35,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
 
   const [sourcePickerSessionId, setSourcePickerSessionId] = useState('');
+  const [sourcePickerUri, setSourcePickerUri] = useState('');
+  const [sourcePickerPollInterval, setSourcePickerPollInterval] = useState('');
+  const [sourcePickerTimeoutIn, setSourcePickerTimeoutIn] = useState('');
   const [sourcePickerReady, setSourcePickerReady] = useState(false);
   const [sourcePickerError, setSourcePickerError] = useState<string | null>(null);
   const [sourcePickerLoading, setSourcePickerLoading] = useState(false);
@@ -149,6 +151,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     setSourcePickerLoading(true);
     setSourcePickerError(null);
     setSourcePickerSessionId('');
+    setSourcePickerUri('');
+    setSourcePickerPollInterval('');
     setSourcePickerReady(false);
     try {
       const response = await fetch(`${apiUrl}/api/googlephotos/picker/session`, {
@@ -163,9 +167,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           refresh_token: sourceRefreshToken,
         }),
       });
-      const data = await response.json().catch(() => ({} as { success?: boolean; session_id?: string; error_code?: string }));
-      if (data.success && data.session_id) {
+      const data = await response.json().catch(() => ({} as { success?: boolean; session_id?: string; picker_uri?: string; poll_interval?: string; timeout_in?: string; error_code?: string }));
+      if (data.success && data.session_id && data.picker_uri) {
         setSourcePickerSessionId(data.session_id);
+        setSourcePickerUri(data.picker_uri);
+        setSourcePickerPollInterval(data.poll_interval || '');
+        setSourcePickerTimeoutIn(data.timeout_in || '');
       } else {
         setSourcePickerError(translateApiError(data.error_code));
         setSourcePickerReady(true); // allow start even without a working picker UI
@@ -855,13 +862,28 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       {sourcePickerLoading && (
                         <p className="text-xs font-sans text-[var(--color-text-muted)]">{t('connect.googlePhotosPickerLoading')}</p>
                       )}
-                      {sourcePickerSessionId ? (
+                      {sourcePickerSessionId && sourcePickerUri ? (
                         <GooglePhotosPicker
+                          key={sourcePickerSessionId}
+                          apiUrl={apiUrl}
+                          token={token}
                           oauthToken={sourcePass}
+                          refreshToken={sourceRefreshToken}
                           sessionId={sourcePickerSessionId}
-                          developerKey={googlePhotosPickerDeveloperKey}
+                          pickerUri={sourcePickerUri}
+                          pollInterval={sourcePickerPollInterval}
+                          timeoutIn={sourcePickerTimeoutIn}
                           onSelectionComplete={() => setSourcePickerReady(true)}
-                          onError={(msg) => { setSourcePickerError(msg); setSourcePickerReady(true); }}
+                          onError={(msg) => {
+                            // A poll error means no valid selection was confirmed.
+                            // Clear the session id so the start guard
+                            // (connect.errors.googlePhotosPickerRequired) blocks
+                            // the migration instead of allowing an expired/empty
+                            // selection through. The error is shown inline.
+                            setSourcePickerError(msg);
+                            setSourcePickerReady(false);
+                            setSourcePickerSessionId('');
+                          }}
                         />
                       ) : !sourcePickerLoading && sourcePickerError ? (
                         <div className="flex items-start gap-2 text-rose-700">
