@@ -195,13 +195,11 @@ func (p *GooglePhotosProvider) CreatePickerSession(ctx context.Context) (string,
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	body, err := json.Marshal(map[string]interface{}{
-		"mediaTypes": []string{"ALL_MEDIA"},
-	})
-	if err != nil {
-		return "", err
-	}
-	req, err := p.newRequest(ctx, "POST", p.pickerSessionURL("/sessions"), bytes.NewReader(body))
+	// The Picker API's POST /v1/sessions expects an EMPTY request body. Sending
+	// any fields (e.g. "mediaTypes") yields HTTP 400 "Unknown name ... Cannot
+	// find field". The media type filter is configured in the Picker widget
+	// itself, not in the session creation call.
+	req, err := p.newRequest(ctx, "POST", p.pickerSessionURL("/sessions"), http.NoBody)
 	if err != nil {
 		return "", err
 	}
