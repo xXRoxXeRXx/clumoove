@@ -376,6 +376,7 @@ func main() {
 	mux.Handle("POST /api/migration/start", jwtMiddleware(http.HandlerFunc(server.handleStart)))
 	mux.Handle("POST /api/googlephotos/picker/session", jwtMiddleware(http.HandlerFunc(server.handleGooglePhotosPickerSession)))
 	mux.Handle("POST /api/googlephotos/picker/poll", jwtMiddleware(http.HandlerFunc(server.handleGooglePhotosPickerPoll)))
+	mux.Handle("POST /api/googlephotos/picker/media", jwtMiddleware(http.HandlerFunc(server.handleGooglePhotosPickerMedia)))
 	mux.Handle("GET /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetStatus)))
 	mux.Handle("POST /api/migration/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePause)))
 	mux.Handle("POST /api/migration/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResume)))
@@ -1116,12 +1117,48 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Also render the source folder structure (defaults to root /).
-	// For a Google Photos Picker source the user selects individual media in the
-	// Picker UI, so there is no folder tree to render here; skip it and return an
-	// empty file list (the real items are enumerated at index time).
+	// For a Google Photos Picker source the user selected individual media in
+	// the Picker UI; enumerate exactly those items here so the file-selection
+	// screen can show (and pre-select) them before the migration starts.
 	var files []storage.CloudResource
-	if req.SourceProvider == "googlephotos" && req.SourcePickerSessionID != "" {
-		files = []storage.CloudResource{}
+	if req.SourceProvider == "googlephotos" {
+		if req.SourcePickerSessionID != "" {
+			if gp, ok := sourceClient.(*storage.GooglePhotosProvider); ok {
+				gp.SetPickerSession(req.SourcePickerSessionID)
+				items, lerr := gp.GetPickerMediaItems(r.Context(), req.SourcePickerSessionID)
+				if lerr != nil {
+					// Try a single token refresh on expiry, mirroring the picker
+					// media/session/poll handlers, so a stale access token picked
+					// up on a lingering connect screen does not abort the connect.
+					if (errors.Is(lerr, storage.ErrAuth) || errors.Is(lerr, storage.ErrPickerSessionExpired)) && req.SourceRefreshToken != "" {
+						refreshed, rerr := refreshGooglePhotosClient(r.Context(), req.SourceRefreshToken)
+						if rerr == nil {
+							gp = refreshed
+							defer gp.Close()
+							gp.SetPickerSession(req.SourcePickerSessionID)
+							items, lerr = gp.GetPickerMediaItems(r.Context(), req.SourcePickerSessionID)
+						}
+					}
+					if lerr != nil {
+						log.Printf("handleConnect: failed to list google photos picker items (session %s): %v", req.SourcePickerSessionID, lerr)
+						writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
+						return
+					}
+				}
+				for _, item := range items {
+					files = append(files, storage.CloudResource{
+						Path:   storage.PickerPath(item),
+						Name:   item.Name,
+						Size:   item.Size,
+						IsDir:  false,
+						Hash:   "",
+						LastModified: time.Time{},
+					})
+				}
+			}
+		}
+		// Without a Picker session there is no folder tree to render; return an
+		// empty list (media is selected later on the file-selection screen).
 	} else {
 		reqPath := req.Path
 		if reqPath == "" {
@@ -1337,6 +1374,96 @@ func (s *APIServer) handleGooglePhotosPickerPoll(w http.ResponseWriter, r *http.
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// GooglePhotosPickerMediaRequest is the body of POST /api/googlephotos/picker/media.
+// It carries the confirmed Picker session id and the OAuth tokens. The frontend
+// calls this once the user has finished selecting media in the Picker UI (after
+// the poll reports media_items_set), to fetch the concrete list of chosen items
+// for display in the file-selection screen.
+type GooglePhotosPickerMediaRequest struct {
+	Provider     string `json:"provider"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	SessionID    string `json:"session_id"`
+}
+
+// handleGooglePhotosPickerMedia enumerates the media items the user selected in a
+// Google Photos Picker session and returns them as CloudResources (path =
+// PickerPath transport handle, name, size, is_dir=false). These are shown in the
+// file-selection screen so the user can review and (de)select before starting.
+func (s *APIServer) handleGooglePhotosPickerMedia(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+
+	var req GooglePhotosPickerMediaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+	if req.Provider != "googlephotos" || req.AccessToken == "" || req.SessionID == "" {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	client, err := storage.NewGooglePhotosProvider(context.Background(), req.AccessToken)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
+		return
+	}
+	defer client.Close()
+
+	mediaCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	client.SetPickerSession(req.SessionID)
+	items, err := client.GetPickerMediaItems(mediaCtx, req.SessionID)
+	if err != nil {
+		// Try one token refresh on expiry, mirroring session creation/poll.
+		if (errors.Is(err, storage.ErrAuth) || errors.Is(err, storage.ErrPickerSessionExpired)) && req.RefreshToken != "" {
+			refreshed, rerr := refreshGooglePhotosClient(mediaCtx, req.RefreshToken)
+			if rerr == nil {
+				client = refreshed
+				defer client.Close()
+				client.SetPickerSession(req.SessionID)
+				items, err = client.GetPickerMediaItems(mediaCtx, req.SessionID)
+			}
+		}
+		if err != nil {
+			if errors.Is(err, storage.ErrPickerSessionExpired) {
+				writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
+				return
+			}
+			log.Printf("handleGooglePhotosPickerMedia: failed to list items (user=%s, session=%s): %v", userID, req.SessionID, err)
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
+			return
+		}
+	}
+
+	files := make([]storage.CloudResource, 0, len(items))
+	for _, item := range items {
+		files = append(files, storage.CloudResource{
+			Path:         storage.PickerPath(item),
+			Name:         item.Name,
+			Size:         item.Size,
+			IsDir:        false,
+			Hash:         "",
+			LastModified: time.Time{},
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"files":   files,
+	})
+}
+
 type StartRequest struct {
 	ConnectRequest
 	ConflictStrategy   string   `json:"conflict_strategy"`
