@@ -112,7 +112,16 @@ func (p *GooglePhotosProvider) errorFromResponse(resp *http.Response) error {
 	return fmt.Errorf("google photos api error with status: %d", resp.StatusCode)
 }
 
-// Connect probes Photos Library access by listing albums and media items.
+// Connect probes Photos Library access.
+//
+// We only test `albums.list` here. The provider is configured with the narrow
+// `photoslibrary.readonly.appcreateddata` scope (the only read scope that
+// remains after Google removed `photoslibrary.readonly` on 2025-04-01). That
+// scope authorises `albums.list` and `mediaItems:search` (used by
+// listAlbumMedia), but NOT the account-wide `mediaItems.list` endpoint — a
+// probe against `mediaItems.list` returns HTTP 403 "insufficient authentication
+// scopes" and would make every Google Photos connect fail. Listing albums is the
+// minimal, scope-conformant connectivity check.
 func (p *GooglePhotosProvider) Connect(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -131,22 +140,6 @@ func (p *GooglePhotosProvider) Connect(ctx context.Context) (bool, error) {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, fmt.Errorf("google photos connect: %w", p.errorFromResponse(resp))
-	}
-
-	req2, err := p.newRequest(ctx, "GET", p.apiURL("/mediaItems?pageSize=1"), nil)
-	if err != nil {
-		return false, err
-	}
-	resp2, err := p.HTTPClient.Do(req2)
-	if err != nil {
-		return false, err
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode == http.StatusUnauthorized {
-		return false, fmt.Errorf("google photos connect: %w", ErrAuth)
-	}
-	if resp2.StatusCode < 200 || resp2.StatusCode >= 300 {
-		return false, fmt.Errorf("google photos connect: %w", p.errorFromResponse(resp2))
 	}
 
 	return true, nil
