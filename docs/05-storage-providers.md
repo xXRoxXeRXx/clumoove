@@ -96,8 +96,8 @@ provider is `magentacloud` (the frontend sends an empty URL).
 
 ## 3.1. Google Photos (`googlephotos`)
 
-`googlephotos` is a **separate provider** from `google` (it uses its own OAuth client with the
-`photoslibrary` scope). Albums are mapped to directories (`IsDir = true`) and media items to files
+`googlephotos` is a **separate provider** from `google` (it uses its own OAuth client with the narrow
+`photoslibrary.readonly.appcreateddata` + `photoslibrary.appendonly` scopes). Albums are mapped to directories (`IsDir = true`) and media items to files
 (`resourceType = "files"`); no new `resourceType` values are introduced, so the existing `files`
 pipeline (indexer, transfer, integrity) runs unchanged.
 
@@ -106,9 +106,15 @@ pipeline (indexer, transfer, integrity) runs unchanged.
 - **Listing:**
   - `/` → all albums as `is_dir=true` entries (`Path = /<albumId>`).
   - `/<albumId>` → media items via `mediaItems:search`; each becomes `Path = /<albumId>/<mediaId>`.
-- **Download:** re-fetches a fresh `baseUrl` (short-lived, ~1h) and appends `=d` for original bytes.
-- **Upload:** `mediaItems:upload` (multipart/related bytes → `uploadToken`), then
-  `mediaItems:batchCreate` into the album resolved from the path's first segment. The album is
+- **Download:** re-fetches a fresh `baseUrl` (short-lived, ~1h) and appends the download suffix for
+  original bytes — `=d` for images, `=dv` for `video/*` (videos require `=dv` or the API returns an
+  error/scaled thumbnail). The suffix is chosen by the item's `mimeType`.
+- **Upload:** raw binary bytes go to `POST /v1/uploads` with `Content-Type: application/octet-stream`,
+  `X-Goog-Upload-Protocol: raw`, and `X-Goog-Upload-Content-Type: <mime>`; the response body is the
+  **upload token as plain text** (not JSON). It is then referenced in
+  `mediaItems:batchCreate` into the album resolved from the path's first segment. The `albumId` +
+  `newMediaItems[].simpleMediaItem` payload carries **both** `uploadToken` AND `fileName`; `description`
+  is left empty (the API prohibits storing programmatic/auto-generated text there). The album is
   created on demand and **deduplicated** via an in-memory `title ↔ ID` cache so repeated uploads
   into the same album reuse it instead of creating duplicates (the Photos API does **not** dedupe
   albums by title). A Photos→Photos upload whose path carries the source album **id** is mapped onto

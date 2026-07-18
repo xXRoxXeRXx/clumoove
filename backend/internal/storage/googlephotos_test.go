@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,9 +19,18 @@ type mockGooglePhotos struct {
 	server  *httptest.Server
 	uploads []string
 
-	mu          sync.Mutex
-	createdAlbs map[string]string // title -> id, to mimic persistent albums
-	albumSeq    int
+	mu           sync.Mutex
+	createdAlbs  map[string]string // title -> id, to mimic persistent albums
+	albumSeq     int
+	lastUpload   lastUploadInfo    // records the most recent upload request metadata
+	batchPayload string            // raw body of the most recent batchCreate
+}
+
+type lastUploadInfo struct {
+	protocol     string
+	mime         string
+	contentType  string
+	body         string
 }
 
 func newMockGooglePhotos(t *testing.T) *mockGooglePhotos {
@@ -72,15 +82,29 @@ func newMockGooglePhotos(t *testing.T) *mockGooglePhotos {
 					},
 				},
 			})
-		case strings.HasSuffix(r.URL.Path, "/mediaItems:upload"):
+		case r.URL.Path == "/uploads":
+			// Raw-binary upload endpoint: the upload token is returned as
+			// plain text (NOT JSON). Record the protocol/headers/body.
 			m.mu.Lock()
 			m.uploads = append(m.uploads, "uploaded")
+			bodyBytes, _ := io.ReadAll(r.Body)
+			m.lastUpload = lastUploadInfo{
+				protocol:    r.Header.Get("X-Goog-Upload-Protocol"),
+				mime:        r.Header.Get("X-Goog-Upload-Content-Type"),
+				contentType: r.Header.Get("Content-Type"),
+				body:        string(bodyBytes),
+			}
 			m.mu.Unlock()
-			json.NewEncoder(w).Encode(map[string]string{"uploadToken": "tok123"})
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("tok123"))
 		case strings.HasSuffix(r.URL.Path, "/mediaItems:batchCreate"):
+			raw, _ := io.ReadAll(r.Body)
+			m.mu.Lock()
+			m.batchPayload = string(raw)
+			m.mu.Unlock()
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"newMediaItemResults": []map[string]interface{}{
-					{"status": map[string]interface{}{"message": "OK"}},
+					{"status": map[string]interface{}{"message": "OK", "code": 0}},
 				},
 			})
 		case r.URL.Path == "/mediaItems":
@@ -266,4 +290,115 @@ func TestGooglePhotosNotSupported(t *testing.T) {
 	if h, err := p.GetFileHash(context.Background(), "files", "/a/b"); err != nil || h != "" {
 		t.Errorf("GetFileHash should return empty with no error, got %q %v", h, err)
 	}
+}
+
+func TestGooglePhotosUploadUsesRawBinaryEndpoint(t *testing.T) {
+	p, m := newTestGooglePhotos(t)
+	err := p.StreamUploadChunked(context.Background(), "files", "/MyAlbum/photo.jpg", strings.NewReader("binarydata"), 10, nil)
+	if err != nil {
+		t.Fatalf("StreamUploadChunked error: %v", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.uploads) != 1 {
+		t.Fatalf("expected 1 upload, got %d", len(m.uploads))
+	}
+	if m.lastUpload.protocol != "raw" {
+		t.Errorf("expected X-Goog-Upload-Protocol: raw, got %q", m.lastUpload.protocol)
+	}
+	if m.lastUpload.contentType != "application/octet-stream" {
+		t.Errorf("expected Content-Type application/octet-stream, got %q", m.lastUpload.contentType)
+	}
+	if m.lastUpload.mime != "image/jpeg" {
+		t.Errorf("expected X-Goog-Upload-Content-Type image/jpeg, got %q", m.lastUpload.mime)
+	}
+	if m.lastUpload.body != "binarydata" {
+		t.Errorf("expected raw binary body 'binarydata', got %q", m.lastUpload.body)
+	}
+}
+
+func TestGooglePhotosBatchCreateUsesFileName(t *testing.T) {
+	p, m := newTestGooglePhotos(t)
+	err := p.StreamUploadChunked(context.Background(), "files", "/MyAlbum/photo.jpg", strings.NewReader("binarydata"), 10, nil)
+	if err != nil {
+		t.Fatalf("StreamUploadChunked error: %v", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var payload struct {
+		NewMediaItems []struct {
+			Description     string `json:"description"`
+			SimpleMediaItem struct {
+				UploadToken string `json:"uploadToken"`
+				FileName    string `json:"fileName"`
+			} `json:"simpleMediaItem"`
+		} `json:"newMediaItems"`
+	}
+	if err := json.Unmarshal([]byte(m.batchPayload), &payload); err != nil {
+		t.Fatalf("failed to decode batchCreate payload: %v", err)
+	}
+	if len(payload.NewMediaItems) != 1 {
+		t.Fatalf("expected 1 new media item, got %d", len(payload.NewMediaItems))
+	}
+	item := payload.NewMediaItems[0]
+	if item.SimpleMediaItem.FileName != "photo.jpg" {
+		t.Errorf("expected simpleMediaItem.fileName 'photo.jpg', got %q", item.SimpleMediaItem.FileName)
+	}
+	if item.Description != "" {
+		t.Errorf("description must not carry the filename, got %q", item.Description)
+	}
+}
+
+func TestGooglePhotosStreamDownloadVideoSuffix(t *testing.T) {
+	if got := downloadSuffix("video/mp4"); got != "=dv" {
+		t.Errorf("downloadSuffix(video/mp4) = %q, want =dv", got)
+	}
+	if got := downloadSuffix("image/jpeg"); got != "=d" {
+		t.Errorf("downloadSuffix(image/jpeg) = %q, want =d", got)
+	}
+}
+
+func TestGooglePhotosStreamDownloadSuffixApplied(t *testing.T) {
+	var serverURL string
+	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/mediaItems/"):
+			if r.Method == http.MethodHead {
+				w.Header().Set("Content-Length", "12345")
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			json.NewEncoder(w).Encode(googlePhotosMediaItem{
+				ID:       "media1",
+				Filename: "clip.mp4",
+				MimeType: "video/mp4",
+				BaseURL:  serverURL + "/base/media1",
+			})
+		case strings.HasPrefix(r.URL.Path, "/base/media1"):
+			if !strings.HasSuffix(r.URL.String(), "=dv") {
+				t.Errorf("video download must use =dv suffix, got %q", r.URL.String())
+			}
+			w.Header().Set("Content-Length", "12345")
+			w.Write([]byte("videodata-bytes"))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer vs.Close()
+	serverURL = vs.URL
+
+	p2 := &GooglePhotosProvider{
+		AccessToken:    "test-token",
+		HTTPClient:     vs.Client(),
+		BaseURL:        vs.URL,
+		albumTitleToID: make(map[string]string),
+		albumIDToTitle: make(map[string]string),
+	}
+	rc, err := p2.StreamDownload(context.Background(), "files", "/album1/media1")
+	if err != nil {
+		t.Fatalf("StreamDownload error: %v", err)
+	}
+	defer rc.Close()
 }
