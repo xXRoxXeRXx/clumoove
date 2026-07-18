@@ -616,7 +616,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             {file.name}
           </span>
           
-          {!file.is_dir && !(isGooglePhotosSource && file.size === 0) && (
+          {!file.is_dir && !(isGooglePhotosSource && (!file.size || file.size === 0)) && (
             <span className="text-[10px] font-bold text-[var(--color-text-muted)] border border-portal-border px-2 py-0.5 bg-[var(--color-bg-tertiary)] rounded">
               {formatBytes(file.size)}
             </span>
