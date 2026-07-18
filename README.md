@@ -43,7 +43,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 | **Generic WebDAV** | WebDAV | User / password | Files |
 | **Dropbox** | Dropbox API v2 | OAuth2 | Files |
 | **Google Drive** | Google Drive API v3 | OAuth2 | Files, calendars, contacts |
-| **Google Photos** | Google Photos Library API | OAuth2 (separate `photoslibrary` client) | Files (albums = folders, media = files) |
+| **Google Photos** | Google Photos Library API | OAuth2 (separate client, `photoslibrary.readonly.appcreateddata` + `photoslibrary.appendonly` scopes) | Files (albums = folders, media = files) |
 | **S3-compatible** | S3 (Wasabi, MinIO, B2…) | Access / secret key | Files |
 | **SMB / CIFS** | SMB2/SMB3 | User / password | Files |
 | **SFTP** | SSH SFTP | User / password (or key) | Files |
@@ -117,7 +117,7 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | `REDIS_PASSWORD` | Redis password. **Required** — no default; the server refuses to start with an empty/known value. |
 | `DATABASE_URL` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials (Drive/Calendar/Contacts). |
-| `GOOGLE_PHOTOS_CLIENT_ID` / `GOOGLE_PHOTOS_CLIENT_SECRET` | Google **Photos** OAuth2 credentials (distinct client, `photoslibrary` scope). |
+| `GOOGLE_PHOTOS_CLIENT_ID` / `GOOGLE_PHOTOS_CLIENT_SECRET` | Google **Photos** OAuth2 credentials (distinct client, scopes `photoslibrary.readonly.appcreateddata` + `photoslibrary.appendonly`). |
 | `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. |
 | `MAX_THREADS` | Global max parallelism per worker process (default `16`). |
 
