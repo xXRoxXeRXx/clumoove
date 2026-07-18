@@ -381,6 +381,11 @@ func (p *LocalProvider) RenameFile(ctx context.Context, resourceType, oldPath, n
 	return os.Rename(oldResolved, newResolved)
 }
 
+// SupportsAtomicRename is true: the local provider can rename files.
+func (p *LocalProvider) SupportsAtomicRename() bool {
+	return true
+}
+
 func (p *LocalProvider) hashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

@@ -35,6 +35,12 @@ type MetadataApplier interface {
 	ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error
 }
 
+// StorageProvider is the contract every storage backend must satisfy. It is a
+// required (non-optional) interface: adding or removing a method changes the
+// signature for ALL implementers at once, so any new provider — and any test
+// mock — must implement every method, including SupportsAtomicRename. Forgetting
+// a method fails the build with "does not implement storage.StorageProvider
+// (missing method <Name>)"; there is no default implementation.
 type StorageProvider interface {
 	// Close releases any idle connections held by the provider's HTTP client.
 	// It must be called when the provider is no longer needed.
@@ -51,4 +57,11 @@ type StorageProvider interface {
 	CreateParentDirectories(ctx context.Context, resourceType, filePath string) error
 	CreateDirectory(ctx context.Context, resourceType, dirPath string) error
 	RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error
+	// SupportsAtomicRename reports whether the provider honours the
+	// processor's "upload to <path>.tmp then atomically rename" overwrite
+	// pattern. Providers that cannot rename (e.g. Google Photos, which has no
+	// rename/delete operation and writes the media item to its final album+name
+	// during upload) must return false. The processor then skips the delete+rename
+	// step and relies on the provider having already written to the final name.
+	SupportsAtomicRename() bool
 }

@@ -23,8 +23,22 @@ type StorageProvider interface {
     CreateParentDirectories(ctx, resourceType, filePath) error
     CreateDirectory(ctx, resourceType, dirPath) error
     RenameFile(ctx, resourceType, oldPath, newPath) error
+    SupportsAtomicRename() bool
 }
 ```
+
+> **Interface contract — required method.** `SupportsAtomicRename()` is a **mandatory** part of the
+> interface. Every concrete provider **must** implement it, or the package will fail to compile with
+> `does not implement storage.StorageProvider (missing method SupportsAtomicRename)`. There is no
+> default; the compiler enforces it for *all* implementers, including test mocks. When adding a new
+> provider, add this method alongside the others.
+>
+> - Return `true` for providers that support an atomic "upload to `<path>.tmp` then rename to `<path>`"
+>   overwrite pattern (all standard file providers: Nextcloud/WebDAV, S3, SMB, SFTP, Dropbox, Google
+>   Drive, Local).
+> - Return `false` for providers that **cannot** rename or delete (e.g. `googlephotos`: the Google
+>   Photos Library API has no rename/delete operation and writes the media item to its final
+>   album + filename during upload). The processor then skips the temp-file + rename step entirely.
 
 Optional capability interface:
 
@@ -122,12 +136,16 @@ pipeline (indexer, transfer, integrity) runs unchanged.
   named after the id.
 - **No rename / delete / folder semantics:** `DeleteFile` and `RenameFile` return "not supported".
   `CreateDirectory`/`CreateParentDirectories` create the (target) album.
+- **`SupportsAtomicRename()` returns `false`** for `googlephotos`. Because Photos has no rename/delete
+  operation, the media item is written to its final album + filename **during upload**. The processor
+  therefore skips the "upload to `.tmp` then rename" overwrite pattern for this provider — otherwise the
+  always-failing `RenameFile` would abort every `OVERWRITE`/retry upload to a Photos target.
 - **Integrity:** Photos exposes **no content hash**; `GetFileHash` returns empty and the processor
   falls back to size comparison. `InspectResource` populates `Size` via a `HEAD` on `baseUrl`
   (`Content-Length`) so the size fallback is meaningful instead of always `0`.
-- **`.tmp` suffix:** the processor's atomic-rename pattern appends `.tmp` to the upload path; the
-  provider strips it from both the album segment and the filename, because Photos has no rename
-  operation (otherwise the media would be left with a `.tmp` name / orphaned).
+- **`.tmp` suffix:** even though the processor no longer appends `.tmp` for this provider (see above),
+  the provider still strips a `.tmp` suffix defensively from both the album segment and the filename,
+  because Photos has no rename operation (otherwise the media would be left with a `.tmp` name / orphaned).
 
 ---
 
@@ -170,9 +188,14 @@ computes a second (target) hasher when algorithms differ (CPU optimization).
 
 1. Create `backend/internal/storage/<name>.go` implementing `StorageProvider` (and `MetadataApplier` if
    applicable).
-2. Add the provider value to the whitelist in `api/main.go` (`validProviders` map) **and** the frontend
+2. **Implement `SupportsAtomicRename() bool`.** This is a required interface method (no default). Forgetting
+   it produces a compile error `does not implement storage.StorageProvider (missing method
+   SupportsAtomicRename)` for *every* implementer, including test mocks — so add it together with the other
+   methods. Return `true` when the provider supports an atomic "upload to `<path>.tmp` then rename"
+   overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Google Photos).
+3. Add the provider value to the whitelist in `api/main.go` (`validProviders` map) **and** the frontend
    provider selector.
-3. Register it in `NewProvider` (`factory.go`), including any SSRF egress validation for
+4. Register it in `NewProvider` (`factory.go`), including any SSRF egress validation for
    user-supplied hosts.
-4. If it is an OAuth provider, wire token refresh in `internal/oauth` and the rotation daemon.
-5. Update [Storage Providers](./05-storage-providers.md) and the README provider table.
+5. If it is an OAuth provider, wire token refresh in `internal/oauth` and the rotation daemon.
+6. Update [Storage Providers](./05-storage-providers.md) and the README provider table.

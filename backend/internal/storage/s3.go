@@ -542,6 +542,11 @@ func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newP
 	return nil
 }
 
+// SupportsAtomicRename is true: S3 copy+delete rename is supported.
+func (p *S3Provider) SupportsAtomicRename() bool {
+	return true
+}
+
 func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, size int64) error {
 	createResp, err := p.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(p.bucket),

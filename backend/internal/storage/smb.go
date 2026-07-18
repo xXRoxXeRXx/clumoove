@@ -413,6 +413,11 @@ func (p *SMBProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 	return nil
 }
 
+// SupportsAtomicRename is true: SMB rename is supported.
+func (p *SMBProvider) SupportsAtomicRename() bool {
+	return true
+}
+
 func (p *SMBProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	return "", fmt.Errorf("checksum not available")
 }

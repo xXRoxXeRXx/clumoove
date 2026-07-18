@@ -904,3 +904,12 @@ func (p *GooglePhotosProvider) CreateDirectory(ctx context.Context, resourceType
 func (p *GooglePhotosProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	return fmt.Errorf("rename is not supported by googlephotos")
 }
+
+// SupportsAtomicRename is false: Google Photos has no rename or delete
+// operation. The media item is written directly to its final album + filename
+// during StreamUpload(Chunked) (the processor's ".tmp" suffix is stripped
+// there), so the processor must NOT attempt the upload-to-.tmp-then-rename
+// pattern — doing so would always fail. See processor.go deleteAfterUpload.
+func (p *GooglePhotosProvider) SupportsAtomicRename() bool {
+	return false
+}

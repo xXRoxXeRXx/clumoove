@@ -416,6 +416,11 @@ func (p *SFTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 	return nil
 }
 
+// SupportsAtomicRename is true: SFTP rename is supported.
+func (p *SFTPProvider) SupportsAtomicRename() bool {
+	return true
+}
+
 func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	if resourceType != "files" {
 		return "", fmt.Errorf("resource type %s not supported by SFTP", resourceType)

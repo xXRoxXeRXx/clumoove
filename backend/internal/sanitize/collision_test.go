@@ -43,6 +43,9 @@ func (m *mockProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 func (m *mockProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	return fmt.Errorf("not implemented")
 }
+func (m *mockProvider) SupportsAtomicRename() bool {
+	return true
+}
 
 func (m *mockProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error) {
 	if files, ok := m.files[dirPath]; ok {
