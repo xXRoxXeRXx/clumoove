@@ -107,7 +107,12 @@
     "googleAccount": "Google Account",
     "dropboxAccount": "Dropbox Account",
     "googlePhotosAccount": "Google Photos Account",
-    "googlePhotosInfo": "Connects to Google Photos (Library API). Grants read/write access to your photo library and albums. A dedicated OAuth client with the photoslibrary.readonly.appcreateddata + photoslibrary.appendonly scopes is recommended.",
+    "googlePhotosInfo": "Connects to Google Photos via the Picker API. You select the exact photos and videos to migrate in the embedded picker below — Google no longer permits reading the whole library automatically. A dedicated OAuth client with the photospicker.mediaitems.readonly + photoslibrary.appendonly scopes is required. As a target, uploads use the Library API.",
+    "googlePhotosPickerTitle": "Select photos & videos from Google Photos",
+    "googlePhotosPickerLoading": "Loading Google Photos picker…",
+    "googlePhotosPickerDone": "Selection confirmed.",
+    "googlePhotosPickerConfirmed": "Your Google Photos selection is ready for migration.",
+    "googlePhotosPickerLoadFailed": "The Google Photos picker could not be loaded. You can still start the migration; the selected items will be read at transfer time.",
     "submit": "Check connection",
     "sshKeyPem": "Security key (Key file)",
     "testing": "Checking connection...",
@@ -135,7 +140,9 @@
       "connectionFailed": "The connection could not be established.",
       "verifyFailed": "Connection failed. Please check your credentials.",
       "networkError": "A network error occurred. Please check your internet connection.",
-      "oauthError": "Sign-in error: {{error}}"
+      "oauthError": "Sign-in error: {{error}}",
+      "googlePhotosPickerRequired": "Please connect Google Photos and select media in the picker before continuing.",
+      "googlePhotosPickerPending": "Please confirm your Google Photos selection in the picker before continuing."
     }
   },
   "fileBrowser": {
@@ -486,6 +493,7 @@
     "WS_TOKEN_MISSING": "Security code is missing.",
     "WS_TOKEN_INVALID": "The security code is invalid or has expired.",
     "INTERNAL_ERROR": "An internal server error occurred. Please try again later.",
+    "GOOGLE_PHOTOS_PICKER_SESSION_FAILED": "Could not start the Google Photos picker session. Please reconnect Google Photos and try again.",
     "USER_DISABLED": "This account has been suspended. Please contact an administrator.",
     "USER_NOT_FOUND": "The requested user was not found.",
     "CANNOT_MODIFY_SELF": "You cannot perform this action on your own account.",

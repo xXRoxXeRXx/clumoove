@@ -374,6 +374,7 @@ func main() {
 	mux.Handle("POST /api/migration/target/browse", jwtMiddleware(http.HandlerFunc(server.handleTargetBrowse)))
 	mux.Handle("POST /api/migration/target/mkdir", jwtMiddleware(http.HandlerFunc(server.handleTargetMkdir)))
 	mux.Handle("POST /api/migration/start", jwtMiddleware(http.HandlerFunc(server.handleStart)))
+	mux.Handle("POST /api/googlephotos/picker/session", jwtMiddleware(http.HandlerFunc(server.handleGooglePhotosPickerSession)))
 	mux.Handle("GET /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetStatus)))
 	mux.Handle("POST /api/migration/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePause)))
 	mux.Handle("POST /api/migration/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResume)))
@@ -582,6 +583,18 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	reqPath := req.Path
 	if reqPath == "" {
 		reqPath = "/"
+	}
+
+	// A Google Photos SOURCE is selected via the Picker UI, not a browsable
+	// folder tree (the read scope no longer grants library listing). Browsing
+	// would 403 and surface a confusing generic error, so short-circuit with a
+	// clear machine-readable code and an empty list.
+	if req.SourceProvider == "googlephotos" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"success":    false,
+			"error_code": ErrGooglePhotosPickerBrowseUnsupported,
+		})
+		return
 	}
 
 	// List the requested path for files, or root "/" for calendars/contacts
@@ -1029,6 +1042,7 @@ type ConnectRequest struct {
 	TargetTokenExpiresIn int    `json:"target_token_expires_in"`
 	SourceProvider       string `json:"source_provider"`
 	TargetProvider       string `json:"target_provider"`
+	SourcePickerSessionID string `json:"source_picker_session_id"`
 	Path                 string `json:"path"`
 	ResourceType         string `json:"resource_type"`
 }
@@ -1100,18 +1114,26 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Also render the source folder structure (defaults to root /)
-	reqPath := req.Path
-	if reqPath == "" {
-		reqPath = "/"
-	}
-	listCtx, listCancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer listCancel()
-	files, err := sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
-	if err != nil {
-		log.Printf("handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
-		return
+	// Also render the source folder structure (defaults to root /).
+	// For a Google Photos Picker source the user selects individual media in the
+	// Picker UI, so there is no folder tree to render here; skip it and return an
+	// empty file list (the real items are enumerated at index time).
+	var files []storage.CloudResource
+	if req.SourceProvider == "googlephotos" && req.SourcePickerSessionID != "" {
+		files = []storage.CloudResource{}
+	} else {
+		reqPath := req.Path
+		if reqPath == "" {
+			reqPath = "/"
+		}
+		listCtx, listCancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer listCancel()
+		files, err = sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
+		if err != nil {
+			log.Printf("handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1120,6 +1142,74 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GooglePhotosPickerSessionRequest is the body of POST /api/googlephotos/picker/session.
+type GooglePhotosPickerSessionRequest struct {
+	Provider      string `json:"provider"`
+	AccessToken   string `json:"access_token"`
+	RefreshToken  string `json:"refresh_token"`
+}
+
+// handleGooglePhotosPickerSession creates a Google Photos Picker session for an
+// already-authenticated googlephotos source. The returned session_id is used by
+// the frontend's embedded Picker widget; the actual media items are enumerated
+// later by the indexer (so the session is reused end-to-end). Never log the
+// picker session's derived URLs/baseUrls — they are credentialed.
+func (s *APIServer) handleGooglePhotosPickerSession(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+
+	var req GooglePhotosPickerSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+	if req.Provider != "googlephotos" {
+		writeError(w, http.StatusBadRequest, ErrProviderUnsupported)
+		return
+	}
+	if req.AccessToken == "" {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	// Build a provider with the caller-supplied access token and create a Picker
+	// session. We do not decrypt any DB-stored token here — the frontend passes
+	// the freshly returned OAuth access token from the popup. Use a detached
+	// context for the provider's HTTP client: the request body is already fully
+	// decoded above, and a client built from r.Context() would have its transport
+	// torn down if the client disconnects mid-call, failing the session creation.
+	client, err := storage.NewGooglePhotosProvider(context.Background(), req.AccessToken)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
+		return
+	}
+	defer client.Close()
+
+	sessionCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	sessionID, err := client.CreatePickerSession(sessionCtx)
+	if err != nil {
+		log.Printf("handleGooglePhotosPickerSession: failed to create session (user=%s): %v", userID, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
+		return
+	}
+
+	// Log only the session id length — never the id itself or derived URLs.
+	log.Printf("handleGooglePhotosPickerSession: created picker session for user %s (idLen=%d)", userID, len(sessionID))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":    true,
+		"session_id": sessionID,
+	})
+}
 type StartRequest struct {
 	ConnectRequest
 	ConflictStrategy   string   `json:"conflict_strategy"`
@@ -1287,6 +1377,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		SelectedContacts:            db.StringArray(req.Contacts),
 		Threads:                     threads,
 		BandwidthLimitMbps:          bandwidthLimit,
+		PickerSessionID:            req.SourcePickerSessionID,
 	}
 
 	migrationID, err := db.CreateMigration(s.db, m)
@@ -1757,7 +1848,9 @@ const (
 	ErrWsTokenInvalid           APIErrorCode = "WS_TOKEN_INVALID"
 	ErrInternalError            APIErrorCode = "INTERNAL_ERROR"
 
-	// Admin / user-management
+	// Google Photos Picker
+	ErrGooglePhotosPickerSessionFailed APIErrorCode = "GOOGLE_PHOTOS_PICKER_SESSION_FAILED"
+	ErrGooglePhotosPickerBrowseUnsupported APIErrorCode = "GOOGLE_PHOTOS_PICKER_BROWSE_UNSUPPORTED"
 	ErrUserDisabled           APIErrorCode = "USER_DISABLED"
 	ErrUserNotFound           APIErrorCode = "USER_NOT_FOUND"
 	ErrCannotModifySelf       APIErrorCode = "CANNOT_MODIFY_SELF"
@@ -2807,6 +2900,10 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"registrations_enabled": val,
 		"local_storage_enabled": os.Getenv("LOCAL_STORAGE_ROOT") != "",
 		"oauth_providers":       oauth.ConfiguredProviders(),
+		// Google Picker JS API key (optional). When set, the frontend embeds the
+		// official Picker widget; when empty the Picker still works with just the
+		// OAuth token for the Google Photos feature.
+		"google_photos_picker_developer_key": os.Getenv("GOOGLE_PHOTOS_PICKER_DEVELOPER_KEY"),
 	})
 }
 

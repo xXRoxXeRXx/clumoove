@@ -402,3 +402,108 @@ func TestGooglePhotosStreamDownloadSuffixApplied(t *testing.T) {
 	}
 	defer rc.Close()
 }
+
+func TestPickerPathRoundTrip(t *testing.T) {
+	item := PickerMediaItem{
+		ID:      "media-abc123",
+		Name:    "holiday.jpg",
+		BaseURL: "https://lh3.googleusercontent.com/abc/def?sz=w1234",
+		MimeType: "image/jpeg",
+	}
+	path := PickerPath(item)
+	if !IsPickerPath(path) {
+		t.Fatalf("PickerPath did not produce a /picker/ path: %q", path)
+	}
+
+	mediaID, baseURL, err := parsePickerPath(path)
+	if err != nil {
+		t.Fatalf("parsePickerPath error: %v", err)
+	}
+	if mediaID != item.ID {
+		t.Errorf("mediaID = %q, want %q", mediaID, item.ID)
+	}
+	if baseURL != item.BaseURL {
+		t.Errorf("baseURL = %q, want %q", baseURL, item.BaseURL)
+	}
+
+	if got := pickerMimeFromPath(path); got != item.MimeType {
+		t.Errorf("pickerMimeFromPath = %q, want %q", got, item.MimeType)
+	}
+
+	// The target name must be a clean basename (no /picker/ prefix, no query).
+	target := PickerTargetName(path)
+	if strings.HasPrefix(target, "/picker/") {
+		t.Errorf("PickerTargetName leaked /picker/ prefix: %q", target)
+	}
+	if strings.Contains(target, "base_url") || strings.Contains(target, "?") {
+		t.Errorf("PickerTargetName leaked credentialed query: %q", target)
+	}
+	if !strings.HasPrefix(target, "google-photos-"+item.ID) {
+		t.Errorf("PickerTargetName = %q, want prefix google-photos-%s", target, item.ID)
+	}
+}
+
+func TestPickerPathRoundTripVideo(t *testing.T) {
+	item := PickerMediaItem{
+		ID:      "vid-9",
+		Name:    "clip",
+		BaseURL: "https://lh3.googleusercontent.com/vid/xyz",
+		MimeType: "video/mp4",
+	}
+	path := PickerPath(item)
+	mediaID, baseURL, err := parsePickerPath(path)
+	if err != nil {
+		t.Fatalf("parsePickerPath error: %v", err)
+	}
+	if mediaID != item.ID || baseURL != item.BaseURL {
+		t.Errorf("round-trip mismatch: id=%q url=%q", mediaID, baseURL)
+	}
+	// Video path should carry a .mp4 suffix on the id segment.
+	if !strings.Contains(path, ".mp4") {
+		t.Errorf("expected .mp4 extension in picker path for video, got %q", path)
+	}
+}
+
+func TestPickerPathInvalid(t *testing.T) {
+	for _, bad := range []string{"", "/notpicker/x", "/picker/id", "/picker/id.jpg"} {
+		if _, _, err := parsePickerPath(bad); err == nil {
+			t.Errorf("expected error for %q, got nil", bad)
+		}
+	}
+}
+
+func TestExtForMime(t *testing.T) {
+	cases := []struct {
+		mime string
+		name string
+		want string
+	}{
+		{"image/jpeg", "a", ".jpg"},
+		{"image/png", "a", ".jpg"},
+		{"video/mp4", "a", ".mp4"},
+		{"application/octet-stream", "a", ""},
+		{"image/jpeg", "photo.jpg", ""}, // name already has an extension
+	}
+	for _, c := range cases {
+		if got := extForMime(c.mime, c.name); got != c.want {
+			t.Errorf("extForMime(%q,%q) = %q, want %q", c.mime, c.name, got, c.want)
+		}
+	}
+}
+
+func TestPickerHandleFromMetadata(t *testing.T) {
+	h := PickerHandle{ID: "m1", BaseURL: "https://x/y", Mime: "image/jpeg", Name: "pic.jpg"}
+	raw, _ := json.Marshal(h)
+	got, ok := PickerHandleFromMetadata(raw)
+	if !ok || got.ID != h.ID || got.BaseURL != h.BaseURL {
+		t.Errorf("round-trip failed: got %+v ok=%v", got, ok)
+	}
+	// Empty / non-picker metadata must report ok=false.
+	if _, ok := PickerHandleFromMetadata([]byte("{}")); ok {
+		t.Error("empty metadata should not be a picker handle")
+	}
+	if _, ok := PickerHandleFromMetadata(nil); ok {
+		t.Error("nil metadata should not be a picker handle")
+	}
+}
+

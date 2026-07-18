@@ -2,11 +2,14 @@ package storage
 
 import (
 	"bytes"
+	"errors"
+
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -16,6 +19,34 @@ import (
 )
 
 const googlePhotosAPIBase = "https://photoslibrary.googleapis.com/v1"
+
+// photoPickerAPIBase is the Google Photos Picker API. The Picker is the only
+// remaining surface that can read a user's entire Google Photos library after
+// Google removed the account-wide Library API `mediaItems.list` scope on
+// 2025-03-31. A Picker session is created, the user selects media in a Google-
+// hosted UI, and the items are then listed via this endpoint.
+const photoPickerAPIBase = "https://photospicker.googleapis.com/v1"
+
+// ErrPickerSessionExpired is returned by GetPickerMediaItems when the Google
+// Photos Picker session can no longer be read (HTTP 400/404). Picker sessions
+// are short-lived and single-use; when indexing runs much later than the
+// connect-time selection (e.g. a scheduled migration), the indexer uses this
+// sentinel to create a fresh session with the current OAuth token.
+var ErrPickerSessionExpired = errors.New("google photos picker session expired or invalid")
+
+// pickerPathPrefix marks a task FilePath that was produced from a Picker
+// selection rather than the Library API. The path is encoded as
+//   /picker/<mediaID><ext>?base_url=<url-escaped download URL>
+// The `base_url` is re-read at download time (it is valid for ~60 minutes and
+// requires the OAuth bearer header) so we never store long-lived secrets.
+//
+// The /picker/ prefix is a SOURCE-SIDE transport handle only. It must never be
+// used as the upload destination: the processor derives the clean user-visible
+// target filename from PickerTargetName (below) so media is written under the
+// user's target directory with a real name rather than a "/picker/<id>?base_url=…"
+// path that would otherwise create a literal "picker" folder and embed a
+// credentialed query string in target filenames.
+const pickerPathPrefix = "/picker/"
 
 // GooglePhotosProvider implements StorageProvider for the Google Photos Library API.
 // Albums are mapped to directories (is_dir=true) and media items to files (resourceType "files").
@@ -34,6 +65,11 @@ type GooglePhotosProvider struct {
 	albumMu       sync.Mutex
 	albumTitleToID map[string]string // album title -> album id
 	albumIDToTitle map[string]string // album id   -> album title
+
+	// pickerSessionID is the Google Photos Picker session id, set from
+	// Connect()/the migration row so the indexer reuses the same session that
+	// the user selected media in.
+	pickerSessionID string
 
 	// uploadSem bounds concurrent write requests to the Photos Library API,
 	// which enforces a tight "concurrent write request" quota. Without it, the
@@ -104,6 +140,23 @@ func (p *GooglePhotosProvider) newRequest(ctx context.Context, method, urlStr st
 	return req, nil
 }
 
+// SetPickerSession stores the Picker session id on the provider instance.
+func (p *GooglePhotosProvider) SetPickerSession(sessionID string) {
+	p.pickerSessionID = sessionID
+}
+
+// PickerSessionID returns the currently configured Picker session id (if any).
+// The indexer reads it to enumerate the user selection and to detect when a
+// persisted session has expired and must be refreshed.
+func (p *GooglePhotosProvider) PickerSessionID() string {
+	return p.pickerSessionID
+}
+
+// pickerSessionURL returns the full URL for a Picker API endpoint.
+func (p *GooglePhotosProvider) pickerSessionURL(suffix string) string {
+	return photoPickerAPIBase + suffix
+}
+
 // googlePhotosError models the standard Google Photos API error envelope.
 type googlePhotosError struct {
 	Error struct {
@@ -123,21 +176,256 @@ func (p *GooglePhotosProvider) errorFromResponse(resp *http.Response) error {
 	return fmt.Errorf("google photos api error with status: %d", resp.StatusCode)
 }
 
-// Connect probes Photos Library access.
+// PickerSession models the response of POST /v1/sessions.
+type PickerSession struct {
+	SessionID string `json:"sessionId"`
+}
+
+// CreatePickerSession creates a Google Photos Picker session. The caller (the
+// frontend) then uses the returned session id together with the user's OAuth
+// access token to render the embedded Picker UI. The session is valid for a
+// limited time and should be re-created if indexing is deferred far into the
+// future.
+func (p *GooglePhotosProvider) CreatePickerSession(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	body, err := json.Marshal(map[string]interface{}{
+		"mediaTypes": []string{"ALL_MEDIA"},
+	})
+	if err != nil {
+		return "", err
+	}
+	req, err := p.newRequest(ctx, "POST", p.pickerSessionURL("/sessions"), bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("google photos picker session: %w", ErrAuth)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("google photos picker session: %w", p.errorFromResponse(resp))
+	}
+	var s PickerSession
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return "", err
+	}
+	if s.SessionID == "" {
+		return "", fmt.Errorf("google photos picker session: empty session id")
+	}
+	p.pickerSessionID = s.SessionID
+	return s.SessionID, nil
+}
+
+// PickerMediaItem models one media item returned by the Picker API. The Picker
+// baseUrl is the download URL (valid for ~60 minutes, served only with the
+// OAuth bearer header). There is no content hash or size in the Picker payload,
+// so size is discovered at download/inspect time via a HEAD request.
+type PickerMediaItem struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	BaseURL string `json:"baseUrl"`
+	MimeType string `json:"mimeType"`
+	Size    int64  `json:"-"`
+}
+
+type pickerMediaItemsResponse struct {
+	MediaItems   []PickerMediaItem `json:"mediaItems"`
+	NextPageToken string           `json:"nextPageToken"`
+}
+
+// GetPickerMediaItems lists every media item the user selected in the given
+// Picker session. It paginates on nextPageToken. The returned items carry the
+// download baseUrl + mime type + a stable id used to build the task path.
+func (p *GooglePhotosProvider) GetPickerMediaItems(ctx context.Context, sessionID string) ([]PickerMediaItem, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	var items []PickerMediaItem
+	pageToken := ""
+	for {
+		urlStr := p.pickerSessionURL("/mediaItems?sessionId=" + url.QueryEscape(sessionID))
+		if pageToken != "" {
+			urlStr += "&pageToken=" + url.QueryEscape(pageToken)
+		}
+		req, err := p.newRequest(ctx, "GET", urlStr, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusUnauthorized {
+			resp.Body.Close()
+			return nil, fmt.Errorf("google photos picker media: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound {
+			// A 400/404 almost always means the session expired or was already
+			// consumed. The caller (indexer) treats this sentinel as a signal to
+			// create a fresh session and retry, so deferred migrations survive.
+			resp.Body.Close()
+			return nil, fmt.Errorf("%w: %v", ErrPickerSessionExpired, p.errorFromResponse(resp))
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			errBody := p.errorFromResponse(resp)
+			resp.Body.Close()
+			return nil, errBody
+		}
+		var listResp pickerMediaItemsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+		resp.Body.Close()
+		items = append(items, listResp.MediaItems...)
+		// NOTE: the Picker payload carries no byte size, and resolving it would
+		// require a HEAD on every item's baseUrl. For large selections (thousands
+		// of items) that is N sequential requests and risks blowing the overall
+		// index timeout while stalling the whole migration. We therefore do NOT
+		// size items here; the processor discovers size at transfer time via
+		// InspectResource/StreamDownload (HEAD on demand), and total_bytes is
+		// reported as it is learned. The picker baseUrl is valid ~60 minutes, so
+		// it is still fresh when the worker downloads each item.
+		if listResp.NextPageToken == "" {
+			break
+		}
+		pageToken = listResp.NextPageToken
+	}
+	return items, nil
+}
+
+// pickerPath builds a task FilePath for a Picker media item. The format is
+//   /picker/<mediaID><ext>?base_url=<url-escaped download URL>&mime=<mime>
+// so the processor can recover the exact download URL at transfer time without
+// persisting it beyond the task lifetime. The FilePath is a SOURCE-SIDE
+// transport handle only; the processor derives the clean target filename via
+// PickerTargetName.
+func PickerPath(item PickerMediaItem) string {
+	return pickerPathPrefix + item.ID + extForMime(item.MimeType, item.Name) +
+		"?base_url=" + url.QueryEscape(item.BaseURL) +
+		"&mime=" + url.QueryEscape(item.MimeType)
+}
+
+// pickerMimeFromPath extracts the mime type stored in a Picker task path.
+func pickerMimeFromPath(filePath string) string {
+	q := strings.IndexByte(filePath, '?')
+	if q < 0 {
+		return ""
+	}
+	values, err := url.ParseQuery(filePath[q+1:])
+	if err != nil {
+		return ""
+	}
+	return values.Get("mime")
+}
+
+// parsePickerPath extracts the media id and download baseUrl from a Picker task
+// path produced by PickerPath. It returns (mediaID, baseURL, error).
+func parsePickerPath(filePath string) (string, string, error) {
+	clean := strings.TrimPrefix(filePath, "/")
+	if !strings.HasPrefix(clean, strings.TrimPrefix(pickerPathPrefix, "/")) {
+		return "", "", fmt.Errorf("not a picker path: %s", filePath)
+	}
+	rest := strings.TrimPrefix(clean, strings.TrimPrefix(pickerPathPrefix, "/"))
+	q := strings.IndexByte(rest, '?')
+	if q < 0 {
+		return "", "", fmt.Errorf("picker path missing query: %s", filePath)
+	}
+	mediaIDWithExt := rest[:q]
+	// Strip the extension from the media id segment.
+	mediaID := mediaIDWithExt
+	if dot := strings.LastIndexByte(mediaID, '.'); dot > 0 {
+		mediaID = mediaID[:dot]
+	}
+
+	values, err := url.ParseQuery(rest[q+1:])
+	if err != nil {
+		return "", "", fmt.Errorf("picker path invalid query: %w", err)
+	}
+	baseURL, err := url.QueryUnescape(values.Get("base_url"))
+	if err != nil {
+		return "", "", fmt.Errorf("picker path invalid base_url: %w", err)
+	}
+	if mediaID == "" || baseURL == "" {
+		return "", "", fmt.Errorf("picker path missing media id or base_url: %s", filePath)
+	}
+	return mediaID, baseURL, nil
+}
+
+// IsPickerPath reports whether filePath is a Picker-sourced task path.
+func IsPickerPath(filePath string) bool {
+	return strings.HasPrefix(filePath, pickerPathPrefix)
+}
+
+// PickerHandle is the serialisable transport handle for a Picker-sourced media
+// item. It is stored in the task's Metadata so the source download can recover
+// the exact download baseUrl at transfer time, while the task FilePath stays a
+// clean, user-visible name (no embedded credentialed URL).
+type PickerHandle struct {
+	ID      string `json:"picker_id"`
+	BaseURL string `json:"base_url"`
+	Mime    string `json:"mime"`
+	Name    string `json:"name"`
+}
+
+// PickerHandleFromMetadata decodes a PickerHandle from a task metadata blob.
+// It returns ok=false when the metadata does not describe a Picker item.
+func PickerHandleFromMetadata(raw json.RawMessage) (PickerHandle, bool) {
+	if len(raw) == 0 {
+		return PickerHandle{}, false
+	}
+	var h PickerHandle
+	if err := json.Unmarshal(raw, &h); err != nil {
+		return PickerHandle{}, false
+	}
+	if h.ID == "" || h.BaseURL == "" {
+		return PickerHandle{}, false
+	}
+	return h, true
+}
+
+// PickerTargetName returns the clean, user-visible target filename (basename)
+// for a Picker-sourced task FilePath. The transport handle encodes the media
+// id and mime type, so we derive a unique, stable "<id>.<ext>" name. This keeps
+// the media out of a literal "/picker/" folder and free of the "?base_url=…"
+// query string that the transport handle carries, so the upload destination is
+// a normal filename under the user's target directory.
+func PickerTargetName(filePath string) string {
+	mediaID, baseURL, err := parsePickerPath(filePath)
+	if err != nil || mediaID == "" {
+		// Fall back to a generic, still-unique name derived from the path.
+		clean := strings.TrimPrefix(filePath, pickerPathPrefix)
+		clean = strings.Split(clean, "?")[0]
+		if clean == "" {
+			return "google-photos-item"
+		}
+		return "google-photos-" + clean
+	}
+	_ = baseURL
+	return "google-photos-" + mediaID + extForMime(pickerMimeFromPath(filePath), "")
+}
+
+// Connect validates the OAuth token.
 //
-// We only test `albums.list` here. The provider is configured with the narrow
-// `photoslibrary.readonly.appcreateddata` scope (the only read scope that
-// remains after Google removed `photoslibrary.readonly` on 2025-04-01). That
-// scope authorises `albums.list` and `mediaItems:search` (used by
-// listAlbumMedia), but NOT the account-wide `mediaItems.list` endpoint — a
-// probe against `mediaItems.list` returns HTTP 403 "insufficient authentication
-// scopes" and would make every Google Photos connect fail. Listing albums is the
-// minimal, scope-conformant connectivity check.
+// As a SOURCE, Google Photos now uses the Picker API (`photospicker.mediaitems.
+// readonly`), which does not grant the Library `albums.list` scope (that scope
+// was removed on 2025-03-31). Probing `albums.list` would therefore 403 and make
+// every connect fail. We instead validate the token against the OAuth userinfo
+// endpoint, which is covered by the `userinfo.email` scope that is always
+// requested. As a TARGET the Library `appendonly` scope is used for uploads and
+// is unaffected by this read-side check.
 func (p *GooglePhotosProvider) Connect(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	req, err := p.newRequest(ctx, "GET", p.apiURL("/albums?pageSize=1"), nil)
+	req, err := p.newRequest(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
 	if err != nil {
 		return false, err
 	}
@@ -365,6 +653,27 @@ func (p *GooglePhotosProvider) InspectResource(ctx context.Context, resourceType
 		return CloudResource{}, fmt.Errorf("resource type %s not supported by googlephotos", resourceType)
 	}
 
+	// Picker-sourced paths carry their own download baseUrl. Inspect the size
+	// via a HEAD on that URL (no "=d" suffix — that is Library-API-only).
+	if IsPickerPath(resourcePath) {
+		mediaID, baseURL, err := parsePickerPath(resourcePath)
+		if err != nil {
+			return CloudResource{}, err
+		}
+		var size int64
+		if s, serr := p.fetchMediaSize(ctx, baseURL); serr == nil {
+			size = s
+		}
+		// The picker path only carries the opaque media id (no human name), so
+		return CloudResource{
+			Path:  resourcePath,
+			Name:  mediaID,
+			Size:  size,
+			IsDir: false,
+			Hash:  "",
+		}, nil
+	}
+
 	clean := p.cleanPath(resourcePath)
 	if clean == "" {
 		return CloudResource{Path: "/", Name: "", IsDir: true, Size: 0}, nil
@@ -444,10 +753,34 @@ func (p *GooglePhotosProvider) fetchMediaSize(ctx context.Context, baseURL strin
 	return resp.ContentLength, nil
 }
 
-// StreamDownload fetches the original bytes via the (fresh) baseUrl with the "=d" download suffix.
+// StreamDownload fetches the original bytes via the (fresh) baseUrl. Picker-
+// sourced paths carry their own baseUrl (valid ~60 min, served only with the
+// OAuth bearer header) and must be downloaded verbatim — no "=d"/"=dv" suffix,
+// which is a Library-API-only construct that does not apply to Picker URLs.
 func (p *GooglePhotosProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by googlephotos", resourceType)
+	}
+
+	if IsPickerPath(filePath) {
+		mediaID, baseURL, err := parsePickerPath(filePath)
+		if err != nil {
+			return nil, err
+		}
+		_ = mediaID
+		req, err := p.newRequest(ctx, "GET", baseURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("google photos picker download: failed with status %d", resp.StatusCode)
+		}
+		return resp.Body, nil
 	}
 
 	parts := strings.Split(p.cleanPath(filePath), "/")
@@ -573,7 +906,10 @@ func mimeFromName(name string) string {
 		return "application/octet-stream"
 	}
 }
-// that the processor's atomic-rename pattern may have appended.
+// deriveOriginalName returns the file name portion of filePath, stripping any
+// ".tmp" suffix the processor's atomic-rename pattern may have appended (see
+// processor.go). Google Photos ignores the suffix anyway, but keeping the name
+// clean avoids a ".tmp" media item name on the target.
 func deriveOriginalName(filePath string) string {
 	name := path.Base(filePath)
 	return strings.TrimSuffix(name, ".tmp")
@@ -921,3 +1257,16 @@ func (p *GooglePhotosProvider) RenameFile(ctx context.Context, resourceType, old
 func (p *GooglePhotosProvider) SupportsAtomicRename() bool {
 	return false
 }
+
+// GetPickerMediaItems is a package-level accessor used by the indexer. Only the
+// Google Photos provider implements Picker enumeration; other providers return
+// an error so the caller can fail fast with a clear message. This keeps the
+// StorageProvider interface unchanged for the other nine providers.
+func GetPickerMediaItems(ctx context.Context, provider StorageProvider, sessionID string) ([]PickerMediaItem, error) {
+	gp, ok := provider.(*GooglePhotosProvider)
+	if !ok {
+		return nil, fmt.Errorf("picker enumeration is only supported for the googlephotos provider")
+	}
+	return gp.GetPickerMediaItems(ctx, sessionID)
+}
+
