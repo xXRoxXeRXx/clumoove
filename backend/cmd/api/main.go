@@ -1186,7 +1186,8 @@ func (s *APIServer) handleGooglePhotosPickerSession(w http.ResponseWriter, r *ht
 	// context for the provider's HTTP client: the request body is already fully
 	// decoded above, and a client built from r.Context() would have its transport
 	// torn down if the client disconnects mid-call, failing the session creation.
-	client, err := storage.NewGooglePhotosProvider(context.Background(), req.AccessToken)
+	accessToken := req.AccessToken
+	client, err := storage.NewGooglePhotosProvider(context.Background(), accessToken)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
 		return
@@ -1197,9 +1198,31 @@ func (s *APIServer) handleGooglePhotosPickerSession(w http.ResponseWriter, r *ht
 	defer cancel()
 	sessionID, err := client.CreatePickerSession(sessionCtx)
 	if err != nil {
-		log.Printf("handleGooglePhotosPickerSession: failed to create session (user=%s): %v", userID, err)
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-		return
+		// A 403 means the Picker API service is not enabled in the Cloud
+		// project — tell the user specifically instead of the generic failure.
+		if errors.Is(err, storage.ErrPickerAPIForbidden) {
+			log.Printf("handleGooglePhotosPickerSession: picker API forbidden (user=%s): %v", userID, err)
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerAPIDisabled})
+			return
+		}
+		// If the access token expired (401), try a single refresh before giving
+		// up. The frontend passes a freshly minted access token, but it may still
+		// be stale if the user lingered on the connect screen.
+		if errors.Is(err, storage.ErrAuth) && req.RefreshToken != "" {
+			refreshed, rerr := oauth.RefreshToken(sessionCtx, "googlephotos", req.RefreshToken)
+			if rerr == nil && refreshed.AccessToken != "" {
+				client, err = storage.NewGooglePhotosProvider(context.Background(), refreshed.AccessToken)
+				if err == nil {
+					defer client.Close()
+					sessionID, err = client.CreatePickerSession(sessionCtx)
+				}
+			}
+		}
+		if err != nil {
+			log.Printf("handleGooglePhotosPickerSession: failed to create session (user=%s): %v", userID, err)
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
+			return
+		}
 	}
 
 	// Log only the session id length — never the id itself or derived URLs.
@@ -1851,6 +1874,11 @@ const (
 	// Google Photos Picker
 	ErrGooglePhotosPickerSessionFailed APIErrorCode = "GOOGLE_PHOTOS_PICKER_SESSION_FAILED"
 	ErrGooglePhotosPickerBrowseUnsupported APIErrorCode = "GOOGLE_PHOTOS_PICKER_BROWSE_UNSUPPORTED"
+	// Returned when Google rejects the Picker session creation with HTTP 403,
+	// which almost always means the "Google Photos Picker API" service is not
+	// enabled for the OAuth client's Cloud project (the scopes alone are not
+	// enough — the API must be activated in the Cloud Console).
+	ErrGooglePhotosPickerAPIDisabled APIErrorCode = "GOOGLE_PHOTOS_PICKER_API_DISABLED"
 	ErrUserDisabled           APIErrorCode = "USER_DISABLED"
 	ErrUserNotFound           APIErrorCode = "USER_NOT_FOUND"
 	ErrCannotModifySelf       APIErrorCode = "CANNOT_MODIFY_SELF"

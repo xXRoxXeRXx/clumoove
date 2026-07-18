@@ -160,6 +160,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         body: JSON.stringify({
           provider: 'googlephotos',
           access_token: accessToken,
+          refresh_token: sourceRefreshToken,
         }),
       });
       const data = await response.json().catch(() => ({} as { success?: boolean; session_id?: string; error_code?: string }));
