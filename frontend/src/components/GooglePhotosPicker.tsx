@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2 } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, ExternalLink, Loader2 } from 'lucide-react';
 
 interface GooglePhotosPickerProps {
   apiUrl: string;
@@ -219,6 +219,10 @@ export const GooglePhotosPicker: React.FC<GooglePhotosPickerProps> = ({
 
   return (
     <div className="space-y-3">
+      <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-2xl p-3 flex items-start gap-2.5 shadow-xs">
+        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
+        <p className="text-[11px] font-sans leading-relaxed">{t('connect.googlePhotosOriginalWarning')}</p>
+      </div>
       <div className="min-h-[120px] bg-[var(--color-bg-tertiary)]/40 border border-[var(--color-border)] rounded-2xl p-4 flex flex-col items-center justify-center gap-3">
         {status === 'idle' && (
           <>

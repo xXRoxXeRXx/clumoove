@@ -721,6 +721,16 @@ func (p *GooglePhotosProvider) mediaItemToResource(albumID string, m googlePhoto
 	}
 }
 
+// parseDimensions converts the Google Photos mediaMetadata width/height strings
+// (decimal integers) into ints. Missing/invalid values yield 0,0 so callers can
+// fall back to the default download parameter.
+func parseDimensions(wStr, hStr string) (int, int) {
+	var w, h int
+	fmt.Sscanf(wStr, "%d", &w)
+	fmt.Sscanf(hStr, "%d", &h)
+	return w, h
+}
+
 func extForMime(mime, name string) string {
 	if strings.Contains(name, ".") {
 		return ""
@@ -736,11 +746,18 @@ func extForMime(mime, name string) string {
 }
 
 // downloadSuffix returns the Google Photos baseUrl download parameter for a
-// given mime type. Images use "=d"; videos require "=dv" to fetch the real
-// video bytes (otherwise an error/scaled thumbnail is returned).
-func downloadSuffix(mimeType string) string {
+// given mime type and original dimensions. Images use "=w<width>-h<height>" to
+// force Google to render the FULL original pixel resolution instead of the
+// web-optimised thumbnail it serves by default. Videos require "=dv" to fetch
+// the real video bytes (the API caps this at 1080p regardless of source
+// resolution). width/height are ignored for videos. Callers without dimensions
+// pass 0,0 which for images falls back to "=d" (default download parameter).
+func downloadSuffix(mimeType string, width, height int) string {
 	if strings.HasPrefix(mimeType, "video/") {
 		return "=dv"
+	}
+	if width > 0 && height > 0 {
+		return fmt.Sprintf("=w%d-h%d", width, height)
 	}
 	return "=d"
 }
@@ -913,7 +930,8 @@ func (p *GooglePhotosProvider) StreamDownload(ctx context.Context, resourceType,
 		return nil, fmt.Errorf("google photos download: no baseUrl for media item %s", mediaID)
 	}
 
-	dlReq, err := p.newRequest(ctx, "GET", fetched.BaseURL+downloadSuffix(fetched.MimeType), nil)
+	w, h := parseDimensions(fetched.MediaMetadata.Width, fetched.MediaMetadata.Height)
+	dlReq, err := p.newRequest(ctx, "GET", fetched.BaseURL+downloadSuffix(fetched.MimeType, w, h), nil)
 	if err != nil {
 		return nil, err
 	}
