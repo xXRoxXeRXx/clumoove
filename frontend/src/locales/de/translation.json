@@ -107,7 +107,12 @@
     "googleAccount": "Google-Konto",
     "dropboxAccount": "Dropbox-Konto",
     "googlePhotosAccount": "Google Photos-Konto",
-    "googlePhotosInfo": "Verbindet mit Google Photos (Library API). Gewährt Lese-/Schreibzugriff auf Ihre Fotos und Alben. Ein separater OAuth-Client mit den Scopes photoslibrary.readonly.appcreateddata + photoslibrary.appendonly wird empfohlen.",
+    "googlePhotosInfo": "Verbindet mit Google Photos über die Picker-API. Du wählst die genauen Fotos und Videos für die Übertragung im eingebetteten Picker unten aus — Google erlaubt das automatische Auslesen der gesamten Bibliothek nicht mehr. Ein separater OAuth-Client mit den Scopes photospicker.mediaitems.readonly + photoslibrary.appendonly ist erforderlich. Als Ziel verwendet der Upload die Library-API.",
+    "googlePhotosPickerTitle": "Fotos & Videos aus Google Photos auswählen",
+    "googlePhotosPickerLoading": "Google Photos-Picker wird geladen…",
+    "googlePhotosPickerDone": "Auswahl bestätigt.",
+    "googlePhotosPickerConfirmed": "Deine Google-Photos-Auswahl ist für die Übertragung bereit.",
+    "googlePhotosPickerLoadFailed": "Der Google Photos-Picker konnte nicht geladen werden. Du kannst die Übertragung trotzdem starten; die ausgewählten Elemente werden zur Übertragungszeit gelesen.",
     "submit": "Verbindung prüfen",
     "sshKeyPem": "Sicherheitsschlüssel (Schlüsseldatei)",
     "testing": "Verbindung wird geprüft...",
@@ -135,7 +140,9 @@
       "connectionFailed": "Die Verbindung konnte nicht hergestellt werden.",
       "verifyFailed": "Verbindung fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.",
       "networkError": "Ein Netzwerkfehler ist aufgetreten. Bitte überprüfe deine Internetverbindung.",
-      "oauthError": "Fehler bei der Anmeldung: {{error}}"
+      "oauthError": "Fehler bei der Anmeldung: {{error}}",
+      "googlePhotosPickerRequired": "Bitte verbinde Google Photos und wähle Medien im Picker aus, bevor du fortfährst.",
+      "googlePhotosPickerPending": "Bitte bestätige deine Google-Photos-Auswahl im Picker, bevor du fortfährst."
     }
   },
   "fileBrowser": {
@@ -486,6 +493,7 @@
     "WS_TOKEN_MISSING": "Sicherheits-Code fehlt.",
     "WS_TOKEN_INVALID": "Sicherheits-Code ungültig oder abgelaufen.",
     "INTERNAL_ERROR": "Ein interner Serverfehler ist aufgetreten. Bitte versuche es später noch einmal.",
+    "GOOGLE_PHOTOS_PICKER_SESSION_FAILED": "Die Google-Photos-Picker-Sitzung konnte nicht gestartet werden. Bitte verbinde Google Photos erneut und versuche es nochmal.",
     "USER_DISABLED": "Dieses Konto wurde gesperrt. Bitte wende dich an einen Administrator.",
     "USER_NOT_FOUND": "Der angeforderte Benutzer wurde nicht gefunden.",
     "CANNOT_MODIFY_SELF": "Du kannst diese Aktion nicht an deinem eigenen Konto ausführen.",
