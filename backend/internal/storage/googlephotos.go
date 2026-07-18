@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"path"
 	"strings"
 	"sync"
@@ -345,6 +343,16 @@ func extForMime(mime, name string) string {
 	}
 }
 
+// downloadSuffix returns the Google Photos baseUrl download parameter for a
+// given mime type. Images use "=d"; videos require "=dv" to fetch the real
+// video bytes (otherwise an error/scaled thumbnail is returned).
+func downloadSuffix(mimeType string) string {
+	if strings.HasPrefix(mimeType, "video/") {
+		return "=dv"
+	}
+	return "=d"
+}
+
 // InspectResource returns metadata for an album (directory) or a media item (file).
 func (p *GooglePhotosProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -468,7 +476,7 @@ func (p *GooglePhotosProvider) StreamDownload(ctx context.Context, resourceType,
 		return nil, fmt.Errorf("google photos download: no baseUrl for media item %s", mediaID)
 	}
 
-	dlReq, err := p.newRequest(ctx, "GET", fetched.BaseURL+"=d", nil)
+	dlReq, err := p.newRequest(ctx, "GET", fetched.BaseURL+downloadSuffix(fetched.MimeType), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -511,20 +519,52 @@ func (p *GooglePhotosProvider) StreamUploadChunked(ctx context.Context, resource
 		return err
 	}
 
-	// 1) Upload the binary bytes to obtain an uploadToken.
-	uploadToken, err := p.uploadBytes(ctx, stream, size, progressChan)
+	// The original filename (sans any ".tmp" suffix) is carried as the media
+	// item fileName; the actual filename comes from the uploaded bytes.
+	originalName := deriveOriginalName(filePath)
+
+	// 1) Upload the binary bytes to obtain an uploadToken. The upload content
+	// type is derived from the original filename so the Photos API receives the
+	// correct X-Goog-Upload-Content-Type header.
+	uploadMime := mimeFromName(originalName)
+	uploadToken, err := p.uploadBytes(ctx, stream, size, uploadMime, progressChan)
 	if err != nil {
 		return err
 	}
 
 	// 2) batchCreate the media item referencing the uploadToken + album.
-	// The original filename (sans any ".tmp" suffix) is carried as the
-	// media item description; the actual filename comes from the uploaded bytes.
-	originalName := deriveOriginalName(filePath)
 	return p.batchCreateMedia(ctx, uploadToken, resolvedAlbumID, originalName)
 }
 
-// deriveOriginalName returns the last path segment without any ".tmp" suffix
+// mimeFromName derives a best-effort MIME type from a filename's extension,
+// defaulting to application/octet-stream. It is used as the value of the
+// X-Goog-Upload-Content-Type header when uploading raw bytes to Photos.
+func mimeFromName(name string) string {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".png":
+		return "image/png"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	case ".heic":
+		return "image/heic"
+	case ".mp4":
+		return "video/mp4"
+	case ".mov":
+		return "video/quicktime"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".webm":
+		return "video/webm"
+	default:
+		return "application/octet-stream"
+	}
+}
 // that the processor's atomic-rename pattern may have appended.
 func deriveOriginalName(filePath string) string {
 	name := path.Base(filePath)
@@ -705,57 +745,32 @@ func (p *GooglePhotosProvider) createAlbumUnique(ctx context.Context, title stri
 	return created.ID, nil
 }
 
-// uploadBytes performs mediaItems:upload (multipart/related) and returns the uploadToken.
-func (p *GooglePhotosProvider) uploadBytes(ctx context.Context, stream io.Reader, size int64, progressChan chan<- int64) (string, error) {
-	pr, pw := io.Pipe()
-	writer := multipart.NewWriter(pw)
-
-	// Wrap the source stream to report progress.
+// uploadBytes performs a raw-binary upload to POST /v1/uploads and returns the
+// upload token as plain text. The Photos Library upload endpoint expects:
+//   - Content-Type: application/octet-stream
+//   - X-Goog-Upload-Protocol: raw
+//   - X-Goog-Upload-Content-Type: <mime>
+//   - the raw binary bytes as the request body
+// The response body is the upload token as plain text (NOT JSON).
+func (p *GooglePhotosProvider) uploadBytes(ctx context.Context, stream io.Reader, size int64, mime string, progressChan chan<- int64) (string, error) {
 	var src io.Reader = stream
 	if progressChan != nil {
 		src = &googlePhotosProgressReader{r: stream, progressChan: progressChan}
 	}
 
-	go func() {
-		metaPart, err := writer.CreatePart(textproto.MIMEHeader{
-			"Content-Type": {"application/json"},
-		})
-		if err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		_ = json.NewEncoder(metaPart).Encode(map[string]interface{}{
-			"description": "",
-		})
-
-		binPart, err := writer.CreatePart(textproto.MIMEHeader{
-			"Content-Type": {"application/octet-stream"},
-		})
-		if err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		if _, err := io.Copy(binPart, src); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		if err := writer.Close(); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		pw.Close()
-	}()
-
-	req, err := p.newRequest(ctx, "POST", p.apiURL("/mediaItems:upload"), pr)
+	req, err := p.newRequest(ctx, "POST", p.apiURL("/uploads"), src)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	// The multipart wrapper makes the real body length larger than the source
-	// byte count, and the pipe is consumed lazily, so we cannot set an accurate
-	// Content-Length here. The HTTP client falls back to chunked transfer
-	// encoding, which the Photos endpoint accepts. (size is kept for callers
-	// that may need it but is intentionally not advertised as Content-Length.)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Goog-Upload-Protocol", "raw")
+	if mime != "" {
+		req.Header.Set("X-Goog-Upload-Content-Type", mime)
+	}
+	if size > 0 {
+		req.ContentLength = size
+	}
+
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
 		return "", err
@@ -773,16 +788,11 @@ func (p *GooglePhotosProvider) uploadBytes(ctx context.Context, stream io.Reader
 	if err != nil {
 		return "", err
 	}
-	var upResp struct {
-		UploadToken string `json:"uploadToken"`
-	}
-	if err := json.Unmarshal(body, &upResp); err != nil {
-		return "", err
-	}
-	if upResp.UploadToken == "" {
+	uploadToken := strings.TrimSpace(string(body))
+	if uploadToken == "" {
 		return "", fmt.Errorf("google photos upload: empty upload token")
 	}
-	return upResp.UploadToken, nil
+	return uploadToken, nil
 }
 
 func (p *GooglePhotosProvider) batchCreateMedia(ctx context.Context, uploadToken, albumID, fileName string) error {
@@ -790,9 +800,9 @@ func (p *GooglePhotosProvider) batchCreateMedia(ctx context.Context, uploadToken
 		"albumId": albumID,
 		"newMediaItems": []map[string]interface{}{
 			{
-				"description": fileName,
 				"simpleMediaItem": map[string]interface{}{
 					"uploadToken": uploadToken,
+					"fileName":    fileName,
 				},
 			},
 		},
@@ -817,6 +827,27 @@ func (p *GooglePhotosProvider) batchCreateMedia(ctx context.Context, uploadToken
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("google photos batchCreate: %w", p.errorFromResponse(resp))
+	}
+
+	// The batchCreate endpoint returns 200 with a per-item result array even when
+	// individual items fail. Inspect newMediaItemResults and surface a real error
+	// for any non-zero per-item status code.
+	var batchResp struct {
+		NewMediaItemResults []struct {
+			UploadToken string `json:"uploadToken"`
+			Status      struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"status"`
+		} `json:"newMediaItemResults"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&batchResp); err != nil {
+		return fmt.Errorf("google photos batchCreate: failed to decode response: %w", err)
+	}
+	for _, r := range batchResp.NewMediaItemResults {
+		if r.Status.Code != 0 {
+			return fmt.Errorf("google photos batchCreate: item failed with status %d: %s", r.Status.Code, r.Status.Message)
+		}
 	}
 	return nil
 }

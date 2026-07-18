@@ -107,7 +107,7 @@
     "googleAccount": "Google-Konto",
     "dropboxAccount": "Dropbox-Konto",
     "googlePhotosAccount": "Google Photos-Konto",
-    "googlePhotosInfo": "Verbindet mit Google Photos (Library API). Gewährt Lese-/Schreibzugriff auf Ihre Fotos und Alben. Ein separater OAuth-Client mit dem photoslibrary-Scope wird empfohlen.",
+    "googlePhotosInfo": "Verbindet mit Google Photos (Library API). Gewährt Lese-/Schreibzugriff auf Ihre Fotos und Alben. Ein separater OAuth-Client mit den Scopes photoslibrary.readonly.appcreateddata + photoslibrary.appendonly wird empfohlen.",
     "submit": "Verbindung prüfen",
     "sshKeyPem": "Sicherheitsschlüssel (Schlüsseldatei)",
     "testing": "Verbindung wird geprüft...",
