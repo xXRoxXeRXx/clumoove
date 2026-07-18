@@ -762,6 +762,20 @@ func downloadSuffix(mimeType string, width, height int) string {
 	return "=d"
 }
 
+// pickerMaxResolutionSuffix returns the download parameter used for Picker-
+// sourced items. The Picker mediaFile payload carries no width/height, and the
+// Picker OAuth client lacks the Library "photoslibrary.readonly" scope needed to
+// look dimensions up via mediaItems/{id}. Requesting a size far larger than any
+// real original (=w100000-h100000) makes Google return the FULL original pixel
+// resolution (the same =w-h family the Picker baseUrl accepts, like the Library
+// baseUrl). Videos use =dv (API-capped at 1080p regardless of source).
+func pickerMaxResolutionSuffix(mimeType string) string {
+	if strings.HasPrefix(mimeType, "video/") {
+		return "=dv"
+	}
+	return "=w100000-h100000"
+}
+
 // InspectResource returns metadata for an album (directory) or a media item (file).
 func (p *GooglePhotosProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -771,14 +785,17 @@ func (p *GooglePhotosProvider) InspectResource(ctx context.Context, resourceType
 	}
 
 	// Picker-sourced paths carry their own download baseUrl. Inspect the size
-	// via a HEAD on that URL (no "=d" suffix — that is Library-API-only).
+	// via a HEAD on that URL with the max-resolution suffix so the reported size
+	// matches what StreamDownload actually transfers (the verbatim Picker URL
+	// serves a smaller web-optimised rendition).
 	if IsPickerPath(resourcePath) {
 		mediaID, baseURL, err := ParsePickerPath(resourcePath)
 		if err != nil {
 			return CloudResource{}, err
 		}
+		mime := PickerMimeFromPath(resourcePath)
 		var size int64
-		if s, serr := p.fetchMediaSize(ctx, baseURL); serr == nil {
+		if s, serr := p.fetchMediaSize(ctx, baseURL+pickerMaxResolutionSuffix(mime)); serr == nil {
 			size = s
 		}
 		// The picker path only carries the opaque media id (no human name), so
@@ -872,8 +889,10 @@ func (p *GooglePhotosProvider) fetchMediaSize(ctx context.Context, baseURL strin
 
 // StreamDownload fetches the original bytes via the (fresh) baseUrl. Picker-
 // sourced paths carry their own baseUrl (valid ~60 min, served only with the
-// OAuth bearer header) and must be downloaded verbatim — no "=d"/"=dv" suffix,
-// which is a Library-API-only construct that does not apply to Picker URLs.
+// OAuth bearer header). Unlike earlier assumptions, the Picker baseUrl accepts
+// the same =w-h/=dv download parameters as the Library baseUrl, so we append
+// pickerMaxResolutionSuffix to force the FULL original resolution (the verbatim
+// Picker URL otherwise serves a web-optimised, smaller rendition).
 func (p *GooglePhotosProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by googlephotos", resourceType)
@@ -885,7 +904,9 @@ func (p *GooglePhotosProvider) StreamDownload(ctx context.Context, resourceType,
 			return nil, err
 		}
 		_ = mediaID
-		req, err := p.newRequest(ctx, "GET", baseURL, nil)
+		mime := PickerMimeFromPath(filePath)
+		dlURL := baseURL + pickerMaxResolutionSuffix(mime)
+		req, err := p.newRequest(ctx, "GET", dlURL, nil)
 		if err != nil {
 			return nil, err
 		}
