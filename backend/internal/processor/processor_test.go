@@ -1,10 +1,88 @@
 package processor
 
 import (
+	"context"
+	"io"
 	"sync"
 	"testing"
 	"time"
+
+	"backend/internal/storage"
 )
+
+// fakeProvider is a minimal StorageProvider used to exercise transfer-decision
+// helpers without any network. Only SupportsAtomicRename is meaningful here;
+// the other methods panic if accidentally called by the tested code.
+type fakeProvider struct {
+	atomicRename bool
+}
+
+func (f *fakeProvider) Close() error { return nil }
+func (f *fakeProvider) Connect(ctx context.Context) (bool, error) {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error) {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error) {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	return nil
+}
+func (f *fakeProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	panic("not implemented in test")
+}
+func (f *fakeProvider) SupportsAtomicRename() bool { return f.atomicRename }
+
+// TestUseTempThenRename verifies the overwrite/retry decision: the temp-file +
+// rename pattern must only be used when BOTH an overwrite is requested AND the
+// target provider supports renaming. This is what keeps Google Photos (no
+// rename) uploads from failing when the conflict strategy is OVERWRITE.
+func TestUseTempThenRename(t *testing.T) {
+	renameable := &fakeProvider{atomicRename: true}
+	noRename := &fakeProvider{atomicRename: false}
+
+	cases := []struct {
+		name             string
+		target           storage.StorageProvider
+		deleteAfterUpload bool
+		want             bool
+	}{
+		{"renameable + overwrite", renameable, true, true},
+		{"renameable + no overwrite", renameable, false, false},
+		{"no-rename + overwrite (googlephotos)", noRename, true, false},
+		{"no-rename + no overwrite", noRename, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := useTempThenRename(c.target, c.deleteAfterUpload); got != c.want {
+				t.Fatalf("useTempThenRename(...)=%v, want %v", got, c.want)
+			}
+		})
+	}
+}
 
 func TestTransferTimeout(t *testing.T) {
 	const mb = int64(1024 * 1024)

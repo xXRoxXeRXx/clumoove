@@ -794,6 +794,11 @@ func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	return nil
 }
 
+// SupportsAtomicRename is true: Dropbox move_v2 is supported.
+func (p *DropboxProvider) SupportsAtomicRename() bool {
+	return true
+}
+
 func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
