@@ -1583,6 +1583,13 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		threads = 16
 	}
 
+	// Google Photos is rate-limited and single-threaded (parallel uploads
+	// exhaust the quota with HTTP 429 almost immediately). Force threads to 1
+	// when either side is googlephotos, regardless of what the client sent.
+	if req.SourceProvider == "googlephotos" || req.TargetProvider == "googlephotos" {
+		threads = 1
+	}
+
 	// Validate bandwidth limit
 	bandwidthLimit := req.BandwidthLimitMbps
 	if bandwidthLimit < 0 {
