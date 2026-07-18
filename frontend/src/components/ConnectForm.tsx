@@ -125,9 +125,19 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     };
 
-    // Periodically check if user closed the popup manually to clean up listener leaks (I7 fix)
+    // Periodically check if user closed the popup manually to clean up listener leaks (I7 fix).
+    // Accessing popup.closed can throw / log a console warning when the SPA document is served
+    // with Cross-Origin-Opener-Policy: same-origin (the cross-origin popup becomes inaccessible),
+    // so guard the read. The postMessage path above remains the primary completion signal.
     const checkClosedInterval = setInterval(() => {
-      if (!popup || popup.closed) {
+      let closed = false;
+      try {
+        closed = !popup || popup.closed;
+      } catch {
+        // popup.closed is blocked by COOP; treat as not-yet-closed and rely on postMessage.
+        closed = false;
+      }
+      if (closed) {
         cleanup();
       }
     }, 1000);
@@ -263,6 +273,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       const data = await response.json() as ConnectResponse;
       if (data.success) {
         let pickerSessionId = '';
+        let pickerUri = '';
         // For a Google Photos source, create the Picker session now so the
         // file-selection screen can present the Picker immediately (the user
         // selects media there, not on the connect screen).
@@ -280,9 +291,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 refresh_token: sourceRefreshToken,
               }),
             });
-            const pickerData = await pickerResp.json().catch(() => ({} as { success?: boolean; session_id?: string }));
+            const pickerData = await pickerResp.json().catch(() => ({} as { success?: boolean; session_id?: string; picker_uri?: string }));
             if (pickerData.success && pickerData.session_id) {
               pickerSessionId = pickerData.session_id;
+              pickerUri = pickerData.picker_uri || '';
             }
           } catch {
             // Picker session creation is best-effort here; the file-selection
@@ -304,6 +316,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             source_provider: sourceProvider,
             target_provider: targetProvider,
             source_picker_session_id: pickerSessionId,
+            source_picker_uri: pickerUri,
           },
           data.files || []
         );
