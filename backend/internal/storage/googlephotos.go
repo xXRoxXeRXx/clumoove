@@ -181,9 +181,12 @@ func (p *GooglePhotosProvider) errorFromResponse(resp *http.Response) error {
 	return fmt.Errorf("google photos api error with status: %d", resp.StatusCode)
 }
 
-// PickerSession models the response of POST /v1/sessions.
+// PickerSession models the response of POST /v1/sessions. The Google Photos
+// Picker API returns a PickingSession resource whose identifier field is
+// "id" (not "sessionId") — see the REST reference. Decoding under the wrong
+// tag yields an empty SessionID and the "empty session id" error.
 type PickerSession struct {
-	SessionID string `json:"sessionId"`
+	SessionID string `json:"id"`
 }
 
 // CreatePickerSession creates a Google Photos Picker session. The caller (the
