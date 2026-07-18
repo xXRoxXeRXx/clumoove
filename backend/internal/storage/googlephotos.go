@@ -1023,8 +1023,16 @@ func deriveOriginalName(filePath string) string {
 //   2. if the segment matches an existing album's id, reuse that album (so a
 //      Photos->Photos run keeps the original album title instead of creating a
 //      new album literally named after the id — finding #3);
-//   3. otherwise create a new album with the segment as its title and cache it
-//      (deduplicated on subsequent uploads — finding #2).
+//   3. otherwise look the target account up for an album with this exact title.
+//      This is REQUIRED for correctness: the worker creates a fresh
+//      GooglePhotosProvider per task, so the in-memory title<->id cache is
+//      empty for every task. Google Photos does NOT deduplicate albums by title
+//      (albums.create returns 200 for a duplicate title), so without this step
+//      10 photos in one source folder would each create a brand-new album of the
+//      same name. Querying by title makes the dedup survive fresh provider
+//      instances and process restarts (finding #2);
+//   4. only if no album with that title exists do we create a new one and cache
+//      it.
 func (p *GooglePhotosProvider) resolveAlbum(ctx context.Context, albumSegment string) (string, error) {
 	if id, ok := p.lookupAlbumByTitle(albumSegment); ok {
 		return id, nil
@@ -1035,6 +1043,13 @@ func (p *GooglePhotosProvider) resolveAlbum(ctx context.Context, albumSegment st
 		return albumSegment, nil
 	}
 	if existingID, found := p.findAlbumByID(ctx, albumSegment); found {
+		return existingID, nil
+	}
+
+	// The cache is per-provider-instance and the worker spins up a new provider
+	// for every task, so fall back to a title lookup against the live account
+	// before creating yet another identically-named album.
+	if existingID, found, err := p.findAlbumByTitle(ctx, albumSegment); err == nil && found {
 		return existingID, nil
 	}
 
@@ -1118,7 +1133,12 @@ func (p *GooglePhotosProvider) findAlbumByID(ctx context.Context, id string) (st
 	return "", false
 }
 
-func (p *GooglePhotosProvider) findAlbumByTitle(ctx context.Context, title string) (string, error) {
+// findAlbumByTitle looks up an existing target album by its exact (case-sensitive)
+// title across all album pages. It returns ("", false) when no match is found.
+// Unlike the legacy behaviour it does NOT create an album on a miss — that lets
+// callers (resolveAlbum) decide whether to reuse a cleanly-named album instead of
+// a uniquely-suffixed duplicate.
+func (p *GooglePhotosProvider) findAlbumByTitle(ctx context.Context, title string) (string, bool, error) {
 	pageToken := ""
 	for {
 		urlStr := p.apiURL("/albums?pageSize=50")
@@ -1127,26 +1147,26 @@ func (p *GooglePhotosProvider) findAlbumByTitle(ctx context.Context, title strin
 		}
 		req, err := p.newRequest(ctx, "GET", urlStr, nil)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		resp, err := p.HTTPClient.Do(req)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
-			return "", fmt.Errorf("google photos find album: %w", p.errorFromResponse(resp))
+			return "", false, fmt.Errorf("google photos find album: %w", p.errorFromResponse(resp))
 		}
 		var listResp googlePhotosAlbumsResponse
 		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
 			resp.Body.Close()
-			return "", err
+			return "", false, err
 		}
 		resp.Body.Close()
 		for _, a := range listResp.Albums {
 			p.cacheAlbum(a.ID, a.Title)
 			if a.Title == title {
-				return a.ID, nil
+				return a.ID, true, nil
 			}
 		}
 		if listResp.NextPageToken == "" {
@@ -1154,8 +1174,7 @@ func (p *GooglePhotosProvider) findAlbumByTitle(ctx context.Context, title strin
 		}
 		pageToken = listResp.NextPageToken
 	}
-	// Fall back to creating again (title may differ in casing).
-	return p.createAlbumUnique(ctx, title)
+	return "", false, nil
 }
 
 func (p *GooglePhotosProvider) createAlbumUnique(ctx context.Context, title string) (string, error) {
