@@ -413,8 +413,8 @@ func PickerPath(item PickerMediaItem) string {
 		"&mime=" + url.QueryEscape(item.MimeType)
 }
 
-// pickerMimeFromPath extracts the mime type stored in a Picker task path.
-func pickerMimeFromPath(filePath string) string {
+// PickerMimeFromPath extracts the mime type stored in a Picker task path.
+func PickerMimeFromPath(filePath string) string {
 	q := strings.IndexByte(filePath, '?')
 	if q < 0 {
 		return ""
@@ -428,7 +428,7 @@ func pickerMimeFromPath(filePath string) string {
 
 // parsePickerPath extracts the media id and download baseUrl from a Picker task
 // path produced by PickerPath. It returns (mediaID, baseURL, error).
-func parsePickerPath(filePath string) (string, string, error) {
+func ParsePickerPath(filePath string) (string, string, error) {
 	clean := strings.TrimPrefix(filePath, "/")
 	if !strings.HasPrefix(clean, strings.TrimPrefix(pickerPathPrefix, "/")) {
 		return "", "", fmt.Errorf("not a picker path: %s", filePath)
@@ -498,7 +498,7 @@ func PickerHandleFromMetadata(raw json.RawMessage) (PickerHandle, bool) {
 // query string that the transport handle carries, so the upload destination is
 // a normal filename under the user's target directory.
 func PickerTargetName(filePath string) string {
-	mediaID, baseURL, err := parsePickerPath(filePath)
+	mediaID, baseURL, err := ParsePickerPath(filePath)
 	if err != nil || mediaID == "" {
 		// Fall back to a generic, still-unique name derived from the path.
 		clean := strings.TrimPrefix(filePath, pickerPathPrefix)
@@ -509,7 +509,7 @@ func PickerTargetName(filePath string) string {
 		return "google-photos-" + clean
 	}
 	_ = baseURL
-	return "google-photos-" + mediaID + extForMime(pickerMimeFromPath(filePath), "")
+	return "google-photos-" + mediaID + extForMime(PickerMimeFromPath(filePath), "")
 }
 
 // Connect validates the OAuth token.
@@ -756,7 +756,7 @@ func (p *GooglePhotosProvider) InspectResource(ctx context.Context, resourceType
 	// Picker-sourced paths carry their own download baseUrl. Inspect the size
 	// via a HEAD on that URL (no "=d" suffix — that is Library-API-only).
 	if IsPickerPath(resourcePath) {
-		mediaID, baseURL, err := parsePickerPath(resourcePath)
+		mediaID, baseURL, err := ParsePickerPath(resourcePath)
 		if err != nil {
 			return CloudResource{}, err
 		}
@@ -863,7 +863,7 @@ func (p *GooglePhotosProvider) StreamDownload(ctx context.Context, resourceType,
 	}
 
 	if IsPickerPath(filePath) {
-		mediaID, baseURL, err := parsePickerPath(filePath)
+		mediaID, baseURL, err := ParsePickerPath(filePath)
 		if err != nil {
 			return nil, err
 		}
