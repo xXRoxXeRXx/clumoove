@@ -327,6 +327,71 @@ var errEmptyPickerSelection = errors.New("google photos picker selection is empt
 // so the processor can recover the download URL at transfer time. It mirrors
 // the resilient dedup/error behaviour of indexFolder.
 func indexPickerSource(database *sql.DB, ctx context.Context, client storage.StorageProvider, migID, sessionID string, selectedPaths []string, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+	// When the migration carries explicit selected_paths (the PickerPaths the
+	// user ticked in the UI), those paths are self-describing transport handles
+	// that already embed the download base_url + mime, so we build the tasks
+	// directly from them. We do NOT re-enumerate the Picker session: a session is
+	// short-lived and single-use, so by index time it is usually expired or was
+	// already consumed — re-enumerating would yield a fresh, EMPTY session and
+	// migrate nothing. The selected_paths are the only reliable source of truth.
+	if len(selectedPaths) > 0 {
+		for _, filePath := range selectedPaths {
+			if !storage.IsPickerPath(filePath) {
+				*indexErrors = append(*indexErrors, db.IndexingErrorInput{
+					Path:         filePath,
+					ResourceType: "files",
+					ErrorMessage: "skipped non-picker path in google photos selection",
+				})
+				continue
+			}
+			key := "files:" + filePath
+			if indexedPaths[key] {
+				continue
+			}
+			indexedPaths[key] = true
+			mediaID, baseURL, perr := storage.ParsePickerPath(filePath)
+			if perr != nil {
+				*indexErrors = append(*indexErrors, db.IndexingErrorInput{
+					Path:         filePath,
+					ResourceType: "files",
+					ErrorMessage: "failed to parse picker path: " + sanitizeError(perr.Error()),
+				})
+				log.Printf("Indexing: skipping unparseable picker path %s: %v", filePath, perr)
+				continue
+			}
+			handle := storage.PickerHandle{
+				ID:      mediaID,
+				BaseURL: baseURL,
+				Mime:    storage.PickerMimeFromPath(filePath),
+				Name:    storage.PickerTargetName(filePath),
+			}
+			metaJSON, err := json.Marshal(handle)
+			if err != nil {
+				metaJSON = []byte("{}")
+			}
+			task := &db.Task{
+				MigrationID:  migID,
+				ResourceType: "files",
+				FilePath:     filePath,
+				Status:       "PENDING",
+				Metadata:     metaJSON,
+			}
+			if _, err := db.CreateTask(database, task); err != nil {
+				*indexErrors = append(*indexErrors, db.IndexingErrorInput{
+					Path:         filePath,
+					ResourceType: "files",
+					ErrorMessage: "failed to create task: " + sanitizeError(err.Error()),
+				})
+				log.Printf("Indexing: skipping picker item %s (failed to create task): %v", filePath, err)
+				continue
+			}
+			*totalFiles++
+		}
+		return nil
+	}
+
+	// No explicit selection: migrate the whole session (legacy behaviour for
+	// migrations started before per-item selection existed).
 	items, err := storage.GetPickerMediaItems(ctx, client, sessionID)
 	if err != nil {
 		return err
@@ -335,23 +400,8 @@ func indexPickerSource(database *sql.DB, ctx context.Context, client storage.Sto
 		return errEmptyPickerSelection
 	}
 
-	// The Google Photos Picker session may contain more media than the user
-	// actually selected (e.g. when an entire album was captured by the session,
-	// or a stale session was reused). When the migration carries explicit
-	// selected_paths (the PickerPaths the user ticked in the UI), restrict the
-	// migration to exactly those items so we never silently transfer the whole
-	// library. An empty selectedPaths slice means "migrate the whole session".
-	selectedSet := make(map[string]bool, len(selectedPaths))
-	for _, p := range selectedPaths {
-		selectedSet[p] = true
-	}
-	filterBySelection := len(selectedSet) > 0
-
 	for _, item := range items {
 		filePath := storage.PickerPath(item)
-		if filterBySelection && !selectedSet[filePath] {
-			continue
-		}
 		key := "files:" + filePath
 		if indexedPaths[key] {
 			continue
