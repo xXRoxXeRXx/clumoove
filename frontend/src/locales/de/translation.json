@@ -494,6 +494,7 @@
     "WS_TOKEN_INVALID": "Sicherheits-Code ungültig oder abgelaufen.",
     "INTERNAL_ERROR": "Ein interner Serverfehler ist aufgetreten. Bitte versuche es später noch einmal.",
     "GOOGLE_PHOTOS_PICKER_SESSION_FAILED": "Die Google-Photos-Picker-Sitzung konnte nicht gestartet werden. Bitte verbinde Google Photos erneut und versuche es nochmal.",
+    "GOOGLE_PHOTOS_PICKER_API_DISABLED": "Die Google-Photos-Picker-API ist für dieses Google-Cloud-Projekt nicht aktiviert. Aktiviere die \"Google Photos Picker API\" in der Cloud Console und stelle sicher, dass der OAuth-Client den Scope photospicker.mediaitems.readonly hat, und verbinde Google Photos erneut.",
     "USER_DISABLED": "Dieses Konto wurde gesperrt. Bitte wende dich an einen Administrator.",
     "USER_NOT_FOUND": "Der angeforderte Benutzer wurde nicht gefunden.",
     "CANNOT_MODIFY_SELF": "Du kannst diese Aktion nicht an deinem eigenen Konto ausführen.",
