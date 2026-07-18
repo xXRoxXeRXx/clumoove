@@ -300,15 +300,29 @@ func (p *GooglePhotosProvider) GetPickerSession(ctx context.Context, sessionID s
 	return s, nil
 }
 
-// PickerMediaItem models one media item returned by the Picker API. The Picker
-// baseUrl is the download URL (valid for ~60 minutes, served only with the
-// OAuth bearer header). There is no content hash or size in the Picker payload,
-// so size is discovered at download/inspect time via a HEAD request.
-type PickerMediaItem struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	BaseURL string `json:"baseUrl"`
+// pickerMediaFile models the nested mediaFile object of a PickedMediaItem
+// returned by the Google Photos Picker mediaItems.list endpoint. The Picker
+// payload does NOT return flat baseUrl/mimeType/name fields — they live under
+// mediaFile. Decoding against the wrong (flat) shape yields empty baseUrl,
+// mime and name, which is why selected items showed up as blank 0B entries and
+// the worker failed with "picker path missing media id or base_url".
+type pickerMediaFile struct {
+	BaseURL  string `json:"baseUrl"`
 	MimeType string `json:"mimeType"`
+	Filename string `json:"filename"`
+}
+
+// PickerMediaItem models one PickedMediaItem returned by the Picker API. The
+// Picker baseUrl is the download URL (valid for ~60 minutes, served only with
+// the OAuth bearer header). There is no content hash or size in the Picker
+// payload, so size is discovered at download/inspect time via a HEAD request.
+type PickerMediaItem struct {
+	ID        string          `json:"id"`
+	MediaFile pickerMediaFile `json:"mediaFile"`
+	// Name and MimeType are surfaced from mediaFile for convenience.
+	Name    string `json:"-"`
+	BaseURL string `json:"-"`
+	MimeType string `json:"-"`
 	Size    int64  `json:"-"`
 }
 
@@ -361,6 +375,15 @@ func (p *GooglePhotosProvider) GetPickerMediaItems(ctx context.Context, sessionI
 			return nil, err
 		}
 		resp.Body.Close()
+		// The Picker payload nests baseUrl/mimeType/filename under mediaFile;
+		// surface them onto the item so the rest of the pipeline (PickerPath,
+		// task metadata, display name) can read them uniformly.
+		for i := range listResp.MediaItems {
+			mi := &listResp.MediaItems[i]
+			mi.BaseURL = mi.MediaFile.BaseURL
+			mi.MimeType = mi.MediaFile.MimeType
+			mi.Name = mi.MediaFile.Filename
+		}
 		items = append(items, listResp.MediaItems...)
 		// NOTE: the Picker payload carries no byte size, and resolving it would
 		// require a HEAD on every item's baseUrl. For large selections (thousands
