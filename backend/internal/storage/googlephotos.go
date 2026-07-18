@@ -34,7 +34,17 @@ type GooglePhotosProvider struct {
 	albumMu       sync.Mutex
 	albumTitleToID map[string]string // album title -> album id
 	albumIDToTitle map[string]string // album id   -> album title
+
+	// uploadSem bounds concurrent write requests to the Photos Library API,
+	// which enforces a tight "concurrent write request" quota. Without it, the
+	// worker's parallel threads exhaust the quota (HTTP 429) within milliseconds.
+	uploadSem chan struct{}
 }
+
+// googlePhotosMaxConcurrentWrites is the cap on parallel album/media write
+// calls. Google's Photos Library API throttles concurrent writes aggressively;
+// staying at 2 keeps well under the limit while still pipelining uploads.
+const googlePhotosMaxConcurrentWrites = 2
 
 func NewGooglePhotosProvider(ctx context.Context, token string) (*GooglePhotosProvider, error) {
 	if token == "" {
@@ -50,6 +60,7 @@ func NewGooglePhotosProvider(ctx context.Context, token string) (*GooglePhotosPr
 		BaseURL:        googlePhotosAPIBase,
 		albumTitleToID: make(map[string]string),
 		albumIDToTitle: make(map[string]string),
+		uploadSem:      make(chan struct{}, googlePhotosMaxConcurrentWrites),
 	}, nil
 }
 
@@ -495,6 +506,10 @@ func (p *GooglePhotosProvider) StreamUploadChunked(ctx context.Context, resource
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by googlephotos", resourceType)
 	}
+
+	// Bound concurrent writes to respect the Photos "concurrent write request" quota.
+	p.uploadSem <- struct{}{}
+	defer func() { <-p.uploadSem }()
 
 	parts := strings.Split(p.cleanPath(filePath), "/")
 	if len(parts) < 1 {

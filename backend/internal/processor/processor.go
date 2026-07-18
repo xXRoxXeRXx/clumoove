@@ -731,7 +731,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
 		}
 
-		if sanitize.IsCaseInsensitive(mig.TargetProvider) {
+		// Google Photos has no rename/overwrite-by-case semantics and the
+		// collision check issues an albums lookup that fails with
+		// "Invalid album ID" while also burning the scarce write quota. Skip it.
+		if sanitize.IsCaseInsensitive(mig.TargetProvider) && mig.TargetProvider != "googlephotos" {
 			collision, err := sanitize.CheckCaseCollision(ctx, targetClient, task.ResourceType,
 				path.Dir(targetPath), path.Base(targetPath))
 			if err != nil {
