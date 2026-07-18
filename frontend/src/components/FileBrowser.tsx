@@ -90,7 +90,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // other selected files.
   const isGooglePhotosSource = credentials.source_provider === 'googlephotos';
   const [pickerSessionId, setPickerSessionId] = useState(credentials.source_picker_session_id || '');
-  const [pickerUri, setPickerUri] = useState('');
+  const [pickerUri, setPickerUri] = useState(credentials.source_picker_uri || '');
   const [pickerPollInterval, setPickerPollInterval] = useState('');
   const [pickerTimeoutIn, setPickerTimeoutIn] = useState('');
   const [pickerLoading, setPickerLoading] = useState(false);

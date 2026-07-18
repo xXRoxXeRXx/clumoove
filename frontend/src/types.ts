@@ -33,6 +33,7 @@ export interface MigrationConfig {
   source_provider: Provider;
   target_provider: Provider;
   source_picker_session_id?: string;
+  source_picker_uri?: string;
 }
 
 export interface User {
