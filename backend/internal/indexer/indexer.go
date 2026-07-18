@@ -122,7 +122,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		// read scope for the whole library). The session may have expired by the
 		// time we index, so indexGooglePhotosPicker retries with a fresh session.
 		if mig.SourceProvider == "googlephotos" && gpSource != nil {
-			if err := idx.indexGooglePhotosPicker(migID, gpSource, ctx, sourceClient, &totalFiles, &totalBytes, indexedPaths, &indexErrors); err != nil {
+			if err := idx.indexGooglePhotosPicker(migID, gpSource, paths, ctx, sourceClient, &totalFiles, &totalBytes, indexedPaths, &indexErrors); err != nil {
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing Google Photos selection failed: %v", err))
 				return
 			}
@@ -267,13 +267,13 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 // freshly minted session exactly once. This keeps immediate migrations fast while
 // making scheduled/retried migrations robust without requiring the user to
 // re-open the Picker UI.
-func (idx *Indexer) indexGooglePhotosPicker(migID string, gp *storage.GooglePhotosProvider, ctx context.Context, client storage.StorageProvider, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+func (idx *Indexer) indexGooglePhotosPicker(migID string, gp *storage.GooglePhotosProvider, selectedPaths []string, ctx context.Context, client storage.StorageProvider, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	sessionID := gp.PickerSessionID()
 	if sessionID == "" {
 		return fmt.Errorf("google photos picker session id is missing from the migration")
 	}
 
-	err := indexPickerSource(idx.db, ctx, client, migID, sessionID, totalFiles, totalBytes, indexedPaths, indexErrors)
+	err := indexPickerSource(idx.db, ctx, client, migID, sessionID, selectedPaths, totalFiles, totalBytes, indexedPaths, indexErrors)
 	if err == nil {
 		return nil
 	}
@@ -290,7 +290,7 @@ func (idx *Indexer) indexGooglePhotosPicker(migID string, gp *storage.GooglePhot
 	}
 	refreshAndUseFresh(idx.db, migID, gp, fresh)
 
-	if rerr := indexPickerSource(idx.db, ctx, client, migID, fresh, totalFiles, totalBytes, indexedPaths, indexErrors); rerr != nil {
+	if rerr := indexPickerSource(idx.db, ctx, client, migID, fresh, selectedPaths, totalFiles, totalBytes, indexedPaths, indexErrors); rerr != nil {
 		if errors.Is(rerr, errEmptyPickerSelection) {
 			*indexErrors = append(*indexErrors, db.IndexingErrorInput{
 				Path:         "/picker",
@@ -326,7 +326,7 @@ var errEmptyPickerSelection = errors.New("google photos picker selection is empt
 // FilePath is a self-describing Picker path (`/picker/<id><ext>?base_url=...`)
 // so the processor can recover the download URL at transfer time. It mirrors
 // the resilient dedup/error behaviour of indexFolder.
-func indexPickerSource(database *sql.DB, ctx context.Context, client storage.StorageProvider, migID, sessionID string, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+func indexPickerSource(database *sql.DB, ctx context.Context, client storage.StorageProvider, migID, sessionID string, selectedPaths []string, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	items, err := storage.GetPickerMediaItems(ctx, client, sessionID)
 	if err != nil {
 		return err
@@ -334,8 +334,24 @@ func indexPickerSource(database *sql.DB, ctx context.Context, client storage.Sto
 	if len(items) == 0 {
 		return errEmptyPickerSelection
 	}
+
+	// The Google Photos Picker session may contain more media than the user
+	// actually selected (e.g. when an entire album was captured by the session,
+	// or a stale session was reused). When the migration carries explicit
+	// selected_paths (the PickerPaths the user ticked in the UI), restrict the
+	// migration to exactly those items so we never silently transfer the whole
+	// library. An empty selectedPaths slice means "migrate the whole session".
+	selectedSet := make(map[string]bool, len(selectedPaths))
+	for _, p := range selectedPaths {
+		selectedSet[p] = true
+	}
+	filterBySelection := len(selectedSet) > 0
+
 	for _, item := range items {
 		filePath := storage.PickerPath(item)
+		if filterBySelection && !selectedSet[filePath] {
+			continue
+		}
 		key := "files:" + filePath
 		if indexedPaths[key] {
 			continue
