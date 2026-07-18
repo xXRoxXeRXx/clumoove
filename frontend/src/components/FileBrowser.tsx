@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X } from 'lucide-react';
+import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X, ExternalLink } from 'lucide-react';
 import type { CloudFile, MigrationConfig } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
+import { GooglePhotosPicker } from './GooglePhotosPicker';
 
 interface FileBrowserProps {
   initialFiles: CloudFile[];
@@ -81,6 +82,20 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [newFolderName, setNewFolderName] = useState('');
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Google Photos Picker state. When the source is googlephotos, the file-
+  // selection screen shows the Picker instead of a folder tree. The user picks
+  // media in Google Photos; once confirmed we fetch the concrete items and drop
+  // them into directoryContents['/'] + selectedPaths so they behave like any
+  // other selected files.
+  const isGooglePhotosSource = credentials.source_provider === 'googlephotos';
+  const [pickerSessionId, setPickerSessionId] = useState(credentials.source_picker_session_id || '');
+  const [pickerUri, setPickerUri] = useState('');
+  const [pickerPollInterval, setPickerPollInterval] = useState('');
+  const [pickerTimeoutIn, setPickerTimeoutIn] = useState('');
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [pickerReady, setPickerReady] = useState(!isGooglePhotosSource);
   
   // Scheduling state
   const [enableScheduling, setEnableScheduling] = useState(false);
@@ -399,6 +414,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     try {
       const requestBody: Record<string, unknown> = {
         ...credentials,
+        source_picker_session_id: isGooglePhotosSource ? pickerSessionId : (credentials.source_picker_session_id || ''),
         conflict_strategy: conflictStrategy,
         paths: pathsToMigrate,
         calendars: calendarsToMigrate,
@@ -440,6 +456,96 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     }
   };
 
+  // createGooglePhotosPickerSession asks the backend to create a Google Photos
+  // Picker session from the source OAuth tokens. The returned session id + uri
+  // drive the embedded Picker widget shown above the (empty) file list.
+  const createGooglePhotosPickerSession = async () => {
+    setPickerLoading(true);
+    setPickerError(null);
+    setPickerSessionId('');
+    setPickerUri('');
+    setPickerReady(false);
+    try {
+      const response = await fetch(`${apiUrl}/api/googlephotos/picker/session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          provider: 'googlephotos',
+          access_token: credentials.source_password,
+          refresh_token: credentials.source_refresh_token,
+        }),
+      });
+      const data = await response.json().catch(() => ({} as { success?: boolean; session_id?: string; picker_uri?: string; poll_interval?: string; timeout_in?: string; error_code?: string }));
+      if (data.success && data.session_id && data.picker_uri) {
+        setPickerSessionId(data.session_id);
+        setPickerUri(data.picker_uri);
+        setPickerPollInterval(data.poll_interval || '');
+        setPickerTimeoutIn(data.timeout_in || '');
+      } else {
+        setPickerError(translateApiError(data.error_code));
+        setPickerReady(false);
+      }
+    } catch {
+      setPickerError(t('connect.errors.networkError'));
+      setPickerReady(false);
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  // loadPickerMedia fetches the media items the user selected in the Picker and
+  // merges them into the file list + selection so they appear (pre-selected) in
+  // the file-selection tree like any other source files.
+  const loadPickerMedia = async (sessionId: string) => {
+    setPickerLoading(true);
+    setPickerError(null);
+    try {
+      const response = await fetch(`${apiUrl}/api/googlephotos/picker/media`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          provider: 'googlephotos',
+          access_token: credentials.source_password,
+          refresh_token: credentials.source_refresh_token,
+          session_id: sessionId,
+        }),
+      });
+      const data = await response.json().catch(() => ({} as { success?: boolean; files?: CloudFile[]; error_code?: string }));
+      if (data.success && data.files) {
+        const sorted = sortEntries(data.files);
+        setDirectoryContents((prev) => ({ ...prev, '/': sorted }));
+        setSelectedPaths((prev) => {
+          const next = { ...prev };
+          for (const f of sorted) next[f.path] = true;
+          return next;
+        });
+        setPickerReady(true);
+      } else {
+        setPickerError(translateApiError(data.error_code));
+        setPickerReady(false);
+      }
+    } catch {
+      setPickerError(t('connect.errors.networkError'));
+      setPickerReady(false);
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  // When googlephotos is the source and no session was created during connect,
+  // create the Picker session so the user can begin selecting media on the
+  // file-selection screen.
+  const ensureGooglePhotosPicker = () => {
+    if (isGooglePhotosSource && !pickerSessionId) {
+      void createGooglePhotosPickerSession();
+    }
+  };
 
   const renderNode = (file: CloudFile, depth: number = 0) => {
     const isExpanded = !!expandedPaths[file.path];
@@ -706,7 +812,69 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </div>
 
           <div className="flex-grow overflow-y-auto scrollbar-portal">
-            {activeTab === 'files' && (
+            {activeTab === 'files' && isGooglePhotosSource && (
+              <div className="space-y-4 py-2">
+                {pickerSessionId && pickerUri ? (
+                  <GooglePhotosPicker
+                    key={pickerSessionId}
+                    apiUrl={apiUrl}
+                    token={token}
+                    oauthToken={credentials.source_password}
+                    refreshToken={credentials.source_refresh_token}
+                    sessionId={pickerSessionId}
+                    pickerUri={pickerUri}
+                    pollInterval={pickerPollInterval}
+                    timeoutIn={pickerTimeoutIn}
+                    onSelectionComplete={() => loadPickerMedia(pickerSessionId)}
+                    onError={(msg) => {
+                      setPickerError(msg);
+                      setPickerReady(false);
+                      setPickerSessionId('');
+                    }}
+                  />
+                ) : pickerLoading ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-[var(--color-text-muted)] gap-3">
+                    <RefreshCw className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+                    <p className="font-mono text-[10px] italic">{t('connect.googlePhotosPickerLoading')}</p>
+                  </div>
+                ) : !pickerSessionId ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-[var(--color-text-muted)] gap-3 text-center">
+                    <AlertTriangle className="w-8 h-8 text-[var(--color-portal-orange-themed)]" />
+                    <span className="text-xs font-sans leading-relaxed max-w-sm">{t('connect.googlePhotosPickerOpenHint')}</span>
+                    <button
+                      type="button"
+                      onClick={() => ensureGooglePhotosPicker()}
+                      className="py-2 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-2"
+                    >
+                      <ExternalLink className="w-4 h-4" /> {t('connect.googlePhotosPickerOpen')}
+                    </button>
+                  </div>
+                ) : pickerError ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-rose-700 gap-3 text-center">
+                    <AlertTriangle className="w-8 h-8" />
+                    <span className="text-xs font-sans leading-relaxed max-w-sm">{pickerError}</span>
+                    <button
+                      type="button"
+                      onClick={() => createGooglePhotosPickerSession()}
+                      className="py-2 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs transition-all cursor-pointer"
+                    >
+                      {t('common.retry')}
+                    </button>
+                  </div>
+                ) : null}
+
+                {pickerReady && directoryContents['/']?.length > 0 && (
+                  <div className="border-t border-[var(--color-border-light)] pt-4 mt-2">
+                    <p className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
+                      {t('fileBrowser.selectedFiles')} ({Object.values(selectedPaths).filter(Boolean).length})
+                    </p>
+                    {directoryContents['/'].map((file) => renderNode(file, 0))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab === 'files' && !isGooglePhotosSource && (
               directoryContents['/']?.length > 0 ? (
                 directoryContents['/'].map((file) => renderNode(file, 0))
               ) : (
@@ -804,7 +972,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           {/* Action submit button - moved to top */}
           <button
             onClick={handleStartMigration}
-            disabled={starting}
+            disabled={starting || (isGooglePhotosSource && !pickerReady)}
             className="w-full flex items-center justify-center gap-2.5 py-4 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           >
             {starting ? (

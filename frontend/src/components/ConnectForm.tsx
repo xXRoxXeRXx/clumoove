@@ -5,7 +5,6 @@ import type { CloudFile, MigrationConfig } from '../types';
 
 type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
 import { useApiError } from '../utils/apiError';
-import { GooglePhotosPicker } from './GooglePhotosPicker';
 
 interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
@@ -33,14 +32,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [targetProvider, setTargetProvider] = useState<ProviderId>('nextcloud');
   const [sourceOAuthUser, setSourceOAuthUser] = useState('');
   const [targetOAuthUser, setTargetOAuthUser] = useState('');
-
-  const [sourcePickerSessionId, setSourcePickerSessionId] = useState('');
-  const [sourcePickerUri, setSourcePickerUri] = useState('');
-  const [sourcePickerPollInterval, setSourcePickerPollInterval] = useState('');
-  const [sourcePickerTimeoutIn, setSourcePickerTimeoutIn] = useState('');
-  const [sourcePickerReady, setSourcePickerReady] = useState(false);
-  const [sourcePickerError, setSourcePickerError] = useState<string | null>(null);
-  const [sourcePickerLoading, setSourcePickerLoading] = useState(false);
 
   const [sourceSmbHost, setSourceSmbHost] = useState('');
   const [sourceSmbPort, setSourceSmbPort] = useState('445');
@@ -116,7 +107,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           // For Google Photos, create a Picker session so the user can select
           // media in the embedded Picker widget. Other providers skip this.
           if (provider === 'googlephotos') {
-            createGooglePhotosPickerSession(event.data.token);
+            // Google Photos source selection happens on the next screen
+            // (file selection), not here — we only store the OAuth tokens.
           }
         } else {
           setTargetOAuthUser(event.data.username || provider);
@@ -141,48 +133,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }, 1000);
 
     window.addEventListener('message', handleMessage);
-  };
-
-  // createGooglePhotosPickerSession asks the backend to create a Google Photos
-  // Picker session from the freshly obtained OAuth access token. The session id
-  // is stored in component state and used by the embedded Picker widget and sent
-  // with the connect/start requests so the indexer can enumerate the selection.
-  const createGooglePhotosPickerSession = async (accessToken: string) => {
-    setSourcePickerLoading(true);
-    setSourcePickerError(null);
-    setSourcePickerSessionId('');
-    setSourcePickerUri('');
-    setSourcePickerPollInterval('');
-    setSourcePickerReady(false);
-    try {
-      const response = await fetch(`${apiUrl}/api/googlephotos/picker/session`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          provider: 'googlephotos',
-          access_token: accessToken,
-          refresh_token: sourceRefreshToken,
-        }),
-      });
-      const data = await response.json().catch(() => ({} as { success?: boolean; session_id?: string; picker_uri?: string; poll_interval?: string; timeout_in?: string; error_code?: string }));
-      if (data.success && data.session_id && data.picker_uri) {
-        setSourcePickerSessionId(data.session_id);
-        setSourcePickerUri(data.picker_uri);
-        setSourcePickerPollInterval(data.poll_interval || '');
-        setSourcePickerTimeoutIn(data.timeout_in || '');
-      } else {
-        setSourcePickerError(translateApiError(data.error_code));
-        setSourcePickerReady(true); // allow start even without a working picker UI
-      }
-    } catch {
-      setSourcePickerError(t('connect.errors.networkError'));
-      setSourcePickerReady(true);
-    } finally {
-      setSourcePickerLoading(false);
-    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -278,17 +228,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       return;
     }
 
-    // Google Photos source requires a Picker session + confirmed selection
-    // before a migration can be started.
-    if (sourceProvider === 'googlephotos' && !sourcePickerSessionId) {
-      setError(t('connect.errors.googlePhotosPickerRequired'));
-      return;
-    }
-    if (sourceProvider === 'googlephotos' && sourcePickerSessionId && !sourcePickerReady) {
-      setError(t('connect.errors.googlePhotosPickerPending'));
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
@@ -312,7 +251,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           target_token_expires_in: targetTokenExpiresIn,
           source_provider: sourceProvider,
           target_provider: targetProvider,
-          source_picker_session_id: sourceProvider === 'googlephotos' ? sourcePickerSessionId : '',
+          source_picker_session_id: '',
         }),
       });
 
@@ -323,6 +262,33 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
       const data = await response.json() as ConnectResponse;
       if (data.success) {
+        let pickerSessionId = '';
+        // For a Google Photos source, create the Picker session now so the
+        // file-selection screen can present the Picker immediately (the user
+        // selects media there, not on the connect screen).
+        if (sourceProvider === 'googlephotos') {
+          try {
+            const pickerResp = await fetch(`${apiUrl}/api/googlephotos/picker/session`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                provider: 'googlephotos',
+                access_token: sourcePass,
+                refresh_token: sourceRefreshToken,
+              }),
+            });
+            const pickerData = await pickerResp.json().catch(() => ({} as { success?: boolean; session_id?: string }));
+            if (pickerData.success && pickerData.session_id) {
+              pickerSessionId = pickerData.session_id;
+            }
+          } catch {
+            // Picker session creation is best-effort here; the file-selection
+            // screen can retry it. Proceed without blocking the connect.
+          }
+        }
         onConnectSuccess(
           {
             source_url: finalSourceUrl,
@@ -337,7 +303,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             target_token_expires_in: targetTokenExpiresIn,
             source_provider: sourceProvider,
             target_provider: targetProvider,
-            source_picker_session_id: sourceProvider === 'googlephotos' ? sourcePickerSessionId : '',
+            source_picker_session_id: pickerSessionId,
           },
           data.files || []
         );
@@ -825,7 +791,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
                     {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'googlephotos' ? t('connect.googlePhotosConnect') : t('connect.dropboxConnect')}
                   </label>
-                  {sourcePass ? (
+                   {sourcePass ? (
                     <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
@@ -836,9 +802,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         onClick={() => {
                           setSourcePass('');
                           setSourceOAuthUser('');
-                          setSourcePickerSessionId('');
-                          setSourcePickerReady(false);
-                          setSourcePickerError(null);
                         }}
                         className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
                       >
@@ -853,45 +816,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     >
                       <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'googlephotos' ? 'Google Photos' : 'Dropbox' })}
                     </button>
-                  )}
-                  {sourceProvider === 'googlephotos' && sourcePass && (
-                    <div className="mt-4 space-y-2">
-                      <p className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                        {t('connect.googlePhotosPickerTitle')}
-                      </p>
-                      {sourcePickerLoading && (
-                        <p className="text-xs font-sans text-[var(--color-text-muted)]">{t('connect.googlePhotosPickerLoading')}</p>
-                      )}
-                      {sourcePickerSessionId && sourcePickerUri ? (
-                        <GooglePhotosPicker
-                          key={sourcePickerSessionId}
-                          apiUrl={apiUrl}
-                          token={token}
-                          oauthToken={sourcePass}
-                          refreshToken={sourceRefreshToken}
-                          sessionId={sourcePickerSessionId}
-                          pickerUri={sourcePickerUri}
-                          pollInterval={sourcePickerPollInterval}
-                          timeoutIn={sourcePickerTimeoutIn}
-                          onSelectionComplete={() => setSourcePickerReady(true)}
-                          onError={(msg) => {
-                            // A poll error means no valid selection was confirmed.
-                            // Clear the session id so the start guard
-                            // (connect.errors.googlePhotosPickerRequired) blocks
-                            // the migration instead of allowing an expired/empty
-                            // selection through. The error is shown inline.
-                            setSourcePickerError(msg);
-                            setSourcePickerReady(false);
-                            setSourcePickerSessionId('');
-                          }}
-                        />
-                      ) : !sourcePickerLoading && sourcePickerError ? (
-                        <div className="flex items-start gap-2 text-rose-700">
-                          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                          <span className="text-xs font-sans leading-relaxed">{sourcePickerError}</span>
-                        </div>
-                      ) : null}
-                    </div>
                   )}
                 </div>
               )}
@@ -1331,7 +1255,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         <div className="flex justify-center pt-4">
             <button
               type="submit"
-              disabled={loading || (sourceProvider === 'googlephotos' && sourcePickerSessionId !== '' && !sourcePickerReady)}
+              disabled={loading}
             className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? (

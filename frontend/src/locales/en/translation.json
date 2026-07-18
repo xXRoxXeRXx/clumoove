@@ -108,7 +108,6 @@
     "dropboxAccount": "Dropbox Account",
     "googlePhotosAccount": "Google Photos Account",
     "googlePhotosInfo": "Connects to Google Photos via the Picker API. You select the exact photos and videos to migrate in a Google Photos tab that opens when you click the button below — Google no longer permits reading the whole library automatically. A dedicated OAuth client with the photospicker.mediaitems.readonly + photoslibrary.appendonly scopes is required. As a target, uploads use the Library API.",
-    "googlePhotosPickerTitle": "Select photos & videos from Google Photos",
     "googlePhotosPickerLoading": "Preparing Google Photos picker…",
     "googlePhotosPickerOpen": "Open Google Photos picker",
     "googlePhotosPickerOpenHint": "A new tab opens where you pick the photos and videos to migrate. Return here after confirming your selection in Google Photos.",
@@ -144,9 +143,7 @@
       "connectionFailed": "The connection could not be established.",
       "verifyFailed": "Connection failed. Please check your credentials.",
       "networkError": "A network error occurred. Please check your internet connection.",
-      "oauthError": "Sign-in error: {{error}}",
-      "googlePhotosPickerRequired": "Please connect Google Photos and select media in the picker before continuing.",
-      "googlePhotosPickerPending": "Please confirm your Google Photos selection in the picker before continuing."
+      "oauthError": "Sign-in error: {{error}}"
     }
   },
   "fileBrowser": {
@@ -156,6 +153,7 @@
     "calendars": "Calendars",
     "contacts": "Contacts",
     "emptyDir": "Empty folder",
+    "selectedFiles": "Selected files",
     "noFiles": "No files found",
     "noCalendars": "No calendars found",
     "noContacts": "No address books found",
