@@ -472,6 +472,52 @@ func TestPickerPathInvalid(t *testing.T) {
 	}
 }
 
+// TestPickerMediaItemNestedDecode verifies that the real Google Photos Picker
+// payload — where baseUrl/mimeType/filename are nested under mediaFile — is
+// decoded correctly so Name/BaseURL/MimeType are populated (and not blank).
+func TestPickerMediaItemNestedDecode(t *testing.T) {
+	const body = `{
+		"mediaItems": [
+			{
+				"id": "MEDIA_ID_1",
+				"createTime": "2024-01-02T03:04:05Z",
+				"type": "PHOTO",
+				"mediaFile": {
+					"baseUrl": "https://lh3.googleusercontent.com/p/AF1QipXbaseurl",
+					"mimeType": "image/jpeg",
+					"filename": "holiday-beach.jpg"
+				}
+			}
+		],
+		"nextPageToken": ""
+	}`
+	var resp pickerMediaItemsResponse
+	if err := json.Unmarshal([]byte(body), &resp); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if len(resp.MediaItems) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(resp.MediaItems))
+	}
+	mi := resp.MediaItems[0]
+	if mi.ID != "MEDIA_ID_1" {
+		t.Errorf("ID = %q, want MEDIA_ID_1", mi.ID)
+	}
+	if mi.MediaFile.BaseURL == "" || mi.MediaFile.MimeType == "" || mi.MediaFile.Filename == "" {
+		t.Fatalf("nested mediaFile not decoded: %+v", mi.MediaFile)
+	}
+	// The convenience fields must be surfaced during GetPickerMediaItems.
+	mi.BaseURL = mi.MediaFile.BaseURL
+	mi.MimeType = mi.MediaFile.MimeType
+	mi.Name = mi.MediaFile.Filename
+	if mi.BaseURL == "" || mi.MimeType == "" || mi.Name == "" {
+		t.Errorf("surfaced picker fields empty: name=%q base=%q mime=%q", mi.Name, mi.BaseURL, mi.MimeType)
+	}
+	path := PickerPath(mi)
+	if !strings.Contains(path, "base_url=https%3A%2F%2Flh3.googleusercontent.com") {
+		t.Errorf("picker path missing base_url: %q", path)
+	}
+}
+
 func TestExtForMime(t *testing.T) {
 	cases := []struct {
 		mime string
