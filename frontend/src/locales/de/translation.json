@@ -108,7 +108,6 @@
     "dropboxAccount": "Dropbox-Konto",
     "googlePhotosAccount": "Google Photos-Konto",
     "googlePhotosInfo": "Verbindet mit Google Photos über die Picker-API. Du wählst die genauen Fotos und Videos für die Übertragung in einem Google-Photos-Tab aus, der sich beim Klick auf die Schaltfläche unten öffnet — Google erlaubt das automatische Auslesen der gesamten Bibliothek nicht mehr. Ein separater OAuth-Client mit den Scopes photospicker.mediaitems.readonly + photoslibrary.appendonly ist erforderlich. Als Ziel verwendet der Upload die Library-API.",
-    "googlePhotosPickerTitle": "Fotos & Videos aus Google Photos auswählen",
     "googlePhotosPickerLoading": "Google Photos-Picker wird vorbereitet…",
     "googlePhotosPickerOpen": "Google Photos-Picker öffnen",
     "googlePhotosPickerOpenHint": "Es öffnet sich ein neuer Tab, in dem du die zu übertragenden Fotos und Videos auswählst. Komm danach hierher zurück, nachdem du deine Auswahl in Google Photos bestätigt hast.",
@@ -144,9 +143,7 @@
       "connectionFailed": "Die Verbindung konnte nicht hergestellt werden.",
       "verifyFailed": "Verbindung fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.",
       "networkError": "Ein Netzwerkfehler ist aufgetreten. Bitte überprüfe deine Internetverbindung.",
-      "oauthError": "Fehler bei der Anmeldung: {{error}}",
-      "googlePhotosPickerRequired": "Bitte verbinde Google Photos und wähle Medien im Picker aus, bevor du fortfährst.",
-      "googlePhotosPickerPending": "Bitte bestätige deine Google-Photos-Auswahl im Picker, bevor du fortfährst."
+      "oauthError": "Fehler bei der Anmeldung: {{error}}"
     }
   },
   "fileBrowser": {
@@ -156,6 +153,7 @@
     "calendars": "Kalender",
     "contacts": "Kontakte",
     "emptyDir": "Leerer Ordner",
+    "selectedFiles": "Ausgewählte Dateien",
     "noFiles": "Keine Dateien gefunden",
     "noCalendars": "Keine Kalender gefunden",
     "noContacts": "Keine Adressbücher gefunden",
