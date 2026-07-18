@@ -187,14 +187,43 @@ func (p *GooglePhotosProvider) errorFromResponse(resp *http.Response) error {
 // tag yields an empty SessionID and the "empty session id" error.
 type PickerSession struct {
 	SessionID string `json:"id"`
+	// PickerURI is the URL the user must open (in a new tab/window) to pick
+	// media in Google Photos. It cannot be embedded in an iframe. The Photos
+	// Picker API has no embeddable JS widget, so the frontend opens this URI
+	// and then polls the session until MediaItemsSet becomes true.
+	PickerURI string `json:"pickerUri"`
+	// MediaItemsSet is true once the user has finished picking media.
+	MediaItemsSet bool `json:"mediaItemsSet"`
+	// PollingConfig carries Google's recommended poll interval / timeout.
+	PollingConfig *PickerPollingConfig `json:"pollingConfig,omitempty"`
 }
 
-// CreatePickerSession creates a Google Photos Picker session. The caller (the
-// frontend) then uses the returned session id together with the user's OAuth
-// access token to render the embedded Picker UI. The session is valid for a
-// limited time and should be re-created if indexing is deferred far into the
-// future.
+// PickerPollingConfig mirrors the pollingConfig object of a PickingSession.
+// Durations are serialized by Google as strings like "5s".
+type PickerPollingConfig struct {
+	PollInterval string `json:"pollInterval,omitempty"`
+	TimeoutIn    string `json:"timeoutIn,omitempty"`
+}
+
+// CreatePickerSession creates a Google Photos Picker session and returns only
+// the session id. It is used by the indexer (which only needs the id to
+// enumerate the selection). The frontend uses CreatePickerSessionFull instead
+// because it also needs the pickerUri to open the picker.
 func (p *GooglePhotosProvider) CreatePickerSession(ctx context.Context) (string, error) {
+	s, err := p.CreatePickerSessionFull(ctx)
+	if err != nil {
+		return "", err
+	}
+	return s.SessionID, nil
+}
+
+// CreatePickerSessionFull creates a Google Photos Picker session and returns the
+// full PickingSession resource, including the pickerUri the user must open (the
+// Photos Picker API has no embeddable JS widget) and the pollingConfig used by
+// the frontend to poll the session until the user finishes selecting media. The
+// session is valid for a limited time and should be re-created if indexing is
+// deferred far into the future.
+func (p *GooglePhotosProvider) CreatePickerSessionFull(ctx context.Context) (PickerSession, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -204,36 +233,71 @@ func (p *GooglePhotosProvider) CreatePickerSession(ctx context.Context) (string,
 	// itself, not in the session creation call.
 	req, err := p.newRequest(ctx, "POST", p.pickerSessionURL("/sessions"), http.NoBody)
 	if err != nil {
-		return "", err
+		return PickerSession{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return "", err
+		return PickerSession{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
-		return "", fmt.Errorf("google photos picker session: %w", ErrAuth)
+		return PickerSession{}, fmt.Errorf("google photos picker session: %w", ErrAuth)
 	}
 	if resp.StatusCode == http.StatusForbidden {
 		// A 403 from the Picker API almost always means the "Google Photos
 		// Picker API" service is not enabled for the OAuth client's Cloud
 		// project. Surface this distinctly so the API can return a targeted
 		// error_code telling the user to enable the API.
-		return "", fmt.Errorf("google photos picker session: %w", ErrPickerAPIForbidden)
+		return PickerSession{}, fmt.Errorf("google photos picker session: %w", ErrPickerAPIForbidden)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("google photos picker session: %w", p.errorFromResponse(resp))
+		return PickerSession{}, fmt.Errorf("google photos picker session: %w", p.errorFromResponse(resp))
 	}
 	var s PickerSession
 	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
-		return "", err
+		return PickerSession{}, err
 	}
 	if s.SessionID == "" {
-		return "", fmt.Errorf("google photos picker session: empty session id")
+		return PickerSession{}, fmt.Errorf("google photos picker session: empty session id")
 	}
 	p.pickerSessionID = s.SessionID
-	return s.SessionID, nil
+	return s, nil
+}
+
+// GetPickerSession retrieves the current status of a Picker session. The
+// frontend polls this after the user opens the pickerUri, watching for
+// MediaItemsSet to flip to true (the user finished selecting media).
+func (p *GooglePhotosProvider) GetPickerSession(ctx context.Context, sessionID string) (PickerSession, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	req, err := p.newRequest(ctx, "GET", p.pickerSessionURL("/sessions/"+url.PathEscape(sessionID)), http.NoBody)
+	if err != nil {
+		return PickerSession{}, err
+	}
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return PickerSession{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return PickerSession{}, fmt.Errorf("google photos picker session: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return PickerSession{}, fmt.Errorf("google photos picker session: %w", ErrPickerAPIForbidden)
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return PickerSession{}, fmt.Errorf("google photos picker session: %w", ErrPickerSessionExpired)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return PickerSession{}, fmt.Errorf("google photos picker session: %w", p.errorFromResponse(resp))
+	}
+	var s PickerSession
+	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+		return PickerSession{}, err
+	}
+	return s, nil
 }
 
 // PickerMediaItem models one media item returned by the Picker API. The Picker

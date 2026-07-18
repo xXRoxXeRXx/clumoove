@@ -71,7 +71,6 @@ function App() {
   const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
   const [localStorageEnabled, setLocalStorageEnabled] = useState<boolean>(false);
   const [oauthProviders, setOauthProviders] = useState<Record<string, boolean>>({});
-  const [googlePhotosPickerDeveloperKey, setGooglePhotosPickerDeveloperKey] = useState<string>('');
 
   useEffect(() => {
     fetch(`${API_URL}/api/settings`)
@@ -82,9 +81,6 @@ function App() {
         }
         if (data && data.oauth_providers && typeof data.oauth_providers === 'object') {
           setOauthProviders(data.oauth_providers);
-        }
-        if (data && typeof data.google_photos_picker_developer_key === 'string') {
-          setGooglePhotosPickerDeveloperKey(data.google_photos_picker_developer_key);
         }
       })
       .catch(() => {});
@@ -607,7 +603,6 @@ function App() {
               token={token}
               localStorageEnabled={localStorageEnabled}
               oauthProviders={oauthProviders}
-              googlePhotosPickerDeveloperKey={googlePhotosPickerDeveloperKey}
             />
           )}
           
