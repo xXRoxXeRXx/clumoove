@@ -34,6 +34,11 @@ const photoPickerAPIBase = "https://photospicker.googleapis.com/v1"
 // sentinel to create a fresh session with the current OAuth token.
 var ErrPickerSessionExpired = errors.New("google photos picker session expired or invalid")
 
+// ErrPickerAPIForbidden is returned by CreatePickerSession on HTTP 403. This
+// almost always means the "Google Photos Picker API" service is not enabled for
+// the OAuth client's Google Cloud project (the scopes alone are insufficient).
+var ErrPickerAPIForbidden = errors.New("google photos picker API is forbidden (not enabled in cloud project)")
+
 // pickerPathPrefix marks a task FilePath that was produced from a Picker
 // selection rather than the Library API. The path is encoded as
 //   /picker/<mediaID><ext>?base_url=<url-escaped download URL>
@@ -208,6 +213,13 @@ func (p *GooglePhotosProvider) CreatePickerSession(ctx context.Context) (string,
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return "", fmt.Errorf("google photos picker session: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		// A 403 from the Picker API almost always means the "Google Photos
+		// Picker API" service is not enabled for the OAuth client's Cloud
+		// project. Surface this distinctly so the API can return a targeted
+		// error_code telling the user to enable the API.
+		return "", fmt.Errorf("google photos picker session: %w", ErrPickerAPIForbidden)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("google photos picker session: %w", p.errorFromResponse(resp))
