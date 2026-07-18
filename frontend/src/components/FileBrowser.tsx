@@ -140,13 +140,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       if (data.success) {
         const foldersOnly = sortEntries((data.files || []).filter((f: CloudFile) => f.is_dir));
         setTargetDirectoryContents((prev) => ({ ...prev, [folderPath]: foldersOnly }));
-        // When opening the browser, eagerly expand and load the first few
-        // levels of the folder tree so all subfolders are visible at once.
-        if (depth < 3) {
+        // Only the first folder level is loaded directly. Deeper levels are
+        // loaded on demand when the user expands a folder.
+        if (depth < 1) {
           setTargetExpandedPaths((prev) => ({ ...prev, [folderPath]: true }));
-          for (const child of foldersOnly) {
-            fetchTargetChildren(child.path, depth + 1);
-          }
         }
       } else {
         setTargetError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.loadTarget'));
