@@ -71,7 +71,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   );
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
   const [conflictStrategy, setConflictStrategy] = useState('SKIP');
-  const [threads, setThreads] = useState(4);
+  const isGooglePhotosSource = credentials.source_provider === 'googlephotos';
+  const [threads, setThreads] = useState<number>(isGooglePhotosSource ? 1 : 4);
   const [targetDir, setTargetDir] = useState('/');
   const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
   const [targetExpandedPaths, setTargetExpandedPaths] = useState<Record<string, boolean>>({});
@@ -88,7 +89,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // media in Google Photos; once confirmed we fetch the concrete items and drop
   // them into directoryContents['/'] + selectedPaths so they behave like any
   // other selected files.
-  const isGooglePhotosSource = credentials.source_provider === 'googlephotos';
   const [pickerSessionId, setPickerSessionId] = useState(credentials.source_picker_session_id || '');
   const [pickerUri, setPickerUri] = useState(credentials.source_picker_uri || '');
   const [pickerPollInterval, setPickerPollInterval] = useState('');
@@ -1083,10 +1083,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <input
                   type="range"
                   min="1"
-                  max="16"
+                  max={isGooglePhotosSource ? 1 : 16}
                   value={threads}
+                  disabled={isGooglePhotosSource}
                   onChange={(e) => setThreads(parseInt(e.target.value, 10))}
-                  className="flex-grow accent-portal-navy cursor-pointer"
+                  className="flex-grow accent-portal-navy cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <span className={`font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[32px] text-center transition-colors ${
                   threads > 8 ? 'bg-[var(--color-warning-bg)] text-[var(--color-portal-orange-themed)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]'
@@ -1095,7 +1096,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </span>
               </div>
               <p className="text-[9.5px] text-[var(--color-text-muted)] leading-relaxed font-sans">
-                {threads > 8 ? (
+                {isGooglePhotosSource ? (
+                  <span className="text-[var(--color-portal-navy-themed)] font-semibold">{t('fileBrowser.threadsGooglePhotos')}</span>
+                ) : threads > 8 ? (
                   <span className="text-[var(--color-portal-orange-themed)] font-semibold">{t('fileBrowser.threadsHighWarn')}</span>
                 ) : (
                   t('fileBrowser.threadsHint')
