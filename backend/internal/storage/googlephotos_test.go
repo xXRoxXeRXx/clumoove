@@ -458,6 +458,44 @@ func TestGooglePhotosStreamDownloadImageMaxResolution(t *testing.T) {
 	defer rc.Close()
 }
 
+func TestGooglePhotosPickerStreamDownloadMaxResolution(t *testing.T) {
+	// The Picker baseUrl must receive the =w100000-h100000 (images) / =dv
+	// (videos) suffix so Google returns the full original resolution instead of
+	// the small web-optimised rendition the verbatim URL serves.
+	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/base/") {
+			if !strings.HasSuffix(r.URL.String(), "=w100000-h100000") {
+				t.Errorf("picker image download must request max resolution, got %q", r.URL.String())
+			}
+			w.Header().Set("Content-Length", "999999")
+			w.Write([]byte("fullres-image-bytes"))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer vs.Close()
+
+	item := PickerMediaItem{
+		ID:       "picker-img-1",
+		Name:     "holiday.jpg",
+		BaseURL:  vs.URL + "/base/picker-img-1",
+		MimeType: "image/jpeg",
+	}
+	path := PickerPath(item)
+	p2 := &GooglePhotosProvider{
+		AccessToken:    "test-token",
+		HTTPClient:     vs.Client(),
+		BaseURL:        vs.URL,
+		albumTitleToID: make(map[string]string),
+		albumIDToTitle: make(map[string]string),
+	}
+	rc, err := p2.StreamDownload(context.Background(), "files", path)
+	if err != nil {
+		t.Fatalf("Picker StreamDownload error: %v", err)
+	}
+	defer rc.Close()
+}
+
 func TestPickerPathRoundTrip(t *testing.T) {
 	item := PickerMediaItem{
 		ID:      "media-abc123",
