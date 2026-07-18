@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     selected_paths JSONB,
     selected_calendars JSONB,
     selected_contacts JSONB,
+    picker_session_id TEXT,
     total_files INT NOT NULL DEFAULT 0,
     total_bytes BIGINT NOT NULL DEFAULT 0,
     processed_files INT NOT NULL DEFAULT 0,

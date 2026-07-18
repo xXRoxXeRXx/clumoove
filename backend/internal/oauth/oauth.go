@@ -55,7 +55,7 @@ func InitConfigs() {
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		Scopes: []string{
-			"https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
+			"https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
 			"https://www.googleapis.com/auth/photoslibrary.appendonly",
 			"https://www.googleapis.com/auth/userinfo.email",
 			"https://www.googleapis.com/auth/userinfo.profile",

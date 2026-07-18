@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/storage"
 )
 
@@ -66,6 +68,19 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 
+	// For OAuth providers (e.g. googlephotos) the access token may have expired
+	// by the time indexing runs (especially for scheduled migrations). Refresh it
+	// now so the provider can authenticate at index time. The refreshed token is
+	// persisted so the worker does not need to refresh again.
+	if mig.SourceRefreshTokenEncrypted.Valid && mig.SourceRefreshTokenEncrypted.String != "" {
+		sourcePass, err = idx.ensureFreshSourceToken(migID, mig, sourcePass)
+		if err != nil {
+			crypto.ZeroString(&sourcePass)
+			failMigration(idx.db, migID, fmt.Sprintf("Failed to refresh source OAuth token: %v", err))
+			return
+		}
+	}
+
 	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
 		crypto.ZeroString(&sourcePass)
@@ -74,6 +89,21 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 	defer sourceClient.Close()
 	defer crypto.ZeroString(&sourcePass)
+
+	// Reuse the Google Photos Picker session the user selected their media in, so
+	// the indexer enumerates exactly the items the user picked. Picker sessions
+	// are short-lived, so when indexing runs much later than the selection (e.g.
+	// for a scheduled migration) the session may have expired; indexGooglePhotos
+	// transparently creates a fresh session with the current token in that case.
+	var gpSource *storage.GooglePhotosProvider
+	if mig.SourceProvider == "googlephotos" {
+		if gp, ok := sourceClient.(*storage.GooglePhotosProvider); ok {
+			gpSource = gp
+			if mig.PickerSessionID != "" {
+				gp.SetPickerSession(mig.PickerSessionID)
+			}
+		}
+	}
 
 	var totalFiles int
 	var totalBytes int64
@@ -86,6 +116,19 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	// 1. Index files
 	for _, p := range paths {
+		// Google Photos as a Picker source: the user selected individual media
+		// items in the Picker UI, so we enumerate the Picker session directly
+		// instead of walking a folder tree (the Library API no longer exposes a
+		// read scope for the whole library). The session may have expired by the
+		// time we index, so indexGooglePhotosPicker retries with a fresh session.
+		if mig.SourceProvider == "googlephotos" && gpSource != nil {
+			if err := idx.indexGooglePhotosPicker(migID, gpSource, ctx, sourceClient, &totalFiles, &totalBytes, indexedPaths, &indexErrors); err != nil {
+				failMigration(idx.db, migID, fmt.Sprintf("Indexing Google Photos selection failed: %v", err))
+				return
+			}
+			continue
+		}
+
 		res, err := sourceClient.InspectResource(ctx, "files", p)
 		if err != nil {
 			// A single bad file path must not abort the whole migration.
@@ -215,8 +258,160 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 }
 
-// indexFolder walks a directory/collection recursively using BFS with a visited
-// map to prevent infinite loops on symlink cycles or circular DAVs.
+// indexGooglePhotosPicker enumerates the user's Google Photos Picker selection.
+// It first tries the session id persisted on the migration row. Picker sessions
+// are short-lived and single-use, so for a deferred/scheduled migration the
+// stored session is very likely expired or already consumed by index time. We
+// therefore treat BOTH an expired session (ErrPickerSessionExpired) AND an empty
+// selection from a *stored* session as suspicious and transparently retry with a
+// freshly minted session exactly once. This keeps immediate migrations fast while
+// making scheduled/retried migrations robust without requiring the user to
+// re-open the Picker UI.
+func (idx *Indexer) indexGooglePhotosPicker(migID string, gp *storage.GooglePhotosProvider, ctx context.Context, client storage.StorageProvider, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+	sessionID := gp.PickerSessionID()
+	if sessionID == "" {
+		return fmt.Errorf("google photos picker session id is missing from the migration")
+	}
+
+	err := indexPickerSource(idx.db, ctx, client, migID, sessionID, totalFiles, totalBytes, indexedPaths, indexErrors)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, storage.ErrPickerSessionExpired) && !errors.Is(err, errEmptyPickerSelection) {
+		return err
+	}
+
+	// Stored session expired or returned nothing (likely consumed) — mint a
+	// fresh session with the current (already-refreshed) OAuth token and retry
+	// exactly once. A genuinely empty fresh selection is reported as an error.
+	fresh, cerr := gp.CreatePickerSession(ctx)
+	if cerr != nil {
+		return fmt.Errorf("failed to refresh expired google photos picker session: %w", cerr)
+	}
+	refreshAndUseFresh(idx.db, migID, gp, fresh)
+
+	if rerr := indexPickerSource(idx.db, ctx, client, migID, fresh, totalFiles, totalBytes, indexedPaths, indexErrors); rerr != nil {
+		if errors.Is(rerr, errEmptyPickerSelection) {
+			*indexErrors = append(*indexErrors, db.IndexingErrorInput{
+				Path:         "/picker",
+				ResourceType: "files",
+				ErrorMessage: "no media items were selected in the Google Photos Picker",
+			})
+			return nil
+		}
+		return rerr
+	}
+	return nil
+}
+
+// refreshAndUseFresh records a freshly minted Picker session on the provider and
+// (best-effort) persists it on the migration row so a deferred re-index can find
+// it. Persistence failures are non-fatal: the in-memory provider already uses the
+// new session for the current run.
+func refreshAndUseFresh(database *sql.DB, migID string, gp *storage.GooglePhotosProvider, fresh string) {
+	gp.SetPickerSession(fresh)
+	if perr := db.UpdateMigrationPickerSession(database, migID, fresh); perr != nil {
+		log.Printf("Indexing: could not persist refreshed picker session for %s: %v", migID, perr)
+	}
+}
+
+// errEmptyPickerSelection is returned by indexPickerSource when the Picker
+// session yields no media items. It is a sentinel the caller uses to decide
+// whether to retry with a freshly minted session before concluding the
+// selection is genuinely empty.
+var errEmptyPickerSelection = errors.New("google photos picker selection is empty")
+
+// indexPickerSource enumerates the media items the user selected in a Google
+// Photos Picker session and creates one PENDING task per item. Each task's
+// FilePath is a self-describing Picker path (`/picker/<id><ext>?base_url=...`)
+// so the processor can recover the download URL at transfer time. It mirrors
+// the resilient dedup/error behaviour of indexFolder.
+func indexPickerSource(database *sql.DB, ctx context.Context, client storage.StorageProvider, migID, sessionID string, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+	items, err := storage.GetPickerMediaItems(ctx, client, sessionID)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return errEmptyPickerSelection
+	}
+	for _, item := range items {
+		filePath := storage.PickerPath(item)
+		key := "files:" + filePath
+		if indexedPaths[key] {
+			continue
+		}
+		indexedPaths[key] = true
+		handle := storage.PickerHandle{
+			ID:      item.ID,
+			BaseURL: item.BaseURL,
+			Mime:    item.MimeType,
+			Name:    item.Name,
+		}
+		metaJSON, err := json.Marshal(handle)
+		if err != nil {
+			metaJSON = []byte("{}")
+		}
+		task := &db.Task{
+			MigrationID:  migID,
+			ResourceType: "files",
+			FilePath:     filePath,
+			FileSize:     item.Size,
+			Status:       "PENDING",
+			Metadata:     metaJSON,
+		}
+		if _, err := db.CreateTask(database, task); err != nil {
+			*indexErrors = append(*indexErrors, db.IndexingErrorInput{
+				Path:         filePath,
+				ResourceType: "files",
+				ErrorMessage: "failed to create task: " + sanitizeError(err.Error()),
+			})
+			log.Printf("Indexing: skipping picker item %s (failed to create task): %v", filePath, err)
+			continue
+		}
+		*totalFiles++
+		*totalBytes += item.Size
+	}
+	return nil
+}
+
+// ensureFreshSourceToken refreshes an OAuth source access token if it is expired
+// or near expiry (mirroring the worker's inline refresh). It returns the freshly
+// decrypted access token and persists the new token pair atomically.
+func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, accessToken string) (string, error) {
+	if !mig.SourceTokenExpiresAt.Valid || time.Now().Before(mig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
+		return accessToken, nil
+	}
+	refreshToken, err := crypto.Decrypt(mig.SourceRefreshTokenEncrypted.String, idx.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt source refresh token: %w", err)
+	}
+	tokenResp, err := oauth.RefreshToken(context.Background(), mig.SourceProvider, refreshToken)
+	if err != nil {
+		return "", fmt.Errorf("oauth refresh failed for source (%s): %w", mig.SourceProvider, err)
+	}
+	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, idx.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt refreshed source access token: %w", err)
+	}
+	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, idx.encryptionKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt refreshed source refresh token: %w", err)
+	}
+	expiresIn := tokenResp.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	if err := db.UpdateMigrationOAuthTokens(idx.db, db.OAuthTokenUpdate{
+		MigrationID:           migID,
+		Role:                  "source",
+		AccessTokenEncrypted:  newAccessEnc,
+		RefreshTokenEncrypted: newRefreshEnc,
+		ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
+	}); err != nil {
+		return "", fmt.Errorf("failed to persist refreshed source tokens: %w", err)
+	}
+	return tokenResp.AccessToken, nil
+}
 //
 // Resilient indexing: a failure to list a single folder (e.g. a slow/stalled
 // WebDAV PROPFIND that hits the per-request timeout) is recorded in indexErrors
@@ -346,9 +541,21 @@ func marshalString(s string) string {
 // before being persisted or returned to the client.
 var credURLRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s:@]+@`)
 
-// sanitizeError redacts credentials (user:pass) from any URLs embedded in an
-// error message. It leaves the rest of the message intact so operators still get
-// useful diagnostics (e.g. host/path and the failure type).
+// credQueryRe matches credential-bearing URL query values so they are redacted
+// before being persisted or returned to the client. This covers:
+//   - base_url=… : the short-lived, bearer-authenticated Google Photos Picker
+//     download URL that is embedded verbatim into task FilePath values;
+//   - access_token=… / token=… : OAuth tokens that may leak into error strings.
+// The value (everything up to the next & or end of string) is replaced with a
+// redaction marker so the host/path diagnostics remain useful.
+var credQueryRe = regexp.MustCompile(`(?i)((?:base_url|access_token|token)=)[^&\s]+`)
+
+// sanitizeError redacts credentials from any URLs embedded in an error message.
+// It strips user:pass userinfo (credURLRe) and credential-bearing query values
+// (credQueryRe, e.g. the Google Photos Picker base_url) before the message is
+// persisted or returned to the client. The rest of the message is left intact so
+// operators still get useful diagnostics (host/path and the failure type).
 func sanitizeError(msg string) string {
-	return credURLRe.ReplaceAllString(msg, "${1}***:***@")
+	msg = credURLRe.ReplaceAllString(msg, "${1}***:***@")
+	return credQueryRe.ReplaceAllString(msg, "${1}***")
 }

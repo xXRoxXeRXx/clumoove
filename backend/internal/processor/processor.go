@@ -717,7 +717,16 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	if task.ResourceType == "files" {
 		// Use path (POSIX) rather than filepath: WebDAV/Nextcloud paths are always
 		// slash-separated, independent of the OS this server process runs on.
-		targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
+		destFilePath := task.FilePath
+		// A Google Photos Picker source encodes a SOURCE-SIDE transport handle
+		// (a "/picker/<id>?base_url=…" path) in FilePath. That handle must never
+		// become the upload destination — it would create a literal "picker"
+		// folder and embed a credentialed query string in target filenames.
+		// Derive a clean, user-visible destination name instead.
+		if mig.SourceProvider == "googlephotos" && storage.IsPickerPath(destFilePath) {
+			destFilePath = storage.PickerTargetName(destFilePath)
+		}
+		targetPath = path.Clean(path.Join(mig.TargetDir, destFilePath))
 	}
 
 	// 3a. Filename Sanitization (before conflict resolution)

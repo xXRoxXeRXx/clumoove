@@ -160,6 +160,7 @@ type Migration struct {
 	SelectedPaths               StringArray             `json:"selected_paths,omitempty"`
 	SelectedCalendars           StringArray             `json:"selected_calendars,omitempty"`
 	SelectedContacts            StringArray             `json:"selected_contacts,omitempty"`
+	PickerSessionID             string                  `json:"picker_session_id,omitempty"`
 	TotalFiles                  int                     `json:"total_files"`
 	TotalBytes                  int64                   `json:"total_bytes"`
 	ProcessedFiles              int                     `json:"processed_files"`
@@ -402,6 +403,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (selected_contacts): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS picker_session_id TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (picker_session_id): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id)`)
 			if err != nil {
@@ -643,8 +648,9 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 			target_url, target_username, target_password_encrypted,
 			target_refresh_token_encrypted, target_token_expires_at,
 			source_provider, target_provider, status, conflict_strategy, target_dir,
-			selected_paths, selected_calendars, selected_contacts, threads, bandwidth_limit_mbps
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			selected_paths, selected_calendars, selected_contacts, threads, bandwidth_limit_mbps,
+			picker_session_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
@@ -655,6 +661,7 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 		m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt,
 		m.SourceProvider, m.TargetProvider, m.Status, m.ConflictStrategy, m.TargetDir,
 		m.SelectedPaths, m.SelectedCalendars, m.SelectedContacts, m.Threads, m.BandwidthLimitMbps,
+		m.PickerSessionID,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
 
 	if err != nil {
@@ -673,7 +680,8 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		       source_provider, target_provider, status, conflict_strategy, total_files, total_bytes,
 		       processed_files, processed_bytes, live_bytes, skipped_files, failed_files,
 		       error_message, created_at, updated_at, target_dir, threads,
-		       selected_paths, selected_calendars, selected_contacts, bandwidth_limit_mbps
+		       selected_paths, selected_calendars, selected_contacts, bandwidth_limit_mbps,
+		       picker_session_id
 		FROM migrations WHERE id = $1
 	`
 	var m Migration
@@ -686,6 +694,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		&m.ProcessedFiles, &m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles,
 		&m.ErrorMessage, &m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
 		&m.SelectedPaths, &m.SelectedCalendars, &m.SelectedContacts, &m.BandwidthLimitMbps,
+		&m.PickerSessionID,
 	)
 	if err != nil {
 		return nil, err
@@ -715,7 +724,18 @@ func UpdateMigrationThreads(db *sql.DB, id string, threads int) error {
 	return err
 }
 
-// UpdateMigrationStatus updates the status of a migration.
+// UpdateMigrationPickerSession persists the Google Photos Picker session id
+// for a migration (used by the deferred/scheduled flow where the picker session
+// is created separately from the migration row).
+func UpdateMigrationPickerSession(db *sql.DB, id string, pickerSessionID string) error {
+	query := `
+		UPDATE migrations
+		SET picker_session_id = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+	_, err := db.Exec(query, pickerSessionID, id)
+	return err
+}
 // If errMsg is non-nil the error_message column is also updated;
 // passing nil leaves any previously recorded error intact.
 func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string) error {
