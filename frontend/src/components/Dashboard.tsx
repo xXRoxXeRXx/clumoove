@@ -243,17 +243,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     lastActiveTime.current = 0;
     prevStatusRef.current = '';
 
-    // Construct WebSocket URL. The backend authenticates the socket via the
-    // `?token=<jwt>` query parameter (see AGENTS.md), NOT a subprotocol, so the
-    // bearer token must be appended here. Passing it as the 2nd WebSocket
-    // constructor argument would set it as a Subprotocol and leave the socket
-    // unauthenticated (broken access control).
+    // Construct WebSocket URL. The backend authenticates the socket by accepting
+    // the JWT either as a query parameter (HTTP only) or as a WebSocket
+    // subprotocol (works over both HTTP and HTTPS). On HTTPS the query-param path
+    // is explicitly rejected (see handleWebSocket / ErrWsTokenInsecure), so we
+    // must pass the token via the Subprotocol argument to keep the socket
+    // authenticated over wss://. The backend echoes it back in the handshake.
     const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const apiUrlObj = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
-    const wsUrl = `${wsProto}://${apiUrlObj.host}/api/migration/${migrationId}/ws?token=${encodeURIComponent(token)}`;
+    const wsUrl = `${wsProto}://${apiUrlObj.host}/api/migration/${migrationId}/ws`;
 
     let isMounted = true;
-    let ws = new WebSocket(wsUrl);
+    // Pass the JWT as the subprotocol (2nd arg) so the secure HTTPS path works.
+    let ws = new WebSocket(wsUrl, token);
 
     ws.onopen = () => {
       // Connection established
@@ -387,8 +389,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         reconnectDelay = Math.min(reconnectDelay * 2, 30000);
         const wsProtoR = window.location.protocol === 'https:' ? 'wss' : 'ws';
         const apiUrlObjR = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
-        const wsUrlR = `${wsProtoR}://${apiUrlObjR.host}/api/migration/${migrationId}/ws?token=${encodeURIComponent(token)}`;
-        const wsR = new WebSocket(wsUrlR);
+        const wsUrlR = `${wsProtoR}://${apiUrlObjR.host}/api/migration/${migrationId}/ws`;
+        const wsR = new WebSocket(wsUrlR, token);
         wsR.onopen = ws.onopen;
         wsR.onmessage = ws.onmessage;
         wsR.onerror = ws.onerror;
