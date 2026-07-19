@@ -32,6 +32,8 @@ export interface MigrationConfig {
   target_token_expires_in: number;
   source_provider: Provider;
   target_provider: Provider;
+  source_profile_id?: string;
+  target_profile_id?: string;
   source_picker_session_id?: string;
   source_picker_uri?: string;
 }

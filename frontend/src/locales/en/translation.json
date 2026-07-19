@@ -548,6 +548,7 @@
     "PROFILE_NOT_FOUND": "The saved connection was not found.",
     "PROFILE_NAME_EXISTS": "A connection with this name already exists for this role.",
     "PROFILE_INVALID_PROVIDER": "This provider type is not supported.",
+    "PROFILE_URL_REQUIRED": "This provider requires a server address (URL).",
     "PROFILE_INVALID_ROLE": "A connection must be used as 'source' or 'target'."
   },
   "admin": {

@@ -24,6 +24,34 @@ func IsValidProvider(p string) bool {
 	return false
 }
 
+// Providers that require a user-supplied URL with a resolvable host. Providers
+// without a host (local, OAuth-only, or with a hardcoded endpoint such as
+// magentacloud/dropbox/google/googlephotos) are exempt from the URL-host check.
+var hostBasedProviders = map[string]bool{
+	"nextcloud": true,
+	"webdav":    true,
+	"smb":       true,
+	"sftp":      true,
+	"s3":        true,
+}
+
+// ValidateProviderURL verifies that a provider which needs a host actually has a
+// URL with a non-empty host. It is called at profile create/update and at
+// migration start so a host-based provider with a blank URL is rejected up front
+// with a clean error code instead of failing cryptically deep inside indexing
+// (where the raw Go error would otherwise leak to the client). The SSRF egress
+// policy itself is still enforced later inside NewProvider.
+func ValidateProviderURL(providerType, urlStr string) error {
+	if !hostBasedProviders[providerType] {
+		return nil
+	}
+	parsed, err := url.Parse(urlStr)
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Errorf("provider %q requires a valid URL with a host", providerType)
+	}
+	return nil
+}
+
 func NewProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
 	// Sanitize URL credentials to prevent leakage in url.Error (Finding 2)
 	if providerType == "nextcloud" || providerType == "webdav" {
