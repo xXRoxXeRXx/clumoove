@@ -691,12 +691,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	// Create storage providers
 	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
-		return fmt.Errorf("failed to create source client: %w", err)
+		return fmt.Errorf("failed to create source client")
 	}
 	defer sourceClient.Close()
 	targetClient, err := storage.NewProvider(ctx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
 	if err != nil {
-		return fmt.Errorf("failed to create target client: %w", err)
+		return fmt.Errorf("failed to create target client")
 	}
 	defer targetClient.Close()
 

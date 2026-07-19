@@ -440,6 +440,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             target_token_expires_in: targetTokenExpiresIn,
             source_provider: sourceProvider,
             target_provider: targetProvider,
+            source_profile_id: sourceProfileId,
+            target_profile_id: targetProfileId,
             source_picker_session_id: pickerSessionId,
             source_picker_uri: pickerUri,
           },

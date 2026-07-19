@@ -84,7 +84,11 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
 		crypto.ZeroString(&sourcePass)
-		failMigration(idx.db, migID, fmt.Sprintf("Failed to create storage provider: %v", err))
+		// Log the detailed (sanitized) error server-side for diagnostics, but do
+		// not persist/leak the raw Go error string to the client (Security ->
+		// Error messages). Surface a neutral, user-safe message instead.
+		log.Printf("Migration %s: failed to create source storage provider: %s", migID, sanitizeError(err.Error()))
+		failMigration(idx.db, migID, "Failed to connect to the source. Please verify the source connection settings.")
 		return
 	}
 	defer sourceClient.Close()
