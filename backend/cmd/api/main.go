@@ -472,9 +472,15 @@ var allowedOrigins = func() map[string]bool {
 		"http://localhost:3000": true, // alternative dev port
 		"http://localhost:3001": true, // docker compose port
 	}
-	// Allow the production domain if set via environment variable
+	// Allow the production domain(s) if set via environment variable.
+	// Supports comma-separated multiple origins.
 	if prod := os.Getenv("CORS_ALLOWED_ORIGIN"); prod != "" {
-		allowed[prod] = true
+		for _, o := range strings.Split(prod, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				allowed[o] = true
+			}
+		}
 	}
 	return allowed
 }()
