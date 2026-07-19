@@ -477,8 +477,102 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans selection:bg-portal-orange selection:text-white relative">
-      
+    <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans selection:bg-portal-orange selection:text-white relative overflow-x-hidden">
+
+      {/* Europa Data Centres Background */}
+      <div className="fixed inset-0 z-0 pointer-events-none opacity-[0.07] dark:opacity-[0.12]" aria-hidden="true">
+        <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+          <defs>
+            <radialGradient id="glow-dc" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ff6600" stopOpacity="1" />
+              <stop offset="100%" stopColor="#ff6600" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="glow-conn" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#002f6c" stopOpacity="0.6" />
+              <stop offset="100%" stopColor="#002f6c" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+
+          {/* Europe landmass (simplified) */}
+          <path d="M520 180 Q540 160 570 155 Q600 150 630 160 Q660 170 680 180 Q700 190 720 200 Q740 210 750 230 Q760 250 755 270 Q750 290 740 310 Q730 330 710 340 Q690 350 670 355 Q650 360 630 365 Q610 370 590 375 Q570 380 550 390 Q530 400 510 410 Q490 420 480 440 Q470 460 465 480 Q460 500 455 520 Q450 540 440 555 Q430 570 420 580 Q410 590 400 595 Q390 600 380 590 Q370 580 365 560 Q360 540 358 520 Q355 500 360 480 Q365 460 375 440 Q385 420 400 400 Q415 380 430 365 Q445 350 460 335 Q475 320 490 300 Q505 280 515 260 Q525 240 525 220 Q525 200 520 180Z" fill="var(--color-portal-navy)" />
+          <path d="M570 155 Q580 140 600 130 Q620 120 640 125 Q660 130 670 145 Q680 160 685 175 Q690 190 680 200 Q670 210 655 215 Q640 220 625 215 Q610 210 600 195 Q590 180 580 170 Q570 160 570 155Z" fill="var(--color-portal-navy)" />
+          <path d="M750 230 Q770 220 790 225 Q810 230 820 250 Q830 270 825 290 Q820 310 810 325 Q800 340 780 345 Q760 350 750 340 Q740 330 745 310 Q750 290 750 270 Q750 250 750 230Z" fill="var(--color-portal-navy)" />
+
+          {/* Scandinavia */}
+          <path d="M520 70 Q540 60 560 65 Q580 70 590 90 Q600 110 595 130 Q590 150 580 160 Q570 170 555 165 Q540 160 535 140 Q530 120 528 100 Q526 80 520 70Z" fill="var(--color-portal-navy)" opacity="0.8" />
+          <path d="M590 65 Q610 55 630 60 Q650 65 655 85 Q660 105 655 120 Q650 135 640 145 Q630 155 615 150 Q600 145 595 125 Q590 105 592 85 Q594 65 590 65Z" fill="var(--color-portal-navy)" opacity="0.7" />
+
+          {/* British Isles */}
+          <path d="M450 180 Q460 170 475 175 Q490 180 495 200 Q500 220 495 240 Q490 260 480 270 Q470 280 460 275 Q450 270 448 250 Q445 230 448 210 Q450 190 450 180Z" fill="var(--color-portal-navy)" opacity="0.85" />
+
+          {/* Iberian Peninsula */}
+          <path d="M420 400 Q435 390 455 395 Q475 400 480 420 Q485 440 478 460 Q470 480 455 490 Q440 500 425 495 Q410 490 405 470 Q400 450 405 430 Q410 410 420 400Z" fill="var(--color-portal-navy)" opacity="0.85" />
+
+          {/* Italian Peninsula */}
+          <path d="M590 375 Q600 370 610 375 Q620 380 625 400 Q630 420 632 440 Q635 460 632 480 Q630 500 620 510 Q610 520 600 515 Q590 510 588 490 Q585 470 585 450 Q585 430 587 410 Q590 390 590 375Z" fill="var(--color-portal-navy)" opacity="0.85" />
+
+          {/* Balkans */}
+          <path d="M650 355 Q670 350 690 360 Q710 370 720 390 Q730 410 728 430 Q725 450 715 465 Q705 480 690 485 Q675 490 660 485 Q645 480 640 460 Q635 440 638 420 Q640 400 645 380 Q650 360 650 355Z" fill="var(--color-portal-navy)" opacity="0.8" />
+
+          {/* Eastern Europe */}
+          <path d="M680 200 Q710 190 740 195 Q770 200 790 220 Q810 240 815 270 Q820 300 810 330 Q800 360 780 375 Q760 390 735 385 Q710 380 695 365 Q680 350 675 330 Q670 310 670 290 Q670 270 672 250 Q675 230 680 210 Q680 200 680 200Z" fill="var(--color-portal-navy)" opacity="0.75" />
+
+          {/* Data Centre markers */}
+          <circle cx="485" cy="230" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="485" cy="230" r="5" fill="#ff6600" />
+          <text x="482" y="215" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">LON</text>
+
+          <circle cx="600" cy="160" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="600" cy="160" r="5" fill="#ff6600" />
+          <text x="595" y="145" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">FRA</text>
+
+          <circle cx="700" cy="200" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="700" cy="200" r="5" fill="#ff6600" />
+          <text x="693" y="185" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">AMS</text>
+
+          <circle cx="750" cy="300" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="750" cy="300" r="5" fill="#ff6600" />
+          <text x="747" y="285" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">FRA</text>
+
+          <circle cx="600" cy="360" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="600" cy="360" r="5" fill="#ff6600" />
+          <text x="595" y="345" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">MIL</text>
+
+          <circle cx="440" cy="460" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="440" cy="460" r="5" fill="#ff6600" />
+          <text x="435" y="445" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">MAD</text>
+
+          <circle cx="695" cy="400" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="695" cy="400" r="5" fill="#ff6600" />
+          <text x="687" y="385" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">VIE</text>
+
+          <circle cx="790" cy="340" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="790" cy="340" r="5" fill="#ff6600" />
+          <text x="783" y="325" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">WAW</text>
+
+          <circle cx="540" cy="120" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="540" cy="120" r="5" fill="#ff6600" />
+          <text x="535" y="105" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">CPH</text>
+
+          <circle cx="650" cy="290" r="20" fill="url(#glow-dc)" opacity="0.9" />
+          <circle cx="650" cy="290" r="5" fill="#ff6600" />
+          <text x="643" y="275" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">ZRH</text>
+
+          {/* Connection lines between hubs */}
+          <line x1="485" y1="230" x2="600" y2="160" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="600" y1="160" x2="700" y2="200" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="700" y1="200" x2="750" y2="300" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="600" y1="360" x2="695" y2="400" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="650" y1="290" x2="600" y2="360" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="750" y1="300" x2="695" y2="400" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="750" y1="300" x2="790" y2="340" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="440" y1="460" x2="600" y2="360" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="700" y1="200" x2="790" y2="340" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="600" y1="160" x2="540" y2="120" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          <line x1="650" y1="290" x2="700" y2="200" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+        </svg>
+      </div>
+
       {/* Floating Glassmorphism Header */}
       <header className="sticky top-0 z-50 glass-panel border-b border-[var(--color-border)] backdrop-blur-lg shadow-sm transition-all duration-300">
         <div className="max-w-6xl mx-auto px-6 h-18 flex items-center justify-between">
