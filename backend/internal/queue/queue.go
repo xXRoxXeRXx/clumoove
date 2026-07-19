@@ -79,8 +79,8 @@ func NewQueue(redisAddr string) (*Queue, error) {
 // DequeueSQL pops a task from the database queue natively respecting migration/sync thread limits.
 func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) (*Payload, error) {
 	query := `
-		WITH available_tasks AS (
-			SELECT t.id, t.migration_id, t.sync_job_id
+		WITH candidate AS (
+			SELECT t.id
 			FROM tasks t
 			LEFT JOIN migrations m ON t.migration_id = m.id
 			LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
@@ -98,11 +98,16 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 			)
 			ORDER BY t.created_at ASC
 			LIMIT 1
+		),
+		locked AS (
+			SELECT t.id
+			FROM tasks t
+			INNER JOIN candidate c ON t.id = c.id
 			FOR UPDATE SKIP LOCKED
 		)
 		UPDATE tasks
 		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1
-		WHERE id = (SELECT id FROM available_tasks)
+		WHERE id = (SELECT id FROM locked)
 		RETURNING id, migration_id, sync_job_id
 	`
 	var payload Payload
