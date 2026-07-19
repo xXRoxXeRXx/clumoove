@@ -1243,17 +1243,25 @@ func UpdateMigrationTotals(db *sql.DB, id string, totalFiles int, totalBytes int
 	return err
 }
 
-// CreateTask inserts a new task for migration
+// CreateTask inserts a new task for migration or sync job
 func CreateTask(db *sql.DB, t *Task) (string, error) {
+	var migID, syncID sql.NullString
+	if t.MigrationID != "" {
+		migID = sql.NullString{String: t.MigrationID, Valid: true}
+	}
+	if t.SyncJobID != "" {
+		syncID = sql.NullString{String: t.SyncJobID, Valid: true}
+	}
+
 	query := `
 		INSERT INTO tasks (
-			migration_id, file_path, file_size, source_hash, status, resource_type, metadata
-		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+			migration_id, sync_job_id, file_path, file_size, source_hash, status, resource_type, metadata
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
-		t.MigrationID, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata,
+		migID, syncID, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata,
 	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 
 	if err != nil {
@@ -1265,17 +1273,24 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 // GetTask retrieves a single task by ID
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
-		SELECT id, migration_id, file_path, file_size, source_hash, worker_hash, target_hash,
+		SELECT id, migration_id, sync_job_id, file_path, file_size, source_hash, worker_hash, target_hash,
 		       status, error_message, attempts, next_retry_at, created_at, updated_at, resource_type, metadata
 		FROM tasks WHERE id = $1
 	`
 	var t Task
+	var migID, syncID sql.NullString
 	err := db.QueryRow(query, id).Scan(
-		&t.ID, &t.MigrationID, &t.FilePath, &t.FileSize, &t.SourceHash, &t.WorkerHash, &t.TargetHash,
+		&t.ID, &migID, &syncID, &t.FilePath, &t.FileSize, &t.SourceHash, &t.WorkerHash, &t.TargetHash,
 		&t.Status, &t.ErrorMessage, &t.Attempts, &t.NextRetryAt, &t.CreatedAt, &t.UpdatedAt, &t.ResourceType, &t.Metadata,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if migID.Valid {
+		t.MigrationID = migID.String
+	}
+	if syncID.Valid {
+		t.SyncJobID = syncID.String
 	}
 	return &t, nil
 }
