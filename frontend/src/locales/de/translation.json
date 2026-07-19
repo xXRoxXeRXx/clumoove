@@ -548,6 +548,7 @@
     "PROFILE_NOT_FOUND": "Die gespeicherte Verbindung wurde nicht gefunden.",
     "PROFILE_NAME_EXISTS": "Eine Verbindung mit diesem Namen existiert bereis für diese Rolle.",
     "PROFILE_INVALID_PROVIDER": "Dieser Anbieter wird nicht unterstützt.",
+    "PROFILE_URL_REQUIRED": "Dieser Anbieter benötigt eine Server-Adresse (URL).",
     "PROFILE_INVALID_ROLE": "Eine Verbindung muss als 'source' oder 'target' verwendet werden."
   },
   "admin": {

@@ -1687,6 +1687,17 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject host-based providers submitted with a blank URL up front, instead of
+	// letting them fail cryptically during indexing with a raw error string.
+	if err := storage.ValidateProviderURL(req.SourceProvider, req.SourceURL); err != nil {
+		writeError(w, http.StatusBadRequest, ErrSourceUrlInvalid)
+		return
+	}
+	if err := storage.ValidateProviderURL(req.TargetProvider, req.TargetURL); err != nil {
+		writeError(w, http.StatusBadRequest, ErrTargetUrlInvalid)
+		return
+	}
+
 	targetDir := req.TargetDir
 	if targetDir == "" {
 		targetDir = "/"
@@ -1945,6 +1956,13 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 
 	urlStr := normalizeProviderURL(req.Provider, req.URL)
 
+	// Reject host-based providers submitted with a blank URL up front, instead
+	// of letting them fail cryptically during indexing with a raw error string.
+	if err := storage.ValidateProviderURL(req.Provider, urlStr); err != nil {
+		writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
+		return
+	}
+
 	var passEnc string
 	if req.Password != "" {
 		enc, err := crypto.Encrypt(req.Password, s.encryptionKey)
@@ -2100,6 +2118,24 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 	}
 	if req.OAuthUser != "" {
 		in.OAuthUser = &req.OAuthUser
+	}
+
+	// Validate the resulting provider/URL combination (merging with the existing
+	// profile, since updates are partial). Rejects host-based providers left with
+	// a blank URL so they cannot fail cryptically during indexing later.
+	if existing, gerr := db.GetConnectionProfile(s.db, id); gerr == nil {
+		mergedProvider := existing.Provider
+		if in.Provider != nil {
+			mergedProvider = *in.Provider
+		}
+		mergedURL := existing.URL
+		if in.URL != nil {
+			mergedURL = *in.URL
+		}
+		if err := storage.ValidateProviderURL(mergedProvider, mergedURL); err != nil {
+			writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
+			return
+		}
 	}
 
 	if err := db.UpdateConnectionProfile(s.db, id, in); err != nil {
@@ -2656,9 +2692,10 @@ const (
 	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
 
 	// Connection profiles
-	ErrProfileNotFound       APIErrorCode = "PROFILE_NOT_FOUND"
-	ErrProfileNameExists     APIErrorCode = "PROFILE_NAME_EXISTS"
+	ErrProfileNotFound        APIErrorCode = "PROFILE_NOT_FOUND"
+	ErrProfileNameExists      APIErrorCode = "PROFILE_NAME_EXISTS"
 	ErrProfileInvalidProvider APIErrorCode = "PROFILE_INVALID_PROVIDER"
+	ErrProfileURLRequired     APIErrorCode = "PROFILE_URL_REQUIRED"
 )
 
 // writeError emits a structured error response carrying only a machine-readable
