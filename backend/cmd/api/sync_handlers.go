@@ -16,27 +16,27 @@ import (
 )
 
 type createSyncRequest struct {
-	SourceProfileID            string   `json:"source_profile_id,omitempty"`
-	TargetProfileID            string   `json:"target_profile_id,omitempty"`
-	SourceURL                  string   `json:"source_url"`
-	SourceUsername             string   `json:"source_username"`
-	SourcePassword             string   `json:"source_password"`
-	SourceRefreshToken         string   `json:"source_refresh_token,omitempty"`
-	SourceTokenExpiresAt       *string  `json:"source_token_expires_at,omitempty"`
-	TargetURL                  string   `json:"target_url"`
-	TargetUsername             string   `json:"target_username"`
-	TargetPassword             string   `json:"target_password"`
-	TargetRefreshToken         string   `json:"target_refresh_token,omitempty"`
-	TargetTokenExpiresAt       *string  `json:"target_token_expires_at,omitempty"`
-	SourceProvider             string   `json:"source_provider"`
-	TargetProvider             string   `json:"target_provider"`
-	Direction                  string   `json:"direction"`
-	ConflictStrategy           string   `json:"conflict_strategy"`
-	DeletePropagation          bool     `json:"delete_propagation"`
-	IntervalMinutes            int      `json:"interval_minutes"`
-	Threads                    int      `json:"threads"`
-	TargetDir                  string   `json:"target_dir"`
-	SelectedPaths              []string `json:"selected_paths"`
+	SourceProfileID      string   `json:"source_profile_id,omitempty"`
+	TargetProfileID      string   `json:"target_profile_id,omitempty"`
+	SourceURL            string   `json:"source_url"`
+	SourceUsername       string   `json:"source_username"`
+	SourcePassword       string   `json:"source_password"`
+	SourceRefreshToken   string   `json:"source_refresh_token,omitempty"`
+	SourceTokenExpiresAt *string  `json:"source_token_expires_at,omitempty"`
+	TargetURL            string   `json:"target_url"`
+	TargetUsername       string   `json:"target_username"`
+	TargetPassword       string   `json:"target_password"`
+	TargetRefreshToken   string   `json:"target_refresh_token,omitempty"`
+	TargetTokenExpiresAt *string  `json:"target_token_expires_at,omitempty"`
+	SourceProvider       string   `json:"source_provider"`
+	TargetProvider       string   `json:"target_provider"`
+	Direction            string   `json:"direction"`
+	ConflictStrategy     string   `json:"conflict_strategy"`
+	DeletePropagation    bool     `json:"delete_propagation"`
+	IntervalMinutes      int      `json:"interval_minutes"`
+	Threads              int      `json:"threads"`
+	TargetDir            string   `json:"target_dir"`
+	SelectedPaths        []string `json:"selected_paths"`
 }
 
 func (s *APIServer) handleListSyncs(w http.ResponseWriter, r *http.Request) {
@@ -166,24 +166,55 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist OAuth refresh tokens so the engine can rotate them before expiry.
+	// Without this, OAuth-based sync jobs (Dropbox/Google) would fail as soon as
+	// the initial access token expires.
+	var sourceRefreshEnc sql.NullString
+	var sourceTokenExpiresAt sql.NullTime
+	if req.SourceRefreshToken != "" {
+		enc, eerr := crypto.Encrypt(req.SourceRefreshToken, s.encryptionKey)
+		if eerr != nil {
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+			return
+		}
+		sourceRefreshEnc = sql.NullString{String: enc, Valid: true}
+		sourceTokenExpiresAt = parseSyncTokenExpiry(req.SourceTokenExpiresAt)
+	}
+
+	var targetRefreshEnc sql.NullString
+	var targetTokenExpiresAt sql.NullTime
+	if req.TargetRefreshToken != "" {
+		enc, eerr := crypto.Encrypt(req.TargetRefreshToken, s.encryptionKey)
+		if eerr != nil {
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+			return
+		}
+		targetRefreshEnc = sql.NullString{String: enc, Valid: true}
+		targetTokenExpiresAt = parseSyncTokenExpiry(req.TargetTokenExpiresAt)
+	}
+
 	job := &db.SyncJob{
-		UserID:                  userID,
-		SourceURL:               req.SourceURL,
-		SourceUsername:          req.SourceUsername,
-		SourcePasswordEncrypted: sEnc,
-		TargetURL:               req.TargetURL,
-		TargetUsername:          req.TargetUsername,
-		TargetPasswordEncrypted: tEnc,
-		SourceProvider:          req.SourceProvider,
-		TargetProvider:          req.TargetProvider,
-		Direction:               req.Direction,
-		ConflictStrategy:        req.ConflictStrategy,
-		DeletePropagation:       req.DeletePropagation,
-		IntervalMinutes:         req.IntervalMinutes,
-		Threads:                 req.Threads,
-		Status:                  "IDLE",
-		TargetDir:               req.TargetDir,
-		SelectedPaths:           req.SelectedPaths,
+		UserID:                      userID,
+		SourceURL:                   req.SourceURL,
+		SourceUsername:              req.SourceUsername,
+		SourcePasswordEncrypted:     sEnc,
+		SourceRefreshTokenEncrypted: sourceRefreshEnc,
+		SourceTokenExpiresAt:        sourceTokenExpiresAt,
+		TargetURL:                   req.TargetURL,
+		TargetUsername:              req.TargetUsername,
+		TargetPasswordEncrypted:     tEnc,
+		TargetRefreshTokenEncrypted: targetRefreshEnc,
+		TargetTokenExpiresAt:        targetTokenExpiresAt,
+		SourceProvider:              req.SourceProvider,
+		TargetProvider:              req.TargetProvider,
+		Direction:                   req.Direction,
+		ConflictStrategy:            req.ConflictStrategy,
+		DeletePropagation:           req.DeletePropagation,
+		IntervalMinutes:             req.IntervalMinutes,
+		Threads:                     req.Threads,
+		Status:                      "IDLE",
+		TargetDir:                   req.TargetDir,
+		SelectedPaths:               req.SelectedPaths,
 	}
 
 	jobID, err := db.CreateSyncJob(s.db, job)
@@ -237,8 +268,12 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
+	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
 		return
 	}
 
@@ -265,8 +300,12 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
+	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
 		return
 	}
 
@@ -297,8 +336,12 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
+	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
 		return
 	}
 
@@ -315,7 +358,10 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = db.UpdateSyncJobStatus(s.db, id, "PAUSED", nil)
+	// Clear any stale error from a previous failed run so the UI doesn't keep
+	// showing it while the job is intentionally paused.
+	emptyErr := ""
+	_ = db.UpdateSyncJobStatus(s.db, id, "PAUSED", &emptyErr)
 	// Deactivate schedule
 	_, _ = s.db.Exec(`UPDATE schedules SET is_active = FALSE WHERE task_type = 'sync' AND task_id = $1`, id)
 
@@ -332,12 +378,18 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
+	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+		return
+	}
 
-	_ = db.UpdateSyncJobStatus(s.db, id, "IDLE", nil)
+	// Clear any stale error from a previous failed run when resuming.
+	emptyErr := ""
+	_ = db.UpdateSyncJobStatus(s.db, id, "IDLE", &emptyErr)
 	// Activate schedule
 	nextRun := time.Now()
 	_, _ = s.db.Exec(`UPDATE schedules SET is_active = TRUE, next_run_at = $1 WHERE task_type = 'sync' AND task_id = $2`, nextRun, id)
@@ -355,8 +407,12 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
 	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
+	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
 		return
 	}
 
@@ -383,8 +439,12 @@ func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 	id := r.PathValue("id")
 
 	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
+	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
 		return
 	}
 
@@ -471,10 +531,18 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	// Periodic comment heartbeat keeps the SSE connection alive behind proxies
+	// that would otherwise GC an idle connection between data frames.
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
 		case <-ticker.C:
 			jobs, err := db.GetSyncJobsForUser(s.db, userID)
 			if err != nil {
@@ -508,3 +576,17 @@ func sanitizeCSVFormula(input string) string {
 	return input
 }
 
+// parseSyncTokenExpiry converts an optional RFC3339 expiry timestamp from the
+// request into a sql.NullTime. A missing/invalid value falls back to "now" so
+// the engine's ensureFreshToken treats the token as already-expired and refreshes
+// on first use (safer than silently assuming a far-future expiry).
+func parseSyncTokenExpiry(raw *string) sql.NullTime {
+	if raw == nil || *raw == "" {
+		return sql.NullTime{Time: time.Now(), Valid: true}
+	}
+	exp, err := time.Parse(time.RFC3339, *raw)
+	if err != nil {
+		return sql.NullTime{Time: time.Now(), Valid: true}
+	}
+	return sql.NullTime{Time: exp, Valid: true}
+}
