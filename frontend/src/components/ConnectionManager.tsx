@@ -148,7 +148,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 
         <button
           onClick={() => { setEditing(null); setCreating(true); }}
-          className={`w-auto inline-flex items-center justify-center gap-2 ${primaryBtnCls}`}
+          className={`w-full inline-flex items-center justify-center gap-2 ${primaryBtnCls}`}
         >
           <Plus className="w-4 h-4" />
           {t('settings.connections.newProfile')}
