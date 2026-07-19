@@ -309,7 +309,7 @@
       "providerLabel": "Provider",
       "passwordLabel": "Password",
       "useProfile": "Use saved profile",
-      "usingProfile": "Using the saved profile. The connection details are loaded automatically from the server.",
+      "usingProfile": "Using the saved profile \"{{name}}\". The connection details are loaded automatically from the server.",
       "saveProfile": "Save as profile",
       "saveProfileHint": "The entered credentials will be stored encrypted for future transfers.",
       "oauthConnectedAs": "Connected as {{user}}",
