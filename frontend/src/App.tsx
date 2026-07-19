@@ -630,6 +630,8 @@ function App() {
               user={user}
               onBack={() => goBack()}
               onUpdateUser={(updated) => setUser(updated)}
+              oauthProviders={oauthProviders}
+              localStorageEnabled={localStorageEnabled}
             />
           )}
 
