@@ -43,7 +43,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const { t } = useTranslation();
   const translateApiError = useApiError();
 
-  const [tab, setTab] = useState<'account' | 'connections'>('account');
+  const [tab, setTab] = useState<'account' | 'connections' | 'appearance' | 'notifications' | 'about'>('account');
 
   // Theme context
   const { preference, setPreference, systemTheme } = useThemeContext();
@@ -517,14 +517,47 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           <Plug className="w-4 h-4" />
           {t('settings.tabs.connections')}
         </button>
+        <button
+          onClick={() => setTab('appearance')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+            tab === 'appearance'
+              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+          }`}
+        >
+          <Palette className="w-4 h-4" />
+          {t('settings.tabs.appearance')}
+        </button>
+        <button
+          onClick={() => setTab('notifications')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+            tab === 'notifications'
+              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+          }`}
+        >
+          <Mail className="w-4 h-4" />
+          {t('settings.tabs.notifications')}
+        </button>
+        <button
+          onClick={() => setTab('about')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+            tab === 'about'
+              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+          }`}
+        >
+          <Info className="w-4 h-4" />
+          {t('settings.tabs.about')}
+        </button>
       </div>
 
       {/* Main Grid Layout */}
       {tab === 'account' && (
        <div className="grid md:grid-cols-2 gap-6">
         
-        {/* Left Side: Profile picture, profile details & password */}
-        <div className="space-y-6">
+         {/* Left Side: Profile picture & profile details */}
+         <div className="space-y-6">
           
           {/* Section 1: Profile picture */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
@@ -727,7 +760,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               </button>
             </form>
           </div>
+        </div>
 
+        {/* Right Side: Password & 2FA */}
+        <div className="space-y-6">
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -940,16 +976,17 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
                   {setupLoading ? t('settings.preparing') : t('settings.setup')}
-                </button>
-              </div>
-            )}
+              </button>
+            </div>
+          )}
           </div>
         </div>
+       </div>
+      )}
 
-        {/* Right Side: Appearance, system control & email notifications */}
+      {/* Appearance Tab */}
+      {tab === 'appearance' && (
         <div className="space-y-6">
-          
-          {/* Section 4: Appearance */}
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Palette className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -1013,8 +1050,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               </p>
             )}
           </div>
+        </div>
+      )}
 
-{/* Section 6: Email notifications (SMTP) */}
+      {/* Notifications Tab (SMTP) */}
+      {tab === 'notifications' && (
+        <div className="space-y-6">
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Mail className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -1169,8 +1210,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               </div>
             </form>
           </div>
+        </div>
+      )}
 
-          {/* Section 7: About */}
+      {/* About Tab */}
+      {tab === 'about' && (
+        <div className="space-y-6">
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Info className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -1207,8 +1252,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 github.com/xXRoxXeRXx/clumoove
               </a>
             </div>
-          </div>
-
           </div>
         </div>
       )}

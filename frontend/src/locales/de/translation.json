@@ -289,7 +289,10 @@
     "title": "Einstellungen",
     "tabs": {
       "account": "Konto",
-      "connections": "Verbindungen"
+      "connections": "Verbindungen",
+      "appearance": "Darstellung",
+      "notifications": "Benachrichtigungen",
+      "about": "Über"
     },
     "connections": {
       "title": "Verbindungen",

@@ -289,7 +289,10 @@
     "title": "Settings",
     "tabs": {
       "account": "Account",
-      "connections": "Connections"
+      "connections": "Connections",
+      "appearance": "Appearance",
+      "notifications": "Notifications",
+      "about": "About"
     },
     "connections": {
       "title": "Connections",
