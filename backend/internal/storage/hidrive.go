@@ -278,7 +278,7 @@ func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	uploadCtx, cancel := context.WithTimeout(ctx, baseTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(uploadCtx, "POST", hidriveAPIBase+"/file?on_exist=overwrite", stream)
+	req, err := http.NewRequestWithContext(uploadCtx, "POST", hidriveAPIBase+"/file", stream)
 	if err != nil {
 		return err
 	}
@@ -290,6 +290,7 @@ func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	q := req.URL.Query()
 	q.Set("dir", p.cleanPath(dir))
 	q.Set("name", name)
+	q.Set("on_exist", "overwrite")
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := p.HTTPClient.Do(req)
