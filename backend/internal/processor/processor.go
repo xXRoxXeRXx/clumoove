@@ -1522,8 +1522,14 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
 
 	// Token still valid with >2 min margin (updated by a concurrent thread) → use as-is.
+	// Exception: googlephotos source tokens must always be refreshed because the
+	// photoslibrary.readonly scope (needed for full-resolution Picker downloads via
+	// mediaItems/{id}) is only granted on a fresh token after the scope was added.
+	// Without this, the Library lookup 403s and we fall back to the small Picker URL.
 	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
-		return accessToken, nil
+		if provider != "googlephotos" || role != "source" {
+			return accessToken, nil
+		}
 	}
 
 	log.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
