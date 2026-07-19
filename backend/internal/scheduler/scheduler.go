@@ -262,8 +262,16 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 		return nil
 	}
 
+	// RUNNING/INDEXING mean a pass is already in flight. Skip (don't error) to
+	// avoid permanently deactivating the schedule — overlap protection is handled
+	// by the engine, and the schedule advances next_run_at so the next tick retries.
+	if job.Status == "RUNNING" || job.Status == "INDEXING" {
+		log.Printf("[Scheduler] Skipping sync job %s trigger: job is already %s (overlap protection)", syncJobID, job.Status)
+		return nil
+	}
+
 	if job.Status != "IDLE" {
-		return fmt.Errorf("sync job %s is not in IDLE state (current: %s)", syncJobID, job.Status)
+		return fmt.Errorf("sync job %s is in a terminal/non-runnable state (current: %s)", syncJobID, job.Status)
 	}
 
 	go s.syncEngine.RunSyncPass(ctx, syncJobID)
