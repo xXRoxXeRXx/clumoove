@@ -1146,9 +1146,34 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                {t('settings.name')}
+              </span>
+              <span className="text-sm font-mono text-[var(--color-portal-navy-themed)]">{t('settings.appName')}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('settings.version')}
               </span>
               <span className="text-sm font-mono text-[var(--color-portal-navy-themed)]">v{__APP_VERSION__}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                {t('settings.license')}
+              </span>
+              <span className="text-sm font-mono text-[var(--color-portal-navy-themed)]">{t('settings.licenseName')}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                {t('settings.source')}
+              </span>
+              <a
+                href="https://github.com/xXRoxXeRXx/clumoove"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-mono text-[var(--color-portal-orange-themed)] hover:underline"
+              >
+                github.com/xXRoxXeRXx/clumoove
+              </a>
             </div>
           </div>
 
