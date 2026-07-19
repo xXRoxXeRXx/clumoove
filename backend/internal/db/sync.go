@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -41,6 +42,32 @@ type SyncJob struct {
 	FailedFiles                int            `json:"failed_files"`
 	CreatedAt                  time.Time      `json:"created_at"`
 	UpdatedAt                  time.Time      `json:"updated_at"`
+}
+
+// MarshalJSON serializes the sync job with nullable columns (sql.NullString,
+// sql.NullTime) resolved to plain JSON strings/null so frontend consumers don't
+// receive raw driver structs like {"String":"...","Valid":true}.
+func (s SyncJob) MarshalJSON() ([]byte, error) {
+	type alias SyncJob
+	aux := struct {
+		*alias
+		LastRunStatus string  `json:"last_run_status,omitempty"`
+		ErrorMessage  string  `json:"error_message,omitempty"`
+		LastRunAt     *string `json:"last_run_at,omitempty"`
+	}{
+		alias: (*alias)(&s),
+	}
+	if s.LastRunStatus.Valid {
+		aux.LastRunStatus = s.LastRunStatus.String
+	}
+	if s.ErrorMessage.Valid {
+		aux.ErrorMessage = s.ErrorMessage.String
+	}
+	if s.LastRunAt.Valid {
+		iso := s.LastRunAt.Time.Format(time.RFC3339)
+		aux.LastRunAt = &iso
+	}
+	return json.Marshal(aux)
 }
 
 // SyncState represents the last known state of a file during a sync
