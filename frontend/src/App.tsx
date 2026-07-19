@@ -138,14 +138,10 @@ function App() {
     applyHistory(nextStep, migId ?? migrationId, false);
   };
 
-  // "Back to migration overview": pops app entries until the seeded top-level
-  // overview is reached; only pushes a fresh overview when no app entries exist.
+  // Clicking the logo always returns to the top-level migration overview,
+  // replacing the current entry so further browser-back leaves the app.
   const goToOverview = () => {
-    if (historyDepth.current > 0) {
-      window.history.back();
-    } else {
-      navigate('history');
-    }
+    replaceNav('history');
   };
 
   // In-app back (FileBrowser / Settings / Admin).
