@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -313,7 +314,84 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 	if progressChan != nil {
 		defer close(progressChan)
 	}
-	return p.StreamUpload(ctx, resourceType, filePath, stream, size)
+
+	const chunkSize int64 = 50 * 1024 * 1024 // 50 MB per chunk
+
+	if size <= chunkSize {
+		return p.StreamUpload(ctx, resourceType, filePath, stream, size)
+	}
+
+	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
+		return err
+	}
+
+	dir := path.Dir(filePath)
+	name := path.Base(filePath)
+
+	buf := make([]byte, chunkSize)
+	var uploaded int64
+	chunkIndex := 0
+
+	for uploaded < size {
+		n, readErr := io.ReadFull(stream, buf)
+		if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
+			return fmt.Errorf("hidrive chunked read: %w", readErr)
+		}
+		chunkData := buf[:n]
+		chunkStart := uploaded
+		chunkEnd := uploaded + int64(n) - 1
+		chunkSizeActual := int64(n)
+
+		timeout := 10 * time.Minute
+		uploadCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		body := bytes.NewReader(chunkData)
+		req, err := http.NewRequestWithContext(uploadCtx, "POST", hidriveAPIBase+"/file", body)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+p.AccessToken)
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.ContentLength = chunkSizeActual
+		contentRange := fmt.Sprintf("bytes %d-%d/%d", chunkStart, chunkEnd, size)
+		req.Header.Set("Content-Range", contentRange)
+
+		q := req.URL.Query()
+		q.Set("dir", p.cleanPath(dir))
+		q.Set("name", name)
+		q.Set("on_exist", "overwrite")
+		req.URL.RawQuery = q.Encode()
+
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			cancel()
+			return fmt.Errorf("hidrive chunked upload chunk %d: %w", chunkIndex, err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			cancel()
+			return fmt.Errorf("hidrive chunked upload: %w", ErrAuth)
+		}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			cancel()
+			return fmt.Errorf("hidrive chunked upload chunk %d failed, status: %d", chunkIndex, resp.StatusCode)
+		}
+
+		uploaded += chunkSizeActual
+		chunkIndex++
+
+		if progressChan != nil {
+			progressChan <- uploaded
+		}
+
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+
+	return nil
 }
 
 func (p *HiDriveProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
