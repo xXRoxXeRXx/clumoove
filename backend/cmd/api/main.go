@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"bytes"
@@ -393,6 +393,14 @@ func main() {
 	mux.Handle("GET /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSchedule)))
 	mux.Handle("DELETE /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSchedule)))
 
+	// Connection Profiles (Protected)
+	mux.Handle("GET /api/profiles", jwtMiddleware(http.HandlerFunc(server.handleListProfiles)))
+	mux.Handle("POST /api/profiles", jwtMiddleware(http.HandlerFunc(server.handleCreateProfile)))
+	mux.Handle("GET /api/profiles/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetProfile)))
+	mux.Handle("PUT /api/profiles/{id}", jwtMiddleware(http.HandlerFunc(server.handleUpdateConnectionProfile)))
+	mux.Handle("DELETE /api/profiles/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteProfile)))
+	mux.Handle("POST /api/profiles/{id}/test", jwtMiddleware(http.HandlerFunc(server.handleTestProfile)))
+
 	// Admin User-Management & Oversight (ADMIN-only, gated inside each handler)
 	mux.Handle("POST /api/admin/users", jwtMiddleware(http.HandlerFunc(server.handleAdminCreateUser)))
 	mux.Handle("POST /api/admin/users/{id}/suspend", jwtMiddleware(http.HandlerFunc(server.handleAdminSuspendUser)))
@@ -540,6 +548,111 @@ func normalizeProviderURL(provider, urlStr string) string {
 		return "https://magentacloud.de/remote.php/webdav"
 	}
 	return urlStr
+}
+
+// loadProfileInto merges a stored connection profile into the request for the
+// given role ('source' | 'target'). Explicit request fields take precedence over
+// profile values. Returns the (possibly updated) request and the decrypted
+// refresh token so callers can re-store it on a migration.
+func (s *APIServer) loadProfileInto(r *http.Request, req *ConnectRequest, role string) (string, error) {
+	var profileID string
+	var provider, urlStr, username, password string
+	switch role {
+	case "source":
+		profileID = req.SourceProfileID
+		provider = req.SourceProvider
+		urlStr = req.SourceURL
+		username = req.SourceUsername
+		password = req.SourcePassword
+	case "target":
+		profileID = req.TargetProfileID
+		provider = req.TargetProvider
+		urlStr = req.TargetURL
+		username = req.TargetUsername
+		password = req.TargetPassword
+	default:
+		return "", nil
+	}
+	if profileID == "" {
+		return "", nil
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owned, err := db.VerifyProfileOwnership(s.db, profileID, userID)
+	if err != nil {
+		return "", err
+	}
+	if !owned {
+		return "", errors.New("profile not owned")
+	}
+	p, err := db.GetConnectionProfile(s.db, profileID)
+	if err != nil {
+		return "", errors.New("profile not found")
+	}
+
+	// Decrypt stored credentials (only used server-side for this request).
+	var refreshToken string
+	if p.PasswordEncrypted != "" {
+		dec, derr := crypto.Decrypt(p.PasswordEncrypted, s.encryptionKey)
+		if derr == nil {
+			password = dec
+		}
+	}
+	if p.RefreshTokenEncrypted != "" {
+		dec, derr := crypto.Decrypt(p.RefreshTokenEncrypted, s.encryptionKey)
+		if derr == nil {
+			refreshToken = dec
+		}
+	}
+
+	// OAuth providers need an *access* token in the password field (the storage
+	// layer treats it as a Bearer token). A stored profile only keeps the refresh
+	// token, so exchange it for a fresh access token before connecting/starting.
+	// The refresh token is still propagated to req for persistence/rotation.
+	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "googlephotos"
+	if isOAuth && refreshToken != "" {
+		tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken)
+		if terr == nil && tok.AccessToken != "" {
+			password = tok.AccessToken
+		}
+	}
+
+	// Explicit request values win; otherwise fall back to the profile.
+	if provider == "" {
+		provider = p.Provider
+	}
+	if urlStr == "" {
+		urlStr = p.URL
+	}
+	if username == "" {
+		username = p.Username
+	}
+	// A non-empty request password/refresh-token (including an ad-hoc override)
+	// overrides the profile value, so callers can still pass explicit creds.
+
+	switch role {
+	case "source":
+		req.SourceProvider = provider
+		req.SourceURL = urlStr
+		req.SourceUsername = username
+		if req.SourcePassword == "" {
+			req.SourcePassword = password
+		}
+		if req.SourceRefreshToken == "" {
+			req.SourceRefreshToken = refreshToken
+		}
+	case "target":
+		req.TargetProvider = provider
+		req.TargetURL = urlStr
+		req.TargetUsername = username
+		if req.TargetPassword == "" {
+			req.TargetPassword = password
+		}
+		if req.TargetRefreshToken == "" {
+			req.TargetRefreshToken = refreshToken
+		}
+	}
+	return refreshToken, nil
 }
 
 // handleBrowse lists the top-level calendar collections or addressbooks, or files/directories on the source server.
@@ -1047,6 +1160,9 @@ type ConnectRequest struct {
 	SourcePickerSessionID string `json:"source_picker_session_id"`
 	Path                 string `json:"path"`
 	ResourceType         string `json:"resource_type"`
+	// Optional reusable profile references (explicit request fields override).
+	SourceProfileID string `json:"source_profile_id"`
+	TargetProfileID string `json:"target_profile_id"`
 }
 
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -1058,6 +1174,19 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	var req ConnectRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	// Merge any referenced reusable connection profiles into the request.
+	// Explicit request fields win; profile values fill the blanks.
+	if _, err := s.loadProfileInto(r, &req, "source"); err != nil {
+		log.Printf("handleConnect: failed to load source profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	if _, err := s.loadProfileInto(r, &req, "target"); err != nil {
+		log.Printf("handleConnect: failed to load target profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
 
@@ -1483,6 +1612,19 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Merge any referenced reusable connection profiles into the request.
+	// Explicit request fields win; profile values fill the blanks.
+	if _, err := s.loadProfileInto(r, &req.ConnectRequest, "source"); err != nil {
+		log.Printf("handleStart: failed to load source profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	if _, err := s.loadProfileInto(r, &req.ConnectRequest, "target"); err != nil {
+		log.Printf("handleStart: failed to load target profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+
 	if len(req.Paths) == 0 && len(req.Calendars) == 0 && len(req.Contacts) == 0 {
 		writeError(w, http.StatusBadRequest, ErrNoSourcePaths)
 		return
@@ -1691,6 +1833,367 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		"migration_id": migrationID,
 	})
 }
+
+// --------------------------------------------------------------------------
+// Connection Profiles (reusable source/target credentials)
+// --------------------------------------------------------------------------
+
+const profileRateLimit = 60
+
+// ConnectionProfileRequest is the body for POST/PUT /api/profiles.
+// Credentials are optional on PUT (omitted fields are left unchanged).
+type ConnectionProfileRequest struct {
+	Name                  string  `json:"name"`
+	Role                  string  `json:"role"` // 'source' | 'target'
+	Provider              string  `json:"provider"`
+	URL                   string  `json:"url"`
+	Username              string  `json:"username"`
+	Password              string  `json:"password"`
+	RefreshToken          string  `json:"refresh_token"`
+	RefreshTokenExpiresIn int     `json:"refresh_token_expires_in"`
+	OAuthUser            string  `json:"oauth_user"`
+}
+
+// handleListProfiles returns the user's profiles (optionally filtered by role).
+func (s *APIServer) handleListProfiles(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+	role := r.URL.Query().Get("role")
+
+	profiles, err := db.GetConnectionProfiles(s.db, userID, role)
+	if err != nil {
+		log.Printf("handleListProfiles: query failed for user %s: %v", userID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	public := make([]db.ConnectionProfilePublic, 0, len(profiles))
+	for i := range profiles {
+		public = append(public, profiles[i].ToPublic())
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":  true,
+		"profiles": public,
+	})
+}
+
+// handleCreateProfile inserts a new profile, validating the provider whitelist
+// and encrypting any supplied credentials.
+func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), profileRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+
+	var req ConnectionProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	if req.Name == "" || req.Role == "" || req.Provider == "" {
+		writeError(w, http.StatusBadRequest, ErrMissingRequiredFields)
+		return
+	}
+	if req.Role != "source" && req.Role != "target" {
+		writeError(w, http.StatusBadRequest, ErrProfileInvalidRole)
+		return
+	}
+	if !storage.IsValidProvider(req.Provider) {
+		writeError(w, http.StatusBadRequest, ErrProfileInvalidProvider)
+		return
+	}
+
+	urlStr := normalizeProviderURL(req.Provider, req.URL)
+
+	var passEnc string
+	if req.Password != "" {
+		enc, err := crypto.Encrypt(req.Password, s.encryptionKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+			return
+		}
+		passEnc = enc
+	}
+
+	var refreshEnc sql.NullString
+	var tokenExpiresAt sql.NullTime
+	if req.RefreshToken != "" {
+		enc, err := crypto.Encrypt(req.RefreshToken, s.encryptionKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+			return
+		}
+		refreshEnc = sql.NullString{String: enc, Valid: true}
+		expiresIn := req.RefreshTokenExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 3600
+		}
+		tokenExpiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
+	}
+
+	p := &db.ConnectionProfile{
+		UserID:                 userID,
+		Name:                   req.Name,
+		Role:                   req.Role,
+		Provider:               req.Provider,
+		URL:                    urlStr,
+		Username:               req.Username,
+		PasswordEncrypted:     passEnc,
+		RefreshTokenEncrypted: refreshEnc.String,
+		TokenExpiresAt:        tokenExpiresAt,
+		OAuthUser:             req.OAuthUser,
+	}
+	if !refreshEnc.Valid {
+		p.RefreshTokenEncrypted = ""
+	}
+
+	id, err := db.CreateConnectionProfile(s.db, p)
+	if err != nil {
+		if db.IsUniqueViolation(err) {
+			writeError(w, http.StatusConflict, ErrProfileNameExists)
+			return
+		}
+		log.Printf("handleCreateProfile: insert failed for user %s: %v", userID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditMigrationCreated, id, userID, map[string]interface{}{
+		"action": "PROFILE_CREATED",
+		"role":   req.Role,
+		"provider": req.Provider,
+	})
+	writeJSON(w, http.StatusCreated, map[string]interface{}{"success": true, "id": id})
+}
+
+// handleGetProfile returns a single profile (404 on non-owner / missing).
+func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
+		return
+	}
+	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("handleGetProfile: ownership check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	p, err := db.GetConnectionProfile(s.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "profile": p.ToPublic()})
+}
+
+// handleUpdateConnectionProfile applies a partial update to a profile.
+func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), profileRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID := auth.GetUserIDFromContext(r.Context())
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
+		return
+	}
+	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("handleUpdateProfile: ownership check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+
+	var req ConnectionProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	in := db.UpdateConnectionProfileInput{}
+	if req.Name != "" {
+		in.Name = &req.Name
+	}
+	if req.Provider != "" {
+		if !storage.IsValidProvider(req.Provider) {
+			writeError(w, http.StatusBadRequest, ErrProfileInvalidProvider)
+			return
+		}
+		in.Provider = &req.Provider
+	}
+	if r.URL.Query().Get("url") == "1" || req.URL != "" {
+		u := normalizeProviderURL(req.Provider, req.URL)
+		in.URL = &u
+	}
+	if r.URL.Query().Get("username") == "1" || req.Username != "" {
+		in.Username = &req.Username
+	}
+	if req.Password != "" {
+		enc, err := crypto.Encrypt(req.Password, s.encryptionKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+			return
+		}
+		in.PasswordEncrypted = &enc
+	}
+	if req.RefreshToken != "" {
+		enc, err := crypto.Encrypt(req.RefreshToken, s.encryptionKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+			return
+		}
+		in.RefreshTokenEncrypted = &enc
+		expiresIn := req.RefreshTokenExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 3600
+		}
+		exp := time.Now().Add(time.Duration(expiresIn) * time.Second)
+		in.TokenExpiresAt = &exp
+	}
+	if req.OAuthUser != "" {
+		in.OAuthUser = &req.OAuthUser
+	}
+
+	if err := db.UpdateConnectionProfile(s.db, id, in); err != nil {
+		if db.IsUniqueViolation(err) {
+			writeError(w, http.StatusConflict, ErrProfileNameExists)
+			return
+		}
+		log.Printf("handleUpdateProfile: update failed for profile %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// handleDeleteProfile removes a profile (404 on non-owner / missing).
+func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
+		return
+	}
+	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("handleDeleteProfile: ownership check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	if err := db.DeleteConnectionProfile(s.db, id); err != nil {
+		log.Printf("handleDeleteProfile: delete failed for profile %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	s.writeAudit(r, db.AuditMigrationDeleted, id, userID, map[string]interface{}{
+		"action": "PROFILE_DELETED",
+	})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+// handleTestProfile verifies the stored credentials of a profile by performing
+// a real connection attempt. Returns success:false with a machine-readable
+// error_code (never a 4xx) so the frontend can localize the result.
+func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), profileRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID := auth.GetUserIDFromContext(r.Context())
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
+		return
+	}
+	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("handleTestProfile: ownership check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	p, err := db.GetConnectionProfile(s.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+
+	// Decrypt the stored credentials for the test only (never returned to client).
+	// For OAuth providers the refresh token is supplied as the "password" field
+	// (the storage layer exchanges it for an access token on Connect).
+	var password, refreshToken string
+	if p.PasswordEncrypted != "" {
+		dec, derr := crypto.Decrypt(p.PasswordEncrypted, s.encryptionKey)
+		if derr != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
+			return
+		}
+		password = dec
+	}
+	if p.RefreshTokenEncrypted != "" {
+		dec, derr := crypto.Decrypt(p.RefreshTokenEncrypted, s.encryptionKey)
+		if derr != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
+			return
+		}
+		refreshToken = dec
+	}
+	// A stored profile keeps only the OAuth refresh token; exchange it for a
+	// fresh access token (used as the Bearer token by the storage layer) before
+	// testing the connection.
+	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "googlephotos"
+	if isOAuth && refreshToken != "" {
+		password = refreshToken
+		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
+			password = tok.AccessToken
+		}
+	}
+
+	client, err := storage.NewProvider(r.Context(), p.Provider, p.URL, p.Username, password)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
+		return
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	ok, cerr := client.Connect(ctx)
+	if !ok {
+		log.Printf("handleTestProfile: connection failed for profile %s (provider %s): %v", id, p.Provider, cerr)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
 
 func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -2123,6 +2626,12 @@ const (
 	ErrLastAdmin              APIErrorCode = "LAST_ADMIN"
 	ErrInvalidRole            APIErrorCode = "INVALID_ROLE"
 	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
+
+	// Connection profiles
+	ErrProfileNotFound    APIErrorCode = "PROFILE_NOT_FOUND"
+	ErrProfileNameExists APIErrorCode = "PROFILE_NAME_EXISTS"
+	ErrProfileInvalidProvider APIErrorCode = "PROFILE_INVALID_PROVIDER"
+	ErrProfileInvalidRole    APIErrorCode = "PROFILE_INVALID_ROLE"
 )
 
 // writeError emits a structured error response carrying only a machine-readable

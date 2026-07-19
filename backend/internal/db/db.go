@@ -546,6 +546,44 @@ func InitDB(connStr string) (*sql.DB, error) {
 			log.Printf("Failed schema migration (idx_audit_log_user_id): %v\n", err)
 		}
 
+		// Reusable connection profiles (one side of a connection: source OR target)
+		_, err = db.Exec(`
+			CREATE TABLE IF NOT EXISTS connection_profiles (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				name TEXT NOT NULL,
+				role TEXT NOT NULL CHECK (role IN ('source', 'target')),
+				provider TEXT NOT NULL,
+				url TEXT,
+				username TEXT,
+				password_encrypted TEXT,
+				refresh_token_encrypted TEXT,
+				token_expires_at TIMESTAMP WITH TIME ZONE,
+				oauth_user TEXT,
+				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE (user_id, role, name)
+			)
+		`)
+		if err != nil {
+			log.Printf("Failed schema migration (create connection_profiles table): %v\n", err)
+		}
+
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conn_profiles_user_role ON connection_profiles(user_id, role)`)
+		if err != nil {
+			log.Printf("Failed schema migration (idx_conn_profiles_user_role): %v\n", err)
+		}
+
+		_, err = db.Exec(`
+			CREATE OR REPLACE TRIGGER update_connection_profiles_updated_at
+				BEFORE UPDATE ON connection_profiles
+				FOR EACH ROW
+				EXECUTE FUNCTION update_updated_at_column()
+		`)
+		if err != nil {
+			log.Printf("Failed schema migration (trigger connection_profiles_updated_at): %v\n", err)
+		}
+
 			_, err = db.Exec(`
 				CREATE TABLE IF NOT EXISTS user_smtp_settings (
 					user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -2617,6 +2655,232 @@ func UpdateSchedule(db *sql.DB, s *Schedule) error {
 	`
 	_, err := db.Exec(query, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive, s.ID)
 	return err
+}
+
+// ============================================================================
+// Connection Profiles (reusable source/target credentials per user)
+// ============================================================================
+
+// ConnectionProfile describes exactly one side (source OR target) of a connection.
+// OAuth-based profiles store only the (encrypted) refresh token + oauth_user;
+// password-based profiles store username + encrypted password; 'local' stores neither.
+type ConnectionProfile struct {
+	ID                     string         `json:"id"`
+	UserID                 string         `json:"user_id"`
+	Name                   string         `json:"name"`
+	Role                   string         `json:"role"` // 'source' | 'target'
+	Provider               string         `json:"provider"`
+	URL                    string         `json:"url,omitempty"`
+	Username               string         `json:"username,omitempty"`
+	PasswordEncrypted     string         `json:"-"`
+	RefreshTokenEncrypted string         `json:"-"`
+	TokenExpiresAt        sql.NullTime   `json:"token_expires_at,omitempty"`
+	OAuthUser             string         `json:"oauth_user,omitempty"`
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
+}
+
+// ConnectionProfilePublic is the subset of ConnectionProfile that may be sent to
+// the client: secrets are never serialized, and we expose only whether a
+// password is stored (so the UI can render the right fields).
+type ConnectionProfilePublic struct {
+	ID              string       `json:"id"`
+	Name            string       `json:"name"`
+	Role            string       `json:"role"`
+	Provider        string       `json:"provider"`
+	URL             string       `json:"url,omitempty"`
+	Username        string       `json:"username,omitempty"`
+	HasPassword     bool         `json:"has_password"`
+	TokenExpiresAt sql.NullTime `json:"token_expires_at,omitempty"`
+	OAuthUser      string       `json:"oauth_user,omitempty"`
+	CreatedAt       time.Time    `json:"created_at"`
+	UpdatedAt       time.Time    `json:"updated_at"`
+}
+
+// ToPublic strips secret fields and derives HasPassword.
+func (p *ConnectionProfile) ToPublic() ConnectionProfilePublic {
+	return ConnectionProfilePublic{
+		ID:              p.ID,
+		Name:            p.Name,
+		Role:            p.Role,
+		Provider:        p.Provider,
+		URL:             p.URL,
+		Username:        p.Username,
+		HasPassword:     p.PasswordEncrypted != "",
+		TokenExpiresAt: p.TokenExpiresAt,
+		OAuthUser:      p.OAuthUser,
+		CreatedAt:       p.CreatedAt,
+		UpdatedAt:       p.UpdatedAt,
+	}
+}
+
+// CreateConnectionProfile inserts a new profile and returns its UUID.
+func CreateConnectionProfile(database *sql.DB, p *ConnectionProfile) (string, error) {
+	query := `
+		INSERT INTO connection_profiles (
+			user_id, name, role, provider, url, username,
+			password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id, created_at, updated_at
+	`
+	err := database.QueryRow(
+		query,
+		p.UserID, p.Name, p.Role, p.Provider, p.URL, p.Username,
+		p.PasswordEncrypted, p.RefreshTokenEncrypted, p.TokenExpiresAt, p.OAuthUser,
+	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+	if err != nil {
+		return "", err
+	}
+	return p.ID, nil
+}
+
+// GetConnectionProfile loads a single profile by ID (regardless of owner; the
+// caller must enforce ownership via VerifyProfileOwnership before use).
+func GetConnectionProfile(database *sql.DB, id string) (*ConnectionProfile, error) {
+	query := `
+		SELECT id, user_id, name, role, provider, url, username,
+		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user,
+		       created_at, updated_at
+		FROM connection_profiles WHERE id = $1
+	`
+	var p ConnectionProfile
+	err := database.QueryRow(query, id).Scan(
+		&p.ID, &p.UserID, &p.Name, &p.Role, &p.Provider, &p.URL, &p.Username,
+		&p.PasswordEncrypted, &p.RefreshTokenEncrypted, &p.TokenExpiresAt, &p.OAuthUser,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// GetConnectionProfiles lists the user's profiles, optionally filtered by role.
+func GetConnectionProfiles(database *sql.DB, userID, role string) ([]ConnectionProfile, error) {
+	args := []interface{}{userID}
+	query := `
+		SELECT id, user_id, name, role, provider, url, username,
+		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user,
+		       created_at, updated_at
+		FROM connection_profiles
+		WHERE user_id = $1
+	`
+	if role != "" {
+		query += ` AND role = $2`
+		args = append(args, role)
+	}
+	query += ` ORDER BY role, name ASC`
+
+	rows, err := database.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var profiles []ConnectionProfile
+	for rows.Next() {
+		var p ConnectionProfile
+		if err := rows.Scan(
+			&p.ID, &p.UserID, &p.Name, &p.Role, &p.Provider, &p.URL, &p.Username,
+			&p.PasswordEncrypted, &p.RefreshTokenEncrypted, &p.TokenExpiresAt, &p.OAuthUser,
+			&p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		profiles = append(profiles, p)
+	}
+	return profiles, rows.Err()
+}
+
+// UpdateConnectionProfile applies a partial update to an existing profile.
+// Empty-string fields are left unchanged; pass a pointer sentinel via the
+// UpdateConnectionProfileInput wrapper so callers can distinguish "set to empty"
+// from "do not change". For the password/refresh token, nil means "do not
+// change", while a non-nil *string changes (or clears) the value.
+type UpdateConnectionProfileInput struct {
+	Name                   *string
+	Provider               *string
+	URL                    *string
+	Username               *string
+	PasswordEncrypted      *string // nil = unchanged; "" = clear
+	RefreshTokenEncrypted  *string // nil = unchanged; "" = clear
+	TokenExpiresAt         *time.Time
+	OAuthUser              *string
+}
+
+func UpdateConnectionProfile(database *sql.DB, id string, in UpdateConnectionProfileInput) error {
+	setClauses := []string{}
+	args := []interface{}{}
+	idx := 1
+
+	if in.Name != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("name = $%d", idx))
+		args = append(args, *in.Name)
+	}
+	if in.Provider != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("provider = $%d", idx))
+		args = append(args, *in.Provider)
+	}
+	if in.URL != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("url = $%d", idx))
+		args = append(args, *in.URL)
+	}
+	if in.Username != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("username = $%d", idx))
+		args = append(args, *in.Username)
+	}
+	if in.PasswordEncrypted != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("password_encrypted = $%d", idx))
+		args = append(args, *in.PasswordEncrypted)
+	}
+	if in.RefreshTokenEncrypted != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("refresh_token_encrypted = $%d", idx))
+		args = append(args, *in.RefreshTokenEncrypted)
+	}
+	if in.TokenExpiresAt != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("token_expires_at = $%d", idx))
+		args = append(args, *in.TokenExpiresAt)
+	}
+	if in.OAuthUser != nil {
+		idx++
+		setClauses = append(setClauses, fmt.Sprintf("oauth_user = $%d", idx))
+		args = append(args, *in.OAuthUser)
+	}
+
+	if len(setClauses) == 0 {
+		return nil
+	}
+
+	query := `UPDATE connection_profiles SET ` + strings.Join(setClauses, ", ") + ` WHERE id = $1`
+	args = append([]interface{}{id}, args...)
+	_, err := database.Exec(query, args...)
+	return err
+}
+
+// DeleteConnectionProfile removes a profile by ID.
+func DeleteConnectionProfile(database *sql.DB, id string) error {
+	_, err := database.Exec(`DELETE FROM connection_profiles WHERE id = $1`, id)
+	return err
+}
+
+// VerifyProfileOwnership reports whether the profile belongs to the user.
+// Returns EXISTS semantics so a non-owned ID yields false (not an error),
+// letting callers return 404 Not Found without leaking existence.
+func VerifyProfileOwnership(database *sql.DB, profileID, userID string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM connection_profiles WHERE id = $1 AND user_id = $2)`
+	var exists bool
+	err := database.QueryRow(query, profileID, userID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 // ============================================================================

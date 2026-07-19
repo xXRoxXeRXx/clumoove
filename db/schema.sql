@@ -222,3 +222,28 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
+
+-- Reusable connection profiles (one side of a connection: source OR target)
+CREATE TABLE IF NOT EXISTS connection_profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('source', 'target')),
+    provider TEXT NOT NULL,
+    url TEXT,
+    username TEXT,
+    password_encrypted TEXT,
+    refresh_token_encrypted TEXT,
+    token_expires_at TIMESTAMP WITH TIME ZONE,
+    oauth_user TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, role, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conn_profiles_user_role ON connection_profiles(user_id, role);
+
+CREATE OR REPLACE TRIGGER update_connection_profiles_updated_at
+    BEFORE UPDATE ON connection_profiles
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
