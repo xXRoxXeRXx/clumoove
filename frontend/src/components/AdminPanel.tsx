@@ -46,7 +46,7 @@ function SectionCard({ icon: Icon, title, children }: {
 
 const inputCls = 'w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans';
 const selectCls = 'px-3 py-1.5 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans';
-const primaryBtnCls = 'bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer';
+const primaryBtnCls = 'bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer';
 const secondaryBtnCls = 'px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all cursor-pointer';
 
 export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
@@ -226,7 +226,7 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
           <option value="false">{t('admin.users.suspended')}</option>
         </select>
         <button onClick={() => setShowCreate((v) => !v)}
-          className="ml-auto flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md transition-all cursor-pointer">
+          className="ml-auto flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md transition-all cursor-pointer">
           <UserPlus className="w-4 h-4" /> {t('admin.users.create')}
         </button>
       </div>

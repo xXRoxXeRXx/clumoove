@@ -479,97 +479,255 @@ function App() {
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans selection:bg-portal-orange selection:text-white relative overflow-x-hidden">
 
-      {/* Europa Data Centres Background */}
-      <div className="fixed inset-0 z-0 pointer-events-none opacity-[0.07] dark:opacity-[0.12]" aria-hidden="true">
-        <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg" className="w-full h-full">
+      {/* Full-screen Europa background with servers & data flow */}
+      <style>{`
+        @keyframes orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes pulse-dot { 0%,100% { opacity:0.3; r:3; } 50% { opacity:1; r:6; } }
+        @keyframes data-flow { to { stroke-dashoffset: -200; } }
+        @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+        @keyframes spin-star { to { transform: rotate(360deg); } }
+      `}</style>
+      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden" aria-hidden="true">
+        <svg viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg" className="w-full h-full" preserveAspectRatio="xMidYMid slice">
           <defs>
-            <radialGradient id="glow-dc" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#ff6600" stopOpacity="1" />
-              <stop offset="100%" stopColor="#ff6600" stopOpacity="0" />
+            <radialGradient id="glow-blue" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#1e3a8a" stopOpacity="0.12" />
+              <stop offset="100%" stopColor="#1e3a8a" stopOpacity="0" />
             </radialGradient>
-            <radialGradient id="glow-conn" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#002f6c" stopOpacity="0.6" />
-              <stop offset="100%" stopColor="#002f6c" stopOpacity="0" />
+            <radialGradient id="glow-yellow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffd700" stopOpacity="0.15" />
+              <stop offset="100%" stopColor="#ffd700" stopOpacity="0" />
             </radialGradient>
+            <radialGradient id="server-pulse" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffd700" stopOpacity="0.6" />
+              <stop offset="100%" stopColor="#ffd700" stopOpacity="0" />
+            </radialGradient>
+            <pattern id="star-pattern" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
+              <polygon points="50,4 53,22 72,22 57,33 63,51 50,41 37,51 43,33 28,22 47,22" fill="#ffd700" opacity="0.1" />
+            </pattern>
           </defs>
 
-          {/* Europe landmass (simplified) */}
-          <path d="M520 180 Q540 160 570 155 Q600 150 630 160 Q660 170 680 180 Q700 190 720 200 Q740 210 750 230 Q760 250 755 270 Q750 290 740 310 Q730 330 710 340 Q690 350 670 355 Q650 360 630 365 Q610 370 590 375 Q570 380 550 390 Q530 400 510 410 Q490 420 480 440 Q470 460 465 480 Q460 500 455 520 Q450 540 440 555 Q430 570 420 580 Q410 590 400 595 Q390 600 380 590 Q370 580 365 560 Q360 540 358 520 Q355 500 360 480 Q365 460 375 440 Q385 420 400 400 Q415 380 430 365 Q445 350 460 335 Q475 320 490 300 Q505 280 515 260 Q525 240 525 220 Q525 200 520 180Z" fill="var(--color-portal-navy)" />
-          <path d="M570 155 Q580 140 600 130 Q620 120 640 125 Q660 130 670 145 Q680 160 685 175 Q690 190 680 200 Q670 210 655 215 Q640 220 625 215 Q610 210 600 195 Q590 180 580 170 Q570 160 570 155Z" fill="var(--color-portal-navy)" />
-          <path d="M750 230 Q770 220 790 225 Q810 230 820 250 Q830 270 825 290 Q820 310 810 325 Q800 340 780 345 Q760 350 750 340 Q740 330 745 310 Q750 290 750 270 Q750 250 750 230Z" fill="var(--color-portal-navy)" />
+          {/* Ambient glows */}
+          <circle cx="200" cy="200" r="300" fill="url(#glow-blue)" />
+          <circle cx="1200" cy="700" r="350" fill="url(#glow-blue)" />
+          <circle cx="720" cy="100" r="280" fill="url(#glow-yellow)" />
+          <circle cx="720" cy="800" r="280" fill="url(#glow-yellow)" />
 
-          {/* Scandinavia */}
-          <path d="M520 70 Q540 60 560 65 Q580 70 590 90 Q600 110 595 130 Q590 150 580 160 Q570 170 555 165 Q540 160 535 140 Q530 120 528 100 Q526 80 520 70Z" fill="var(--color-portal-navy)" opacity="0.8" />
-          <path d="M590 65 Q610 55 630 60 Q650 65 655 85 Q660 105 655 120 Q650 135 640 145 Q630 155 615 150 Q600 145 595 125 Q590 105 592 85 Q594 65 590 65Z" fill="var(--color-portal-navy)" opacity="0.7" />
+          {/* Star tiling */}
+          <rect x="0" y="0" width="1440" height="900" fill="url(#star-pattern)" />
 
-          {/* British Isles */}
-          <path d="M450 180 Q460 170 475 175 Q490 180 495 200 Q500 220 495 240 Q490 260 480 270 Q470 280 460 275 Q450 270 448 250 Q445 230 448 210 Q450 190 450 180Z" fill="var(--color-portal-navy)" opacity="0.85" />
+          {/* Europa landmass (simplified, full map) */}
+          <g opacity="0.08" fill="#1e3a8a">
+            <path d="M520 150 Q540 130 570 125 Q600 120 630 130 Q660 140 680 150 Q700 160 720 170 Q740 180 750 200 Q760 220 755 240 Q750 260 740 280 Q730 300 710 310 Q690 320 670 325 Q650 330 630 335 Q610 340 590 345 Q570 350 550 360 Q530 370 510 380 Q490 390 480 410 Q470 430 465 450 Q460 470 455 490 Q450 510 440 525 Q430 540 420 550 Q410 560 400 565 Q390 570 380 560 Q370 550 365 530 Q360 510 358 490 Q355 470 360 450 Q365 430 375 410 Q385 390 400 370 Q415 350 430 335 Q445 320 460 305 Q475 290 490 270 Q505 250 515 230 Q525 210 525 190 Q525 170 520 150Z" />
+            <path d="M570 125 Q580 110 600 100 Q620 90 640 95 Q660 100 670 115 Q680 130 685 145 Q690 160 680 170 Q670 180 655 185 Q640 190 625 185 Q610 180 600 165 Q590 150 580 140 Q570 130 570 125Z" />
+            <path d="M750 200 Q770 190 790 195 Q810 200 820 220 Q830 240 825 260 Q820 280 810 295 Q800 310 780 315 Q760 320 750 310 Q740 300 745 280 Q750 260 750 240 Q750 220 750 200Z" />
+            <path d="M520 40 Q540 30 560 35 Q580 40 590 60 Q600 80 595 100 Q590 120 580 130 Q570 140 555 135 Q540 130 535 110 Q530 90 528 70 Q526 50 520 40Z" opacity="0.7" />
+            <path d="M590 35 Q610 25 630 30 Q650 35 655 55 Q660 75 655 90 Q650 105 640 115 Q630 125 615 120 Q600 115 595 95 Q590 75 592 55 Q594 35 590 35Z" opacity="0.6" />
+            <path d="M450 150 Q460 140 475 145 Q490 150 495 170 Q500 190 495 210 Q490 230 480 240 Q470 250 460 245 Q450 240 448 220 Q445 200 448 180 Q450 160 450 150Z" opacity="0.75" />
+            <path d="M420 370 Q435 360 455 365 Q475 370 480 390 Q485 410 478 430 Q470 450 455 460 Q440 470 425 465 Q410 460 405 440 Q400 420 405 400 Q410 380 420 370Z" opacity="0.75" />
+            <path d="M590 345 Q600 340 610 345 Q620 350 625 370 Q630 390 632 410 Q635 430 632 450 Q630 470 620 480 Q610 490 600 485 Q590 480 588 460 Q585 440 585 420 Q585 400 587 380 Q590 360 590 345Z" opacity="0.75" />
+            <path d="M650 325 Q670 320 690 330 Q710 340 720 360 Q730 380 728 400 Q725 420 715 435 Q705 450 690 455 Q675 460 660 455 Q645 450 640 430 Q635 410 638 390 Q640 370 645 350 Q650 330 650 325Z" opacity="0.7" />
+            <path d="M680 170 Q710 160 740 165 Q770 170 790 190 Q810 210 815 240 Q820 270 810 300 Q800 330 780 345 Q760 360 735 355 Q710 350 695 335 Q680 320 675 300 Q670 280 670 260 Q670 240 672 220 Q675 200 680 180Z" opacity="0.65" />
+          </g>
 
-          {/* Iberian Peninsula */}
-          <path d="M420 400 Q435 390 455 395 Q475 400 480 420 Q485 440 478 460 Q470 480 455 490 Q440 500 425 495 Q410 490 405 470 Q400 450 405 430 Q410 410 420 400Z" fill="var(--color-portal-navy)" opacity="0.85" />
+          {/* Server/Data Centre markers with pulsing animation */}
+          <g>
+            <circle cx="485" cy="200" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="2s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="485" cy="200" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="2s" repeatCount="indefinite" />
+            </circle>
+            <text x="475" y="188" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">LON</text>
 
-          {/* Italian Peninsula */}
-          <path d="M590 375 Q600 370 610 375 Q620 380 625 400 Q630 420 632 440 Q635 460 632 480 Q630 500 620 510 Q610 520 600 515 Q590 510 588 490 Q585 470 585 450 Q585 430 587 410 Q590 390 590 375Z" fill="var(--color-portal-navy)" opacity="0.85" />
+            <circle cx="600" cy="130" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="2.5s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="600" cy="130" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="2.5s" repeatCount="indefinite" />
+            </circle>
+            <text x="590" y="118" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">AMS</text>
 
-          {/* Balkans */}
-          <path d="M650 355 Q670 350 690 360 Q710 370 720 390 Q730 410 728 430 Q725 450 715 465 Q705 480 690 485 Q675 490 660 485 Q645 480 640 460 Q635 440 638 420 Q640 400 645 380 Q650 360 650 355Z" fill="var(--color-portal-navy)" opacity="0.8" />
+            <circle cx="700" cy="170" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="1.8s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="700" cy="170" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="1.8s" repeatCount="indefinite" />
+            </circle>
+            <text x="690" y="158" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">FRA</text>
 
-          {/* Eastern Europe */}
-          <path d="M680 200 Q710 190 740 195 Q770 200 790 220 Q810 240 815 270 Q820 300 810 330 Q800 360 780 375 Q760 390 735 385 Q710 380 695 365 Q680 350 675 330 Q670 310 670 290 Q670 270 672 250 Q675 230 680 210 Q680 200 680 200Z" fill="var(--color-portal-navy)" opacity="0.75" />
+            <circle cx="750" cy="270" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="3s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="750" cy="270" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="3s" repeatCount="indefinite" />
+            </circle>
+            <text x="740" y="258" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">FRA2</text>
 
-          {/* Data Centre markers */}
-          <circle cx="485" cy="230" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="485" cy="230" r="5" fill="#ff6600" />
-          <text x="482" y="215" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">LON</text>
+            <circle cx="600" cy="330" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="2.2s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="600" cy="330" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="2.2s" repeatCount="indefinite" />
+            </circle>
+            <text x="590" y="318" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">MIL</text>
 
-          <circle cx="600" cy="160" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="600" cy="160" r="5" fill="#ff6600" />
-          <text x="595" y="145" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">FRA</text>
+            <circle cx="440" cy="430" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="2.7s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="440" cy="430" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="2.7s" repeatCount="indefinite" />
+            </circle>
+            <text x="430" y="418" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">MAD</text>
 
-          <circle cx="700" cy="200" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="700" cy="200" r="5" fill="#ff6600" />
-          <text x="693" y="185" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">AMS</text>
+            <circle cx="695" cy="370" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="2s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="695" cy="370" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="2s" repeatCount="indefinite" />
+            </circle>
+            <text x="685" y="358" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">VIE</text>
 
-          <circle cx="750" cy="300" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="750" cy="300" r="5" fill="#ff6600" />
-          <text x="747" y="285" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">FRA</text>
+            <circle cx="790" cy="310" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="2.8s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="790" cy="310" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="2.8s" repeatCount="indefinite" />
+            </circle>
+            <text x="780" y="298" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">WAW</text>
 
-          <circle cx="600" cy="360" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="600" cy="360" r="5" fill="#ff6600" />
-          <text x="595" y="345" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">MIL</text>
+            <circle cx="540" cy="90" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="2.3s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="540" cy="90" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="2.3s" repeatCount="indefinite" />
+            </circle>
+            <text x="530" y="78" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">CPH</text>
 
-          <circle cx="440" cy="460" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="440" cy="460" r="5" fill="#ff6600" />
-          <text x="435" y="445" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">MAD</text>
+            <circle cx="650" cy="260" r="18" fill="url(#server-pulse)">
+              <animate attributeName="r" values="12;22;12" dur="1.9s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="650" cy="260" r="4" fill="#ffd700">
+              <animate attributeName="r" values="3;6;3" dur="1.9s" repeatCount="indefinite" />
+            </circle>
+            <text x="640" y="248" fontSize="10" fill="#ffd700" fontWeight="bold" fontFamily="monospace">ZRH</text>
 
-          <circle cx="695" cy="400" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="695" cy="400" r="5" fill="#ff6600" />
-          <text x="687" y="385" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">VIE</text>
+            {/* Extra data flow server markers */}
+            <circle cx="800" cy="150" r="12" fill="url(#server-pulse)">
+              <animate attributeName="r" values="8;16;8" dur="3.2s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="800" cy="150" r="3" fill="#ffd700">
+              <animate attributeName="r" values="2;5;2" dur="3.2s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="500" cy="300" r="12" fill="url(#server-pulse)">
+              <animate attributeName="r" values="8;16;8" dur="2.6s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="500" cy="300" r="3" fill="#ffd700">
+              <animate attributeName="r" values="2;5;2" dur="2.6s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="680" cy="450" r="12" fill="url(#server-pulse)">
+              <animate attributeName="r" values="8;16;8" dur="3.5s" repeatCount="indefinite" />
+            </circle>
+            <circle cx="680" cy="450" r="3" fill="#ffd700">
+              <animate attributeName="r" values="2;5;2" dur="3.5s" repeatCount="indefinite" />
+            </circle>
+          </g>
 
-          <circle cx="790" cy="340" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="790" cy="340" r="5" fill="#ff6600" />
-          <text x="783" y="325" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">WAW</text>
+          {/* Data flow lines with animated dash offset */}
+          <g opacity="0.15">
+            <line x1="485" y1="200" x2="600" y2="130" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="3s" repeatCount="indefinite" />
+            </line>
+            <line x1="600" y1="130" x2="700" y2="170" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="2.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="700" y1="170" x2="750" y2="270" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="4s" repeatCount="indefinite" />
+            </line>
+            <line x1="600" y1="330" x2="695" y2="370" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="3.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="650" y1="260" x2="600" y2="330" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="2.8s" repeatCount="indefinite" />
+            </line>
+            <line x1="750" y1="270" x2="695" y2="370" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="3.2s" repeatCount="indefinite" />
+            </line>
+            <line x1="750" y1="270" x2="790" y2="310" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="2.2s" repeatCount="indefinite" />
+            </line>
+            <line x1="440" y1="430" x2="600" y2="330" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="4.5s" repeatCount="indefinite" />
+            </line>
+            <line x1="700" y1="170" x2="790" y2="310" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="3.8s" repeatCount="indefinite" />
+            </line>
+            <line x1="600" y1="130" x2="540" y2="90" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="2s" repeatCount="indefinite" />
+            </line>
+            <line x1="650" y1="260" x2="700" y2="170" stroke="url(#glow-yellow)" strokeWidth="2" strokeDasharray="8,6">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="3s" repeatCount="indefinite" />
+            </line>
+            <line x1="800" y1="150" x2="700" y2="170" stroke="url(#glow-yellow)" strokeWidth="1.5" strokeDasharray="6,8">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="3.3s" repeatCount="indefinite" />
+            </line>
+            <line x1="500" y1="300" x2="600" y2="330" stroke="url(#glow-yellow)" strokeWidth="1.5" strokeDasharray="6,8">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="2.7s" repeatCount="indefinite" />
+            </line>
+            <line x1="680" y1="450" x2="600" y2="330" stroke="url(#glow-yellow)" strokeWidth="1.5" strokeDasharray="6,8">
+              <animate attributeName="stroke-dashoffset" from="0" to="-200" dur="4.2s" repeatCount="indefinite" />
+            </line>
+          </g>
 
-          <circle cx="540" cy="120" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="540" cy="120" r="5" fill="#ff6600" />
-          <text x="535" y="105" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">CPH</text>
+          {/* Scattered stars (rotating) */}
+          <g opacity="0.2">
+            <g><animateTransform attributeName="transform" type="rotate" from="0 200 300" to="360 200 300" dur="20s" repeatCount="indefinite" />
+              <polygon points="200,300 203,315 218,315 206,324 211,338 200,329 189,338 194,324 182,315 197,315" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 900 150" to="360 900 150" dur="25s" repeatCount="indefinite" />
+              <polygon points="900,150 903,165 918,165 906,174 911,188 900,179 889,188 894,174 882,165 897,165" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 1200 600" to="360 1200 600" dur="30s" repeatCount="indefinite" />
+              <polygon points="1200,600 1202,610 1212,610 1204,616 1207,626 1200,620 1193,626 1196,616 1188,610 1198,610" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 300 700" to="360 300 700" dur="22s" repeatCount="indefinite" />
+              <polygon points="300,700 302,710 312,710 304,716 307,726 300,720 293,726 296,716 288,710 298,710" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 1100 200" to="360 1100 200" dur="28s" repeatCount="indefinite" />
+              <polygon points="1100,200 1102,210 1112,210 1104,216 1107,226 1100,220 1093,226 1096,216 1088,210 1098,210" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 400 450" to="360 400 450" dur="35s" repeatCount="indefinite" />
+              <polygon points="400,450 403,465 418,465 406,474 411,488 400,479 389,488 394,474 382,465 397,465" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 1300 350" to="360 1300 350" dur="18s" repeatCount="indefinite" />
+              <polygon points="1300,350 1302,360 1312,360 1304,366 1307,376 1300,370 1293,376 1296,366 1288,360 1298,360" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 100 600" to="360 100 600" dur="26s" repeatCount="indefinite" />
+              <polygon points="100,600 103,615 118,615 106,624 111,638 100,629 89,638 94,624 82,615 97,615" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 800 800" to="360 800 800" dur="32s" repeatCount="indefinite" />
+              <polygon points="800,800 803,815 818,815 806,824 811,838 800,829 789,838 794,824 782,815 797,815" fill="#ffd700" />
+            </g>
+            <g><animateTransform attributeName="transform" type="rotate" from="0 500 50" to="360 500 50" dur="24s" repeatCount="indefinite" />
+              <polygon points="500,50 502,60 512,60 504,66 507,76 500,70 493,76 496,66 488,60 498,60" fill="#ffd700" />
+            </g>
+          </g>
 
-          <circle cx="650" cy="290" r="20" fill="url(#glow-dc)" opacity="0.9" />
-          <circle cx="650" cy="290" r="5" fill="#ff6600" />
-          <text x="643" y="275" fontSize="11" fill="var(--color-portal-orange)" fontWeight="bold" fontFamily="Poppins, sans-serif">ZRH</text>
-
-          {/* Connection lines between hubs */}
-          <line x1="485" y1="230" x2="600" y2="160" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="600" y1="160" x2="700" y2="200" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="700" y1="200" x2="750" y2="300" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="600" y1="360" x2="695" y2="400" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="650" y1="290" x2="600" y2="360" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="750" y1="300" x2="695" y2="400" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="750" y1="300" x2="790" y2="340" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="440" y1="460" x2="600" y2="360" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="700" y1="200" x2="790" y2="340" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="600" y1="160" x2="540" y2="120" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
-          <line x1="650" y1="290" x2="700" y2="200" stroke="var(--color-portal-navy)" strokeWidth="1.5" strokeDasharray="6,4" opacity="0.5" />
+          {/* Orbiting data packets */}
+          <g opacity="0.12">
+            <circle cx="540" cy="90" r="2" fill="#ffd700">
+              <animateMotion dur="8s" repeatCount="indefinite" path="M540,90 Q600,130 700,170 Q800,150 790,310 Q750,270 700,170 Q600,130 540,90" />
+            </circle>
+            <circle cx="750" cy="270" r="2" fill="#ffd700">
+              <animateMotion dur="10s" repeatCount="indefinite" path="M750,270 Q790,310 695,370 Q600,330 650,260 Q700,170 750,270" />
+            </circle>
+            <circle cx="600" cy="330" r="2" fill="#ffd700">
+              <animateMotion dur="12s" repeatCount="indefinite" path="M600,330 Q440,430 500,300 Q600,130 650,260 Q695,370 600,330" />
+            </circle>
+            <circle cx="700" cy="170" r="2" fill="#ffd700">
+              <animateMotion dur="9s" repeatCount="indefinite" path="M700,170 Q650,260 600,330 Q695,370 750,270 Q790,310 800,150 Q700,170" />
+            </circle>
+          </g>
         </svg>
       </div>
 
@@ -579,7 +737,7 @@ function App() {
           <div className="flex items-center gap-3">
             <div 
               onClick={() => step !== 'login' && goToOverview()}
-              className="group w-10 h-10 flex items-center justify-center bg-gradient-to-tr from-portal-orange to-orange-500 rounded-xl text-white shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer hover:-translate-y-0.5"
+              className="group w-10 h-10 flex items-center justify-center bg-gradient-to-tr from-portal-orange to-yellow-500 rounded-xl text-portal-navy shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer hover:-translate-y-0.5"
             >
               <CloudSync className="w-5 h-5 stroke-[2.5] group-hover:rotate-12 transition-transform duration-300" />
             </div>

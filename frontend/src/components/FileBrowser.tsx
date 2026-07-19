@@ -903,7 +903,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
                         <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
                           selectedCalendars[cal.path] 
-                            ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-[var(--color-text-inverse)] border-transparent' 
+                            ? 'bg-gradient-to-tr from-portal-orange to-yellow-500 text-portal-navy border-transparent' 
                             : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)]'
                         }`}>
                           {selectedCalendars[cal.path] && <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />}
@@ -943,7 +943,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
                         <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
                           selectedContacts[addr.path] 
-                            ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-[var(--color-text-inverse)] border-transparent' 
+                            ? 'bg-gradient-to-tr from-portal-orange to-yellow-500 text-portal-navy border-transparent' 
                             : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)]'
                         }`}>
                           {selectedContacts[addr.path] && <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />}
@@ -970,7 +970,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <button
             onClick={handleStartMigration}
             disabled={starting || (isGooglePhotosSource && !pickerReady)}
-            className="w-full flex items-center justify-center gap-2.5 py-4 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            className="w-full flex items-center justify-center gap-2.5 py-4 bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           >
             {starting ? (
               <>
@@ -1305,7 +1305,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   <button
                     type="submit"
                     disabled={!newFolderName.trim()}
-                    className="px-3.5 py-2 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] text-xs font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    className="px-3.5 py-2 bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy text-xs font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
                     Erstellen
                   </button>
@@ -1346,7 +1346,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     setIsCreatingFolder(false);
                     setNewFolderName('');
                   }}
-                  className="px-4 py-2 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] text-[11px] font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all cursor-pointer"
+                  className="px-4 py-2 bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy text-[11px] font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all cursor-pointer"
                 >
                   {t('common.select')}
                 </button>

@@ -672,7 +672,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <button
                   type="submit"
                   disabled={emailChangeLoading || newEmail.trim() === ''}
-                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  className="w-full bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
                   {emailChangeLoading ? t('settings.saving') : t('settings.requestLink')}
                 </button>
@@ -721,7 +721,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               <button
                 type="submit"
                 disabled={profileLoading || displayName.trim() === '' || displayName.trim() === user?.display_name}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                className="w-full bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
               >
                 {profileLoading ? t('settings.saving') : t('settings.saveChanges')}
               </button>
@@ -812,7 +812,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               <button
                 type="submit"
                 disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                className="w-full bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
               >
                 {passwordLoading ? t('settings.changing') : t('settings.changePassword')}
               </button>
@@ -852,7 +852,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <button
                   type="button"
                   onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')).catch(() => {}); setTotpMessage({ text: t('settings.copied'), type: 'success' }); }}
-                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer"
+                  className="w-full bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer"
                 >
                   {t('settings.copyCodes')}
                 </button>
@@ -889,7 +889,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   <button
                     type="submit"
                     disabled={enableLoading || !enableCode}
-                    className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                    className="flex-1 bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                   >
                     {enableLoading ? t('settings.activating') : t('settings.activate')}
                   </button>
@@ -937,7 +937,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   type="button"
                   onClick={handle2FASetup}
                   disabled={setupLoading}
-                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  className="w-full bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
                   {setupLoading ? t('settings.preparing') : t('settings.setup')}
                 </button>
@@ -1154,7 +1154,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <button
                   type="submit"
                   disabled={smtpLoading || !smtpHost || !smtpUsername || !smtpFromEmail}
-                  className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  className="flex-1 bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
                   {smtpLoading ? t('settings.saving') : t('settings.saveSmtp')}
                 </button>

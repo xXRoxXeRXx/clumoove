@@ -11,7 +11,7 @@ interface ConnectionManagerProps {
   oauthProviders?: Record<string, boolean>;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'local';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'hidrive' | 'local';
 
 interface ProfilePublic {
   id: string;
@@ -30,7 +30,7 @@ type MessageState = { text: string; type: 'success' | 'error' } | null;
 
 const inputCls = 'w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
-const primaryBtnCls = 'bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
+const primaryBtnCls = 'bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
 const secondaryBtnCls = 'px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all cursor-pointer';
 
 function MessageBanner({ message }: { message: MessageState }) {
@@ -128,10 +128,11 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
     ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
     ...(oauthProviders.googlephotos ? [{ id: 'googlephotos' as const, name: 'Google Photos' }] : []),
+    ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : []),
   ];
 
-  const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google' || prov === 'googlephotos';
+  const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google' || prov === 'googlephotos' || prov === 'hidrive';
 
   return (
     <div className="space-y-6">
@@ -343,7 +344,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const [oauthRefreshToken, setOauthRefreshToken] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
 
-  const isOAuth = provider === 'dropbox' || provider === 'google' || provider === 'googlephotos';
+  const isOAuth = provider === 'dropbox' || provider === 'google' || provider === 'googlephotos' || provider === 'hidrive';
   const needsPassword = !isOAuth && provider !== 'local';
 
   const openOAuthPopup = () => {
@@ -468,7 +469,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
               ) : (
                 <button type="button" onClick={openOAuthPopup}
                   className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : provider === 'googlephotos' ? 'Google Photos' : 'Dropbox' })}
+                  <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : provider === 'googlephotos' ? 'Google Photos' : provider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                 </button>
               )}
               {editing && !oauthRefreshToken && (

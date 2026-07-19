@@ -17,6 +17,7 @@ export type Provider =
   | 'smb'
   | 's3'
   | 'sftp'
+  | 'hidrive'
   | 'local';
 
 export interface MigrationConfig {

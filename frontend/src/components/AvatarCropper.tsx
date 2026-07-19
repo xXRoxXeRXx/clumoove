@@ -211,7 +211,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
           <button
             type="button"
             onClick={handleSave}
-            className="flex items-center justify-center gap-1.5 py-2.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:shadow-md text-[var(--color-text-inverse)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer"
+            className="flex items-center justify-center gap-1.5 py-2.5 bg-gradient-to-r from-portal-orange to-yellow-500 hover:shadow-md text-portal-navy rounded-xl text-xs font-bold font-mono transition-all cursor-pointer"
           >
             <Check className="w-4 h-4" />
             {t('common.confirm')}

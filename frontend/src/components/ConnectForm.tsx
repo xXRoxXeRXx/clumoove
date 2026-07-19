@@ -14,7 +14,7 @@ interface ConnectFormProps {
   oauthProviders?: Record<string, boolean>;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'local';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'hidrive' | 'local';
 
 export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {} }) => {
   const [sourceUrl, setSourceUrl] = useState('');
@@ -200,7 +200,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
     : sourceProvider === 'magentacloud' || sourceProvider === 'local'
     ? ''
-    : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? `https://api.${sourceProvider}.com` : sourceUrl);
+    : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos' || sourceProvider === 'hidrive') ? `https://api.${sourceProvider}.com` : sourceUrl);
 
   // Build the final provider URL for the target side.
   const finalTargetUrlValue = (): string => targetProvider === 'smb'
@@ -211,14 +211,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${targetSftpHost}:${targetSftpPort}`
     : targetProvider === 'magentacloud' || targetProvider === 'local'
     ? ''
-    : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? `https://api.${targetProvider}.com` : targetUrl);
+    : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos' || targetProvider === 'hidrive') ? `https://api.${targetProvider}.com` : targetUrl);
 
   // Persist a connection as a reusable profile (called after a successful connect).
   const saveProfile = async (role: 'source' | 'target', name: string) => {
     if (!name.trim()) return false;
     const isOAuth = (role === 'source'
-      ? (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos')
-      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos'));
+      ? (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos' || sourceProvider === 'hidrive')
+      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos' || targetProvider === 'hidrive'));
     const payload: Record<string, unknown> = {
       name: name.trim(),
       provider: role === 'source' ? sourceProvider : targetProvider,
@@ -257,10 +257,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
       : sourceProvider === 'magentacloud' || sourceProvider === 'local'
       ? ''
-      : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? `https://api.${sourceProvider}.com` : sourceUrl);
+      : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos' || sourceProvider === 'hidrive') ? `https://api.${sourceProvider}.com` : sourceUrl);
     const finalSourceUser = sourceProvider === 'local'
       ? ''
-      : (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? (sourceOAuthUser || sourceProvider) : sourceUser;
+      : (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos' || sourceProvider === 'hidrive') ? (sourceOAuthUser || sourceProvider) : sourceUser;
     const finalSourcePass = sourceProvider === 'local'
       ? ''
       : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass;
@@ -272,10 +272,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `sftp://${targetSftpHost}:${targetSftpPort}`
       : targetProvider === 'magentacloud' || targetProvider === 'local'
       ? ''
-      : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? `https://api.${targetProvider}.com` : targetUrl);
+      : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos' || targetProvider === 'hidrive') ? `https://api.${targetProvider}.com` : targetUrl);
     const finalTargetUser = targetProvider === 'local'
       ? ''
-      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? (targetOAuthUser || targetProvider) : targetUser;
+      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos' || targetProvider === 'hidrive') ? (targetOAuthUser || targetProvider) : targetUser;
     const finalTargetPass = targetProvider === 'local'
       ? ''
       : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass;
@@ -451,7 +451,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   };
   const handleSourceProviderSelect = (val: ProviderId) => {
     setSourceProvider(val);
-    if (val === 'dropbox' || val === 'google' || val === 'googlephotos') {
+    if (val === 'dropbox' || val === 'google' || val === 'googlephotos' || val === 'hidrive') {
       setSourceUrl(`https://api.${val}.com`);
       setSourceUser(val);
       setSourcePass('');
@@ -493,7 +493,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleTargetProviderSelect = (val: ProviderId) => {
     setTargetProvider(val);
-    if (val === 'dropbox' || val === 'google' || val === 'googlephotos') {
+    if (val === 'dropbox' || val === 'google' || val === 'googlephotos' || val === 'hidrive') {
       setTargetUrl(`https://api.${val}.com`);
       setTargetUser(val);
       setTargetPass('');
@@ -543,6 +543,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
     ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
     ...(oauthProviders.googlephotos ? [{ id: 'googlephotos' as const, name: 'Google Photos' }] : []),
+    ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
   ];
 
@@ -554,7 +555,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           
           {/* Source Host Card */}
           <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-yellow-500" />
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div className="p-2.5 bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)] rounded-xl group-hover:bg-portal-orange/10 group-hover:text-portal-orange transition-colors duration-300">
@@ -944,13 +945,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'googlephotos' ? t('connect.googlePhotosConnect') : t('connect.dropboxConnect')}
+                    {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'googlephotos' ? t('connect.googlePhotosConnect') : sourceProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                    {sourcePass ? (
                     <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : sourceProvider === 'googlephotos' ? t('connect.googlePhotosAccount') : t('connect.dropboxAccount'))}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : sourceProvider === 'googlephotos' ? t('connect.googlePhotosAccount') : sourceProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                        <button
                         type="button"
@@ -969,7 +970,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => openOAuthPopup(sourceProvider, 'source')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'googlephotos' ? 'Google Photos' : 'Dropbox' })}
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'googlephotos' ? 'Google Photos' : sourceProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
                   )}
                 </div>
@@ -1371,13 +1372,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'googlephotos' ? t('connect.googlePhotosConnect') : t('connect.dropboxConnect')}
+                    {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'googlephotos' ? t('connect.googlePhotosConnect') : targetProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                   {targetPass ? (
                     <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : targetProvider === 'googlephotos' ? t('connect.googlePhotosAccount') : t('connect.dropboxAccount'))}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : targetProvider === 'googlephotos' ? t('connect.googlePhotosAccount') : targetProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                       <button
                         type="button"
@@ -1396,7 +1397,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => openOAuthPopup(targetProvider, 'target')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'googlephotos' ? 'Google Photos' : 'Dropbox' })}
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'googlephotos' ? 'Google Photos' : targetProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
                   )}
                 </div>
@@ -1437,7 +1438,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             <button
               type="submit"
               disabled={loading}
-            className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-yellow-500 hover:from-yellow-500 hover:to-portal-orange text-portal-navy font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? (
               <>

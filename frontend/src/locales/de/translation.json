@@ -104,6 +104,8 @@
     "googleConnect": "Google Verbindung",
     "dropboxConnect": "Dropbox Verbindung",
     "googlePhotosConnect": "Google Photos Verbindung",
+    "hidriveConnect": "HiDrive Verbindung",
+    "hidriveAccount": "HiDrive-Konto",
     "googleAccount": "Google-Konto",
     "dropboxAccount": "Dropbox-Konto",
     "googlePhotosAccount": "Google Photos-Konto",

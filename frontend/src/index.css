@@ -15,11 +15,11 @@
   --radius-2xl: 0.75rem;   /* 12px */
   --radius-3xl: 1rem;      /* 16px */
   
-  --color-portal-navy: #002f6c;
-  --color-portal-navy-dark: #001f4d;
-  --color-portal-navy-light: #0d47a1;
-  --color-portal-orange: #ff6600;
-  --color-portal-orange-hover: #e05300;
+  --color-portal-navy: #1e3a8a;
+  --color-portal-navy-dark: #1e3a8a;
+  --color-portal-navy-light: #2563eb;
+  --color-portal-orange: #ffd700;
+  --color-portal-orange-hover: #e6c200;
   --color-portal-bg: #f8fafc;
   --color-portal-border: #e2e8f0;
   
@@ -46,8 +46,8 @@
     to { transform: translateY(0); opacity: 1; }
   }
   @keyframes pulse-glow {
-    0%, 100% { transform: scale(1); opacity: 0.9; box-shadow: 0 0 0 0px rgba(255, 102, 0, 0.4); }
-    50% { transform: scale(1.03); opacity: 1; box-shadow: 0 0 12px 4px rgba(255, 102, 0, 0.2); }
+    0%, 100% { transform: scale(1); opacity: 0.9; box-shadow: 0 0 0 0px rgba(255, 215, 0, 0.4); }
+    50% { transform: scale(1.03); opacity: 1; box-shadow: 0 0 12px 4px rgba(255, 215, 0, 0.2); }
   }
   @keyframes float {
     0%, 100% { transform: translateY(0); }
@@ -69,8 +69,8 @@
   --color-border-light: #f1f5f9;
   --color-shadow: rgba(0, 47, 108, 0.04);
   --color-shadow-dark: rgba(0, 0, 0, 0.02);
-  --color-portal-orange-themed: #ff6600;
-  --color-portal-navy-themed: #002f6c;
+  --color-portal-orange-themed: #ffd700;
+  --color-portal-navy-themed: #1e3a8a;
   --color-glass-bg: rgba(255, 255, 255, 0.75);
   --color-glass-border: rgba(255, 255, 255, 0.4);
   --color-error-bg: #fef2f2;
@@ -101,8 +101,8 @@
   --color-border-light: #1e293b;
   --color-shadow: rgba(0, 0, 0, 0.3);
   --color-shadow-dark: rgba(0, 0, 0, 0.5);
-  --color-portal-orange-themed: #ff8533;
-  --color-portal-navy-themed: #4a90d9;
+  --color-portal-orange-themed: #ffd700;
+  --color-portal-navy-themed: #1e3a8a;
   --color-glass-bg: rgba(15, 23, 42, 0.8);
   --color-glass-border: rgba(255, 255, 255, 0.05);
   --color-error-bg: #450a0a;
@@ -205,7 +205,7 @@ body {
 
 /* Selection overlay */
 ::selection {
-  background-color: rgba(255, 102, 0, 0.2);
-  color: #e05300;
+  background-color: rgba(255, 215, 0, 0.2);
+  color: #e6c200;
 }
 

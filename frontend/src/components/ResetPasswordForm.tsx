@@ -108,7 +108,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
         <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
 
         <div className="flex flex-col items-center mb-8">
-          <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
+          <div className="p-3 bg-gradient-to-tr from-portal-orange to-yellow-500 rounded-2xl text-portal-navy shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
             <CloudSync className="w-6 h-6 stroke-[2.5]" />
           </div>
           <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
@@ -196,7 +196,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
           <button
             type="submit"
             disabled={loading || password.length < 12 || password !== confirmPassword}
-            className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+            className="w-full bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
           >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">

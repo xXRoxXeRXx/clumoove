@@ -85,6 +85,9 @@ services:
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET}
+      - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
       - redis-queue

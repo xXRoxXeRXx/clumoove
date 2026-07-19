@@ -277,7 +277,7 @@ export function MigrationsDashboard({
           
           <button
             onClick={onStartNewMigration}
-            className="group flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-[var(--color-text-inverse)] px-5 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
+            className="group flex items-center gap-2 bg-gradient-to-r from-portal-orange to-yellow-500 hover:from-yellow-500 hover:to-portal-orange text-portal-navy px-5 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
           >
             <Play className="w-4 h-4 fill-white group-hover:scale-110 transition-transform" />
             <span>{t('migrations.newMigration')}</span>
@@ -381,7 +381,7 @@ export function MigrationsDashboard({
             <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('migrations.dbEmpty')}</p>
             <button
               onClick={onStartNewMigration}
-              className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
+              className="bg-gradient-to-r from-portal-orange to-yellow-500 text-portal-navy hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
             >
               {t('migrations.startFirst')}
             </button>
