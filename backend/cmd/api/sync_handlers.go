@@ -16,6 +16,8 @@ import (
 )
 
 type createSyncRequest struct {
+	SourceProfileID            string   `json:"source_profile_id,omitempty"`
+	TargetProfileID            string   `json:"target_profile_id,omitempty"`
 	SourceURL                  string   `json:"source_url"`
 	SourceUsername             string   `json:"source_username"`
 	SourcePassword             string   `json:"source_password"`
@@ -70,6 +72,51 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Merge any referenced reusable connection profiles into the request.
+	src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
+		Provider:     req.SourceProvider,
+		URL:          req.SourceURL,
+		Username:     req.SourceUsername,
+		Password:     req.SourcePassword,
+		RefreshToken: req.SourceRefreshToken,
+	})
+	if err != nil {
+		log.Printf("handleCreateSync: failed to load source profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	req.SourceProvider = src.Provider
+	req.SourceURL = src.URL
+	req.SourceUsername = src.Username
+	if req.SourcePassword == "" {
+		req.SourcePassword = src.Password
+	}
+	if req.SourceRefreshToken == "" {
+		req.SourceRefreshToken = src.RefreshToken
+	}
+
+	tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+		Provider:     req.TargetProvider,
+		URL:          req.TargetURL,
+		Username:     req.TargetUsername,
+		Password:     req.TargetPassword,
+		RefreshToken: req.TargetRefreshToken,
+	})
+	if err != nil {
+		log.Printf("handleCreateSync: failed to load target profile: %v", err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	req.TargetProvider = tgt.Provider
+	req.TargetURL = tgt.URL
+	req.TargetUsername = tgt.Username
+	if req.TargetPassword == "" {
+		req.TargetPassword = tgt.Password
+	}
+	if req.TargetRefreshToken == "" {
+		req.TargetRefreshToken = tgt.RefreshToken
+	}
+
 	// Default fallback values
 	if req.SourceProvider == "" {
 		req.SourceProvider = "nextcloud"
@@ -77,6 +124,9 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	if req.TargetProvider == "" {
 		req.TargetProvider = "nextcloud"
 	}
+	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
+	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
+
 	if req.Direction == "" {
 		req.Direction = "one_way"
 	}

@@ -433,6 +433,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             'Authorization': `Bearer ${token}`
           },
           body: JSON.stringify({
+            source_profile_id: credentials.source_profile_id,
+            target_profile_id: credentials.target_profile_id,
             source_url: credentials.source_url,
             source_username: credentials.source_username,
             source_password: credentials.source_password,
