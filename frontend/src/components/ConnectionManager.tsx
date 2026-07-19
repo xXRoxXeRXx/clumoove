@@ -420,8 +420,8 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-inverse)] p-4">
-      <div className="w-full max-w-lg glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-900/40 backdrop-blur-sm p-4">
+      <div className="w-full max-w-lg bg-[var(--color-bg-primary)] rounded-2xl p-6 border border-[var(--color-border)] shadow-portal space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
           <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
