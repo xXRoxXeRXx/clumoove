@@ -546,13 +546,12 @@ func InitDB(connStr string) (*sql.DB, error) {
 			log.Printf("Failed schema migration (idx_audit_log_user_id): %v\n", err)
 		}
 
-		// Reusable connection profiles (one side of a connection: source OR target)
+		// Reusable connection profiles (usable as either source or target)
 		_, err = db.Exec(`
 			CREATE TABLE IF NOT EXISTS connection_profiles (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 				user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 				name TEXT NOT NULL,
-				role TEXT NOT NULL CHECK (role IN ('source', 'target')),
 				provider TEXT NOT NULL,
 				url TEXT,
 				username TEXT,
@@ -562,16 +561,20 @@ func InitDB(connStr string) (*sql.DB, error) {
 				oauth_user TEXT,
 				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-				UNIQUE (user_id, role, name)
+				UNIQUE (user_id, name)
 			)
 		`)
 		if err != nil {
 			log.Printf("Failed schema migration (create connection_profiles table): %v\n", err)
 		}
 
-		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conn_profiles_user_role ON connection_profiles(user_id, role)`)
+		// Drop the legacy role column/constraint/index on existing deployments.
+		_, _ = db.Exec(`ALTER TABLE connection_profiles DROP CONSTRAINT IF EXISTS connection_profiles_role_check`)
+		_, _ = db.Exec(`ALTER TABLE connection_profiles DROP COLUMN IF EXISTS role`)
+		_, _ = db.Exec(`DROP INDEX IF EXISTS idx_conn_profiles_user_role`)
+		_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conn_profiles_user ON connection_profiles(user_id)`)
 		if err != nil {
-			log.Printf("Failed schema migration (idx_conn_profiles_user_role): %v\n", err)
+			log.Printf("Failed schema migration (idx_conn_profiles_user): %v\n", err)
 		}
 
 		_, err = db.Exec(`
@@ -2661,14 +2664,13 @@ func UpdateSchedule(db *sql.DB, s *Schedule) error {
 // Connection Profiles (reusable source/target credentials per user)
 // ============================================================================
 
-// ConnectionProfile describes exactly one side (source OR target) of a connection.
+// ConnectionProfile describes a reusable connection (usable as source OR target).
 // OAuth-based profiles store only the (encrypted) refresh token + oauth_user;
 // password-based profiles store username + encrypted password; 'local' stores neither.
 type ConnectionProfile struct {
 	ID                     string         `json:"id"`
 	UserID                 string         `json:"user_id"`
 	Name                   string         `json:"name"`
-	Role                   string         `json:"role"` // 'source' | 'target'
 	Provider               string         `json:"provider"`
 	URL                    string         `json:"url,omitempty"`
 	Username               string         `json:"username,omitempty"`
@@ -2686,7 +2688,6 @@ type ConnectionProfile struct {
 type ConnectionProfilePublic struct {
 	ID              string       `json:"id"`
 	Name            string       `json:"name"`
-	Role            string       `json:"role"`
 	Provider        string       `json:"provider"`
 	URL             string       `json:"url,omitempty"`
 	Username        string       `json:"username,omitempty"`
@@ -2702,7 +2703,6 @@ func (p *ConnectionProfile) ToPublic() ConnectionProfilePublic {
 	return ConnectionProfilePublic{
 		ID:              p.ID,
 		Name:            p.Name,
-		Role:            p.Role,
 		Provider:        p.Provider,
 		URL:             p.URL,
 		Username:        p.Username,
@@ -2718,14 +2718,14 @@ func (p *ConnectionProfile) ToPublic() ConnectionProfilePublic {
 func CreateConnectionProfile(database *sql.DB, p *ConnectionProfile) (string, error) {
 	query := `
 		INSERT INTO connection_profiles (
-			user_id, name, role, provider, url, username,
+			user_id, name, provider, url, username,
 			password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, created_at, updated_at
 	`
 	err := database.QueryRow(
 		query,
-		p.UserID, p.Name, p.Role, p.Provider, p.URL, p.Username,
+		p.UserID, p.Name, p.Provider, p.URL, p.Username,
 		p.PasswordEncrypted, p.RefreshTokenEncrypted, p.TokenExpiresAt, p.OAuthUser,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
@@ -2738,14 +2738,14 @@ func CreateConnectionProfile(database *sql.DB, p *ConnectionProfile) (string, er
 // caller must enforce ownership via VerifyProfileOwnership before use).
 func GetConnectionProfile(database *sql.DB, id string) (*ConnectionProfile, error) {
 	query := `
-		SELECT id, user_id, name, role, provider, url, username,
+		SELECT id, user_id, name, provider, url, username,
 		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user,
 		       created_at, updated_at
 		FROM connection_profiles WHERE id = $1
 	`
 	var p ConnectionProfile
 	err := database.QueryRow(query, id).Scan(
-		&p.ID, &p.UserID, &p.Name, &p.Role, &p.Provider, &p.URL, &p.Username,
+		&p.ID, &p.UserID, &p.Name, &p.Provider, &p.URL, &p.Username,
 		&p.PasswordEncrypted, &p.RefreshTokenEncrypted, &p.TokenExpiresAt, &p.OAuthUser,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
@@ -2755,21 +2755,17 @@ func GetConnectionProfile(database *sql.DB, id string) (*ConnectionProfile, erro
 	return &p, nil
 }
 
-// GetConnectionProfiles lists the user's profiles, optionally filtered by role.
-func GetConnectionProfiles(database *sql.DB, userID, role string) ([]ConnectionProfile, error) {
+// GetConnectionProfiles lists the user's profiles.
+func GetConnectionProfiles(database *sql.DB, userID, _ string) ([]ConnectionProfile, error) {
 	args := []interface{}{userID}
 	query := `
-		SELECT id, user_id, name, role, provider, url, username,
+		SELECT id, user_id, name, provider, url, username,
 		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user,
 		       created_at, updated_at
 		FROM connection_profiles
 		WHERE user_id = $1
 	`
-	if role != "" {
-		query += ` AND role = $2`
-		args = append(args, role)
-	}
-	query += ` ORDER BY role, name ASC`
+	query += ` ORDER BY name ASC`
 
 	rows, err := database.Query(query, args...)
 	if err != nil {
@@ -2781,7 +2777,7 @@ func GetConnectionProfiles(database *sql.DB, userID, role string) ([]ConnectionP
 	for rows.Next() {
 		var p ConnectionProfile
 		if err := rows.Scan(
-			&p.ID, &p.UserID, &p.Name, &p.Role, &p.Provider, &p.URL, &p.Username,
+			&p.ID, &p.UserID, &p.Name, &p.Provider, &p.URL, &p.Username,
 			&p.PasswordEncrypted, &p.RefreshTokenEncrypted, &p.TokenExpiresAt, &p.OAuthUser,
 			&p.CreatedAt, &p.UpdatedAt,
 		); err != nil {

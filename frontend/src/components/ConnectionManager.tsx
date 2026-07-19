@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plug, Plus, Pencil, Trash2, RefreshCw, Server, CheckCircle2, AlertCircle, X } from 'lucide-react';
+import { Plug, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
 import type { ApiErrBody } from './SettingsPage';
 
@@ -16,7 +16,6 @@ type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google'
 interface ProfilePublic {
   id: string;
   name: string;
-  role: 'source' | 'target';
   provider: string;
   url?: string;
   username?: string;
@@ -58,7 +57,6 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   const { t } = useTranslation();
   const translateApiError = useApiError();
 
-  const [tab, setTab] = useState<'source' | 'target'>('source');
   const [profiles, setProfiles] = useState<ProfilePublic[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [message, setMessage] = useState<MessageState>(null);
@@ -66,7 +64,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   const [creating, setCreating] = useState<boolean>(false);
 
   const loadProfiles = useCallback(() => {
-    fetch(`${apiUrl}/api/profiles?role=${tab}`, {
+    fetch(`${apiUrl}/api/profiles`, {
       headers: { 'Authorization': `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : Promise.reject()))
@@ -78,7 +76,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
         setProfiles([]);
         setLoading(false);
       });
-  }, [apiUrl, token, tab]);
+  }, [apiUrl, token]);
 
   useEffect(() => {
     loadProfiles();
@@ -148,35 +146,9 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 
         {message && <MessageBanner message={message} />}
 
-        {/* Role filter */}
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setTab('source')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
-              tab === 'source'
-                ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
-                : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
-            }`}
-          >
-            <Server className="w-4 h-4" />
-            {t('settings.connections.filterSource')}
-          </button>
-          <button
-            onClick={() => setTab('target')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
-              tab === 'target'
-                ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
-                : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
-            }`}
-          >
-            <Plug className="w-4 h-4" />
-            {t('settings.connections.filterTarget')}
-          </button>
-        </div>
-
         <button
           onClick={() => { setEditing(null); setCreating(true); }}
-          className={`w-full flex items-center justify-center gap-2 ${primaryBtnCls}`}
+          className={`w-auto inline-flex items-center justify-center gap-2 ${primaryBtnCls}`}
         >
           <Plus className="w-4 h-4" />
           {t('settings.connections.newProfile')}
@@ -203,9 +175,6 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
                       <span className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)] truncate">{p.name}</span>
                       <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-portal-orange/10 border border-portal-orange text-[var(--color-portal-orange-themed)]">
                         {provName}
-                      </span>
-                      <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-[var(--color-text-muted)]">
-                        {p.role === 'source' ? t('settings.connections.source') : t('settings.connections.target')}
                       </span>
                     </div>
                     {p.oauth_user && (
@@ -261,7 +230,6 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
         <ProfileEditor
           apiUrl={apiUrl}
           token={token}
-          role={tab}
           providerOptions={providerOptions}
           editing={editing}
           onClose={() => { setCreating(false); setEditing(null); }}
@@ -355,7 +323,6 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
 interface ProfileEditorProps {
   apiUrl: string;
   token: string;
-  role: 'source' | 'target';
   providerOptions: { id: ProviderId; name: string }[];
   editing: ProfilePublic | null;
   onClose: () => void;
@@ -363,7 +330,7 @@ interface ProfileEditorProps {
   onError: (msg: string) => void;
 }
 
-function ProfileEditor({ apiUrl, token, role, providerOptions, editing, onClose, onSaved, onError }: ProfileEditorProps) {
+function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSaved, onError }: ProfileEditorProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
 
@@ -416,7 +383,6 @@ function ProfileEditor({ apiUrl, token, role, providerOptions, editing, onClose,
 
     const payload: Record<string, unknown> = {
       name: name.trim(),
-      role,
       provider,
     };
     // Only send url/username when present (PUT leaves omitted fields unchanged).
@@ -454,14 +420,11 @@ function ProfileEditor({ apiUrl, token, role, providerOptions, editing, onClose,
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-inverse)]/40 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-inverse)] p-4">
       <div className="w-full max-w-lg glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
           <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
-            <span className="ml-2 text-[10px] font-mono uppercase tracking-wider text-[var(--color-portal-orange-themed)]">
-              {role === 'source' ? t('settings.connections.source') : t('settings.connections.target')}
-            </span>
           </h3>
           <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer">
             <X className="w-4 h-4" />

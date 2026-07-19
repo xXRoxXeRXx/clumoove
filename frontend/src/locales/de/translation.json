@@ -292,9 +292,7 @@
     },
     "connections": {
       "title": "Verbindungen",
-      "subtitle": "Wiederverwendbare Quell- und Zielverbindungen für schnellere Übertragungen.",
-      "filterSource": "Quellen",
-      "filterTarget": "Ziele",
+      "subtitle": "Wiederverwendbare Verbindungen für schnellere Übertragungen. Jedes Profil kann als Quelle oder als Ziel genutzt werden.",
       "newProfile": "Neues Profil",
       "noProfiles": "Noch keine gespeicherten Verbindungen. Lege eine an, um sie bei späteren Übertragungen zu nutzen.",
       "edit": "Bearbeiten",
@@ -308,16 +306,13 @@
       "saved": "Verbindung gespeichert!",
       "updated": "Verbindung aktualisiert!",
       "nameLabel": "Profilname",
-      "roleLabel": "Verwendet als",
       "providerLabel": "Anbieter",
       "passwordLabel": "Passwort",
       "useProfile": "Gespeichertes Profil verwenden",
       "saveProfile": "Als Profil speichern",
       "saveProfileHint": "Die eingegebenen Zugangsdaten werden verschlüsselt für spätere Übertragungen gespeichert.",
       "oauthConnectedAs": "Verbunden als {{user}}",
-      "tokenExpiresIn": "Token läuft in {{days}} Tagen ab",
-      "source": "Quelle",
-      "target": "Ziel"
+      "tokenExpiresIn": "Token läuft in {{days}} Tagen ab"
     },
     "about": "Über",
     "version": "Version",

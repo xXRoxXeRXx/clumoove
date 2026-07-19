@@ -228,7 +228,6 @@ CREATE TABLE IF NOT EXISTS connection_profiles (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('source', 'target')),
     provider TEXT NOT NULL,
     url TEXT,
     username TEXT,
@@ -238,10 +237,10 @@ CREATE TABLE IF NOT EXISTS connection_profiles (
     oauth_user TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (user_id, role, name)
+    UNIQUE (user_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_conn_profiles_user_role ON connection_profiles(user_id, role);
+CREATE INDEX IF NOT EXISTS idx_conn_profiles_user ON connection_profiles(user_id);
 
 CREATE OR REPLACE TRIGGER update_connection_profiles_updated_at
     BEFORE UPDATE ON connection_profiles
