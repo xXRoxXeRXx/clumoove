@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
@@ -67,8 +67,59 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
+  // Reusable connection profiles
+  const [sourceProfiles, setSourceProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
+  const [targetProfiles, setTargetProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
+  const [sourceProfileId, setSourceProfileId] = useState('');
+  const [targetProfileId, setTargetProfileId] = useState('');
+  const [sourceSaveProfile, setSourceSaveProfile] = useState(false);
+  const [targetSaveProfile, setTargetSaveProfile] = useState(false);
+  const [sourceProfileName, setSourceProfileName] = useState('');
+  const [targetProfileName, setTargetProfileName] = useState('');
+
   const { t } = useTranslation();
   const translateApiError = useApiError();
+
+  // Load reusable connection profiles for the dropdowns.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async (role: 'source' | 'target') => {
+      try {
+        const res = await fetch(`${apiUrl}/api/profiles?role=${role}`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const data = await res.json().catch(() => ({ profiles: [] })) as { profiles?: { id: string; name: string; provider: string }[] };
+        if (!cancelled && data.profiles) {
+          if (role === 'source') setSourceProfiles(data.profiles);
+          else setTargetProfiles(data.profiles);
+        }
+      } catch {
+        // Non-fatal: dropdowns simply stay empty.
+      }
+    };
+    load('source');
+    load('target');
+    return () => { cancelled = true; };
+  }, [apiUrl, token]);
+
+  // Apply a stored profile's credentials into the form. Only overwrites the
+  // fields the provider type supports; explicit ad-hoc entry still wins because
+  // the user can edit afterwards or clear the dropdown.
+  const applyProfile = (role: 'source' | 'target', id: string) => {
+    const list = role === 'source' ? sourceProfiles : targetProfiles;
+    const p = list.find((x) => x.id === id);
+    if (!p) return;
+    if (role === 'source') {
+      setSourceProvider(p.provider as ProviderId);
+      setSourceProfileId(id);
+    } else {
+      setTargetProvider(p.provider as ProviderId);
+      setTargetProfileId(id);
+    }
+    // The actual credential values are resolved server-side via the
+    // source_profile_id / target_profile_id fields; we only pre-fill the
+    // provider and name so the UI reflects the selection.
+  };
 
   const openOAuthPopup = (provider: string, type: 'source' | 'target') => {
     const width = 600;
@@ -135,7 +186,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         closed = !popup || popup.closed;
       } catch {
         // popup.closed is blocked by COOP; treat as not-yet-closed and rely on postMessage.
-        closed = false;
       }
       if (closed) {
         cleanup();
@@ -143,6 +193,63 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }, 1000);
 
     window.addEventListener('message', handleMessage);
+  };
+
+  // Build the final provider URL for the source side (mirrors handleSubmit's logic).
+  const finalSourceUrlValue = (): string => sourceProvider === 'smb'
+    ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
+    : sourceProvider === 's3'
+    ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
+    : sourceProvider === 'sftp'
+    ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
+    : sourceProvider === 'magentacloud' || sourceProvider === 'local'
+    ? ''
+    : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? `https://api.${sourceProvider}.com` : sourceUrl);
+
+  // Build the final provider URL for the target side.
+  const finalTargetUrlValue = (): string => targetProvider === 'smb'
+    ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
+    : targetProvider === 's3'
+    ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
+    : targetProvider === 'sftp'
+    ? `sftp://${targetSftpHost}:${targetSftpPort}`
+    : targetProvider === 'magentacloud' || targetProvider === 'local'
+    ? ''
+    : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? `https://api.${targetProvider}.com` : targetUrl);
+
+  // Persist a connection as a reusable profile (called after a successful connect).
+  const saveProfile = async (role: 'source' | 'target', name: string) => {
+    if (!name.trim()) return false;
+    const isOAuth = (role === 'source'
+      ? (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos')
+      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos'));
+    const payload: Record<string, unknown> = {
+      name: name.trim(),
+      role,
+      provider: role === 'source' ? sourceProvider : targetProvider,
+      url: role === 'source' ? finalSourceUrlValue() : finalTargetUrlValue(),
+      username: role === 'source' ? (isOAuth ? (sourceOAuthUser || sourceProvider) : sourceUser) : (isOAuth ? (targetOAuthUser || targetProvider) : targetUser),
+    };
+    if (!isOAuth && role === 'source' && sourcePass) payload.password = sourcePass;
+    if (!isOAuth && role === 'target' && targetPass) payload.password = targetPass;
+    if (isOAuth && role === 'source' && sourceRefreshToken) {
+      payload.refresh_token = sourceRefreshToken;
+      payload.oauth_user = sourceOAuthUser || sourceProvider;
+    }
+    if (isOAuth && role === 'target' && targetRefreshToken) {
+      payload.refresh_token = targetRefreshToken;
+      payload.oauth_user = targetOAuthUser || targetProvider;
+    }
+    try {
+      const res = await fetch(`${apiUrl}/api/profiles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -226,13 +333,18 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local';
     const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'local';
 
+    // A selected saved profile supplies the credentials server-side, so the
+    // client-side field checks are satisfied by its presence.
+    const sourceProfileSelected = sourceProfileId !== '';
+    const targetProfileSelected = targetProfileId !== '';
+
     if (
-      (sourceUrlRequired && !finalSourceUrl) ||
-      (sourceProvider !== 'local' && !finalSourceUser) ||
-      (sourceProvider !== 'local' && !finalSourcePass) ||
-      (targetUrlRequired && !finalTargetUrl) ||
-      (targetProvider !== 'local' && !finalTargetUser) ||
-      (targetProvider !== 'local' && !finalTargetPass)
+      (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
+      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourceUser) ||
+      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourcePass) ||
+      (targetUrlRequired && !targetProfileSelected && !finalTargetUrl) ||
+      (targetProvider !== 'local' && !targetProfileSelected && !finalTargetUser) ||
+      (targetProvider !== 'local' && !targetProfileSelected && !finalTargetPass)
     ) {
       setError(t('connect.errors.missingFields'));
       return;
@@ -262,6 +374,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           source_provider: sourceProvider,
           target_provider: targetProvider,
           source_picker_session_id: '',
+          source_profile_id: sourceProfileId,
+          target_profile_id: targetProfileId,
         }),
       });
 
@@ -320,6 +434,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           },
           data.files || []
         );
+
+        // Best-effort: persist the connection as a reusable profile
+        // when the user opted in. Fire-and-forget; failures are silent.
+        if (sourceSaveProfile) {
+          const name = sourceProfileName.trim() || `${finalSourceUrlValue() || sourceProvider} (${t('settings.connections.source')})`;
+          saveProfile('source', name);
+        }
+        if (targetSaveProfile) {
+          const name = targetProfileName.trim() || `${finalTargetUrlValue() || targetProvider} (${t('settings.connections.target')})`;
+          saveProfile('target', name);
+        }
       } else {
         setError(translateApiError(data.error_code));
       }
@@ -468,6 +593,18 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   ))}
                 </div>
               </div>
+
+              <ProfileRow
+                role="source"
+                profiles={sourceProfiles}
+                selectedId={sourceProfileId}
+                saveChecked={sourceSaveProfile}
+                saveName={sourceProfileName}
+                onSelect={(id) => applyProfile('source', id)}
+                onSaveChange={setSourceSaveProfile}
+                onNameChange={setSourceProfileName}
+                onClear={() => { setSourceProfileId(''); }}
+              />
 
               {sourceProvider === 'smb' ? (
                 <>
@@ -871,6 +1008,18 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   ))}
                 </div>
               </div>
+
+              <ProfileRow
+                role="target"
+                profiles={targetProfiles}
+                selectedId={targetProfileId}
+                saveChecked={targetSaveProfile}
+                saveName={targetProfileName}
+                onSelect={(id) => applyProfile('target', id)}
+                onSaveChange={setTargetSaveProfile}
+                onNameChange={setTargetProfileName}
+                onClear={() => { setTargetProfileId(''); }}
+              />
 
               {targetProvider === 'smb' ? (
                 <>
@@ -1288,3 +1437,73 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     </div>
   );
 };
+
+// ProfileRow renders the "use saved profile" dropdown and the "save as profile"
+// checkbox inside a ConnectForm card. Selecting a profile applies its
+// credentials; the save checkbox lets the user persist the just-entered
+// connection for reuse.
+function ProfileRow({ role, profiles, selectedId, saveChecked, saveName, onSelect, onSaveChange, onNameChange, onClear }: {
+  role: 'source' | 'target';
+  profiles: { id: string; name: string; provider: string }[];
+  selectedId: string;
+  saveChecked: boolean;
+  saveName: string;
+  onSelect: (id: string) => void;
+  onSaveChange: (v: boolean) => void;
+  onNameChange: (v: string) => void;
+  onClear: () => void;
+}) {
+  const { t } = useTranslation();
+  const hasProfiles = profiles.length > 0;
+
+  return (
+    <div className="space-y-3 pt-1">
+      <div className="space-y-1.5">
+        <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('settings.connections.useProfile')}</label>
+        {hasProfiles ? (
+          <div className="flex gap-2">
+            <select
+              value={selectedId}
+              onChange={(e) => onSelect(e.target.value)}
+              className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+            >
+              <option value="">—</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {selectedId && (
+              <button type="button" onClick={onClear} className="px-3 py-2 rounded-xl text-[10px] font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer">
+                {t('common.cancel')}
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.noProfiles')}</p>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id={`saveProfile-${role}`}
+          checked={saveChecked}
+          onChange={(e) => onSaveChange(e.target.checked)}
+          className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
+        />
+        <label htmlFor={`saveProfile-${role}`} className="text-[10px] text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
+          {t('settings.connections.saveProfile')}
+        </label>
+      </div>
+      {saveChecked && (
+        <input
+          type="text"
+          value={saveName}
+          onChange={(e) => onNameChange(e.target.value)}
+          placeholder={t('settings.connections.nameLabel')}
+          className="w-full px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+        />
+      )}
+    </div>
+  );
+}

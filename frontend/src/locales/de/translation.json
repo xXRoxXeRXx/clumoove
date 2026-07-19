@@ -286,6 +286,39 @@
   "settings": {
     "back": "Zurück",
     "title": "Einstellungen",
+    "tabs": {
+      "account": "Konto",
+      "connections": "Verbindungen"
+    },
+    "connections": {
+      "title": "Verbindungen",
+      "subtitle": "Wiederverwendbare Quell- und Zielverbindungen für schnellere Übertragungen.",
+      "filterSource": "Quellen",
+      "filterTarget": "Ziele",
+      "newProfile": "Neues Profil",
+      "noProfiles": "Noch keine gespeicherten Verbindungen. Lege eine an, um sie bei späteren Übertragungen zu nutzen.",
+      "edit": "Bearbeiten",
+      "test": "Testen",
+      "delete": "Löschen",
+      "deleteConfirm": "Diese gespeicherte Verbindung löschen? Dies kann nicht rückgängig gemacht werden.",
+      "reauthorize": "Neu autorisieren",
+      "reauthorizeHint": "Öffnet die Anmeldung des Anbieters, um den gespeicherten Zugriff zu erneuern.",
+      "testSuccess": "Verbindung erfolgreich!",
+      "testFailed": "Verbindung fehlgeschlagen.",
+      "saved": "Verbindung gespeichert!",
+      "updated": "Verbindung aktualisiert!",
+      "nameLabel": "Profilname",
+      "roleLabel": "Verwendet als",
+      "providerLabel": "Anbieter",
+      "passwordLabel": "Passwort",
+      "useProfile": "Gespeichertes Profil verwenden",
+      "saveProfile": "Als Profil speichern",
+      "saveProfileHint": "Die eingegebenen Zugangsdaten werden verschlüsselt für spätere Übertragungen gespeichert.",
+      "oauthConnectedAs": "Verbunden als {{user}}",
+      "tokenExpiresIn": "Token läuft in {{days}} Tagen ab",
+      "source": "Quelle",
+      "target": "Ziel"
+    },
     "about": "Über",
     "version": "Version",
     "profilePicture": "Profilbild",
@@ -509,7 +542,11 @@
     "CANNOT_MODIFY_SELF": "Du kannst diese Aktion nicht an deinem eigenen Konto ausführen.",
     "LAST_ADMIN": "Der letzte aktive Administrator kann nicht entfernt werden.",
     "INVALID_ROLE": "Ungültige Rolle angegeben.",
-    "PASSWORD_CHANGE_REQUIRED": "Du musst dein Passwort ändern, bevor du fortfahren kannst."
+    "PASSWORD_CHANGE_REQUIRED": "Du musst dein Passwort ändern, bevor du fortfahren kannst.",
+    "PROFILE_NOT_FOUND": "Die gespeicherte Verbindung wurde nicht gefunden.",
+    "PROFILE_NAME_EXISTS": "Eine Verbindung mit diesem Namen existiert bereis für diese Rolle.",
+    "PROFILE_INVALID_PROVIDER": "Dieser Anbieter wird nicht unterstützt.",
+    "PROFILE_INVALID_ROLE": "Eine Verbindung muss als 'source' oder 'target' verwendet werden."
   },
   "admin": {
     "title": "Verwaltung",

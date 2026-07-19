@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail, Info } from 'lucide-react';
+import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail, Info, Plug } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
+import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useApiError } from '../utils/apiError';
 
-type ApiErrBody = { error_code?: string };
+export type ApiErrBody = { error_code?: string };
 
 interface SettingsUser {
   id?: string;
@@ -21,6 +22,8 @@ interface SettingsPageProps {
   user: SettingsUser | null;
   onBack: () => void;
   onUpdateUser: (updatedUser: Partial<SettingsUser>) => void;
+  localStorageEnabled?: boolean;
+  oauthProviders?: Record<string, boolean>;
 }
 
 type MessageState = { text: string; type: 'success' | 'error' } | null;
@@ -36,9 +39,11 @@ function MessageBanner({ message }: { message: MessageState }) {
   );
 }
 
-export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: SettingsPageProps) {
+export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localStorageEnabled = false, oauthProviders = {} }: SettingsPageProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
+
+  const [tab, setTab] = useState<'account' | 'connections'>('account');
 
   // Theme context
   const { preference, setPreference, systemTheme } = useThemeContext();
@@ -488,8 +493,35 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
         </div>
       </div>
 
+      {/* Settings Tabs */}
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => setTab('account')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+            tab === 'account'
+              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+          }`}
+        >
+          <User className="w-4 h-4" />
+          {t('settings.tabs.account')}
+        </button>
+        <button
+          onClick={() => setTab('connections')}
+          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+            tab === 'connections'
+              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+          }`}
+        >
+          <Plug className="w-4 h-4" />
+          {t('settings.tabs.connections')}
+        </button>
+      </div>
+
       {/* Main Grid Layout */}
-      <div className="grid md:grid-cols-2 gap-6">
+      {tab === 'account' && (
+       <div className="grid md:grid-cols-2 gap-6">
         
         {/* Left Side: Profile picture, profile details & password */}
         <div className="space-y-6">
@@ -1177,9 +1209,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser }: Sett
             </div>
           </div>
 
+          </div>
         </div>
+      )}
 
-      </div>
+      {/* Connections Tab */}
+      {tab === 'connections' && (
+        <ConnectionManager apiUrl={apiUrl} token={token} localStorageEnabled={localStorageEnabled} oauthProviders={oauthProviders} />
+      )}
 
       {/* Avatar Cropper Modal Overlay */}
       {showCropper && selectedFile && (
