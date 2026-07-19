@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
