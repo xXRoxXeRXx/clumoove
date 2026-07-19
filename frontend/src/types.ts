@@ -61,3 +61,26 @@ export interface Migration {
   total_bytes: number;
   created_at: string;
 }
+
+export interface SyncJob {
+  id: string;
+  status: string;
+  direction: 'one_way' | 'two_way';
+  interval_minutes: number;
+  delete_propagation: boolean;
+  conflict_strategy: 'OVERWRITE' | 'SKIP' | 'RENAME';
+  source_provider: string;
+  source_url: string | null;
+  target_provider: string;
+  target_url: string | null;
+  total_files: number;
+  processed_files: number;
+  changed_files: number;
+  deleted_files: number;
+  failed_files: number;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+

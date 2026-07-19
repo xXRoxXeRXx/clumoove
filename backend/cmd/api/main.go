@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bytes"
@@ -36,6 +36,7 @@ import (
 	"backend/internal/queue"
 	"backend/internal/scheduler"
 	"backend/internal/storage"
+	appSync "backend/internal/sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -57,6 +58,7 @@ type APIServer struct {
 	db            *sql.DB
 	queue         *queue.Queue
 	indexer       *indexer.Indexer
+	syncEngine    *appSync.Engine
 	encryptionKey string // AES key for credential encryption
 	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
 	ctx           context.Context
@@ -318,10 +320,12 @@ func main() {
 		log.Println("WARNING: TRUSTED_PROXY is not set. If the API runs behind a reverse proxy, per-IP rate limiting and lockout accounting will be ineffective (all clients share the proxy's address). Set TRUSTED_PROXY=1 if a trusted proxy sits in front of the API.")
 	}
 
+	syncEng := appSync.NewEngine(database, q, encryptionKey)
 	server := &APIServer{
 		db:            database,
 		queue:         q,
 		indexer:       indexer.NewIndexer(database, encryptionKey),
+		syncEngine:    syncEng,
 		encryptionKey: encryptionKey,
 		jwtSecret:     jwtSecret,
 		ctx:           ctx,
@@ -388,6 +392,17 @@ func main() {
 	mux.Handle("PUT /api/migration/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetBandwidth)))
 	mux.Handle("PUT /api/migration/{id}/threads", jwtMiddleware(http.HandlerFunc(server.handleSetThreads)))
 
+	// Sync Engine Routes
+	mux.Handle("GET /api/sync", jwtMiddleware(http.HandlerFunc(server.handleListSyncs)))
+	mux.Handle("GET /api/sync/stream", jwtMiddleware(http.HandlerFunc(server.handleSyncStream)))
+	mux.Handle("POST /api/sync", jwtMiddleware(http.HandlerFunc(server.handleCreateSync)))
+	mux.Handle("GET /api/sync/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSyncStatus)))
+	mux.Handle("POST /api/sync/{id}/start", jwtMiddleware(http.HandlerFunc(server.handleStartSync)))
+	mux.Handle("POST /api/sync/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePauseSync)))
+	mux.Handle("POST /api/sync/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResumeSync)))
+	mux.Handle("DELETE /api/sync/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSync)))
+	mux.Handle("GET /api/sync/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadSyncReport)))
+
 	// Schedule Management Routes (Protected)
 	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
 	mux.Handle("GET /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSchedule)))
@@ -440,6 +455,7 @@ func main() {
 
 	// Start the Core Scheduler Engine Daemon
 	sched := scheduler.NewScheduler(database, q, server.indexer)
+	sched.SetSyncEngine(syncEng)
 	go sched.Run(ctx)
 
 	go func() {
@@ -2737,6 +2753,13 @@ const (
 	ErrLastAdmin              APIErrorCode = "LAST_ADMIN"
 	ErrInvalidRole            APIErrorCode = "INVALID_ROLE"
 	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
+
+	// Sync Engine
+	ErrSyncIdMissing          APIErrorCode = "SYNC_ID_MISSING"
+	ErrSyncNotFound           APIErrorCode = "SYNC_NOT_FOUND"
+	ErrSyncNotOwned           APIErrorCode = "SYNC_NOT_OWNED"
+	ErrSyncAlreadyRunning     APIErrorCode = "SYNC_ALREADY_RUNNING"
+	ErrSyncInvalidState       APIErrorCode = "SYNC_INVALID_STATE"
 
 	// Connection profiles
 	ErrProfileNotFound        APIErrorCode = "PROFILE_NOT_FOUND"

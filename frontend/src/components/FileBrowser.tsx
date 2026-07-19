@@ -84,6 +84,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sync Job options
+  const [jobType, setJobType] = useState<'migration' | 'sync'>('migration');
+  const [direction, setDirection] = useState<'one_way' | 'two_way'>('one_way');
+  const [intervalMinutes, setIntervalMinutes] = useState<number>(15);
+  const [deletePropagation, setDeletePropagation] = useState<boolean>(false);
+
+
   // Google Photos Picker state. When the source is googlephotos, the file-
   // selection screen shows the Picker instead of a folder tree. The user picks
   // media in Google Photos; once confirmed we fetch the concrete items and drop
@@ -398,12 +405,19 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       return;
     }
 
-    // Validate scheduled time if scheduling is enabled
-    if (enableScheduling && scheduledTime) {
-      const scheduledDate = new Date(scheduledTime);
-      if (scheduledDate <= new Date()) {
-        setError(t('fileBrowser.errors.futureTime'));
+    if (jobType === 'sync') {
+      if (pathsToMigrate.length === 0) {
+        setError(t('fileBrowser.errors.selectOne'));
         return;
+      }
+    } else {
+      // Validate scheduled time if scheduling is enabled
+      if (enableScheduling && scheduledTime) {
+        const scheduledDate = new Date(scheduledTime);
+        if (scheduledDate <= new Date()) {
+          setError(t('fileBrowser.errors.futureTime'));
+          return;
+        }
       }
     }
 
@@ -411,42 +425,88 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setError(null);
 
     try {
-      const requestBody: Record<string, unknown> = {
-        ...credentials,
-        source_picker_session_id: isGooglePhotosSource ? pickerSessionId : (credentials.source_picker_session_id || ''),
-        conflict_strategy: conflictStrategy,
-        paths: pathsToMigrate,
-        calendars: calendarsToMigrate,
-        contacts: contactsToMigrate,
-        target_dir: targetDir,
-        threads: threads,
-        bandwidth_limit_mbps: bandwidthLimit,
-      };
+      if (jobType === 'sync') {
+        const response = await fetch(`${apiUrl}/api/sync`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            source_url: credentials.source_url,
+            source_username: credentials.source_username,
+            source_password: credentials.source_password,
+            source_refresh_token: credentials.source_refresh_token,
+            target_url: credentials.target_url,
+            target_username: credentials.target_username,
+            target_password: credentials.target_password,
+            target_refresh_token: credentials.target_refresh_token,
+            source_provider: credentials.source_provider,
+            target_provider: credentials.target_provider,
+            direction: direction,
+            conflict_strategy: conflictStrategy,
+            delete_propagation: deletePropagation,
+            interval_minutes: intervalMinutes,
+            threads: threads,
+            target_dir: targetDir,
+            selected_paths: pathsToMigrate,
+          }),
+        });
 
-      // Add scheduled_time if scheduling is enabled
-      if (enableScheduling && scheduledTime) {
-        requestBody.scheduled_time = new Date(scheduledTime).toISOString();
-      }
+        if (!response.ok) {
+          const b = await response.json().catch(() => ({} as { error_code?: string }));
+          throw new Error(b.error_code ? translateApiError(b.error_code) : t('sync.createFailed'));
+        }
 
-      const response = await fetch(`${apiUrl}/api/migration/start`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const b = await response.json().catch(() => ({} as { error_code?: string }));
-        throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.startFailed'));
-      }
-
-      const data = await response.json();
-      if (data.success && data.migration_id) {
-        onStartSuccess(data.migration_id);
+        const data = await response.json();
+        if (data.id) {
+          // Trigger first pass immediately
+          await fetch(`${apiUrl}/api/sync/${data.id}/start`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          onStartSuccess(data.id);
+        } else {
+          setError(t('sync.createFailed'));
+        }
       } else {
-        setError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.startError'));
+        const requestBody: Record<string, unknown> = {
+          ...credentials,
+          source_picker_session_id: isGooglePhotosSource ? pickerSessionId : (credentials.source_picker_session_id || ''),
+          conflict_strategy: conflictStrategy,
+          paths: pathsToMigrate,
+          calendars: calendarsToMigrate,
+          contacts: contactsToMigrate,
+          target_dir: targetDir,
+          threads: threads,
+          bandwidth_limit_mbps: bandwidthLimit,
+        };
+
+        // Add scheduled_time if scheduling is enabled
+        if (enableScheduling && scheduledTime) {
+          requestBody.scheduled_time = new Date(scheduledTime).toISOString();
+        }
+
+        const response = await fetch(`${apiUrl}/api/migration/start`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        if (!response.ok) {
+          const b = await response.json().catch(() => ({} as { error_code?: string }));
+          throw new Error(b.error_code ? translateApiError(b.error_code) : t('fileBrowser.errors.startFailed'));
+        }
+
+        const data = await response.json();
+        if (data.success && data.migration_id) {
+          onStartSuccess(data.migration_id);
+        } else {
+          setError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.startError'));
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('fileBrowser.errors.networkError'));
@@ -992,6 +1052,99 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-3 mb-1">
               <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] tracking-tight">{t('fileBrowser.config')}</h3>
             </div>
+
+            {/* Job Mode Selector: Migration vs Sync */}
+            <div className="space-y-2 text-xs">
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('sync.mode')}</label>
+              <div className="grid grid-cols-2 gap-2 p-1 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setJobType('migration')}
+                  className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
+                    jobType === 'migration'
+                      ? 'bg-portal-navy text-white shadow-xs'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                >
+                  {t('sync.modeMigration')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setJobType('sync')}
+                  className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
+                    jobType === 'sync'
+                      ? 'bg-portal-navy text-white shadow-xs'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                >
+                  {t('sync.modeSync')}
+                </button>
+              </div>
+            </div>
+
+            {jobType === 'sync' && (
+              <div className="space-y-4 p-4 rounded-2xl bg-amber-50/60 border border-amber-200 text-xs animate-fade-in">
+                {/* Direction */}
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-bold text-amber-900 uppercase tracking-widest font-mono">{t('sync.direction')}</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDirection('one_way')}
+                      className={`py-2 px-2.5 rounded-xl text-[11px] font-bold font-mono transition-all border cursor-pointer ${
+                        direction === 'one_way'
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-white text-amber-900 border-amber-200'
+                      }`}
+                    >
+                      {t('sync.oneWay')} (→)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDirection('two_way')}
+                      className={`py-2 px-2.5 rounded-xl text-[11px] font-bold font-mono transition-all border cursor-pointer ${
+                        direction === 'two_way'
+                          ? 'bg-amber-600 text-white border-amber-600'
+                          : 'bg-white text-amber-900 border-amber-200'
+                      }`}
+                    >
+                      {t('sync.twoWay')} (↔)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Interval */}
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-amber-900 uppercase tracking-widest font-mono">{t('sync.interval')}</label>
+                  <select
+                    value={intervalMinutes}
+                    onChange={(e) => setIntervalMinutes(parseInt(e.target.value, 10))}
+                    className="w-full bg-white border border-amber-200 rounded-xl py-2 px-3 text-xs font-mono text-amber-900 focus:outline-none"
+                  >
+                    <option value={5}>5 {t('sync.minutes')}</option>
+                    <option value={15}>15 {t('sync.minutes')}</option>
+                    <option value={30}>30 {t('sync.minutes')}</option>
+                    <option value={60}>1 {t('sync.hour')}</option>
+                    <option value={360}>6 {t('sync.hours')}</option>
+                    <option value={1440}>24 {t('sync.hours')}</option>
+                  </select>
+                </div>
+
+                {/* Delete propagation */}
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="deletePropagation"
+                    checked={deletePropagation}
+                    onChange={(e) => setDeletePropagation(e.target.checked)}
+                    className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                  />
+                  <label htmlFor="deletePropagation" className="text-[11px] font-bold text-amber-950 cursor-pointer">
+                    {t('sync.deletePropagation')}
+                  </label>
+                </div>
+              </div>
+            )}
 
             {/* Target Path */}
             <div className="space-y-2 text-xs">

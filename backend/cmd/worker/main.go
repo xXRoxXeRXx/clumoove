@@ -12,6 +12,7 @@ import (
 	"backend/internal/oauth"
 	"backend/internal/processor"
 	"backend/internal/queue"
+	appSync "backend/internal/sync"
 )
 
 func main() {
@@ -62,8 +63,11 @@ func main() {
 	}
 	workerID := fmt.Sprintf("worker-%s-%d", hostname, os.Getpid())
 
-	// Create processor
+	// Create processor and sync engine, then wire them together so the
+	// connection-recovery scheduler can trigger a new sync pass.
 	proc := processor.NewProcessor(database, q, workerID, encryptionKey)
+	syncEng := appSync.NewEngine(database, q, encryptionKey)
+	proc.SetSyncEngine(syncEng)
 
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
