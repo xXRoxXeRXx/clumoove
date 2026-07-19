@@ -552,6 +552,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
         </button>
       </div>
 
+      {/* Tab Content (stable height to avoid view jumping) */}
+      <div className="min-h-[60vh]">
+
       {/* Main Grid Layout */}
       {tab === 'account' && (
        <div className="grid md:grid-cols-2 gap-6">
@@ -986,7 +989,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
       {/* Appearance Tab */}
       {tab === 'appearance' && (
-        <div className="space-y-6">
+        <div className="grid md:grid-cols-2 gap-6">
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Palette className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -1055,7 +1058,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
       {/* Notifications Tab (SMTP) */}
       {tab === 'notifications' && (
-        <div className="space-y-6">
+        <div className="grid md:grid-cols-2 gap-6">
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Mail className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -1215,7 +1218,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
       {/* About Tab */}
       {tab === 'about' && (
-        <div className="space-y-6">
+        <div className="grid md:grid-cols-2 gap-6">
           <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Info className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
@@ -1258,8 +1261,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
       {/* Connections Tab */}
       {tab === 'connections' && (
-        <ConnectionManager apiUrl={apiUrl} token={token} localStorageEnabled={localStorageEnabled} oauthProviders={oauthProviders} />
+        <div className="grid md:grid-cols-2 gap-6">
+          <ConnectionManager apiUrl={apiUrl} token={token} localStorageEnabled={localStorageEnabled} oauthProviders={oauthProviders} />
+        </div>
       )}
+
+      </div>
 
       {/* Avatar Cropper Modal Overlay */}
       {showCropper && selectedFile && (
