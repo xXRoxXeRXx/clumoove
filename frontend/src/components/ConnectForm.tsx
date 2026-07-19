@@ -986,7 +986,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               )}
               </>
               )}
-              {!sourceProfileId && (
+              {!sourceProfileId && sourceProvider !== 'local' && (
                 <SaveProfileRow
                   idPrefix="source"
                   checked={sourceSaveProfile}
@@ -1414,7 +1414,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               )}
               </>
               )}
-              {!targetProfileId && (
+              {!targetProfileId && targetProvider !== 'local' && (
                 <SaveProfileRow
                   idPrefix="target"
                   checked={targetSaveProfile}
