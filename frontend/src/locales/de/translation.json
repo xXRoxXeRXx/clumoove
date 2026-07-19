@@ -309,7 +309,7 @@
       "providerLabel": "Anbieter",
       "passwordLabel": "Passwort",
       "useProfile": "Gespeichertes Profil verwenden",
-      "usingProfile": "Es wird das gespeicherte Profil verwendet. Die Verbindungsdaten werden automatisch vom Server geladen.",
+      "usingProfile": "Es wird das gespeicherte Profil \"{{name}}\" verwendet. Die Verbindungsdaten werden automatisch vom Server geladen.",
       "saveProfile": "Als Profil speichern",
       "saveProfileHint": "Die eingegebenen Zugangsdaten werden verschlüsselt für spätere Übertragungen gespeichert.",
       "oauthConnectedAs": "Verbunden als {{user}}",

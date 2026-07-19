@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
@@ -71,14 +71,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [profiles, setProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
   const [sourceProfileId, setSourceProfileId] = useState('');
   const [targetProfileId, setTargetProfileId] = useState('');
-  const [sourceSaveProfile, setSourceSaveProfile] = useState(false);
-  const [targetSaveProfile, setTargetSaveProfile] = useState(false);
-  const [sourceProfileName, setSourceProfileName] = useState('');
-  const [targetProfileName, setTargetProfileName] = useState('');
 
   const { t } = useTranslation();
   const translateApiError = useApiError();
 
+  const getProfileName = (id: string) => profiles.find((x) => x.id === id)?.name ?? '';
   // Load reusable connection profiles for the dropdowns.
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +152,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           // media in the embedded Picker widget. Other providers skip this.
           if (provider === 'googlephotos') {
             // Google Photos source selection happens on the next screen
-            // (file selection), not here — we only store the OAuth tokens.
+            // (file selection), not here â€” we only store the OAuth tokens.
           }
         } else {
           setTargetOAuthUser(event.data.username || provider);
@@ -191,61 +188,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     window.addEventListener('message', handleMessage);
   };
 
-  // Build the final provider URL for the source side (mirrors handleSubmit's logic).
-  const finalSourceUrlValue = (): string => sourceProvider === 'smb'
-    ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
-    : sourceProvider === 's3'
-    ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
-    : sourceProvider === 'sftp'
-    ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
-    : sourceProvider === 'magentacloud' || sourceProvider === 'local'
-    ? ''
-    : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? `https://api.${sourceProvider}.com` : sourceUrl);
-
-  // Build the final provider URL for the target side.
-  const finalTargetUrlValue = (): string => targetProvider === 'smb'
-    ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
-    : targetProvider === 's3'
-    ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
-    : targetProvider === 'sftp'
-    ? `sftp://${targetSftpHost}:${targetSftpPort}`
-    : targetProvider === 'magentacloud' || targetProvider === 'local'
-    ? ''
-    : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? `https://api.${targetProvider}.com` : targetUrl);
-
-  // Persist a connection as a reusable profile (called after a successful connect).
-  const saveProfile = async (role: 'source' | 'target', name: string) => {
-    if (!name.trim()) return false;
-    const isOAuth = (role === 'source'
-      ? (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos')
-      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos'));
-    const payload: Record<string, unknown> = {
-      name: name.trim(),
-      provider: role === 'source' ? sourceProvider : targetProvider,
-      url: role === 'source' ? finalSourceUrlValue() : finalTargetUrlValue(),
-      username: role === 'source' ? (isOAuth ? (sourceOAuthUser || sourceProvider) : sourceUser) : (isOAuth ? (targetOAuthUser || targetProvider) : targetUser),
-    };
-    if (!isOAuth && role === 'source' && sourcePass) payload.password = sourcePass;
-    if (!isOAuth && role === 'target' && targetPass) payload.password = targetPass;
-    if (isOAuth && role === 'source' && sourceRefreshToken) {
-      payload.refresh_token = sourceRefreshToken;
-      payload.oauth_user = sourceOAuthUser || sourceProvider;
-    }
-    if (isOAuth && role === 'target' && targetRefreshToken) {
-      payload.refresh_token = targetRefreshToken;
-      payload.oauth_user = targetOAuthUser || targetProvider;
-    }
-    try {
-      const res = await fetch(`${apiUrl}/api/profiles`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify(payload),
-      });
-      return res.ok;
-    } catch {
-      return false;
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -432,14 +374,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
         // Best-effort: persist the connection as a reusable profile
         // when the user opted in. Fire-and-forget; failures are silent.
-        if (sourceSaveProfile) {
-          const name = sourceProfileName.trim() || `${finalSourceUrlValue() || sourceProvider}`;
-          saveProfile('source', name);
-        }
-        if (targetSaveProfile) {
-          const name = targetProfileName.trim() || `${finalTargetUrlValue() || targetProvider}`;
-          saveProfile('target', name);
-        }
       } else {
         setError(translateApiError(data.error_code));
       }
@@ -578,16 +512,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <div className="space-y-3 pt-2">
                   <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile')}</p>
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile', { name: getProfileName(sourceProfileId) })}</p>
                   </div>
-
-                  <SaveProfileRow
-                    idPrefix="source"
-                    checked={sourceSaveProfile}
-                    saveName={sourceProfileName}
-                    onSaveChange={setSourceSaveProfile}
-                    onNameChange={setSourceProfileName}
-                  />
                 </div>
               ) : (
               <>
@@ -895,7 +821,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                     <input
                       type="password"
-                      placeholder="•••• •••• •••• ••••"
+                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -933,7 +859,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
-                      placeholder="•••• •••• •••• ••••"
+                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1005,16 +931,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <div className="space-y-3 pt-2">
                   <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile')}</p>
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile', { name: getProfileName(targetProfileId) })}</p>
                   </div>
-
-                  <SaveProfileRow
-                    idPrefix="target"
-                    checked={targetSaveProfile}
-                    saveName={targetProfileName}
-                    onSaveChange={setTargetSaveProfile}
-                    onNameChange={setTargetProfileName}
-                  />
                 </div>
               ) : (
               <>
@@ -1322,7 +1240,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                     <input
                       type="password"
-                      placeholder="•••• •••• •••• ••••"
+                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1360,7 +1278,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
-                      placeholder="•••• •••• •••• ••••"
+                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1478,7 +1396,7 @@ function ProfileSelect({ profiles, selectedId, onSelect, onClear }: {
           onChange={(e) => onSelect(e.target.value)}
           className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
         >
-          <option value="">—</option>
+          <option value="">â€”</option>
           {profiles.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
@@ -1493,40 +1411,3 @@ function ProfileSelect({ profiles, selectedId, onSelect, onClear }: {
   );
 }
 
-// SaveProfileRow renders the "save as profile" checkbox + name input at the
-// bottom of a ConnectForm card, only when no saved profile is selected.
-function SaveProfileRow({ idPrefix, checked, saveName, onSaveChange, onNameChange }: {
-  idPrefix: string;
-  checked: boolean;
-  saveName: string;
-  onSaveChange: (v: boolean) => void;
-  onNameChange: (v: string) => void;
-}) {
-  const { t } = useTranslation();
-
-  return (
-    <div className="space-y-3 pt-4 mt-2 border-t border-[var(--color-border-light)]">
-      <div className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          id={`saveProfile-${idPrefix}`}
-          checked={checked}
-          onChange={(e) => onSaveChange(e.target.checked)}
-          className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
-        />
-        <label htmlFor={`saveProfile-${idPrefix}`} className="text-[10px] text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
-          {t('settings.connections.saveProfile')}
-        </label>
-      </div>
-      {checked && (
-        <input
-          type="text"
-          value={saveName}
-          onChange={(e) => onNameChange(e.target.value)}
-          placeholder={t('settings.connections.nameLabel')}
-          className="w-full px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
-        />
-      )}
-    </div>
-  );
-}
