@@ -46,12 +46,13 @@ configuration, scaling, and routine operational tasks.
 
 | File | Use | Build | Notes |
 | :--- | :--- | :--- | :--- |
-| `docker-compose.yml` | Production | Pulls GHCR images (`ghcr.io/xxroxxerxx/clumoove-*:0.8.0`) | No local build context, no source mounts. Run as-is behind a reverse proxy. |
+| `docker-compose.yml` | Production | Local multi-stage build (`target: prod`) | Builds api/worker/frontend from source. Run behind a reverse proxy. |
 | `docker-compose.dev.yml` | Development | Local multi-stage build (`target: dev`) + source mounts | Live-reload backend/frontend, mounts `./backend` and `./frontend`. |
-| `docker-compose.prod.yml` | Production (advanced) | Pulls GHCR images | Hardened production variant with extra ops settings. |
+| `docker-compose.prod.yml` | Production (advanced) | Local multi-stage build (`target: prod`) | Hardened production variant with extra ops settings. |
 
-> The default `docker-compose.yml` now runs the **prebuilt production images** from GHCR. Use
-> `docker-compose.dev.yml` for local development with source mounts and live reload.
+> Both production compose files build the images locally from source — no prebuilt
+> images are pulled from GHCR. Use `docker-compose.dev.yml` for local development with
+> source mounts and live reload.
 
 ---
 
@@ -82,21 +83,25 @@ docker compose -f docker-compose.dev.yml up --build -d
 This builds local images, installs dependencies, mounts `./backend` and `./frontend` for live reload,
 initializes the PostgreSQL schema from `db/schema.sql`, and starts all services in the background.
 
-### Production (prebuilt GHCR images)
+### Production (local build)
 
 ```bash
-docker compose up -d
+docker compose up --build -d
 ```
 
-The default `docker-compose.yml` pulls the prebuilt `ghcr.io/xxroxxerxx/clumoove-*:0.8.0` images — no
-local build needed. Suitable for running behind a reverse proxy with HTTPS. The API auto-detects proxied
-CORS/hosts; set `CORS_ALLOWED_ORIGIN`, `FRONTEND_URL`, and `TRUSTED_PROXY=1` as needed.
+This builds the api/worker/frontend `prod` images locally from source and starts all
+services in the background. Suitable for running behind a reverse proxy with HTTPS. The
+API auto-detects proxied CORS/hosts; set `CORS_ALLOWED_ORIGIN`, `FRONTEND_URL`, and
+`TRUSTED_PROXY=1` as needed.
 
 For the hardened production variant, use:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml up --build -d
 ```
+
+> Note: the first `docker compose up --build` compiles the Go binaries and the frontend
+> bundle, so the initial build takes a few minutes. Subsequent runs reuse the layer cache.
 
 ---
 
