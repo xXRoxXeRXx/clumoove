@@ -567,7 +567,30 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             </div>
 
             <div className="space-y-5 text-xs text-left">
-              <div>
+              <ProfileSelect
+                profiles={profiles}
+                selectedId={sourceProfileId}
+                onSelect={(id) => applyProfile('source', id)}
+                onClear={() => { setSourceProfileId(''); }}
+              />
+
+              {sourceProfileId ? (
+                <div className="space-y-3 pt-2">
+                  <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile')}</p>
+                  </div>
+
+                  <SaveProfileRow
+                    idPrefix="source"
+                    checked={sourceSaveProfile}
+                    saveName={sourceProfileName}
+                    onSaveChange={setSourceSaveProfile}
+                    onNameChange={setSourceProfileName}
+                  />
+                </div>
+              ) : (
+              <>
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</label>
                 
                 {/* Visual Provider Pills */}
@@ -587,19 +610,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <ProfileRow
-                idPrefix="source"
-                profiles={profiles}
-                selectedId={sourceProfileId}
-                saveChecked={sourceSaveProfile}
-                saveName={sourceProfileName}
-                onSelect={(id) => applyProfile('source', id)}
-                onSaveChange={setSourceSaveProfile}
-                onNameChange={setSourceProfileName}
-                onClear={() => { setSourceProfileId(''); }}
-              />
 
               {sourceProvider === 'smb' ? (
                 <>
@@ -964,9 +974,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   )}
                 </div>
               )}
+              </>
+              )}
             </div>
           </div>
-
+          
           {/* Target Host Card */}
           <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-navy to-portal-navy-light" />
@@ -982,7 +994,30 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             </div>
 
             <div className="space-y-5 text-xs text-left">
-              <div>
+              <ProfileSelect
+                profiles={profiles}
+                selectedId={targetProfileId}
+                onSelect={(id) => applyProfile('target', id)}
+                onClear={() => { setTargetProfileId(''); }}
+              />
+
+              {targetProfileId ? (
+                <div className="space-y-3 pt-2">
+                  <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile')}</p>
+                  </div>
+
+                  <SaveProfileRow
+                    idPrefix="target"
+                    checked={targetSaveProfile}
+                    saveName={targetProfileName}
+                    onSaveChange={setTargetSaveProfile}
+                    onNameChange={setTargetProfileName}
+                  />
+                </div>
+              ) : (
+              <>
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</label>
                 
                 {/* Visual Provider Pills */}
@@ -1002,19 +1037,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </button>
                   ))}
                 </div>
-              </div>
-
-              <ProfileRow
-                idPrefix="target"
-                profiles={profiles}
-                selectedId={targetProfileId}
-                saveChecked={targetSaveProfile}
-                saveName={targetProfileName}
-                onSelect={(id) => applyProfile('target', id)}
-                onSaveChange={setTargetSaveProfile}
-                onNameChange={setTargetProfileName}
-                onClear={() => { setTargetProfileId(''); }}
-              />
 
               {targetProvider === 'smb' ? (
                 <>
@@ -1379,6 +1401,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   )}
                 </div>
               )}
+              </>
+              )}
             </div>
           </div>
         </div>
@@ -1433,56 +1457,60 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   );
 };
 
-// ProfileRow renders the "use saved profile" dropdown and the "save as profile"
-// checkbox inside a ConnectForm card. Selecting a profile applies its
-// credentials; the save checkbox lets the user persist the just-entered
-// connection for reuse.
-function ProfileRow({ idPrefix, profiles, selectedId, saveChecked, saveName, onSelect, onSaveChange, onNameChange, onClear }: {
-  idPrefix: string;
+// ProfileSelect renders the "use saved profile" dropdown at the top of a
+// ConnectForm card. It is only shown when at least one saved profile exists.
+// Selecting a profile applies its credentials and hides the rest of the form.
+function ProfileSelect({ profiles, selectedId, onSelect, onClear }: {
   profiles: { id: string; name: string; provider: string }[];
   selectedId: string;
-  saveChecked: boolean;
-  saveName: string;
   onSelect: (id: string) => void;
-  onSaveChange: (v: boolean) => void;
-  onNameChange: (v: string) => void;
   onClear: () => void;
 }) {
   const { t } = useTranslation();
-  const hasProfiles = profiles.length > 0;
+  if (profiles.length === 0) return null;
 
   return (
-    <div className="space-y-3 pt-1">
-      <div className="space-y-1.5">
-        <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('settings.connections.useProfile')}</label>
-        {hasProfiles ? (
-          <div className="flex gap-2">
-            <select
-              value={selectedId}
-              onChange={(e) => onSelect(e.target.value)}
-              className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
-            >
-              <option value="">—</option>
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            {selectedId && (
-              <button type="button" onClick={onClear} className="px-3 py-2 rounded-xl text-[10px] font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer">
-                {t('common.cancel')}
-              </button>
-            )}
-          </div>
-        ) : (
-          <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.noProfiles')}</p>
+    <div className="space-y-1.5">
+      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('settings.connections.useProfile')}</label>
+      <div className="flex gap-2">
+        <select
+          value={selectedId}
+          onChange={(e) => onSelect(e.target.value)}
+          className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+        >
+          <option value="">—</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        {selectedId && (
+          <button type="button" onClick={onClear} className="px-3 py-2 rounded-xl text-[10px] font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer">
+            {t('common.cancel')}
+          </button>
         )}
       </div>
+    </div>
+  );
+}
 
+// SaveProfileRow renders the "save as profile" checkbox + name input at the
+// bottom of a ConnectForm card, only when no saved profile is selected.
+function SaveProfileRow({ idPrefix, checked, saveName, onSaveChange, onNameChange }: {
+  idPrefix: string;
+  checked: boolean;
+  saveName: string;
+  onSaveChange: (v: boolean) => void;
+  onNameChange: (v: string) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="space-y-3 pt-4 mt-2 border-t border-[var(--color-border-light)]">
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
           id={`saveProfile-${idPrefix}`}
-          checked={saveChecked}
+          checked={checked}
           onChange={(e) => onSaveChange(e.target.checked)}
           className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
         />
@@ -1490,7 +1518,7 @@ function ProfileRow({ idPrefix, profiles, selectedId, saveChecked, saveName, onS
           {t('settings.connections.saveProfile')}
         </label>
       </div>
-      {saveChecked && (
+      {checked && (
         <input
           type="text"
           value={saveName}
