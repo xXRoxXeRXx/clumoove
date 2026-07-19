@@ -512,7 +512,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <div className="space-y-3 pt-2">
                   <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile', { name: getProfileName(sourceProfileId) })}</p>
+                    <p className="text-xs font-sans leading-relaxed">{t('settings.connections.usingProfile', { name: getProfileName(sourceProfileId) })}</p>
                   </div>
                 </div>
               ) : (
@@ -931,7 +931,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <div className="space-y-3 pt-2">
                   <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('connect.usingProfile', { name: getProfileName(targetProfileId) })}</p>
+                    <p className="text-xs font-sans leading-relaxed">{t('settings.connections.usingProfile', { name: getProfileName(targetProfileId) })}</p>
                   </div>
                 </div>
               ) : (
