@@ -67,9 +67,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
-  // Reusable connection profiles
-  const [sourceProfiles, setSourceProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
-  const [targetProfiles, setTargetProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
+  // Reusable connection profiles (role-agnostic; usable as source or target)
+  const [profiles, setProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
   const [sourceProfileId, setSourceProfileId] = useState('');
   const [targetProfileId, setTargetProfileId] = useState('');
   const [sourceSaveProfile, setSourceSaveProfile] = useState(false);
@@ -83,22 +82,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   // Load reusable connection profiles for the dropdowns.
   useEffect(() => {
     let cancelled = false;
-    const load = async (role: 'source' | 'target') => {
+    const load = async () => {
       try {
-        const res = await fetch(`${apiUrl}/api/profiles?role=${role}`, {
+        const res = await fetch(`${apiUrl}/api/profiles`, {
           headers: { 'Authorization': `Bearer ${token}` },
         });
         const data = await res.json().catch(() => ({ profiles: [] })) as { profiles?: { id: string; name: string; provider: string }[] };
         if (!cancelled && data.profiles) {
-          if (role === 'source') setSourceProfiles(data.profiles);
-          else setTargetProfiles(data.profiles);
+          setProfiles(data.profiles);
         }
       } catch {
         // Non-fatal: dropdowns simply stay empty.
       }
     };
-    load('source');
-    load('target');
+    load();
     return () => { cancelled = true; };
   }, [apiUrl, token]);
 
@@ -106,8 +103,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   // fields the provider type supports; explicit ad-hoc entry still wins because
   // the user can edit afterwards or clear the dropdown.
   const applyProfile = (role: 'source' | 'target', id: string) => {
-    const list = role === 'source' ? sourceProfiles : targetProfiles;
-    const p = list.find((x) => x.id === id);
+    const p = profiles.find((x) => x.id === id);
     if (!p) return;
     if (role === 'source') {
       setSourceProvider(p.provider as ProviderId);
@@ -225,7 +221,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos'));
     const payload: Record<string, unknown> = {
       name: name.trim(),
-      role,
       provider: role === 'source' ? sourceProvider : targetProvider,
       url: role === 'source' ? finalSourceUrlValue() : finalTargetUrlValue(),
       username: role === 'source' ? (isOAuth ? (sourceOAuthUser || sourceProvider) : sourceUser) : (isOAuth ? (targetOAuthUser || targetProvider) : targetUser),
@@ -438,11 +433,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         // Best-effort: persist the connection as a reusable profile
         // when the user opted in. Fire-and-forget; failures are silent.
         if (sourceSaveProfile) {
-          const name = sourceProfileName.trim() || `${finalSourceUrlValue() || sourceProvider} (${t('settings.connections.source')})`;
+          const name = sourceProfileName.trim() || `${finalSourceUrlValue() || sourceProvider}`;
           saveProfile('source', name);
         }
         if (targetSaveProfile) {
-          const name = targetProfileName.trim() || `${finalTargetUrlValue() || targetProvider} (${t('settings.connections.target')})`;
+          const name = targetProfileName.trim() || `${finalTargetUrlValue() || targetProvider}`;
           saveProfile('target', name);
         }
       } else {
@@ -595,8 +590,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               </div>
 
               <ProfileRow
-                role="source"
-                profiles={sourceProfiles}
+                idPrefix="source"
+                profiles={profiles}
                 selectedId={sourceProfileId}
                 saveChecked={sourceSaveProfile}
                 saveName={sourceProfileName}
@@ -1010,8 +1005,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               </div>
 
               <ProfileRow
-                role="target"
-                profiles={targetProfiles}
+                idPrefix="target"
+                profiles={profiles}
                 selectedId={targetProfileId}
                 saveChecked={targetSaveProfile}
                 saveName={targetProfileName}
@@ -1442,8 +1437,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 // checkbox inside a ConnectForm card. Selecting a profile applies its
 // credentials; the save checkbox lets the user persist the just-entered
 // connection for reuse.
-function ProfileRow({ role, profiles, selectedId, saveChecked, saveName, onSelect, onSaveChange, onNameChange, onClear }: {
-  role: 'source' | 'target';
+function ProfileRow({ idPrefix, profiles, selectedId, saveChecked, saveName, onSelect, onSaveChange, onNameChange, onClear }: {
+  idPrefix: string;
   profiles: { id: string; name: string; provider: string }[];
   selectedId: string;
   saveChecked: boolean;
@@ -1486,12 +1481,12 @@ function ProfileRow({ role, profiles, selectedId, saveChecked, saveName, onSelec
       <div className="flex items-center gap-2">
         <input
           type="checkbox"
-          id={`saveProfile-${role}`}
+          id={`saveProfile-${idPrefix}`}
           checked={saveChecked}
           onChange={(e) => onSaveChange(e.target.checked)}
           className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
         />
-        <label htmlFor={`saveProfile-${role}`} className="text-[10px] text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
+        <label htmlFor={`saveProfile-${idPrefix}`} className="text-[10px] text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
           {t('settings.connections.saveProfile')}
         </label>
       </div>

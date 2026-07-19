@@ -550,57 +550,59 @@ func normalizeProviderURL(provider, urlStr string) string {
 	return urlStr
 }
 
-// loadProfileInto merges a stored connection profile into the request for the
-// given role ('source' | 'target'). Explicit request fields take precedence over
-// profile values. Returns the (possibly updated) request and the decrypted
-// refresh token so callers can re-store it on a migration.
-func (s *APIServer) loadProfileInto(r *http.Request, req *ConnectRequest, role string) (string, error) {
-	var profileID string
-	var provider, urlStr, username, password string
-	switch role {
-	case "source":
-		profileID = req.SourceProfileID
-		provider = req.SourceProvider
-		urlStr = req.SourceURL
-		username = req.SourceUsername
-		password = req.SourcePassword
-	case "target":
-		profileID = req.TargetProfileID
-		provider = req.TargetProvider
-		urlStr = req.TargetURL
-		username = req.TargetUsername
-		password = req.TargetPassword
-	default:
-		return "", nil
-	}
+// profileCreds holds the credentials resolved from a stored connection profile.
+type profileCreds struct {
+	Provider     string
+	URL          string
+	Username     string
+	Password     string
+	RefreshToken string
+}
+
+// loadProfile resolves a stored connection profile (referenced by ID) into its
+// credentials. Profiles are role-agnostic and may be used as source or target.
+// Explicit request fields (passed into the creds struct) take precedence over
+// profile values. Returns the merged creds and the decrypted refresh token so
+// callers can re-store it on a migration.
+func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileCreds) (profileCreds, error) {
 	if profileID == "" {
-		return "", nil
+		return base, nil
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
 	owned, err := db.VerifyProfileOwnership(s.db, profileID, userID)
 	if err != nil {
-		return "", err
+		return base, err
 	}
 	if !owned {
-		return "", errors.New("profile not owned")
+		return base, errors.New("profile not owned")
 	}
 	p, err := db.GetConnectionProfile(s.db, profileID)
 	if err != nil {
-		return "", errors.New("profile not found")
+		return base, errors.New("profile not found")
 	}
 
-	// Decrypt stored credentials (only used server-side for this request).
-	var refreshToken string
-	if p.PasswordEncrypted != "" {
-		dec, derr := crypto.Decrypt(p.PasswordEncrypted, s.encryptionKey)
-		if derr == nil {
+	provider := base.Provider
+	if provider == "" {
+		provider = p.Provider
+	}
+	urlStr := base.URL
+	if urlStr == "" {
+		urlStr = p.URL
+	}
+	username := base.Username
+	if username == "" {
+		username = p.Username
+	}
+	password := base.Password
+	if password == "" && p.PasswordEncrypted != "" {
+		if dec, derr := crypto.Decrypt(p.PasswordEncrypted, s.encryptionKey); derr == nil {
 			password = dec
 		}
 	}
-	if p.RefreshTokenEncrypted != "" {
-		dec, derr := crypto.Decrypt(p.RefreshTokenEncrypted, s.encryptionKey)
-		if derr == nil {
+	refreshToken := base.RefreshToken
+	if refreshToken == "" && p.RefreshTokenEncrypted != "" {
+		if dec, derr := crypto.Decrypt(p.RefreshTokenEncrypted, s.encryptionKey); derr == nil {
 			refreshToken = dec
 		}
 	}
@@ -608,51 +610,20 @@ func (s *APIServer) loadProfileInto(r *http.Request, req *ConnectRequest, role s
 	// OAuth providers need an *access* token in the password field (the storage
 	// layer treats it as a Bearer token). A stored profile only keeps the refresh
 	// token, so exchange it for a fresh access token before connecting/starting.
-	// The refresh token is still propagated to req for persistence/rotation.
 	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "googlephotos"
 	if isOAuth && refreshToken != "" {
-		tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken)
-		if terr == nil && tok.AccessToken != "" {
+		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
 			password = tok.AccessToken
 		}
 	}
 
-	// Explicit request values win; otherwise fall back to the profile.
-	if provider == "" {
-		provider = p.Provider
-	}
-	if urlStr == "" {
-		urlStr = p.URL
-	}
-	if username == "" {
-		username = p.Username
-	}
-	// A non-empty request password/refresh-token (including an ad-hoc override)
-	// overrides the profile value, so callers can still pass explicit creds.
-
-	switch role {
-	case "source":
-		req.SourceProvider = provider
-		req.SourceURL = urlStr
-		req.SourceUsername = username
-		if req.SourcePassword == "" {
-			req.SourcePassword = password
-		}
-		if req.SourceRefreshToken == "" {
-			req.SourceRefreshToken = refreshToken
-		}
-	case "target":
-		req.TargetProvider = provider
-		req.TargetURL = urlStr
-		req.TargetUsername = username
-		if req.TargetPassword == "" {
-			req.TargetPassword = password
-		}
-		if req.TargetRefreshToken == "" {
-			req.TargetRefreshToken = refreshToken
-		}
-	}
-	return refreshToken, nil
+	return profileCreds{
+		Provider:     provider,
+		URL:          urlStr,
+		Username:     username,
+		Password:     password,
+		RefreshToken: refreshToken,
+	}, nil
 }
 
 // handleBrowse lists the top-level calendar collections or addressbooks, or files/directories on the source server.
@@ -1179,15 +1150,48 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 	// Merge any referenced reusable connection profiles into the request.
 	// Explicit request fields win; profile values fill the blanks.
-	if _, err := s.loadProfileInto(r, &req, "source"); err != nil {
+	src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
+		Provider:     req.SourceProvider,
+		URL:          req.SourceURL,
+		Username:     req.SourceUsername,
+		Password:     req.SourcePassword,
+		RefreshToken: req.SourceRefreshToken,
+	})
+	if err != nil {
 		log.Printf("handleConnect: failed to load source profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
-	if _, err := s.loadProfileInto(r, &req, "target"); err != nil {
+	req.SourceProvider = src.Provider
+	req.SourceURL = src.URL
+	req.SourceUsername = src.Username
+	if req.SourcePassword == "" {
+		req.SourcePassword = src.Password
+	}
+	if req.SourceRefreshToken == "" {
+		req.SourceRefreshToken = src.RefreshToken
+	}
+
+	tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+		Provider:     req.TargetProvider,
+		URL:          req.TargetURL,
+		Username:     req.TargetUsername,
+		Password:     req.TargetPassword,
+		RefreshToken: req.TargetRefreshToken,
+	})
+	if err != nil {
 		log.Printf("handleConnect: failed to load target profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
+	}
+	req.TargetProvider = tgt.Provider
+	req.TargetURL = tgt.URL
+	req.TargetUsername = tgt.Username
+	if req.TargetPassword == "" {
+		req.TargetPassword = tgt.Password
+	}
+	if req.TargetRefreshToken == "" {
+		req.TargetRefreshToken = tgt.RefreshToken
 	}
 
 	if req.SourceProvider == "" {
@@ -1614,15 +1618,48 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	// Merge any referenced reusable connection profiles into the request.
 	// Explicit request fields win; profile values fill the blanks.
-	if _, err := s.loadProfileInto(r, &req.ConnectRequest, "source"); err != nil {
+	src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
+		Provider:     req.SourceProvider,
+		URL:          req.SourceURL,
+		Username:     req.SourceUsername,
+		Password:     req.SourcePassword,
+		RefreshToken: req.SourceRefreshToken,
+	})
+	if err != nil {
 		log.Printf("handleStart: failed to load source profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
-	if _, err := s.loadProfileInto(r, &req.ConnectRequest, "target"); err != nil {
+	req.SourceProvider = src.Provider
+	req.SourceURL = src.URL
+	req.SourceUsername = src.Username
+	if req.SourcePassword == "" {
+		req.SourcePassword = src.Password
+	}
+	if req.SourceRefreshToken == "" {
+		req.SourceRefreshToken = src.RefreshToken
+	}
+
+	tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+		Provider:     req.TargetProvider,
+		URL:          req.TargetURL,
+		Username:     req.TargetUsername,
+		Password:     req.TargetPassword,
+		RefreshToken: req.TargetRefreshToken,
+	})
+	if err != nil {
 		log.Printf("handleStart: failed to load target profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
+	}
+	req.TargetProvider = tgt.Provider
+	req.TargetURL = tgt.URL
+	req.TargetUsername = tgt.Username
+	if req.TargetPassword == "" {
+		req.TargetPassword = tgt.Password
+	}
+	if req.TargetRefreshToken == "" {
+		req.TargetRefreshToken = tgt.RefreshToken
 	}
 
 	if len(req.Paths) == 0 && len(req.Calendars) == 0 && len(req.Contacts) == 0 {
@@ -1844,26 +1881,24 @@ const profileRateLimit = 60
 // Credentials are optional on PUT (omitted fields are left unchanged).
 type ConnectionProfileRequest struct {
 	Name                  string  `json:"name"`
-	Role                  string  `json:"role"` // 'source' | 'target'
 	Provider              string  `json:"provider"`
 	URL                   string  `json:"url"`
 	Username              string  `json:"username"`
 	Password              string  `json:"password"`
 	RefreshToken          string  `json:"refresh_token"`
 	RefreshTokenExpiresIn int     `json:"refresh_token_expires_in"`
-	OAuthUser            string  `json:"oauth_user"`
+	OAuthUser             string  `json:"oauth_user"`
 }
 
-// handleListProfiles returns the user's profiles (optionally filtered by role).
+// handleListProfiles returns the user's profiles.
 func (s *APIServer) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
 		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
 		return
 	}
-	role := r.URL.Query().Get("role")
 
-	profiles, err := db.GetConnectionProfiles(s.db, userID, role)
+	profiles, err := db.GetConnectionProfiles(s.db, userID, "")
 	if err != nil {
 		log.Printf("handleListProfiles: query failed for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1899,12 +1934,8 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if req.Name == "" || req.Role == "" || req.Provider == "" {
+	if req.Name == "" || req.Provider == "" {
 		writeError(w, http.StatusBadRequest, ErrMissingRequiredFields)
-		return
-	}
-	if req.Role != "source" && req.Role != "target" {
-		writeError(w, http.StatusBadRequest, ErrProfileInvalidRole)
 		return
 	}
 	if !storage.IsValidProvider(req.Provider) {
@@ -1943,7 +1974,6 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 	p := &db.ConnectionProfile{
 		UserID:                 userID,
 		Name:                   req.Name,
-		Role:                   req.Role,
 		Provider:               req.Provider,
 		URL:                    urlStr,
 		Username:               req.Username,
@@ -1969,8 +1999,6 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 
 	s.writeAudit(r, db.AuditMigrationCreated, id, userID, map[string]interface{}{
 		"action": "PROFILE_CREATED",
-		"role":   req.Role,
-		"provider": req.Provider,
 	})
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"success": true, "id": id})
 }
@@ -2628,10 +2656,9 @@ const (
 	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
 
 	// Connection profiles
-	ErrProfileNotFound    APIErrorCode = "PROFILE_NOT_FOUND"
-	ErrProfileNameExists APIErrorCode = "PROFILE_NAME_EXISTS"
+	ErrProfileNotFound       APIErrorCode = "PROFILE_NOT_FOUND"
+	ErrProfileNameExists     APIErrorCode = "PROFILE_NAME_EXISTS"
 	ErrProfileInvalidProvider APIErrorCode = "PROFILE_INVALID_PROVIDER"
-	ErrProfileInvalidRole    APIErrorCode = "PROFILE_INVALID_ROLE"
 )
 
 // writeError emits a structured error response carrying only a machine-readable

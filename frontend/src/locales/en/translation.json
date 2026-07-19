@@ -292,9 +292,7 @@
     },
     "connections": {
       "title": "Connections",
-      "subtitle": "Reusable source and target connections for faster transfers.",
-      "filterSource": "Sources",
-      "filterTarget": "Targets",
+      "subtitle": "Reusable connections for faster transfers. Each profile can be used as a source or a target.",
       "newProfile": "New profile",
       "noProfiles": "No saved connections yet. Create one to reuse it in future transfers.",
       "edit": "Edit",
@@ -308,16 +306,13 @@
       "saved": "Connection saved!",
       "updated": "Connection updated!",
       "nameLabel": "Profile name",
-      "roleLabel": "Used as",
       "providerLabel": "Provider",
       "passwordLabel": "Password",
       "useProfile": "Use saved profile",
       "saveProfile": "Save as profile",
       "saveProfileHint": "The entered credentials will be stored encrypted for future transfers.",
       "oauthConnectedAs": "Connected as {{user}}",
-      "tokenExpiresIn": "Token expires in {{days}} days",
-      "source": "Source",
-      "target": "Target"
+      "tokenExpiresIn": "Token expires in {{days}} days"
     },
     "about": "About",
     "version": "Version",
