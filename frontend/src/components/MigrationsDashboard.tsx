@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
-import type { User, Migration } from '../types';
+import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
@@ -11,6 +11,7 @@ interface MigrationsDashboardProps {
   user: User | null;
   onStartNewMigration: () => void;
   onSelectActiveMigration: (id: string) => void;
+  onSelectActiveSync?: (id: string) => void;
 }
 
 export function MigrationsDashboard({
@@ -19,7 +20,9 @@ export function MigrationsDashboard({
   user,
   onStartNewMigration,
   onSelectActiveMigration,
+  onSelectActiveSync,
 }: MigrationsDashboardProps) {
+  const [activeTab, setActiveTab] = useState<'migrations' | 'sync'>('migrations');
   const [migrations, setMigrations] = useState<Migration[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
@@ -96,7 +99,6 @@ export function MigrationsDashboard({
                 if (line.startsWith('event:')) {
                   event = line.slice(6).trim();
                 } else if (line.startsWith('data:')) {
-                  // SSE joins repeated data lines with newlines; preserve them.
                   data += (data ? '\n' : '') + line.slice(5).trim();
                 }
               }
@@ -121,8 +123,6 @@ export function MigrationsDashboard({
         await read();
         reader.releaseLock();
 
-        // Server closed a healthy stream (e.g. idle timeout) — reset the
-        // backoff so the reconnect starts immediately rather than waiting.
         if (received) {
           retryDelay = 2000;
           setError('');
@@ -133,7 +133,6 @@ export function MigrationsDashboard({
         setLoading(false);
       }
 
-      // Reconnect with capped exponential backoff (2/4/8… ≤ 30 s)
       if (!cancelled) {
         retryTimer = setTimeout(connect, retryDelay);
         retryDelay = Math.min(retryDelay * 2, 30000);
@@ -150,7 +149,7 @@ export function MigrationsDashboard({
   }, [apiUrl, token, t]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation(); // Avoid triggering row selection click
+    e.stopPropagation();
     
     if (!window.confirm(t('migrations.deleteConfirm'))) {
       return;
@@ -244,7 +243,6 @@ export function MigrationsDashboard({
     }
   };
 
-  // Calculate Stats
   const totalMigrations = migrations.length;
   const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING').length;
   const completedMigrations = migrations.filter(m => m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS').length;
@@ -346,23 +344,81 @@ export function MigrationsDashboard({
         </div>
       </div>
 
-      {/* Main Section */}
+      {/* Main Section with Tabs */}
       <div className="glass-panel rounded-3xl border border-[var(--color-glass-border)]/50 shadow-portal p-6">
         
-        {/* Header toolbar */}
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)]">
-            {t('migrations.yourMigrations')}
-          </h2>
-          
+        {/* Navigation Tabs Header */}
+        <div className="flex items-center justify-between border-b border-[var(--color-border)] mb-6 pb-2">
+          <div className="flex items-center gap-6">
+            <button
+              onClick={() => setActiveTab('migrations')}
+              className={`pb-2 text-sm font-display font-extrabold transition-all cursor-pointer border-b-2 ${
+                activeTab === 'migrations'
+                  ? 'border-portal-orange text-[var(--color-portal-navy-themed)]'
+                  : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              {t('sync.tabMigrations')}
+            </button>
+            <button
+              onClick={() => setActiveTab('sync')}
+              className={`pb-2 text-sm font-display font-extrabold transition-all cursor-pointer border-b-2 ${
+                activeTab === 'sync'
+                  ? 'border-portal-orange text-[var(--color-portal-navy-themed)]'
+                  : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              {t('sync.tabSyncs')}
+            </button>
+          </div>
+
           <button
-            onClick={fetchMigrations}
-            className="p-2.5 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)] transition-all focus:outline-none cursor-pointer"
+            onClick={activeTab === 'migrations' ? fetchMigrations : undefined}
+            className="p-2 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 transition-all cursor-pointer"
             title={t('common.refresh')}
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading && activeTab === 'migrations' ? 'animate-spin' : ''}`} />
           </button>
         </div>
+
+        {activeTab === 'sync' ? (
+          <SyncList
+            apiUrl={apiUrl}
+            token={token}
+            onSelectActiveSync={onSelectActiveSync}
+            onStartNewSync={onStartNewMigration}
+          />
+        ) : (
+          <>
+            {/* Status / Table */}
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-20 gap-4">
+                <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+                <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
+              </div>
+            ) : error ? (
+              <div className="p-4 bg-[var(--color-error-bg)]/80 border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl text-xs font-mono text-center">
+                {error}
+              </div>
+            ) : migrations.length === 0 ? (
+              <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
+                <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
+                <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('migrations.noMigrations')}</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('migrations.dbEmpty')}</p>
+                <button
+                  onClick={onStartNewMigration}
+                  className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
+                >
+                  {t('migrations.startFirst')}
+                </button>
+              </div>
+            ) : (
+              /* Table unchanged */
+              null
+            )}
+          </>
+        )}
+
 
         {/* Status / Table */}
         {loading ? (
@@ -520,3 +576,233 @@ export function MigrationsDashboard({
     </div>
   );
 }
+
+function SyncList({
+  apiUrl,
+  token,
+  onSelectActiveSync,
+  onStartNewSync,
+}: {
+  apiUrl: string;
+  token: string;
+  onSelectActiveSync?: (id: string) => void;
+  onStartNewSync: () => void;
+}) {
+  const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
+  const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+
+  const { t } = useTranslation();
+  const { formatDateTime } = useFormat();
+  const translateApiError = useApiError();
+
+  const fetchSyncJobs = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/sync`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(t('sync.loadFailed'));
+      const data = await res.json();
+      setSyncJobs(data || []);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : t('sync.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [apiUrl, token, t]);
+
+  useEffect(() => {
+    // SSE Stream
+    const controller = new AbortController();
+    const connectSSE = async () => {
+      void fetchSyncJobs();
+      try {
+        const res = await fetch(`${apiUrl}/api/sync/stream`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let idx: number;
+          while ((idx = buffer.indexOf('\n\n')) !== -1) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+
+            let event = 'message';
+            let data = '';
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('event:')) event = line.slice(6).trim();
+              else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+            }
+
+            if (event === 'sync_jobs' && data) {
+              try {
+                setSyncJobs(JSON.parse(data) || []);
+                setLoading(false);
+              } catch { /* ignore */ }
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    };
+
+    connectSSE();
+    return () => controller.abort();
+  }, [apiUrl, token, fetchSyncJobs]);
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(t('sync.deleteConfirm'))) return;
+
+    setDeleteLoading(id);
+    try {
+      const res = await fetch(`${apiUrl}/api/sync/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const msg = body?.error_code ? translateApiError(body.error_code) : t('sync.deleteFailed');
+        throw new Error(msg);
+      }
+      setSyncJobs((prev) => prev.filter((j) => j.id !== id));
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : t('sync.deleteFailed'));
+    } finally {
+      setDeleteLoading(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4">
+        <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+        <p className="text-xs font-mono text-[var(--color-text-muted)]">{t('common.loading')}</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] text-rose-700 rounded-xl text-xs font-mono text-center">
+        {error}
+      </div>
+    );
+  }
+
+  if (syncJobs.length === 0) {
+    return (
+      <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
+        <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
+        <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('sync.noSyncJobs')}</p>
+        <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('sync.noSyncSub')}</p>
+        <button
+          onClick={onStartNewSync}
+          className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
+        >
+          {t('sync.startFirst')}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto scrollbar-portal">
+      <table className="w-full text-left border-collapse min-w-[600px]">
+        <thead>
+          <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
+            <th className="py-4.5 px-4 font-semibold">{t('migrations.createdAt')}</th>
+            <th className="py-4.5 px-4 font-semibold">{t('migrations.sourceTarget')}</th>
+            <th className="py-4.5 px-4 font-semibold">{t('sync.direction')}</th>
+            <th className="py-4.5 px-4 font-semibold">{t('migrations.status')}</th>
+            <th className="py-4.5 px-4 font-semibold">{t('sync.lastRun')}</th>
+            <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {syncJobs.map((job) => (
+            <tr
+              key={job.id}
+              onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}
+              className="hover:bg-[var(--color-bg-tertiary)]/50 transition-all duration-200 cursor-pointer group"
+            >
+              <td className="py-4 px-4 whitespace-nowrap text-xs font-mono text-[var(--color-text-secondary)]">
+                {formatDateTime(job.created_at)}
+              </td>
+              <td className="py-4 px-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize">
+                      {job.source_provider}
+                    </span>
+                    <span className="text-[10px] text-[var(--color-text-muted)] max-w-[100px] truncate block">
+                      {job.source_url || t('migrations.oauth')}
+                    </span>
+                  </div>
+                  <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+                  <div className="flex flex-col text-left">
+                    <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize">
+                      {job.target_provider}
+                    </span>
+                    <span className="text-[10px] text-[var(--color-text-muted)] max-w-[100px] truncate block">
+                      {job.target_url || t('migrations.oauth')}
+                    </span>
+                  </div>
+                </div>
+              </td>
+              <td className="py-4 px-4 whitespace-nowrap text-xs font-mono">
+                {job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')}
+              </td>
+              <td className="py-4 px-4 whitespace-nowrap">
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
+                  job.status === 'RUNNING' || job.status === 'INDEXING'
+                    ? 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse'
+                    : job.status === 'PAUSED'
+                    ? 'bg-slate-100 text-slate-700 border-slate-200'
+                    : job.status === 'FAILED'
+                    ? 'bg-rose-50 text-rose-700 border-rose-200'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                }`}>
+                  {job.status === 'RUNNING' || job.status === 'INDEXING' ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                  {job.status}
+                </span>
+              </td>
+              <td className="py-4 px-4 whitespace-nowrap text-xs font-mono text-[var(--color-text-secondary)]">
+                {job.last_run_at ? formatDateTime(job.last_run_at) : '-'}
+              </td>
+              <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                <div className="flex justify-end items-center gap-2">
+                  <button
+                    onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}
+                    className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer"
+                    title={t('sync.openDetail')}
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                  </button>
+                  <button
+                    onClick={(e) => handleDelete(job.id, e)}
+                    disabled={deleteLoading === job.id || job.status === 'RUNNING' || job.status === 'INDEXING'}
+                    className="p-1.5 bg-[var(--color-bg-tertiary)] rounded-lg text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 transition-all disabled:opacity-30 cursor-pointer"
+                    title={t('sync.deleteJob')}
+                  >
+                    {deleteLoading === job.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+

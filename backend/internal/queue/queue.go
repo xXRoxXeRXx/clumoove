@@ -14,6 +14,7 @@ import (
 
 type Payload struct {
 	MigrationID string `json:"migration_id"`
+	SyncJobID   string `json:"sync_job_id"`
 	TaskID      string `json:"task_id"`
 }
 
@@ -74,19 +75,27 @@ func NewQueue(redisAddr string) (*Queue, error) {
 	return nil, fmt.Errorf("failed to ping redis after 10 attempts: %w", pingErr)
 }
 
-// DequeueSQL pops a task from the database queue natively respecting migration thread limits.
-func (q *Queue) DequeueSQL(ctx context.Context, db *sql.DB, workerID string) (*Payload, error) {
+
+// DequeueSQL pops a task from the database queue natively respecting migration/sync thread limits.
+func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) (*Payload, error) {
 	query := `
 		WITH available_tasks AS (
-			SELECT t.id, t.migration_id
+			SELECT t.id, t.migration_id, t.sync_job_id
 			FROM tasks t
-			JOIN migrations m ON t.migration_id = m.id
+			LEFT JOIN migrations m ON t.migration_id = m.id
+			LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
 			WHERE t.status = 'PENDING'
-			AND m.status IN ('RUNNING', 'INDEXING')
 			AND (
-				SELECT COUNT(*) FROM tasks t2 
-				WHERE t2.migration_id = m.id AND t2.status = 'RUNNING'
-			) < m.threads
+				(t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING') AND (
+					SELECT COUNT(*) FROM tasks t2 
+					WHERE t2.migration_id = m.id AND t2.status = 'RUNNING'
+				) < m.threads)
+				OR
+				(t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING') AND (
+					SELECT COUNT(*) FROM tasks t2 
+					WHERE t2.sync_job_id = sj.id AND t2.status = 'RUNNING'
+				) < sj.threads)
+			)
 			ORDER BY t.created_at ASC
 			LIMIT 1
 			FOR UPDATE SKIP LOCKED
@@ -94,15 +103,22 @@ func (q *Queue) DequeueSQL(ctx context.Context, db *sql.DB, workerID string) (*P
 		UPDATE tasks
 		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1
 		WHERE id = (SELECT id FROM available_tasks)
-		RETURNING id, migration_id
+		RETURNING id, migration_id, sync_job_id
 	`
 	var payload Payload
-	err := db.QueryRowContext(ctx, query, workerID).Scan(&payload.TaskID, &payload.MigrationID)
+	var migID, syncID sql.NullString
+	err := dbCon.QueryRowContext(ctx, query, workerID).Scan(&payload.TaskID, &migID, &syncID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No tasks available
 		}
 		return nil, fmt.Errorf("failed to dequeue task from sql: %w", err)
+	}
+	if migID.Valid {
+		payload.MigrationID = migID.String
+	}
+	if syncID.Valid {
+		payload.SyncJobID = syncID.String
 	}
 	return &payload, nil
 }

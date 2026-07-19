@@ -1,0 +1,394 @@
+import { useState, useEffect } from 'react';
+import { Play, Pause, ArrowLeft, RefreshCw, Download, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
+import type { SyncJob } from '../types';
+import { useTranslation } from 'react-i18next';
+import { useFormat } from '../utils/format';
+import { useApiError } from '../utils/apiError';
+
+interface SyncDashboardProps {
+  syncId: string;
+  apiUrl: string;
+  token: string;
+  onBack: () => void;
+}
+
+export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardProps) {
+  const [job, setJob] = useState<SyncJob | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>('');
+  const [actionLoading, setActionLoading] = useState<boolean>(false);
+
+  const { t } = useTranslation();
+  const { formatDateTime } = useFormat();
+  const translateApiError = useApiError();
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchJob = async () => {
+      try {
+        const res = await fetch(`${apiUrl}/api/sync/${syncId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          let msg = t('sync.loadFailed');
+          try {
+            const body = await res.json();
+            if (body?.error_code) msg = translateApiError(body.error_code);
+          } catch { /* ignore */ }
+          throw new Error(msg);
+        }
+        const data = await res.json();
+        if (!cancelled) {
+          setJob(data);
+          setLoading(false);
+        }
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : t('sync.loadFailed'));
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchJob();
+
+    // SSE Stream for live updates
+    const controller = new AbortController();
+    const connectSSE = async () => {
+      try {
+        const response = await fetch(`${apiUrl}/api/sync/stream`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) return;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (!cancelled) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let idx: number;
+          while ((idx = buffer.indexOf('\n\n')) !== -1) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+
+            let event = 'message';
+            let data = '';
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('event:')) event = line.slice(6).trim();
+              else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+            }
+
+            if (event === 'sync_jobs' && data) {
+              try {
+                const jobs: SyncJob[] = JSON.parse(data);
+                const updated = jobs.find((j) => j.id === syncId);
+                if (updated && !cancelled) {
+                  setJob(updated);
+                }
+              } catch { /* ignore */ }
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    };
+
+    connectSSE();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [apiUrl, syncId, token, t, translateApiError]);
+
+  const handleTriggerStart = async () => {
+    setActionLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/api/sync/${syncId}/start`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        let msg = t('sync.startFailed');
+        try {
+          const body = await res.json();
+          if (body?.error_code) msg = translateApiError(body.error_code);
+        } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : t('sync.startFailed'));
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handlePause = async () => {
+    setActionLoading(true);
+    try {
+      await fetch(`${apiUrl}/api/sync/${syncId}/pause`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch { /* ignore */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleResume = async () => {
+    setActionLoading(true);
+    try {
+      await fetch(`${apiUrl}/api/sync/${syncId}/resume`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch { /* ignore */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleDownloadReport = () => {
+    window.open(`${apiUrl}/api/sync/${syncId}/report`, '_blank');
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'IDLE':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="w-4 h-4" />
+            {t('sync.statusIdle')}
+          </span>
+        );
+      case 'RUNNING':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-info-bg)] text-blue-700 border border-[var(--color-info-border)] animate-pulse">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {t('status.active')}
+          </span>
+        );
+      case 'INDEXING':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {t('status.indexing')}
+          </span>
+        );
+      case 'PAUSED':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+            <Pause className="w-4 h-4" />
+            {t('status.paused')}
+          </span>
+        );
+      case 'FAILED':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
+            <XCircle className="w-4 h-4" />
+            {t('status.failed')}
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]">
+            {status}
+          </span>
+        );
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4">
+        <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+        <p className="text-xs font-mono text-[var(--color-text-muted)]">{t('common.loading')}</p>
+      </div>
+    );
+  }
+
+  if (error || !job) {
+    return (
+      <div className="space-y-4">
+        <button onClick={onBack} className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)]">
+          <ArrowLeft className="w-4 h-4" /> {t('common.back')}
+        </button>
+        <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] text-rose-700 rounded-xl text-sm font-mono text-center">
+          {error || t('sync.notFound')}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-6 animate-fade-in">
+      {/* Top Bar */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[var(--color-border)] text-xs font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          {t('common.back')}
+        </button>
+
+        <div className="flex items-center gap-3">
+          {job.status === 'PAUSED' ? (
+            <button
+              onClick={handleResume}
+              disabled={actionLoading}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm cursor-pointer disabled:opacity-50"
+            >
+              <Play className="w-4 h-4 fill-white" />
+              {t('sync.resume')}
+            </button>
+          ) : (
+            <button
+              onClick={handlePause}
+              disabled={actionLoading || job.status === 'INDEXING' || job.status === 'RUNNING'}
+              className="flex items-center gap-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] text-[var(--color-text-primary)] px-4 py-2 rounded-xl text-xs font-bold border border-[var(--color-border)] cursor-pointer disabled:opacity-50"
+            >
+              <Pause className="w-4 h-4" />
+              {t('sync.pause')}
+            </button>
+          )}
+
+          <button
+            onClick={handleTriggerStart}
+            disabled={actionLoading || job.status === 'INDEXING' || job.status === 'RUNNING'}
+            className="flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-4 py-2 rounded-xl text-xs font-bold shadow-sm cursor-pointer disabled:opacity-50"
+          >
+            {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {t('sync.syncNow')}
+          </button>
+        </div>
+      </div>
+
+      {/* Main Header Panel */}
+      <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <h1 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)]">
+                {t('sync.syncJobDetail')}
+              </h1>
+              {getStatusBadge(job.status)}
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)] font-mono">
+              ID: {job.id}
+            </p>
+          </div>
+
+          {job.failed_files > 0 && (
+            <button
+              onClick={handleDownloadReport}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+            >
+              <Download className="w-4 h-4" />
+              {t('sync.downloadReport')}
+            </button>
+          )}
+        </div>
+
+        {/* Source -> Target Connection Banner */}
+        <div className="p-4 rounded-2xl bg-[var(--color-bg-tertiary)]/60 border border-[var(--color-border)] flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="flex flex-col text-left">
+              <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('migrations.source')}</span>
+              <span className="font-bold text-sm text-[var(--color-text-primary)] capitalize">{job.source_provider}</span>
+              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[180px]">{job.source_url || t('migrations.oauth')}</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 font-mono text-xs font-bold text-[var(--color-portal-orange-themed)] uppercase px-3 py-1.5 rounded-full bg-white shadow-xs border border-[var(--color-border)]">
+            {job.direction === 'two_way' ? '↔ ' + t('sync.twoWay') : '→ ' + t('sync.oneWay')}
+          </div>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+            <div className="flex flex-col text-right">
+              <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('migrations.target')}</span>
+              <span className="font-bold text-sm text-[var(--color-text-primary)] capitalize">{job.target_provider}</span>
+              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[180px]">{job.target_url || t('migrations.oauth')}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Config Summary Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+          <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.interval')}</span>
+            <span className="font-bold text-sm text-[var(--color-text-primary)] mt-1 block">
+              {job.interval_minutes} {t('sync.minutes')}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.conflictStrategy')}</span>
+            <span className="font-bold text-sm text-[var(--color-text-primary)] mt-1 block">
+              {job.conflict_strategy}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.deletePropagation')}</span>
+            <span className={`font-bold text-sm mt-1 block ${job.delete_propagation ? 'text-rose-600' : 'text-emerald-600'}`}>
+              {job.delete_propagation ? t('common.enabled') : t('common.disabled')}
+            </span>
+          </div>
+
+          <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.lastRun')}</span>
+            <span className="font-bold text-xs text-[var(--color-text-primary)] mt-1 block truncate">
+              {job.last_run_at ? formatDateTime(job.last_run_at) : '-'}
+            </span>
+          </div>
+        </div>
+
+        {/* Live / Last Run Statistics */}
+        <div className="space-y-3 pt-2">
+          <h3 className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)]">
+            {t('sync.runStats')}
+          </h3>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-slate-50 flex flex-col">
+              <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('sync.processedFiles')}</span>
+              <span className="font-display font-extrabold text-xl text-[var(--color-text-primary)] mt-1">
+                {job.processed_files} / {job.total_files}
+              </span>
+            </div>
+
+            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-blue-50 flex flex-col">
+              <span className="text-[10px] font-mono uppercase text-blue-600 font-bold">{t('sync.changedFiles')}</span>
+              <span className="font-display font-extrabold text-xl text-blue-700 mt-1">
+                {job.changed_files}
+              </span>
+            </div>
+
+            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-purple-50 flex flex-col">
+              <span className="text-[10px] font-mono uppercase text-brand-violet font-bold">{t('sync.deletedFiles')}</span>
+              <span className="font-display font-extrabold text-xl text-purple-700 mt-1">
+                {job.deleted_files}
+              </span>
+            </div>
+
+            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-rose-50 flex flex-col">
+              <span className="text-[10px] font-mono uppercase text-rose-600 font-bold">{t('sync.failedFiles')}</span>
+              <span className="font-display font-extrabold text-xl text-rose-700 mt-1">
+                {job.failed_files}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {job.error_message && (
+          <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-xs font-mono text-rose-700 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+            <span>{job.error_message}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -31,6 +31,14 @@ type CloudResource struct {
 	Metadata     FileMetadata `json:"metadata"`
 }
 
+type FileInfo struct {
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mod_time"`
+	Hash    string    `json:"hash"`
+	IsDir   bool      `json:"is_dir"`
+}
+
 type MetadataApplier interface {
 	ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error
 }

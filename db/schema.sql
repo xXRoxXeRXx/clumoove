@@ -246,3 +246,82 @@ CREATE OR REPLACE TRIGGER update_connection_profiles_updated_at
     BEFORE UPDATE ON connection_profiles
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
+-- Sync Engine — Jobs and State
+-- ============================================================================
+
+-- Table for Sync Jobs
+CREATE TABLE IF NOT EXISTS sync_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_url TEXT NOT NULL,
+    source_username TEXT NOT NULL,
+    source_password_encrypted TEXT NOT NULL,
+    source_refresh_token_encrypted TEXT,
+    source_token_expires_at TIMESTAMP WITH TIME ZONE,
+    target_url TEXT NOT NULL,
+    target_username TEXT NOT NULL,
+    target_password_encrypted TEXT NOT NULL,
+    target_refresh_token_encrypted TEXT,
+    target_token_expires_at TIMESTAMP WITH TIME ZONE,
+    source_provider TEXT NOT NULL DEFAULT 'nextcloud',
+    target_provider TEXT NOT NULL DEFAULT 'nextcloud',
+    direction TEXT NOT NULL DEFAULT 'one_way'
+        CHECK (direction IN ('one_way','two_way')),
+    conflict_strategy TEXT NOT NULL DEFAULT 'OVERWRITE'
+        CHECK (conflict_strategy IN ('OVERWRITE','SKIP','RENAME')),
+    delete_propagation BOOLEAN NOT NULL DEFAULT FALSE,
+    interval_minutes INT NOT NULL DEFAULT 15,
+    threads INT NOT NULL DEFAULT 4,
+    status TEXT NOT NULL DEFAULT 'IDLE',
+    target_dir TEXT NOT NULL DEFAULT '/',
+    selected_paths JSONB,
+    last_run_at TIMESTAMP WITH TIME ZONE,
+    last_run_status TEXT,
+    error_message TEXT,
+    total_files INT NOT NULL DEFAULT 0,
+    processed_files INT NOT NULL DEFAULT 0,
+    changed_files INT NOT NULL DEFAULT 0,
+    deleted_files INT NOT NULL DEFAULT 0,
+    failed_files INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_user_id ON sync_jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_status ON sync_jobs(status);
+
+CREATE OR REPLACE TRIGGER update_sync_jobs_updated_at
+    BEFORE UPDATE ON sync_jobs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Table for Sync State (Persistent Delta Tracking)
+CREATE TABLE IF NOT EXISTS sync_state (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sync_job_id UUID NOT NULL REFERENCES sync_jobs(id) ON DELETE CASCADE,
+    side TEXT NOT NULL CHECK (side IN ('source','target')),
+    rel_path TEXT NOT NULL,
+    size BIGINT NOT NULL DEFAULT 0,
+    mtime TIMESTAMP WITH TIME ZONE,
+    source_hash TEXT,
+    target_hash TEXT,
+    UNIQUE (sync_job_id, side, rel_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_state_job ON sync_state(sync_job_id, side);
+
+-- Modify Tasks table to support Sync Jobs
+ALTER TABLE tasks ALTER COLUMN migration_id DROP NOT NULL;
+
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE;
+
+ALTER TABLE tasks DROP CONSTRAINT IF EXISTS chk_task_job_type;
+ALTER TABLE tasks ADD CONSTRAINT chk_task_job_type CHECK (
+    (migration_id IS NOT NULL AND sync_job_id IS NULL) OR
+    (migration_id IS NULL AND sync_job_id IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_sync_status ON tasks(sync_job_id, status);
+

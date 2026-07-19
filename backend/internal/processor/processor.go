@@ -1,4 +1,4 @@
-﻿package processor
+package processor
 
 import (
 	"context"
@@ -34,6 +34,7 @@ import (
 
 type activeTaskInfo struct {
 	migrationID string
+	syncJobID   string
 	cancel      context.CancelFunc
 }
 
@@ -46,6 +47,9 @@ type Processor struct {
 	activeTasks  sync.Map
 	refreshLocks sync.Map
 	throttlers   sync.Map
+	// syncEngine is used by recoverPausedSyncJobs to trigger a new sync pass
+	// after connection is restored. Set via SetSyncEngine after construction.
+	syncEngine syncEngineInterface
 	// connLossCounts tracks consecutive connection-loss events per migration so
 	// a single flaky task does not immediately pause the whole migration (P1-4).
 	connLossCounts sync.Map
@@ -60,6 +64,19 @@ type Processor struct {
 	// so a task that failed twice for non-network reasons is not wrongly escalated
 	// to a full migration pause on its next (first) connection loss (P1-4).
 	connLossTaskAttempts sync.Map
+}
+
+// syncEngineInterface is a minimal interface so the processor package does not
+// import the concrete sync package (avoiding an import cycle).
+type syncEngineInterface interface {
+	RunSyncPass(ctx context.Context, syncJobID string)
+}
+
+// SetSyncEngine wires the sync engine into the processor so that
+// recoverPausedSyncJobs can trigger a new RunSyncPass after restoring
+// a lost connection.
+func (p *Processor) SetSyncEngine(e syncEngineInterface) {
+	p.syncEngine = e
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
@@ -247,14 +264,24 @@ func (p *Processor) Start(ctx context.Context) {
 						continue                    // No task in queue
 					}
 
-					log.Printf("[Worker %s] Thread %d processing task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
-
-					err = p.processTask(ctx, payload)
-					if err != nil {
-						log.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
-						p.handleTaskFailure(ctx, payload, err)
+					if payload.SyncJobID != "" {
+						log.Printf("[Worker %s] Thread %d processing sync task %s for job %s\n", p.workerID, threadID, payload.TaskID, payload.SyncJobID)
+						err = p.processSyncTask(ctx, payload)
+						if err != nil {
+							log.Printf("[Worker %s] Thread %d error processing sync task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
+							p.handleSyncTaskFailure(ctx, payload, err)
+						} else {
+							log.Printf("[Worker %s] Thread %d successfully processed sync task %s\n", p.workerID, threadID, payload.TaskID)
+						}
 					} else {
-						log.Printf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
+						log.Printf("[Worker %s] Thread %d processing migration task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
+						err = p.processTask(ctx, payload)
+						if err != nil {
+							log.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
+							p.handleTaskFailure(ctx, payload, err)
+						} else {
+							log.Printf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
+						}
 					}
 				}
 			}
@@ -492,6 +519,7 @@ func (p *Processor) RunConnectionRecoveryScheduler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.recoverPausedMigrations(ctx)
+			p.recoverPausedSyncJobs(ctx)
 		}
 	}
 }

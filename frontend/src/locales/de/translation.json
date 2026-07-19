@@ -549,7 +549,12 @@
     "PROFILE_NAME_EXISTS": "Eine Verbindung mit diesem Namen existiert bereis für diese Rolle.",
     "PROFILE_INVALID_PROVIDER": "Dieser Anbieter wird nicht unterstützt.",
     "PROFILE_URL_REQUIRED": "Dieser Anbieter benötigt eine Server-Adresse (URL).",
-    "PROFILE_INVALID_ROLE": "Eine Verbindung muss als 'source' oder 'target' verwendet werden."
+    "PROFILE_INVALID_ROLE": "Eine Verbindung muss als 'source' oder 'target' verwendet werden.",
+    "SYNC_ID_MISSING": "Synchronisations-ID fehlt.",
+    "SYNC_NOT_FOUND": "Synchronisations-Job nicht gefunden.",
+    "SYNC_NOT_OWNED": "Sie haben keinen Zugriff auf diesen Sync-Job.",
+    "SYNC_ALREADY_RUNNING": "Die Synchronisation läuft bereits.",
+    "SYNC_INVALID_STATE": "Der Sync-Job ist in einem ungültigen Zustand."
   },
   "admin": {
     "title": "Verwaltung",
@@ -625,5 +630,42 @@
         "2FA_DISABLED": "2FA deaktiviert"
       }
     }
+  },
+  "sync": {
+    "tabMigrations": "Migrationen",
+    "tabSyncs": "Synchronisationen",
+    "mode": "Aufgabenmodus",
+    "modeMigration": "Einmalige Migration",
+    "modeSync": "Fortlaufende Synchronisation",
+    "oneWay": "One-Way",
+    "twoWay": "Two-Way",
+    "direction": "Sync-Richtung",
+    "interval": "Sync-Intervall",
+    "deletePropagation": "Lösch-Propagation (Löschungen spiegeln)",
+    "minutes": "Minuten",
+    "hour": "Stunde",
+    "hours": "Stunden",
+    "runStats": "Pass-Statistiken",
+    "processedFiles": "Verarbeitete Dateien",
+    "changedFiles": "Geänderte Dateien",
+    "deletedFiles": "Gelöschte Dateien",
+    "failedFiles": "Fehlgeschlagene Dateien",
+    "lastRun": "Letzter Lauf",
+    "syncJobDetail": "Synchronisations-Details",
+    "syncNow": "Jetzt synchronisieren",
+    "pause": "Pausieren",
+    "resume": "Fortsetzen",
+    "downloadReport": "Fehlerbericht herunterladen",
+    "statusIdle": "BEREIT",
+    "loadFailed": "Fehler beim Laden des Sync-Jobs.",
+    "notFound": "Sync-Job nicht gefunden.",
+    "startFailed": "Fehler beim Starten des Sync-Laufs.",
+    "noSyncJobs": "Keine Synchronisationen vorhanden",
+    "noSyncSub": "Konfigurieren Sie einen Sync-Job, um Quelle und Ziel automatisch synchron zu halten.",
+    "startFirst": "Erste Synchronisation einrichten",
+    "openDetail": "Sync-Dashboard öffnen",
+    "deleteJob": "Sync-Job löschen",
+    "deleteConfirm": "Sind Sie sicher, dass Sie diesen Sync-Job löschen möchten? Alle Konfigurationen und History gehen verloren."
   }
 }
+

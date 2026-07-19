@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { SyncDashboard } from './components/SyncDashboard';
 import { ConnectForm } from './components/ConnectForm';
 import { FileBrowser } from './components/FileBrowser';
 import { Dashboard } from './components/Dashboard';
@@ -15,7 +16,7 @@ import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
 import { listenForOAuthMessage } from './utils/oauth';
 
-type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'reset-password' | 'confirm-email';
+type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'reset-password' | 'confirm-email' | 'syncdetail';
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -63,6 +64,7 @@ function App() {
   const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
   const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
   const [migrationId, setMigrationId] = useState<string>('');
+  const [syncId, setSyncId] = useState<string>('');
   const [isValidating, setIsValidating] = useState<boolean>(
     () => !resetTokenFromUrl && !emailChangeTokenFromUrl && localStorage.getItem('has_session') === 'true'
   );
@@ -106,14 +108,22 @@ function App() {
 
   // Build the URL (keeping the ?migration= param) and push/replace a history entry
   // carrying the in-app navigation state, then sync React state.
-  const applyHistory = (nextStep: Step, migId: string, replace: boolean) => {
+  const applyHistory = (nextStep: Step, idVal: string, replace: boolean) => {
     const url = new URL(window.location.href);
-    if (migId) {
-      url.searchParams.set('migration', migId);
+    const state: Record<string, unknown> = { step: nextStep, appEntry: !replace };
+    if (nextStep === 'syncdetail') {
+      url.searchParams.set('sync', idVal);
+      url.searchParams.delete('migration');
+      state.sync = idVal;
+    } else if (idVal && nextStep !== 'history') {
+      url.searchParams.set('migration', idVal);
+      url.searchParams.delete('sync');
+      state.migration = idVal;
     } else {
       url.searchParams.delete('migration');
+      url.searchParams.delete('sync');
     }
-    const state = { step: nextStep, migration: migId, appEntry: !replace };
+
     if (replace) {
       // A replace establishes a fresh baseline: forget any pushed entries.
       window.history.replaceState(state, '', url.toString());
@@ -126,7 +136,11 @@ function App() {
       prevHistoryLen.current = window.history.length;
     }
     setStep(nextStep);
-    setMigrationId(migId);
+    if (nextStep === 'syncdetail') {
+      setSyncId(idVal);
+    } else {
+      setMigrationId(idVal);
+    }
   };
 
   // Replace the current history entry (no new navigable entry). Used for
@@ -193,7 +207,7 @@ function App() {
   // Handle browser back/forward between in-app screens.
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
-      const s = e.state as { step?: Step; migration?: string; appEntry?: boolean } | null;
+      const s = e.state as { step?: Step; migration?: string; sync?: string; appEntry?: boolean } | null;
       // Keep historyDepth in sync for both back (length shrinks) and forward
       // (length grows) so the seeded top-level overview remains the back target.
       const newLen = window.history.length;
@@ -206,7 +220,11 @@ function App() {
       prevHistoryLen.current = newLen;
       if (s?.step) {
         setStep(s.step);
-        setMigrationId(s.migration ?? new URLSearchParams(window.location.search).get('migration') ?? '');
+        if (s.step === 'syncdetail') {
+          setSyncId(s.sync ?? new URLSearchParams(window.location.search).get('sync') ?? '');
+        } else {
+          setMigrationId(s.migration ?? new URLSearchParams(window.location.search).get('migration') ?? '');
+        }
         // Credentials/initialFiles are only needed by `select`; clear them when
         // navigating to an unrelated screen to avoid stale secrets in memory.
         if (s.step !== 'dashboard' && s.step !== 'select') {
@@ -217,9 +235,13 @@ function App() {
         // Pre-app / external entry: re-derive step from session like initial load.
         const params = new URLSearchParams(window.location.search);
         const mig = params.get('migration');
+        const syncJ = params.get('sync');
         if (localStorage.getItem('has_session') === 'true' && mig) {
           setMigrationId(mig);
           setStep('dashboard');
+        } else if (localStorage.getItem('has_session') === 'true' && syncJ) {
+          setSyncId(syncJ);
+          setStep('syncdetail');
         } else if (localStorage.getItem('has_session') === 'true') {
           setStep('history');
         } else {
@@ -261,6 +283,7 @@ function App() {
             // Check if there is an active migration ID in url
             const params = new URLSearchParams(window.location.search);
             const urlMigId = params.get('migration');
+            const urlSyncId = params.get('sync');
             if (urlMigId) {
               // Verify active migration status
               const migRes = await fetch(`${API_URL}/api/migration/${urlMigId}`, {
@@ -268,6 +291,16 @@ function App() {
               });
               if (migRes.ok) {
                 replaceNav('dashboard', urlMigId);
+              } else {
+                replaceNav('history', '');
+              }
+            } else if (urlSyncId) {
+              // Verify active sync status
+              const syncRes = await fetch(`${API_URL}/api/sync/${urlSyncId}`, {
+                headers: { 'Authorization': `Bearer ${data.access_token}` },
+              });
+              if (syncRes.ok) {
+                replaceNav('syncdetail', urlSyncId);
               } else {
                 replaceNav('history', '');
               }
@@ -589,6 +622,18 @@ function App() {
               onSelectActiveMigration={(id) => {
                 navigate('dashboard', id);
               }}
+              onSelectActiveSync={(id) => {
+                navigate('syncdetail', id);
+              }}
+            />
+          )}
+
+          {step === 'syncdetail' && (
+            <SyncDashboard
+              syncId={syncId}
+              apiUrl={API_URL}
+              onBack={() => goBack()}
+              token={token}
             />
           )}
 

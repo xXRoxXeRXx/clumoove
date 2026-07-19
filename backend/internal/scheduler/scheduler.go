@@ -10,13 +10,20 @@ import (
 	"backend/internal/db"
 	"backend/internal/indexer"
 	"backend/internal/queue"
+	"backend/internal/sync"
 )
 
 // Scheduler is the core daemon that manages scheduled tasks
 type Scheduler struct {
-	db      *sql.DB
-	queue   *queue.Queue
-	indexer *indexer.Indexer
+	db         *sql.DB
+	queue      *queue.Queue
+	indexer    *indexer.Indexer
+	syncEngine *sync.Engine
+}
+
+// SetSyncEngine registers the sync engine with the scheduler
+func (s *Scheduler) SetSyncEngine(se *sync.Engine) {
+	s.syncEngine = se
 }
 
 // NewScheduler creates a new Scheduler instance
@@ -176,9 +183,14 @@ func (s *Scheduler) isJobActive(taskType, taskID string) (bool, error) {
 		return isJobActiveStatus(mig.Status), nil
 
 	case "sync":
-		// Future: Check sync_jobs table when implemented
-		// For now, return false to allow scheduling
-		return false, nil
+		job, err := db.GetSyncJob(s.db, taskID)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return false, nil
+			}
+			return false, err
+		}
+		return isJobActiveStatus(job.Status), nil
 
 	case "backup":
 		// Future: Check backup_jobs table when implemented
@@ -231,10 +243,31 @@ func (s *Scheduler) triggerMigration(ctx context.Context, migrationID string) er
 	return nil
 }
 
-// triggerSync is a placeholder for future sync job implementation
+// triggerSync triggers a sync pass for a scheduled sync job.
 func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
-	// Future: Implement sync job triggering
-	log.Printf("[Scheduler] Sync job triggering not yet implemented (job_id=%s)", syncJobID)
+	if s.syncEngine == nil {
+		return fmt.Errorf("sync engine not initialized in scheduler")
+	}
+
+	job, err := db.GetSyncJob(s.db, syncJobID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch sync job %s: %w", syncJobID, err)
+	}
+
+	// PAUSED_CONNECTION_LOSS is a transient state managed by the recovery scheduler.
+	// Returning an error here would permanently deactivate the schedule, so we
+	// skip this trigger silently and let the scheduler advance next_run_at normally.
+	if job.Status == "PAUSED_CONNECTION_LOSS" {
+		log.Printf("[Scheduler] Skipping sync job %s trigger: job is in PAUSED_CONNECTION_LOSS (recovery pending)", syncJobID)
+		return nil
+	}
+
+	if job.Status != "IDLE" {
+		return fmt.Errorf("sync job %s is not in IDLE state (current: %s)", syncJobID, job.Status)
+	}
+
+	go s.syncEngine.RunSyncPass(ctx, syncJobID)
+	log.Printf("[Scheduler] Sync job %s pass started", syncJobID)
 	return nil
 }
 
