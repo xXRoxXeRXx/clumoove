@@ -211,7 +211,7 @@ migration/
 │       └── totp2fa/         # TOTP generation/verification
 ├── frontend/                # React 19 SPA (Vite, Tailwind v4, i18n)
 ├── db/schema.sql            # DDL (also inline in db.go for auto-migration)
-├── docker-compose.yml       # production stack (GHCR images)
+├── docker-compose.yml       # production stack (local prod build)
 ├── docker-compose.dev.yml   # development stack (local build)
 └── .env.example             # environment variable template
 ```

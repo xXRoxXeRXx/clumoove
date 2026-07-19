@@ -45,7 +45,7 @@ There is also a conceptual document:
 ```bash
 cp .env.example .env   # fill ENCRYPTION_SECRET_KEY / JWT_SECRET_KEY (each: openssl rand -base64 32)
 docker compose -f docker-compose.dev.yml up --build -d        # development (local build)
-# docker compose up -d                                        # production (prebuilt GHCR images)
+# docker compose up --build -d                              # production (local build)
 ```
 
 Frontend: http://localhost:3001 · API: http://localhost:8001
