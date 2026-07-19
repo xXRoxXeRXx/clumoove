@@ -152,7 +152,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           // media in the embedded Picker widget. Other providers skip this.
           if (provider === 'googlephotos') {
             // Google Photos source selection happens on the next screen
-            // (file selection), not here â€” we only store the OAuth tokens.
+            // (file selection), not here — we only store the OAuth tokens.
           }
         } else {
           setTargetOAuthUser(event.data.username || provider);
@@ -821,7 +821,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                     <input
                       type="password"
-                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
+                      placeholder="•••• •••• •••• ••••"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -859,7 +859,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
-                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
+                      placeholder="•••• •••• •••• ••••"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1240,7 +1240,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                     <input
                       type="password"
-                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
+                      placeholder="•••• •••• •••• ••••"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1278,7 +1278,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
-                      placeholder="â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢ â€¢â€¢â€¢â€¢"
+                      placeholder="•••• •••• •••• ••••"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1396,7 +1396,7 @@ function ProfileSelect({ profiles, selectedId, onSelect, onClear }: {
           onChange={(e) => onSelect(e.target.value)}
           className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
         >
-          <option value="">â€”</option>
+          <option value="">—</option>
           {profiles.map((p) => (
             <option key={p.id} value={p.id}>{p.name}</option>
           ))}
