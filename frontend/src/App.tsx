@@ -9,13 +9,15 @@ import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { AdminPanel } from './components/AdminPanel';
+import { PrivacyPage } from './components/PrivacyPage';
+import { TermsPage } from './components/TermsPage';
 import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon, Shield } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
 import { listenForOAuthMessage } from './utils/oauth';
 
-type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'reset-password' | 'confirm-email';
+type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'privacy' | 'terms' | 'reset-password' | 'confirm-email';
 
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -1074,6 +1076,14 @@ function App() {
               onBack={() => goBack()}
             />
           )}
+
+          {step === 'privacy' && (
+            <PrivacyPage onBack={() => goBack()} />
+          )}
+
+          {step === 'terms' && (
+            <TermsPage onBack={() => goBack()} />
+          )}
         </div>
       </main>
 
@@ -1089,7 +1099,19 @@ function App() {
               <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">{t('footer.bufferTitle')}</p>
               <p className="text-[var(--color-text-muted)]">{t('footer.bufferText')}</p>
             </div>
-            <div className="md:flex md:justify-end">
+            <div className="flex flex-wrap items-center gap-4 md:justify-end">
+              <button
+                onClick={() => navigate('privacy')}
+                className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer"
+              >
+                Privacy Policy
+              </button>
+              <button
+                onClick={() => navigate('terms')}
+                className="text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer"
+              >
+                Terms of Service
+              </button>
               <LanguageSwitcher />
             </div>
           </div>
