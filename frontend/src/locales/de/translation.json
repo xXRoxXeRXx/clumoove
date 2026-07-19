@@ -16,6 +16,7 @@
     "copy": "Kopieren",
     "search": "Suchen",
     "required": "Erforderlich",
+    "retry": "Erneut versuchen",
     "optional": "Optional",
     "user": "Benutzer",
     "active": "Aktiv"
@@ -305,6 +306,7 @@
       "testFailed": "Verbindung fehlgeschlagen.",
       "saved": "Verbindung gespeichert!",
       "updated": "Verbindung aktualisiert!",
+      "deleted": "Verbindung gelöscht!",
       "nameLabel": "Profilname",
       "providerLabel": "Anbieter",
       "passwordLabel": "Passwort",
@@ -409,6 +411,7 @@
       "totpDisabled": "Zweistufige Überprüfung deaktiviert.",
       "totpNeedCode": "Bitte gib den Code aus deiner App ein.",
       "totpNeedPassword": "Bitte gib dein Passwort ein.",
+      "qrInvalid": "Der QR-Code konnte nicht gelesen werden. Bitte versuche es erneut.",
       "smtpPortRange": "Der Anschluss (Port) muss zwischen 1 und 65535 liegen.",
       "smtpSaved": "Einstellungen erfolgreich gespeichert!",
       "smtpSaveError": "Fehler beim Speichern der Einstellungen.",
