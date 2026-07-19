@@ -682,93 +682,125 @@ function App() {
             </line>
           </g>
 
-          {/* Europa symbols, data centres, cloud transfer icons */}
-          <g opacity="0.15" fill="#ffd700">
-            {/* Europa star symbol (EU flag) */}
-            <g transform="translate(180,250)">
-              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
+          {/* Professional tech infrastructure icons */}
+          <g opacity="0.12" fill="none" stroke="#ffd700" strokeWidth="1.5">
+            {/* Database cluster */}
+            <g transform="translate(160,260)">
+              <ellipse cx="0" cy="-6" rx="8" ry="3" />
+              <path d="M-8,-6 L-8,6 Q-8,9 0,9 Q8,9 8,6 L8,-6" />
+              <path d="M-8,-2 Q-8,1 0,1 Q8,1 8,-2" strokeWidth="1" />
+              <circle cx="-3" cy="4" r="1" fill="#ffd700" stroke="none" />
+              <circle cx="0" cy="4" r="1" fill="#ffd700" stroke="none" />
+              <circle cx="3" cy="4" r="1" fill="#ffd700" stroke="none" />
             </g>
-            <g transform="translate(1050,180)">
-              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
-            </g>
-            <g transform="translate(1250,650)">
-              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
-            </g>
-            <g transform="translate(350,750)">
-              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
-              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
+            <g transform="translate(1080,200)">
+              <ellipse cx="0" cy="-6" rx="8" ry="3" />
+              <path d="M-8,-6 L-8,6 Q-8,9 0,9 Q8,9 8,6 L8,-6" />
+              <path d="M-8,-2 Q-8,1 0,1 Q8,1 8,-2" strokeWidth="1" />
+              <circle cx="-3" cy="4" r="1" fill="#ffd700" stroke="none" />
+              <circle cx="0" cy="4" r="1" fill="#ffd700" stroke="none" />
+              <circle cx="3" cy="4" r="1" fill="#ffd700" stroke="none" />
             </g>
 
-            {/* Data centre/server rack symbols */}
-            <g transform="translate(280,420)">
-              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+            {/* Network switch / router */}
+            <g transform="translate(300,430)">
+              <rect x="-10" y="-6" width="20" height="12" rx="2" />
+              <circle cx="-5" cy="0" r="1.5" fill="#ffd700" stroke="none" />
+              <circle cx="0" cy="0" r="1.5" fill="#ffd700" stroke="none" />
+              <circle cx="5" cy="0" r="1.5" fill="#ffd700" stroke="none" />
+              <line x1="-3" y1="-3" x2="3" y2="-3" strokeWidth="1" />
+              <line x1="-3" y1="3" x2="3" y2="3" strokeWidth="1" />
             </g>
-            <g transform="translate(100,150)">
-              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-            </g>
-            <g transform="translate(1150,350)">
-              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-            </g>
-            <g transform="translate(1350,500)">
-              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
-              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+            <g transform="translate(1180,370)">
+              <rect x="-10" y="-6" width="20" height="12" rx="2" />
+              <circle cx="-5" cy="0" r="1.5" fill="#ffd700" stroke="none" />
+              <circle cx="0" cy="0" r="1.5" fill="#ffd700" stroke="none" />
+              <circle cx="5" cy="0" r="1.5" fill="#ffd700" stroke="none" />
+              <line x1="-3" y1="-3" x2="3" y2="-3" strokeWidth="1" />
+              <line x1="-3" y1="3" x2="3" y2="3" strokeWidth="1" />
             </g>
 
-            {/* Cloud transfer symbols */}
-            <g transform="translate(150,550)">
-              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+            {/* Cloud with arrows up/down (sync) */}
+            <g transform="translate(140,560)">
+              <path d="M-9,2 Q-9,-3 -5,-4 Q-4,-8 1,-8 Q6,-8 7,-4 Q10,-3 9,2 Q10,5 7,6 L-6,6 Q-10,5 -9,2Z" />
+              <path d="M-2,-14 L-2,-2" strokeWidth="1.5" />
+              <polygon points="-4,-12 -2,-15 0,-12" />
+              <path d="M5,-14 L5,-2" strokeWidth="1.5" />
+              <polygon points="3,-12 5,-15 7,-12" />
             </g>
-            <g transform="translate(900,700)">
-              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+            <g transform="translate(920,720)">
+              <path d="M-9,2 Q-9,-3 -5,-4 Q-4,-8 1,-8 Q6,-8 7,-4 Q10,-3 9,2 Q10,5 7,6 L-6,6 Q-10,5 -9,2Z" />
+              <path d="M-2,-14 L-2,-2" strokeWidth="1.5" />
+              <polygon points="-4,-12 -2,-15 0,-12" />
+              <path d="M5,-14 L5,-2" strokeWidth="1.5" />
+              <polygon points="3,-12 5,-15 7,-12" />
             </g>
-            <g transform="translate(1200,100)">
-              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-            </g>
-            <g transform="translate(50,400)">
-              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+            <g transform="translate(1240,120)">
+              <path d="M-9,2 Q-9,-3 -5,-4 Q-4,-8 1,-8 Q6,-8 7,-4 Q10,-3 9,2 Q10,5 7,6 L-6,6 Q-10,5 -9,2Z" />
+              <path d="M-2,-14 L-2,-2" strokeWidth="1.5" />
+              <polygon points="-4,-12 -2,-15 0,-12" />
+              <path d="M5,-14 L5,-2" strokeWidth="1.5" />
+              <polygon points="3,-12 5,-15 7,-12" />
             </g>
 
-            {/* Globe/network symbols */}
-            <g transform="translate(400,120)">
-              <circle cx="0" cy="0" r="8" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <ellipse cx="0" cy="0" rx="4" ry="8" fill="none" stroke="#ffd700" strokeWidth="1" />
-              <line x1="-8" y1="0" x2="8" y2="0" stroke="#ffd700" strokeWidth="1" />
+            {/* Server rack */}
+            <g transform="translate(100,160)">
+              <rect x="-7" y="-10" width="14" height="20" rx="1.5" />
+              <rect x="-5" y="-8" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <rect x="-5" y="-3" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <rect x="-5" y="2" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <rect x="-5" y="7" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <circle cx="4" cy="8.5" r="0.8" fill="#ffd700" stroke="none" />
             </g>
-            <g transform="translate(1100,500)">
-              <circle cx="0" cy="0" r="8" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <ellipse cx="0" cy="0" rx="4" ry="8" fill="none" stroke="#ffd700" strokeWidth="1" />
-              <line x1="-8" y1="0" x2="8" y2="0" stroke="#ffd700" strokeWidth="1" />
+            <g transform="translate(1360,520)">
+              <rect x="-7" y="-10" width="14" height="20" rx="1.5" />
+              <rect x="-5" y="-8" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <rect x="-5" y="-3" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <rect x="-5" y="2" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <rect x="-5" y="7" width="10" height="3" rx="0.5" fill="#ffd700" opacity="0.15" stroke="none" />
+              <circle cx="4" cy="8.5" r="0.8" fill="#ffd700" stroke="none" />
             </g>
-            <g transform="translate(700,700)">
-              <circle cx="0" cy="0" r="8" fill="none" stroke="#ffd700" strokeWidth="1.5" />
-              <ellipse cx="0" cy="0" rx="4" ry="8" fill="none" stroke="#ffd700" strokeWidth="1" />
-              <line x1="-8" y1="0" x2="8" y2="0" stroke="#ffd700" strokeWidth="1" />
+
+            {/* Globe with network nodes */}
+            <g transform="translate(420,130)">
+              <circle cx="0" cy="0" r="9" />
+              <ellipse cx="0" cy="0" rx="4.5" ry="9" strokeWidth="1" />
+              <line x1="-9" y1="0" x2="9" y2="0" strokeWidth="1" />
+              <circle cx="-12" cy="-4" r="1.5" fill="#ffd700" stroke="none" />
+              <circle cx="12" cy="4" r="1.5" fill="#ffd700" stroke="none" />
+              <line x1="-12" y1="-4" x2="-3" y2="-1" strokeWidth="0.8" />
+              <line x1="12" y1="4" x2="3" y2="1" strokeWidth="0.8" />
+            </g>
+            <g transform="translate(1120,520)">
+              <circle cx="0" cy="0" r="9" />
+              <ellipse cx="0" cy="0" rx="4.5" ry="9" strokeWidth="1" />
+              <line x1="-9" y1="0" x2="9" y2="0" strokeWidth="1" />
+              <circle cx="-12" cy="-4" r="1.5" fill="#ffd700" stroke="none" />
+              <circle cx="12" cy="4" r="1.5" fill="#ffd700" stroke="none" />
+              <line x1="-12" y1="-4" x2="-3" y2="-1" strokeWidth="0.8" />
+              <line x1="12" y1="4" x2="3" y2="1" strokeWidth="0.8" />
+            </g>
+
+            {/* Shield / security */}
+            <g transform="translate(720,720)">
+              <path d="M-8,0 L-8,-8 L0,-11 L8,-8 L8,0 Q8,6 0,9 Q-8,6 -8,0Z" />
+              <polyline points="-4,-3 0,1 4,-4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+            <g transform="translate(50,410)">
+              <path d="M-8,0 L-8,-8 L0,-11 L8,-8 L8,0 Q8,6 0,9 Q-8,6 -8,0Z" />
+              <polyline points="-4,-3 0,1 4,-4" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+
+            {/* Data flow node */}
+            <g transform="translate(350,770)">
+              <circle cx="0" cy="0" r="4" />
+              <path d="M-12,-6 Q-6,-10 0,-8 Q6,-6 12,-8" strokeWidth="1" />
+              <path d="M-12,6 Q-6,10 0,8 Q6,6 12,8" strokeWidth="1" />
+            </g>
+            <g transform="translate(1280,660)">
+              <circle cx="0" cy="0" r="4" />
+              <path d="M-12,-6 Q-6,-10 0,-8 Q6,-6 12,-8" strokeWidth="1" />
+              <path d="M-12,6 Q-6,10 0,8 Q6,6 12,8" strokeWidth="1" />
             </g>
           </g>
 
