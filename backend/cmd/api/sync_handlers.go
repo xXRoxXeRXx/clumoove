@@ -12,6 +12,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/storage"
 )
 
 type createSyncRequest struct {
@@ -90,6 +91,16 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetDir == "" {
 		req.TargetDir = "/"
+	}
+
+	// Validate provider URLs for host-based providers upfront
+	if err := storage.ValidateProviderURL(req.SourceProvider, req.SourceURL); err != nil {
+		writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
+		return
+	}
+	if err := storage.ValidateProviderURL(req.TargetProvider, req.TargetURL); err != nil {
+		writeError(w, http.StatusBadRequest, ErrProfileURLRequired)
+		return
 	}
 
 	// Encrypt passwords
