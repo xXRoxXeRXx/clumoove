@@ -41,7 +41,7 @@ services:
 
   # Go API Gateway & Backend Control
   api-backend:
-    image: ghcr.io/xxroxxerxx/clumoove-api:0.11.3
+    image: ghcr.io/xxroxxerxx/clumoove-api:0.12.0
     container_name: migration-api
     restart: unless-stopped
     ports:
@@ -73,7 +73,7 @@ services:
 
   # Core Migration Engine (Worker)
   migration-worker:
-    image: ghcr.io/xxroxxerxx/clumoove-worker:0.11.3
+    image: ghcr.io/xxroxxerxx/clumoove-worker:0.12.0
     container_name: migration-worker-1
     restart: unless-stopped
     command: ["/app/worker"]
@@ -98,7 +98,7 @@ services:
 
   # Web-Frontend (React SPA)
   frontend:
-    image: ghcr.io/xxroxxerxx/clumoove-frontend:0.11.3
+    image: ghcr.io/xxroxxerxx/clumoove-frontend:0.12.0
     container_name: migration-frontend
     restart: unless-stopped
     ports:
