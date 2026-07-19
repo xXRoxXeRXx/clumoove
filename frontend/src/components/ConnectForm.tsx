@@ -71,6 +71,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [profiles, setProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
   const [sourceProfileId, setSourceProfileId] = useState('');
   const [targetProfileId, setTargetProfileId] = useState('');
+  const [sourceSaveProfile, setSourceSaveProfile] = useState(false);
+  const [sourceProfileName, setSourceProfileName] = useState('');
+  const [targetSaveProfile, setTargetSaveProfile] = useState(false);
+  const [targetProfileName, setTargetProfileName] = useState('');
 
   const { t } = useTranslation();
   const translateApiError = useApiError();
@@ -105,13 +109,83 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     if (role === 'source') {
       setSourceProvider(p.provider as ProviderId);
       setSourceProfileId(id);
+      setSourceSaveProfile(false);
+      setSourceProfileName('');
     } else {
       setTargetProvider(p.provider as ProviderId);
       setTargetProfileId(id);
+      setTargetSaveProfile(false);
+      setTargetProfileName('');
     }
     // The actual credential values are resolved server-side via the
     // source_profile_id / target_profile_id fields; we only pre-fill the
     // provider and name so the UI reflects the selection.
+  };
+
+  // Build the final provider URL for the source side (mirrors handleSubmit's logic).
+  const finalSourceUrlValue = (): string => sourceProvider === 'smb'
+    ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
+    : sourceProvider === 's3'
+    ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
+    : sourceProvider === 'sftp'
+    ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
+    : sourceProvider === 'magentacloud' || sourceProvider === 'local'
+    ? ''
+    : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos') ? `https://api.${sourceProvider}.com` : sourceUrl);
+
+  // Build the final provider URL for the target side.
+  const finalTargetUrlValue = (): string => targetProvider === 'smb'
+    ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
+    : targetProvider === 's3'
+    ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
+    : targetProvider === 'sftp'
+    ? `sftp://${targetSftpHost}:${targetSftpPort}`
+    : targetProvider === 'magentacloud' || targetProvider === 'local'
+    ? ''
+    : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos') ? `https://api.${targetProvider}.com` : targetUrl);
+
+  // Persist a connection as a reusable profile (called after a successful connect).
+  const saveProfile = async (role: 'source' | 'target', name: string) => {
+    if (!name.trim()) return false;
+    const isOAuth = (role === 'source'
+      ? (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'googlephotos')
+      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'googlephotos'));
+    const payload: Record<string, unknown> = {
+      name: name.trim(),
+      provider: role === 'source' ? sourceProvider : targetProvider,
+      url: role === 'source' ? finalSourceUrlValue() : finalTargetUrlValue(),
+      username: role === 'source' ? (isOAuth ? (sourceOAuthUser || sourceProvider) : sourceUser) : (isOAuth ? (targetOAuthUser || targetProvider) : targetUser),
+    };
+    if (!isOAuth && role === 'source' && sourcePass) payload.password = sourcePass;
+    if (!isOAuth && role === 'target' && targetPass) payload.password = targetPass;
+    if (isOAuth && role === 'source' && sourceRefreshToken) {
+      payload.refresh_token = sourceRefreshToken;
+      payload.oauth_user = sourceOAuthUser || sourceProvider;
+    }
+    if (isOAuth && role === 'target' && targetRefreshToken) {
+      payload.refresh_token = targetRefreshToken;
+      payload.oauth_user = targetOAuthUser || targetProvider;
+    }
+    try {
+      const res = await fetch(`${apiUrl}/api/profiles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  // Reload the saved profiles so the dropdowns reflect a freshly created one.
+  const refreshProfiles = () => {
+    fetch(`${apiUrl}/api/profiles`, { headers: { 'Authorization': `Bearer ${token}` } })
+      .then((res) => res.json())
+      .then((data: { profiles?: { id: string; name: string; provider: string }[] }) => {
+        if (data.profiles) setProfiles(data.profiles);
+      })
+      .catch(() => { /* non-fatal */ });
   };
 
   const openOAuthPopup = (provider: string, type: 'source' | 'target') => {
@@ -374,6 +448,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
         // Best-effort: persist the connection as a reusable profile
         // when the user opted in. Fire-and-forget; failures are silent.
+        if (sourceSaveProfile) {
+          const name = sourceProfileName.trim() || `${finalSourceUrlValue() || sourceProvider}`;
+          saveProfile('source', name).then((ok) => { if (ok) refreshProfiles(); });
+        }
+        if (targetSaveProfile) {
+          const name = targetProfileName.trim() || `${finalTargetUrlValue() || targetProvider}`;
+          saveProfile('target', name).then((ok) => { if (ok) refreshProfiles(); });
+        }
       } else {
         setError(translateApiError(data.error_code));
       }
@@ -505,7 +587,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 profiles={profiles}
                 selectedId={sourceProfileId}
                 onSelect={(id) => applyProfile('source', id)}
-                onClear={() => { setSourceProfileId(''); }}
+                onClear={() => { setSourceProfileId(''); setSourceSaveProfile(false); setSourceProfileName(''); }}
               />
 
               {sourceProfileId ? (
@@ -902,10 +984,19 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               )}
               </>
               )}
+              {!sourceProfileId && (
+                <SaveProfileRow
+                  idPrefix="source"
+                  checked={sourceSaveProfile}
+                  saveName={sourceProfileName}
+                  onSaveChange={setSourceSaveProfile}
+                  onNameChange={setSourceProfileName}
+                />
+              )}
             </div>
           </div>
-          
-          {/* Target Host Card */}
+           
+           {/* Target Host Card */}
           <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-navy to-portal-navy-light" />
             
@@ -924,7 +1015,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 profiles={profiles}
                 selectedId={targetProfileId}
                 onSelect={(id) => applyProfile('target', id)}
-                onClear={() => { setTargetProfileId(''); }}
+                onClear={() => { setTargetProfileId(''); setTargetSaveProfile(false); setTargetProfileName(''); }}
               />
 
               {targetProfileId ? (
@@ -1321,6 +1412,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               )}
               </>
               )}
+              {!targetProfileId && (
+                <SaveProfileRow
+                  idPrefix="target"
+                  checked={targetSaveProfile}
+                  saveName={targetProfileName}
+                  onSaveChange={setTargetSaveProfile}
+                  onNameChange={setTargetProfileName}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1407,6 +1507,49 @@ function ProfileSelect({ profiles, selectedId, onSelect, onClear }: {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// SaveProfileRow renders the "save as profile" checkbox + name input at the
+// bottom of a ConnectForm card. The parent only renders it when no saved
+// profile is currently selected, so the option disappears once the user has
+// chosen to reuse a stored profile.
+function SaveProfileRow({ idPrefix, checked, saveName, onSaveChange, onNameChange }: {
+  idPrefix: string;
+  checked: boolean;
+  saveName: string;
+  onSaveChange: (v: boolean) => void;
+  onNameChange: (v: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="pt-1">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          id={`saveProfile-${idPrefix}`}
+          checked={checked}
+          onChange={(e) => onSaveChange(e.target.checked)}
+          className="w-4 h-4 rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange/30 cursor-pointer"
+        />
+        <span className="text-[10px] text-[var(--color-text-secondary)] font-sans">
+          {t('settings.connections.saveProfile')}
+        </span>
+      </label>
+      {checked && (
+        <div className="mt-2 space-y-1.5">
+          <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('settings.connections.nameLabel')}</label>
+          <input
+            type="text"
+            value={saveName}
+            onChange={(e) => onNameChange(e.target.value)}
+            placeholder={idPrefix === 'source' ? t('connect.sourceTitle') : t('connect.targetTitle')}
+            className="w-full px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+          />
+          <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>
+        </div>
+      )}
     </div>
   );
 }
