@@ -1,0 +1,13 @@
+const icons = ['☁️','🌍','🖥️','📡','🚀','⚡','🔵','⭐','🌐','🔷','💾','🔄','📊','🔌','🌙'];
+const icon = icons[Math.floor(Math.random() * icons.length)];
+const canvas = document.createElement('canvas');
+canvas.width = 64; canvas.height = 64;
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = '#1e3a8a'; ctx.beginPath(); ctx.roundRect(0,0,64,64,12); ctx.fill();
+ctx.fillStyle = '#ffd700'; ctx.font = '36px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+ctx.fillText(icon, 32, 34);
+document.querySelector('link[rel="icon"]')?.remove();
+const link = document.createElement('link');
+link.rel = 'icon'; link.type = 'image/png';
+link.href = canvas.toDataURL();
+document.head.appendChild(link);
