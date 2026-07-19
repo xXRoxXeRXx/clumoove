@@ -127,6 +127,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           target_username: credentials.target_username,
           target_password: credentials.target_password,
           target_provider: credentials.target_provider,
+          target_profile_id: credentials.target_profile_id,
           path: folderPath,
         }),
       });
@@ -190,6 +191,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           target_username: credentials.target_username,
           target_password: credentials.target_password,
           target_provider: credentials.target_provider,
+          target_profile_id: credentials.target_profile_id,
           path: fullNewPath,
         }),
       });

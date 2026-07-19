@@ -714,6 +714,7 @@ type TargetBrowseRequest struct {
 	TargetUsername string `json:"target_username"`
 	TargetPassword string `json:"target_password"`
 	TargetProvider string `json:"target_provider"`
+	TargetProfileID string `json:"target_profile_id"`
 	Path           string `json:"path"`
 }
 
@@ -731,6 +732,29 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	if req.TargetProvider == "" {
 		req.TargetProvider = "nextcloud"
+	}
+
+	// Resolve a stored connection profile (by ID) into its credentials, so a
+	// profile-selected target works even when the inline URL is blank (the same
+	// server-side resolution used by handleConnect/handleStart).
+	if req.TargetProfileID != "" {
+		tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+			Provider: req.TargetProvider,
+			URL:      req.TargetURL,
+			Username: req.TargetUsername,
+			Password: req.TargetPassword,
+		})
+		if err != nil {
+			log.Printf("handleTargetBrowse: failed to load target profile: %v", err)
+			writeError(w, http.StatusNotFound, ErrProfileNotFound)
+			return
+		}
+		req.TargetProvider = tgt.Provider
+		req.TargetURL = tgt.URL
+		req.TargetUsername = tgt.Username
+		if req.TargetPassword == "" {
+			req.TargetPassword = tgt.Password
+		}
 	}
 
 	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
@@ -775,6 +799,7 @@ type TargetMkdirRequest struct {
 	TargetUsername string `json:"target_username"`
 	TargetPassword string `json:"target_password"`
 	TargetProvider string `json:"target_provider"`
+	TargetProfileID string `json:"target_profile_id"`
 	Path           string `json:"path"`
 }
 
@@ -796,6 +821,28 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 	if req.Path == "" || req.Path == "/" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrFolderPathInvalid})
 		return
+	}
+
+	// Resolve a stored connection profile (by ID) into its credentials, so a
+	// profile-selected target works even when the inline URL is blank.
+	if req.TargetProfileID != "" {
+		tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+			Provider: req.TargetProvider,
+			URL:      req.TargetURL,
+			Username: req.TargetUsername,
+			Password: req.TargetPassword,
+		})
+		if err != nil {
+			log.Printf("handleTargetMkdir: failed to load target profile: %v", err)
+			writeError(w, http.StatusNotFound, ErrProfileNotFound)
+			return
+		}
+		req.TargetProvider = tgt.Provider
+		req.TargetURL = tgt.URL
+		req.TargetUsername = tgt.Username
+		if req.TargetPassword == "" {
+			req.TargetPassword = tgt.Password
+		}
 	}
 
 	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
