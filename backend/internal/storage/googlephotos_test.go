@@ -459,19 +459,38 @@ func TestGooglePhotosStreamDownloadImageMaxResolution(t *testing.T) {
 }
 
 func TestGooglePhotosPickerStreamDownloadMaxResolution(t *testing.T) {
-	// The Picker baseUrl must receive the =w100000-h100000 (images) / =dv
-	// (videos) suffix so Google returns the full original resolution instead of
-	// the small web-optimised rendition the verbatim URL serves.
-	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/base/") {
-			if !strings.HasSuffix(r.URL.String(), "=w100000-h100000") {
-				t.Errorf("picker image download must request max resolution, got %q", r.URL.String())
+	// Picker downloads must resolve the full-resolution URL via the Library API
+	// mediaItems/{id} (photoslibrary.readonly) and apply =w{width}-h{height}
+	// (images) / =dv (videos) — NOT the verbatim Picker baseUrl, which returns a
+	// small web-optimised rendition and rejects =w-h with HTTP 400.
+	var resolvedURL string
+	var vs *httptest.Server
+	vs = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/mediaItems/"):
+			json.NewEncoder(w).Encode(googlePhotosMediaItem{
+				ID:       "picker-img-1",
+				Filename: "holiday.jpg",
+				MimeType: "image/jpeg",
+				BaseURL:  vs.URL + "/lib/base/picker-img-1",
+				MediaMetadata: struct {
+					CreationTime string                 `json:"creationTime"`
+					Width        string                 `json:"width"`
+					Height       string                 `json:"height"`
+					Photo        map[string]interface{} `json:"photo"`
+					Video        map[string]interface{} `json:"video"`
+				}{Width: "4032", Height: "3024"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/lib/base/"):
+			resolvedURL = r.URL.String()
+			if !strings.HasSuffix(resolvedURL, "=w4032-h3024") {
+				t.Errorf("picker image download must request =w{width}-h{height}, got %q", resolvedURL)
 			}
 			w.Header().Set("Content-Length", "999999")
 			w.Write([]byte("fullres-image-bytes"))
-			return
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
 		}
-		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer vs.Close()
 
@@ -494,6 +513,54 @@ func TestGooglePhotosPickerStreamDownloadMaxResolution(t *testing.T) {
 		t.Fatalf("Picker StreamDownload error: %v", err)
 	}
 	defer rc.Close()
+	if resolvedURL == "" {
+		t.Fatal("Library API mediaItems/{id} was not called for picker download")
+	}
+}
+
+func TestGooglePhotosPickerStreamDownloadFallbackWhenLibraryFails(t *testing.T) {
+	// When the Library API lookup fails (e.g. token without photoslibrary.readonly),
+	// the verbatim Picker baseUrl must be used as a fallback so the download still
+	// succeeds instead of hard-failing.
+	var usedFallback bool
+	var serverURL string
+	vs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/mediaItems/"):
+			w.WriteHeader(http.StatusForbidden)
+		case strings.HasPrefix(r.URL.Path, "/base/picker-img-1"):
+			usedFallback = true
+			w.Header().Set("Content-Length", "12345")
+			w.Write([]byte("fallback-bytes"))
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer vs.Close()
+	serverURL = vs.URL
+
+	item := PickerMediaItem{
+		ID:       "picker-img-1",
+		Name:     "holiday.jpg",
+		BaseURL:  serverURL + "/base/picker-img-1",
+		MimeType: "image/jpeg",
+	}
+	path := PickerPath(item)
+	p2 := &GooglePhotosProvider{
+		AccessToken:    "test-token",
+		HTTPClient:     vs.Client(),
+		BaseURL:        vs.URL,
+		albumTitleToID: make(map[string]string),
+		albumIDToTitle: make(map[string]string),
+	}
+	rc, err := p2.StreamDownload(context.Background(), "files", path)
+	if err != nil {
+		t.Fatalf("Picker StreamDownload error: %v", err)
+	}
+	defer rc.Close()
+	if !usedFallback {
+		t.Fatal("expected fallback to verbatim Picker baseUrl when Library API fails")
+	}
 }
 
 func TestPickerPathRoundTrip(t *testing.T) {

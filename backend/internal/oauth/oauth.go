@@ -57,6 +57,7 @@ func InitConfigs() {
 		Scopes: []string{
 			"https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
 			"https://www.googleapis.com/auth/photoslibrary.appendonly",
+			"https://www.googleapis.com/auth/photoslibrary.readonly",
 			"https://www.googleapis.com/auth/userinfo.email",
 			"https://www.googleapis.com/auth/userinfo.profile",
 		},
