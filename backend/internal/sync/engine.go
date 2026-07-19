@@ -26,7 +26,7 @@ type Engine struct {
 	// cancelMu guards the activePassCancels map which tracks in-progress
 	// RunSyncPass goroutines. Entries are added just before the goroutine body
 	// runs and removed when it returns, allowing CancelPass to interrupt them.
-	cancelMu         sync.Mutex
+	cancelMu          sync.Mutex
 	activePassCancels map[string]context.CancelFunc
 }
 
@@ -158,7 +158,20 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	}
 
 	log.Printf("[SyncEngine] Listing target files for job %s...\n", syncJobID)
-	targetRawMap, _, err := e.listFiles(ctx, targetClient, []string{job.TargetDir})
+	// For one-way we must enumerate the entire target tree so we can detect
+	// files that were deleted on source and propagate the deletion. For two-way
+	// we only need the target prefixes that correspond to the selected source
+	// paths, which avoids creating spurious "modified on target" tasks for
+	// unrelated files living under TargetDir.
+	var targetScanPaths []string
+	if job.Direction == "two_way" && len(job.SelectedPaths) > 0 {
+		for _, sp := range job.SelectedPaths {
+			targetScanPaths = append(targetScanPaths, path.Clean(path.Join(job.TargetDir, sp)))
+		}
+	} else {
+		targetScanPaths = []string{job.TargetDir}
+	}
+	targetRawMap, _, err := e.listFiles(ctx, targetClient, targetScanPaths)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Target file listing failed: %v", err))
 		return
@@ -326,13 +339,15 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 					log.Printf("[SyncEngine] Sync conflict for %s: skipping due to strategy SKIP\n", S)
 				case "RENAME":
 					// Rename target first, then upload source
-					renameTasks = append(renameTasks, taskToCreate{
-						filePath:     S,
-						fileSize:     0,
-						resourceType: "files",
-						action:       "conflict_copy",
-						side:         "target",
-					})
+					if conflictNeedsRename(job.ConflictStrategy) {
+						renameTasks = append(renameTasks, taskToCreate{
+							filePath:     S,
+							fileSize:     0,
+							resourceType: "files",
+							action:       "conflict_copy",
+							side:         "target",
+						})
+					}
 					tasks = append(tasks, taskToCreate{
 						filePath:     S,
 						fileSize:     srcFile.Size,
@@ -700,6 +715,12 @@ func (e *Engine) listFiles(ctx context.Context, client storage.StorageProvider, 
 	return fileMap, indexErrors, nil
 }
 
+// conflictNeedsRename reports whether a two-way conflict with the given strategy
+// must rename the target copy before uploading the source version.
+func conflictNeedsRename(strategy string) bool {
+	return strategy == "RENAME"
+}
+
 // getSourceRelPath maps a target path back to its source-side relative path by stripping the target dir prefix.
 func getSourceRelPath(targetPath, targetDir string) string {
 	targetPath = path.Clean("/" + targetPath)
@@ -719,6 +740,14 @@ func getSourceRelPath(targetPath, targetDir string) string {
 	return targetPath
 }
 
+// shouldRefreshToken reports whether the stored OAuth token should be rotated
+// before use. It refreshes only when an expiry is known and the token is within
+// 2 minutes of expiry (or already expired). A missing expiry is treated as
+// "do not refresh" to preserve the pre-existing behaviour.
+func shouldRefreshToken(expiry sql.NullTime) bool {
+	return expiry.Valid && !time.Now().Before(expiry.Time.Add(-2*time.Minute))
+}
+
 // ensureFreshToken refreshes OAuth credentials for a sync job if they are expired or near expiry.
 func (e *Engine) ensureFreshToken(syncJobID string, job *db.SyncJob, role string, currentToken string) (string, error) {
 	var expiry sql.NullTime
@@ -734,7 +763,7 @@ func (e *Engine) ensureFreshToken(syncJobID string, job *db.SyncJob, role string
 		refreshTokenEnc = job.TargetRefreshTokenEncrypted.String
 	}
 
-	if !expiry.Valid || time.Now().Before(expiry.Time.Add(-2*time.Minute)) {
+	if !shouldRefreshToken(expiry) {
 		return currentToken, nil
 	}
 
