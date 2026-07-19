@@ -62,6 +62,13 @@ func InitConfigs() {
 			"https://www.googleapis.com/auth/userinfo.profile",
 		},
 	}
+	configs["hidrive"] = ProviderConfig{
+		ClientID:     os.Getenv("HIDRIVE_CLIENT_ID"),
+		ClientSecret: os.Getenv("HIDRIVE_CLIENT_SECRET"),
+		AuthURL:      "https://my.hidrive.com/client/authorize",
+		TokenURL:     "https://my.hidrive.com/oauth2/token",
+		Scopes:       []string{"admin,rw"},
+	}
 }
 
 // ConfiguredProviders returns the set of OAuth provider keys that have both a

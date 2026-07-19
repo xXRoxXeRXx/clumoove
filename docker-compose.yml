@@ -41,13 +41,11 @@ services:
 
   # Go API Gateway & Backend Control
   api-backend:
-    build:
-      context: ./backend
-      target: prod
+    image: clumoove-api:local
     container_name: migration-api
     restart: unless-stopped
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     environment:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
@@ -59,14 +57,11 @@ services:
       - PORT=8000
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID}
-      - GOOGLE_PHOTOS_CLIENT_SECRET=${GOOGLE_PHOTOS_CLIENT_SECRET}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
+      - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID}
+      - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET}
       - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI}
-      - LOCAL_STORAGE_ROOT=/clumoove
-    volumes:
-      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
       - redis-queue
@@ -75,9 +70,7 @@ services:
 
   # Core Migration Engine (Worker)
   migration-worker:
-    build:
-      context: ./backend
-      target: prod
+    image: clumoove-api:local
     container_name: migration-worker-1
     restart: unless-stopped
     command: ["/app/worker"]
@@ -85,15 +78,13 @@ services:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID}
-      - GOOGLE_PHOTOS_CLIENT_SECRET=${GOOGLE_PHOTOS_CLIENT_SECRET}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET}
-      - LOCAL_STORAGE_ROOT=/clumoove
-    volumes:
-      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
+      - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID}
+      - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET}
     depends_on:
       - postgres-db
       - redis-queue
@@ -102,9 +93,7 @@ services:
 
   # Web-Frontend (React SPA)
   frontend:
-    build:
-      context: ./frontend
-      target: prod
+    image: clumoove-frontend:local
     container_name: migration-frontend
     restart: unless-stopped
     ports:
