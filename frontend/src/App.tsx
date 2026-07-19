@@ -485,7 +485,6 @@ function App() {
         @keyframes pulse-dot { 0%,100% { opacity:0.3; r:3; } 50% { opacity:1; r:6; } }
         @keyframes data-flow { to { stroke-dashoffset: -200; } }
         @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-        @keyframes spin-star { to { transform: rotate(360deg); } }
         @keyframes fly-right { 0% { transform: translateX(-100px) scale(0.5); opacity:0; } 10% { opacity:1; } 90% { opacity:1; } 100% { transform: translateX(1600px) scale(0.8); opacity:0; } }
         @keyframes fly-right2 { 0% { transform: translateX(-100px) scale(0.4); opacity:0; } 10% { opacity:0.8; } 90% { opacity:0.8; } 100% { transform: translateX(1600px) scale(0.6); opacity:0; } }
         @keyframes fly-right3 { 0% { transform: translateX(-100px) scale(0.6); opacity:0; } 10% { opacity:0.9; } 90% { opacity:0.9; } 100% { transform: translateX(1600px) scale(0.7); opacity:0; } }
@@ -683,37 +682,93 @@ function App() {
             </line>
           </g>
 
-          {/* Scattered stars (rotating) */}
-          <g opacity="0.2">
-            <g><animateTransform attributeName="transform" type="rotate" from="0 200 300" to="360 200 300" dur="20s" repeatCount="indefinite" />
-              <polygon points="200,300 203,315 218,315 206,324 211,338 200,329 189,338 194,324 182,315 197,315" fill="#ffd700" />
+          {/* Europa symbols, data centres, cloud transfer icons */}
+          <g opacity="0.15" fill="#ffd700">
+            {/* Europa star symbol (EU flag) */}
+            <g transform="translate(180,250)">
+              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 900 150" to="360 900 150" dur="25s" repeatCount="indefinite" />
-              <polygon points="900,150 903,165 918,165 906,174 911,188 900,179 889,188 894,174 882,165 897,165" fill="#ffd700" />
+            <g transform="translate(1050,180)">
+              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 1200 600" to="360 1200 600" dur="30s" repeatCount="indefinite" />
-              <polygon points="1200,600 1202,610 1212,610 1204,616 1207,626 1200,620 1193,626 1196,616 1188,610 1198,610" fill="#ffd700" />
+            <g transform="translate(1250,650)">
+              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 300 700" to="360 300 700" dur="22s" repeatCount="indefinite" />
-              <polygon points="300,700 302,710 312,710 304,716 307,726 300,720 293,726 296,716 288,710 298,710" fill="#ffd700" />
+            <g transform="translate(350,750)">
+              <circle cx="0" cy="0" r="6" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="0" y1="-8" x2="0" y2="8" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="-4" x2="7" y2="4" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="-7" y1="4" x2="7" y2="-4" stroke="#ffd700" strokeWidth="1.5" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 1100 200" to="360 1100 200" dur="28s" repeatCount="indefinite" />
-              <polygon points="1100,200 1102,210 1112,210 1104,216 1107,226 1100,220 1093,226 1096,216 1088,210 1098,210" fill="#ffd700" />
+
+            {/* Data centre/server rack symbols */}
+            <g transform="translate(280,420)">
+              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 400 450" to="360 400 450" dur="35s" repeatCount="indefinite" />
-              <polygon points="400,450 403,465 418,465 406,474 411,488 400,479 389,488 394,474 382,465 397,465" fill="#ffd700" />
+            <g transform="translate(100,150)">
+              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 1300 350" to="360 1300 350" dur="18s" repeatCount="indefinite" />
-              <polygon points="1300,350 1302,360 1312,360 1304,366 1307,376 1300,370 1293,376 1296,366 1288,360 1298,360" fill="#ffd700" />
+            <g transform="translate(1150,350)">
+              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 100 600" to="360 100 600" dur="26s" repeatCount="indefinite" />
-              <polygon points="100,600 103,615 118,615 106,624 111,638 100,629 89,638 94,624 82,615 97,615" fill="#ffd700" />
+            <g transform="translate(1350,500)">
+              <rect x="-6" y="-8" width="12" height="16" rx="1" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <rect x="-4" y="-6" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="-1" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
+              <rect x="-4" y="4" width="8" height="3" rx="0.5" fill="#ffd700" opacity="0.4" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 800 800" to="360 800 800" dur="32s" repeatCount="indefinite" />
-              <polygon points="800,800 803,815 818,815 806,824 811,838 800,829 789,838 794,824 782,815 797,815" fill="#ffd700" />
+
+            {/* Cloud transfer symbols */}
+            <g transform="translate(150,550)">
+              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
             </g>
-            <g><animateTransform attributeName="transform" type="rotate" from="0 500 50" to="360 500 50" dur="24s" repeatCount="indefinite" />
-              <polygon points="500,50 502,60 512,60 504,66 507,76 500,70 493,76 496,66 488,60 498,60" fill="#ffd700" />
+            <g transform="translate(900,700)">
+              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+            </g>
+            <g transform="translate(1200,100)">
+              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+            </g>
+            <g transform="translate(50,400)">
+              <path d="M-8,2 Q-8,-2 -4,-3 Q-3,-7 2,-7 Q7,-7 8,-3 Q11,-2 10,2 Q11,5 8,6 L-6,6 Q-9,5 -8,2Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <polygon points="0,10 3,4 -3,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+            </g>
+
+            {/* Globe/network symbols */}
+            <g transform="translate(400,120)">
+              <circle cx="0" cy="0" r="8" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <ellipse cx="0" cy="0" rx="4" ry="8" fill="none" stroke="#ffd700" strokeWidth="1" />
+              <line x1="-8" y1="0" x2="8" y2="0" stroke="#ffd700" strokeWidth="1" />
+            </g>
+            <g transform="translate(1100,500)">
+              <circle cx="0" cy="0" r="8" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <ellipse cx="0" cy="0" rx="4" ry="8" fill="none" stroke="#ffd700" strokeWidth="1" />
+              <line x1="-8" y1="0" x2="8" y2="0" stroke="#ffd700" strokeWidth="1" />
+            </g>
+            <g transform="translate(700,700)">
+              <circle cx="0" cy="0" r="8" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <ellipse cx="0" cy="0" rx="4" ry="8" fill="none" stroke="#ffd700" strokeWidth="1" />
+              <line x1="-8" y1="0" x2="8" y2="0" stroke="#ffd700" strokeWidth="1" />
             </g>
           </g>
 
