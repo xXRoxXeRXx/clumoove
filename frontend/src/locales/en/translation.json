@@ -116,7 +116,7 @@
     "googlePhotosPickerDone": "Selection confirmed.",
     "googlePhotosPickerConfirmed": "Your Google Photos selection is ready for migration.",
     "googlePhotosPickerLoadFailed": "The Google Photos picker could not be loaded. You can still start the migration; the selected items will be read at transfer time.",
-    "googlePhotosOriginalWarning": "Files from Google Photos are downloaded through the Photos API and cannot be retrieved as original quality. For the unmodified originals, use a data export via Google Takeout (takeout.google.com) instead.",
+    "googlePhotosOriginalWarning": "Files from Google Photos are downloaded through the Photos API, which never serves byte-identical originals — it re-encodes media and permanently reduces \"Storage saver\" uploads. We request the largest rendition the API offers, but true originals are only available via a Google Takeout export (takeout.google.com).",
     "submit": "Check connection",
     "sshKeyPem": "Security key (Key file)",
     "testing": "Checking connection...",

@@ -116,7 +116,7 @@
     "googlePhotosPickerDone": "Auswahl bestätigt.",
     "googlePhotosPickerConfirmed": "Deine Google-Photos-Auswahl ist für die Übertragung bereit.",
     "googlePhotosPickerLoadFailed": "Der Google Photos-Picker konnte nicht geladen werden. Du kannst die Übertragung trotzdem starten; die ausgewählten Elemente werden zur Übertragungszeit gelesen.",
-    "googlePhotosOriginalWarning": "Dateien aus Google Photos werden über die Photos-API heruntergeladen und können nicht in Originalqualität abgerufen werden. Für die unveränderten Originale nutze stattdessen einen Datenexport über Google Takeout (takeout.google.com).",
+    "googlePhotosOriginalWarning": "Dateien aus Google Photos werden über die Photos-API heruntergeladen, die niemals byte-identische Originale liefert — sie re-encodiert Medien und reduziert \"Speicher sparen\"-Uploads dauerhaft. Wir fordern die größte verfügbare Variante an, echte Originale gibt es nur über einen Google Takeout-Export (takeout.google.com).",
     "submit": "Verbindung prüfen",
     "sshKeyPem": "Sicherheitsschlüssel (Schlüsseldatei)",
     "testing": "Verbindung wird geprüft...",

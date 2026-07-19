@@ -873,13 +873,16 @@ func (p *GooglePhotosProvider) fetchMediaSize(ctx context.Context, baseURL strin
 	return resp.ContentLength, nil
 }
 
-// resolveDownloadURL returns the URL to GET the full-resolution bytes for a
-// Picker-sourced item. It first tries the Library API mediaItems/{id} (granted
-// by photoslibrary.readonly) which yields a fresh baseUrl and the original
-// width/height; we then append =w{width}-h{height} (images) or =dv (videos) to
-// force the maximum original resolution. The Picker baseUrl itself rejects
+// resolveDownloadURL returns the URL to GET the maximum-resolution bytes the
+// Photos API can serve for a Picker-sourced item. It first tries the Library API
+// mediaItems/{id} (granted by photoslibrary.readonly) which yields a fresh
+// baseUrl and the original width/height; we then append =w{width}-h{height}
+// (images) or =dv (videos) to force the LARGEST rendition the API offers. Note
+// this is still NOT byte-identical to the user's uploaded original: the Google
+// Photos API never serves untouched originals (it re-encodes, and "Storage
+// saver" uploads are permanently reduced). The Picker baseUrl itself rejects
 // these parameters (HTTP 400) and only serves a web-optimised rendition, so the
-// Library lookup is what unlocks the original quality. If the Library call
+// Library lookup is what unlocks the larger API rendition. If the Library call
 // fails for any reason we fall back to the verbatim Picker baseUrl so the
 // download still succeeds (at reduced resolution) instead of hard-failing.
 func (p *GooglePhotosProvider) resolveDownloadURL(ctx context.Context, mediaID, pickerBaseURL, mime string) string {
