@@ -490,7 +490,10 @@ function App() {
         @keyframes fly-right { 0% { transform: translateX(-100px) scale(0.5); opacity:0; } 10% { opacity:1; } 90% { opacity:1; } 100% { transform: translateX(1600px) scale(0.8); opacity:0; } }
         @keyframes fly-right2 { 0% { transform: translateX(-100px) scale(0.4); opacity:0; } 10% { opacity:0.8; } 90% { opacity:0.8; } 100% { transform: translateX(1600px) scale(0.6); opacity:0; } }
         @keyframes fly-right3 { 0% { transform: translateX(-100px) scale(0.6); opacity:0; } 10% { opacity:0.9; } 90% { opacity:0.9; } 100% { transform: translateX(1600px) scale(0.7); opacity:0; } }
-        @keyframes cloud-float { 0%,100% { transform: translateX(0); } 50% { transform: translateX(30px); } }
+        @keyframes fly-left { 0% { transform: translateX(1600px) scale(0.5); opacity:0; } 10% { opacity:1; } 90% { opacity:1; } 100% { transform: translateX(-100px) scale(0.8); opacity:0; } }
+        @keyframes fly-left2 { 0% { transform: translateX(1600px) scale(0.4); opacity:0; } 10% { opacity:0.8; } 90% { opacity:0.8; } 100% { transform: translateX(-100px) scale(0.6); opacity:0; } }
+        @keyframes fly-up { 0% { transform: translateY(900px) scale(0.4); opacity:0; } 10% { opacity:0.8; } 90% { opacity:0.8; } 100% { transform: translateY(-100px) scale(0.6); opacity:0; } }
+        @keyframes fly-down { 0% { transform: translateY(-100px) scale(0.6); opacity:0; } 10% { opacity:0.9; } 90% { opacity:0.9; } 100% { transform: translateY(900px) scale(0.7); opacity:0; } }
       `}</style>
       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden" aria-hidden="true">
         <svg viewBox="0 0 1440 900" xmlns="http://www.w3.org/2000/svg" className="w-full h-full" preserveAspectRatio="xMidYMid slice">
@@ -507,15 +510,6 @@ function App() {
               <stop offset="0%" stopColor="#ffd700" stopOpacity="0.6" />
               <stop offset="100%" stopColor="#ffd700" stopOpacity="0" />
             </radialGradient>
-            <pattern id="star-pattern" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
-              <g fill="#ffd700" opacity="0.1">
-                <circle cx="50" cy="55" r="22" />
-                <circle cx="32" cy="42" r="15" />
-                <circle cx="68" cy="42" r="15" />
-                <circle cx="42" cy="32" r="14" />
-                <circle cx="58" cy="32" r="14" />
-              </g>
-            </pattern>
           </defs>
 
           {/* Ambient glows */}
@@ -523,9 +517,6 @@ function App() {
           <circle cx="1200" cy="700" r="350" fill="url(#glow-blue)" />
           <circle cx="720" cy="100" r="280" fill="url(#glow-yellow)" />
           <circle cx="720" cy="800" r="280" fill="url(#glow-yellow)" />
-
-          {/* Cloud tiling */}
-          <rect x="0" y="0" width="1440" height="900" fill="url(#star-pattern)" />
 
           {/* Europa landmass (simplified, full map) */}
           <g opacity="0.08" fill="#1e3a8a">
@@ -828,61 +819,21 @@ function App() {
             </circle>
           </g>
 
-          {/* Cloud server icons floating above data centres */}
-          <g opacity="0.08" fill="#ffd700">
-            <g style={{animation: 'cloud-float 6s ease-in-out infinite'}}>
-              <path d="M460,160 Q470,150 485,150 Q500,150 505,160 Q515,158 520,165 Q525,172 518,178 L462,178 Q455,172 458,165 Q460,162 460,160Z" />
-              <rect x="472" y="168" width="8" height="3" rx="1" />
-              <rect x="485" y="168" width="8" height="3" rx="1" />
-              <rect x="498" y="168" width="8" height="3" rx="1" />
-            </g>
-            <g style={{animation: 'cloud-float 8s ease-in-out infinite 1s'}}>
-              <path d="M580,100 Q590,90 605,90 Q620,90 625,100 Q635,98 640,105 Q645,112 638,118 L582,118 Q575,112 578,105 Q580,102 580,100Z" />
-              <rect x="592" y="108" width="8" height="3" rx="1" />
-              <rect x="605" y="108" width="8" height="3" rx="1" />
-              <rect x="618" y="108" width="8" height="3" rx="1" />
-            </g>
-            <g style={{animation: 'cloud-float 7s ease-in-out infinite 2s'}}>
-              <path d="M680,140 Q690,130 705,130 Q720,130 725,140 Q735,138 740,145 Q745,152 738,158 L682,158 Q675,152 678,145 Q680,142 680,140Z" />
-              <rect x="692" y="148" width="8" height="3" rx="1" />
-              <rect x="705" y="148" width="8" height="3" rx="1" />
-              <rect x="718" y="148" width="8" height="3" rx="1" />
-            </g>
-            <g style={{animation: 'cloud-float 9s ease-in-out infinite 0.5s'}}>
-              <path d="M730,240 Q740,230 755,230 Q770,230 775,240 Q785,238 790,245 Q795,252 788,258 L732,258 Q725,252 728,245 Q730,242 730,240Z" />
-              <rect x="742" y="248" width="8" height="3" rx="1" />
-              <rect x="755" y="248" width="8" height="3" rx="1" />
-              <rect x="768" y="248" width="8" height="3" rx="1" />
-            </g>
-            <g style={{animation: 'cloud-float 6.5s ease-in-out infinite 3s'}}>
-              <path d="M580,300 Q590,290 605,290 Q620,290 625,300 Q635,298 640,305 Q645,312 638,318 L582,318 Q575,312 578,305 Q580,302 580,300Z" />
-              <rect x="592" y="308" width="8" height="3" rx="1" />
-              <rect x="605" y="308" width="8" height="3" rx="1" />
-              <rect x="618" y="308" width="8" height="3" rx="1" />
-            </g>
-            <g style={{animation: 'cloud-float 7.5s ease-in-out infinite 4s'}}>
-              <path d="M420,400 Q430,390 445,390 Q460,390 465,400 Q475,398 480,405 Q485,412 478,418 L422,418 Q415,412 418,405 Q420,402 420,400Z" />
-              <rect x="432" y="408" width="8" height="3" rx="1" />
-              <rect x="445" y="408" width="8" height="3" rx="1" />
-              <rect x="458" y="408" width="8" height="3" rx="1" />
-            </g>
-          </g>
-
-          {/* Flying file icons between servers (documents, video, table, archive) */}
+          {/* Flying file icons between servers — multi-directional migration traffic */}
           <g>
-            {/* Document icon flying LON→AMS */}
+            {/* Document → right */}
             <g style={{animation: 'fly-right 10s ease-in-out infinite'}} opacity="0.3">
               <rect x="0" y="0" width="18" height="22" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
               <line x1="5" y1="6" x2="13" y2="6" stroke="#ffd700" strokeWidth="1.5" />
               <line x1="5" y1="10" x2="13" y2="10" stroke="#ffd700" strokeWidth="1.5" />
               <line x1="5" y1="14" x2="11" y2="14" stroke="#ffd700" strokeWidth="1.5" />
             </g>
-            {/* Video icon flying AMS→FRA */}
+            {/* Video → right */}
             <g style={{animation: 'fly-right2 12s ease-in-out infinite 2s'}} opacity="0.3">
               <rect x="0" y="0" width="20" height="16" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
               <polygon points="8,4 16,8 8,12" fill="#ffd700" opacity="0.5" />
             </g>
-            {/* Table icon flying FRA→FRA2 */}
+            {/* Table → right */}
             <g style={{animation: 'fly-right3 14s ease-in-out infinite 4s'}} opacity="0.3">
               <rect x="0" y="0" width="18" height="18" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
               <line x1="0" y1="6" x2="18" y2="6" stroke="#ffd700" strokeWidth="1" />
@@ -890,13 +841,55 @@ function App() {
               <line x1="6" y1="0" x2="6" y2="18" stroke="#ffd700" strokeWidth="1" />
               <line x1="12" y1="0" x2="12" y2="18" stroke="#ffd700" strokeWidth="1" />
             </g>
-            {/* Archive/folder icon flying FRA2→MIL */}
+            {/* Folder → right */}
             <g style={{animation: 'fly-right 15s ease-in-out infinite 6s'}} opacity="0.3">
               <path d="M0,18 L0,4 Q0,2 2,2 L7,2 L9,4 L18,4 Q20,4 20,6 L20,18 Q20,20 18,20 L2,20 Q0,20 0,18Z" fill="none" stroke="#ffd700" strokeWidth="1.5" />
               <line x1="4" y1="10" x2="16" y2="10" stroke="#ffd700" strokeWidth="1" />
               <line x1="4" y1="14" x2="14" y2="14" stroke="#ffd700" strokeWidth="1" />
             </g>
-            {/* Document icon flying MIL→MAD */}
+            {/* Image → left */}
+            <g style={{animation: 'fly-left 11s ease-in-out infinite 1s'}} opacity="0.25">
+              <rect x="0" y="0" width="18" height="18" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <circle cx="6" cy="6" r="3" fill="#ffd700" opacity="0.4" />
+              <polygon points="4,14 10,8 14,14" fill="none" stroke="#ffd700" strokeWidth="1" />
+            </g>
+            {/* Spreadsheet → left */}
+            <g style={{animation: 'fly-left2 13s ease-in-out infinite 3s'}} opacity="0.25">
+              <rect x="0" y="0" width="18" height="22" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="3" y1="6" x2="15" y2="6" stroke="#ffd700" strokeWidth="1" />
+              <line x1="3" y1="10" x2="15" y2="10" stroke="#ffd700" strokeWidth="1" />
+              <line x1="3" y1="14" x2="15" y2="14" stroke="#ffd700" strokeWidth="1" />
+              <line x1="3" y1="18" x2="11" y2="18" stroke="#ffd700" strokeWidth="1" />
+              <rect x="9" y="0" width="1" height="22" fill="#ffd700" opacity="0.3" />
+            </g>
+            {/* Archive → up */}
+            <g style={{animation: 'fly-up 16s ease-in-out infinite 5s'}} opacity="0.2">
+              <rect x="0" y="0" width="20" height="16" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <path d="M2,16 L2,6 Q2,4 4,4 L16,4 Q18,4 18,6 L18,16" fill="none" stroke="#ffd700" strokeWidth="1" />
+              <line x1="5" y1="10" x2="15" y2="10" stroke="#ffd700" strokeWidth="1" />
+            </g>
+            {/* Code file → down */}
+            <g style={{animation: 'fly-down 14s ease-in-out infinite 7s'}} opacity="0.2">
+              <rect x="0" y="0" width="18" height="22" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <polyline points="5,8 8,11 5,14" fill="none" stroke="#ffd700" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <polyline points="13,8 10,11 13,14" fill="none" stroke="#ffd700" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </g>
+            {/* Database → up */}
+            <g style={{animation: 'fly-up 18s ease-in-out infinite 2s'}} opacity="0.2">
+              <ellipse cx="9" cy="4" rx="8" ry="3" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <path d="M1,4 L1,14 Q1,17 9,17 Q17,17 17,14 L17,4" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <path d="M1,9 Q1,12 9,12 Q17,12 17,9" fill="none" stroke="#ffd700" strokeWidth="1" />
+            </g>
+            {/* Document → down */}
+            <g style={{animation: 'fly-down 12s ease-in-out infinite 4s'}} opacity="0.25">
+              <rect x="0" y="0" width="16" height="20" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="4" y1="6" x2="12" y2="6" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="4" y1="10" x2="12" y2="10" stroke="#ffd700" strokeWidth="1.5" />
+              <line x1="4" y1="14" x2="10" y2="14" stroke="#ffd700" strokeWidth="1.5" />
+            </g>
+          </g>
+          {/* Additional right-bound migration traffic */}
+          <g>
             <g style={{animation: 'fly-right2 11s ease-in-out infinite 8s'}} opacity="0.3">
               <rect x="0" y="0" width="16" height="20" rx="2" fill="none" stroke="#ffd700" strokeWidth="1.5" />
               <line x1="4" y1="5" x2="12" y2="5" stroke="#ffd700" strokeWidth="1.5" />
