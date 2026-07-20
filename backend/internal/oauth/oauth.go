@@ -49,20 +49,8 @@ func InitConfigs() {
 			"https://www.googleapis.com/auth/userinfo.profile",
 		},
 	}
-	configs["googlephotos"] = ProviderConfig{
-		ClientID:     os.Getenv("GOOGLE_PHOTOS_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_PHOTOS_CLIENT_SECRET"),
-		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		Scopes: []string{
-			"https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
-			"https://www.googleapis.com/auth/photoslibrary.appendonly",
-			"https://www.googleapis.com/auth/photoslibrary.readonly",
-			"https://www.googleapis.com/auth/userinfo.email",
-			"https://www.googleapis.com/auth/userinfo.profile",
-		},
-	}
 }
+
 
 // ConfiguredProviders returns the set of OAuth provider keys that have both a
 // client ID and secret configured.
@@ -97,7 +85,7 @@ func GetAuthURL(provider, redirectURI, state string) (string, error) {
 		q.Set("scope", strings.Join(config.Scopes, " "))
 	}
 	// Request offline access for Google to receive a refresh_token.
-	if provider == "google" || provider == "googlephotos" {
+	if provider == "google" {
 		q.Set("access_type", "offline")
 		q.Set("prompt", "consent") // force consent screen so refresh_token is always returned
 	}
@@ -210,35 +198,6 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 
 		if resp.StatusCode != http.StatusOK {
 			return "", fmt.Errorf("failed to fetch google user info: status %d", resp.StatusCode)
-		}
-
-		var info struct {
-			Name  string `json:"name"`
-			Email string `json:"email"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-			return "", err
-		}
-
-		if info.Name != "" {
-			return info.Name, nil
-		}
-		return info.Email, nil
-	case "googlephotos":
-		req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
-		if err != nil {
-			return "", err
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-
-		resp, err := httpClient.Do(req)
-		if err != nil {
-			return "", err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("failed to fetch google photos user info: status %d", resp.StatusCode)
 		}
 
 		var info struct {

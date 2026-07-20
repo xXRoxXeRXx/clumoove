@@ -28,7 +28,6 @@ var providerForbiddenChars = map[string][]rune{
 	"magentacloud": {'/'},
 	"webdav":   {'/'},
 	"sftp":     {'/'},
-	"googlephotos": {'/'},
 }
 
 var providerMaxLength = map[string]int{
@@ -39,7 +38,6 @@ var providerMaxLength = map[string]int{
 	"magentacloud": 255,
 	"webdav":    255,
 	"sftp":      255,
-	"googlephotos": 255,
 	"s3":        1024,
 }
 
@@ -47,7 +45,6 @@ var caseInsensitiveProviders = map[string]bool{
 	"dropbox": true,
 	"google":  true,
 	"smb":     true,
-	"googlephotos": true,
 }
 
 func IsCaseInsensitive(provider string) bool {

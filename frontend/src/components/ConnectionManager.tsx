@@ -11,7 +11,7 @@ interface ConnectionManagerProps {
   oauthProviders?: Record<string, boolean>;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'googlephotos' | 'smb' | 's3' | 'sftp' | 'local';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp' | 'local';
 
 interface ProfilePublic {
   id: string;
@@ -127,11 +127,10 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     { id: 'sftp', name: 'SFTP' },
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
     ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
-    ...(oauthProviders.googlephotos ? [{ id: 'googlephotos' as const, name: 'Google Photos' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : []),
   ];
 
-  const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google' || prov === 'googlephotos';
+  const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google';
 
   return (
     <div className="space-y-6">
@@ -343,7 +342,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const [oauthRefreshToken, setOauthRefreshToken] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
 
-  const isOAuth = provider === 'dropbox' || provider === 'google' || provider === 'googlephotos';
+  const isOAuth = provider === 'dropbox' || provider === 'google';
   const needsPassword = !isOAuth && provider !== 'local';
 
   const openOAuthPopup = () => {
@@ -468,7 +467,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
               ) : (
                 <button type="button" onClick={openOAuthPopup}
                   className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : provider === 'googlephotos' ? 'Google Photos' : 'Dropbox' })}
+                  <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : 'Dropbox' })}
                 </button>
               )}
               {editing && !oauthRefreshToken && (
