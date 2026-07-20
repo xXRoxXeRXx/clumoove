@@ -1,4 +1,4 @@
-﻿package storage
+package storage
 
 import (
 	"context"
@@ -76,9 +76,6 @@ func TestNewProviderOAuthProviders(t *testing.T) {
 	}
 	if p, err := NewProvider(context.Background(), "google", "", "u", "oauth-token"); err != nil || p == nil {
 		t.Errorf("google: got p=%v err=%v", p, err)
-	}
-	if p, err := NewProvider(context.Background(), "googlephotos", "", "u", "oauth-token"); err != nil || p == nil {
-		t.Errorf("googlephotos: got p=%v err=%v", p, err)
 	}
 	// magentacloud ignores url.
 	if p, err := NewProvider(context.Background(), "magentacloud", "", "u", "p"); err != nil || p == nil {

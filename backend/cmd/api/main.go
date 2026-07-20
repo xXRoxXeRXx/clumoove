@@ -378,9 +378,6 @@ func main() {
 	mux.Handle("POST /api/migration/target/browse", jwtMiddleware(http.HandlerFunc(server.handleTargetBrowse)))
 	mux.Handle("POST /api/migration/target/mkdir", jwtMiddleware(http.HandlerFunc(server.handleTargetMkdir)))
 	mux.Handle("POST /api/migration/start", jwtMiddleware(http.HandlerFunc(server.handleStart)))
-	mux.Handle("POST /api/googlephotos/picker/session", jwtMiddleware(http.HandlerFunc(server.handleGooglePhotosPickerSession)))
-	mux.Handle("POST /api/googlephotos/picker/poll", jwtMiddleware(http.HandlerFunc(server.handleGooglePhotosPickerPoll)))
-	mux.Handle("POST /api/googlephotos/picker/media", jwtMiddleware(http.HandlerFunc(server.handleGooglePhotosPickerMedia)))
 	mux.Handle("GET /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetStatus)))
 	mux.Handle("POST /api/migration/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePause)))
 	mux.Handle("POST /api/migration/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResume)))
@@ -626,7 +623,7 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 	// OAuth providers need an *access* token in the password field (the storage
 	// layer treats it as a Bearer token). A stored profile only keeps the refresh
 	// token, so exchange it for a fresh access token before connecting/starting.
-	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "googlephotos"
+	isOAuth := p.Provider == "dropbox" || p.Provider == "google"
 	if isOAuth && refreshToken != "" {
 		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
 			password = tok.AccessToken
@@ -687,17 +684,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		reqPath = "/"
 	}
 
-	// A Google Photos SOURCE is selected via the Picker UI, not a browsable
-	// folder tree (the read scope no longer grants library listing). Browsing
-	// would 403 and surface a confusing generic error, so short-circuit with a
-	// clear machine-readable code and an empty list.
-	if req.SourceProvider == "googlephotos" {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"success":    false,
-			"error_code": ErrGooglePhotosPickerBrowseUnsupported,
-		})
-		return
-	}
+
 
 	// List the requested path for files, or root "/" for calendars/contacts
 	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, reqPath)
@@ -1317,57 +1304,17 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// the Picker UI; enumerate exactly those items here so the file-selection
 	// screen can show (and pre-select) them before the migration starts.
 	var files []storage.CloudResource
-	if req.SourceProvider == "googlephotos" {
-		if req.SourcePickerSessionID != "" {
-			if gp, ok := sourceClient.(*storage.GooglePhotosProvider); ok {
-				gp.SetPickerSession(req.SourcePickerSessionID)
-				items, lerr := gp.GetPickerMediaItems(r.Context(), req.SourcePickerSessionID)
-				if lerr != nil {
-					// Try a single token refresh on expiry, mirroring the picker
-					// media/session/poll handlers, so a stale access token picked
-					// up on a lingering connect screen does not abort the connect.
-					if (errors.Is(lerr, storage.ErrAuth) || errors.Is(lerr, storage.ErrPickerSessionExpired)) && req.SourceRefreshToken != "" {
-						refreshed, rerr := refreshGooglePhotosClient(r.Context(), req.SourceRefreshToken)
-						if rerr == nil {
-							gp = refreshed
-							defer gp.Close()
-							gp.SetPickerSession(req.SourcePickerSessionID)
-							items, lerr = gp.GetPickerMediaItems(r.Context(), req.SourcePickerSessionID)
-						}
-					}
-					if lerr != nil {
-						log.Printf("handleConnect: failed to list google photos picker items (session %s): %v", req.SourcePickerSessionID, lerr)
-						writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
-						return
-					}
-				}
-				for _, item := range items {
-					files = append(files, storage.CloudResource{
-						Path:   storage.PickerPath(item),
-						Name:   item.Name,
-						Size:   item.Size,
-						IsDir:  false,
-						Hash:   "",
-						LastModified: time.Time{},
-					})
-				}
-			}
-		}
-		// Without a Picker session there is no folder tree to render; return an
-		// empty list (media is selected later on the file-selection screen).
-	} else {
-		reqPath := req.Path
-		if reqPath == "" {
-			reqPath = "/"
-		}
-		listCtx, listCancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer listCancel()
-		files, err = sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
-		if err != nil {
-			log.Printf("handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
-			return
-		}
+	reqPath := req.Path
+	if reqPath == "" {
+		reqPath = "/"
+	}
+	listCtx, listCancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer listCancel()
+	files, err = sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
+	if err != nil {
+		log.Printf("handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -1376,289 +1323,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GooglePhotosPickerSessionRequest is the body of POST /api/googlephotos/picker/session.
-type GooglePhotosPickerSessionRequest struct {
-	Provider      string `json:"provider"`
-	AccessToken   string `json:"access_token"`
-	RefreshToken  string `json:"refresh_token"`
-}
 
-// refreshGooglePhotosClient attempts a single OAuth token refresh for the
-// googlephotos provider and, on success, builds a fresh *storage.GooglePhotosProvider
-// from the refreshed access token. The caller is responsible for closing the
-// returned client. This centralises the refresh-plus-rebuild logic shared by the
-// Picker session and poll handlers so the two cannot drift apart.
-func refreshGooglePhotosClient(ctx context.Context, refreshToken string) (*storage.GooglePhotosProvider, error) {
-	if refreshToken == "" {
-		return nil, errors.New("empty refresh token")
-	}
-	refreshed, rerr := oauth.RefreshToken(ctx, "googlephotos", refreshToken)
-	if rerr != nil || refreshed.AccessToken == "" {
-		if rerr != nil {
-			return nil, rerr
-		}
-		return nil, errors.New("refresh returned empty access token")
-	}
-	return storage.NewGooglePhotosProvider(context.Background(), refreshed.AccessToken)
-}
-
-// handleGooglePhotosPickerSession creates a Google Photos Picker session for an
-// already-authenticated googlephotos source. The returned session_id is used by
-// the frontend to open the Photos Picker in a new tab; the actual media items
-// are enumerated later by the indexer (so the session is reused end-to-end).
-// Never log the picker session's derived URLs/baseUrls — they are credentialed.
-func (s *APIServer) handleGooglePhotosPickerSession(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return
-	}
-
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
-		return
-	}
-
-	var req GooglePhotosPickerSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
-		return
-	}
-	if req.Provider != "googlephotos" {
-		writeError(w, http.StatusBadRequest, ErrProviderUnsupported)
-		return
-	}
-	if req.AccessToken == "" {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
-		return
-	}
-
-	// Build a provider with the caller-supplied access token and create a Picker
-	// session. We do not decrypt any DB-stored token here — the frontend passes
-	// the freshly returned OAuth access token from the popup. Use a detached
-	// context for the provider's HTTP client: the request body is already fully
-	// decoded above, and a client built from r.Context() would have its transport
-	// torn down if the client disconnects mid-call, failing the session creation.
-	accessToken := req.AccessToken
-	client, err := storage.NewGooglePhotosProvider(context.Background(), accessToken)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-		return
-	}
-	defer client.Close()
-
-	sessionCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	session, err := client.CreatePickerSessionFull(sessionCtx)
-	if err != nil {
-		// A 403 means the Picker API service is not enabled in the Cloud
-		// project — tell the user specifically instead of the generic failure.
-		if errors.Is(err, storage.ErrPickerAPIForbidden) {
-			log.Printf("handleGooglePhotosPickerSession: picker API forbidden (user=%s): %v", userID, err)
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerAPIDisabled})
-			return
-		}
-		// If the access token expired (401), try a single refresh before giving
-		// up. The frontend passes a freshly minted access token, but it may still
-		// be stale if the user lingered on the connect screen.
-		if errors.Is(err, storage.ErrAuth) && req.RefreshToken != "" {
-			var refreshed *storage.GooglePhotosProvider
-			refreshed, rerr := refreshGooglePhotosClient(sessionCtx, req.RefreshToken)
-			if rerr == nil {
-				client = refreshed
-				defer client.Close()
-				session, err = client.CreatePickerSessionFull(sessionCtx)
-			}
-		}
-		if err != nil {
-			log.Printf("handleGooglePhotosPickerSession: failed to create session (user=%s): %v", userID, err)
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-			return
-		}
-	}
-
-	// Log only the session id length — never the id itself or the pickerUri.
-	log.Printf("handleGooglePhotosPickerSession: created picker session for user %s (idLen=%d)", userID, len(session.SessionID))
-
-	resp := map[string]interface{}{
-		"success":    true,
-		"session_id": session.SessionID,
-		"picker_uri": session.PickerURI,
-	}
-	if session.PollingConfig != nil {
-		resp["poll_interval"] = session.PollingConfig.PollInterval
-		resp["timeout_in"] = session.PollingConfig.TimeoutIn
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// GooglePhotosPickerPollRequest is the body of POST /api/googlephotos/picker/poll.
-// It carries the session id to check and the OAuth token needed to authenticate
-// the sessions.get call. The frontend polls this after the user opens the
-// pickerUri, until media_items_set becomes true.
-type GooglePhotosPickerPollRequest struct {
-	Provider     string `json:"provider"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	SessionID    string `json:"session_id"`
-}
-
-// handleGooglePhotosPickerPoll checks whether the user has finished selecting
-// media in a Google Photos Picker session. The Photos Picker API has no
-// embeddable widget: the user opens the pickerUri in a new tab, and the app
-// polls sessions.get until mediaItemsSet is true.
-func (s *APIServer) handleGooglePhotosPickerPoll(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return
-	}
-
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
-		return
-	}
-
-	var req GooglePhotosPickerPollRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
-		return
-	}
-	if req.Provider != "googlephotos" || req.AccessToken == "" || req.SessionID == "" {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
-		return
-	}
-
-	client, err := storage.NewGooglePhotosProvider(context.Background(), req.AccessToken)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-		return
-	}
-	defer client.Close()
-
-	pollCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	session, err := client.GetPickerSession(pollCtx, req.SessionID)
-	if err != nil {
-		// Try one token refresh on expiry, mirroring session creation.
-		if errors.Is(err, storage.ErrAuth) && req.RefreshToken != "" {
-			refreshed, rerr := refreshGooglePhotosClient(pollCtx, req.RefreshToken)
-			if rerr == nil {
-				client = refreshed
-				defer client.Close()
-				session, err = client.GetPickerSession(pollCtx, req.SessionID)
-			}
-		}
-		if err != nil {
-			if errors.Is(err, storage.ErrPickerSessionExpired) {
-				writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-				return
-			}
-			log.Printf("handleGooglePhotosPickerPoll: failed to poll session (user=%s): %v", userID, err)
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-			return
-		}
-	}
-
-	resp := map[string]interface{}{
-		"success":         true,
-		"media_items_set": session.MediaItemsSet,
-	}
-	if session.PollingConfig != nil {
-		resp["poll_interval"] = session.PollingConfig.PollInterval
-		resp["timeout_in"] = session.PollingConfig.TimeoutIn
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-// GooglePhotosPickerMediaRequest is the body of POST /api/googlephotos/picker/media.
-// It carries the confirmed Picker session id and the OAuth tokens. The frontend
-// calls this once the user has finished selecting media in the Picker UI (after
-// the poll reports media_items_set), to fetch the concrete list of chosen items
-// for display in the file-selection screen.
-type GooglePhotosPickerMediaRequest struct {
-	Provider     string `json:"provider"`
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	SessionID    string `json:"session_id"`
-}
-
-// handleGooglePhotosPickerMedia enumerates the media items the user selected in a
-// Google Photos Picker session and returns them as CloudResources (path =
-// PickerPath transport handle, name, size, is_dir=false). These are shown in the
-// file-selection screen so the user can review and (de)select before starting.
-func (s *APIServer) handleGooglePhotosPickerMedia(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return
-	}
-
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
-		return
-	}
-
-	var req GooglePhotosPickerMediaRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
-		return
-	}
-	if req.Provider != "googlephotos" || req.AccessToken == "" || req.SessionID == "" {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
-		return
-	}
-
-	client, err := storage.NewGooglePhotosProvider(context.Background(), req.AccessToken)
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-		return
-	}
-	defer client.Close()
-
-	mediaCtx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-	defer cancel()
-	client.SetPickerSession(req.SessionID)
-	items, err := client.GetPickerMediaItems(mediaCtx, req.SessionID)
-	if err != nil {
-		// Try one token refresh on expiry, mirroring session creation/poll.
-		if (errors.Is(err, storage.ErrAuth) || errors.Is(err, storage.ErrPickerSessionExpired)) && req.RefreshToken != "" {
-			refreshed, rerr := refreshGooglePhotosClient(mediaCtx, req.RefreshToken)
-			if rerr == nil {
-				client = refreshed
-				defer client.Close()
-				client.SetPickerSession(req.SessionID)
-				items, err = client.GetPickerMediaItems(mediaCtx, req.SessionID)
-			}
-		}
-		if err != nil {
-			if errors.Is(err, storage.ErrPickerSessionExpired) {
-				writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-				return
-			}
-			log.Printf("handleGooglePhotosPickerMedia: failed to list items (user=%s, session=%s): %v", userID, req.SessionID, err)
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrGooglePhotosPickerSessionFailed})
-			return
-		}
-	}
-
-	files := make([]storage.CloudResource, 0, len(items))
-	for _, item := range items {
-		files = append(files, storage.CloudResource{
-			Path:         storage.PickerPath(item),
-			Name:         item.Name,
-			Size:         item.Size,
-			IsDir:        false,
-			Hash:         "",
-			LastModified: time.Time{},
-		})
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"success": true,
-		"files":   files,
-	})
-}
 
 type StartRequest struct {
 	ConnectRequest
@@ -1836,12 +1501,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		threads = 16
 	}
 
-	// Google Photos is rate-limited and single-threaded (parallel uploads
-	// exhaust the quota with HTTP 429 almost immediately). Force threads to 1
-	// when either side is googlephotos, regardless of what the client sent.
-	if req.SourceProvider == "googlephotos" || req.TargetProvider == "googlephotos" {
-		threads = 1
-	}
+
 
 	// Validate bandwidth limit
 	bandwidthLimit := req.BandwidthLimitMbps
@@ -2295,7 +1955,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 	// A stored profile keeps only the OAuth refresh token; exchange it for a
 	// fresh access token (used as the Bearer token by the storage layer) before
 	// testing the connection.
-	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "googlephotos"
+	isOAuth := p.Provider == "dropbox" || p.Provider == "google"
 	if isOAuth && refreshToken != "" {
 		password = refreshToken
 		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
