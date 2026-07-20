@@ -261,6 +261,10 @@ func (p *davProvider) InspectResource(ctx context.Context, resourceType, resourc
 				}
 			}
 
+			if prop.GetETag != "" {
+				res.ETag = strings.Trim(prop.GetETag, `"`)
+			}
+
 			// Parse checksums
 			if prop.Checksums != nil {
 				for _, checksum := range prop.Checksums.Checksum {
@@ -289,6 +293,7 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 				<d:getlastmodified/>
 				<d:getcontentlength/>
 				<d:resourcetype/>
+				<d:getetag/>
 				<oc:checksums/>
 			</d:prop>
 		</d:propfind>`)
@@ -373,6 +378,10 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 					if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
 						res.LastModified = t
 					}
+				}
+
+				if prop.GetETag != "" {
+					res.ETag = strings.Trim(prop.GetETag, `"`)
 				}
 
 				// Parse checksums
