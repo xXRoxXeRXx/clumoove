@@ -407,7 +407,7 @@ func (p *Processor) RunRetryScheduler(ctx context.Context) {
 
 func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	query := `
-		SELECT t.id, COALESCE(t.migration_id, t.sync_job_id, '')
+		SELECT t.id, COALESCE(t.migration_id::text, t.sync_job_id::text, '')
 		FROM tasks t
 		LEFT JOIN migrations m ON t.migration_id = m.id
 		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
@@ -568,7 +568,7 @@ func (p *Processor) RunOrphanedRunningTasksRecovery(ctx context.Context) {
 // whose updated_at is older than 10 minutes (i.e. they were picked up but never finished).
 func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 	query := `
-		SELECT t.id, COALESCE(t.migration_id, t.sync_job_id, '')
+		SELECT t.id, COALESCE(t.migration_id::text, t.sync_job_id::text, '')
 		FROM tasks t
 		LEFT JOIN migrations m ON t.migration_id = m.id
 		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
