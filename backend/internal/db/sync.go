@@ -44,6 +44,7 @@ type SyncJob struct {
 	ChangedFiles                int            `json:"changed_files"`
 	DeletedFiles                int            `json:"deleted_files"`
 	FailedFiles                 int            `json:"failed_files"`
+	ActiveFiles                 []string       `json:"active_files,omitempty"`
 	CreatedAt                   time.Time      `json:"created_at"`
 	UpdatedAt                   time.Time      `json:"updated_at"`
 }
@@ -659,4 +660,28 @@ func UpdateSyncJobThreads(db *sql.DB, id string, threads int) error {
 	query := `UPDATE sync_jobs SET threads = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	_, err := db.Exec(query, threads, id)
 	return err
+}
+
+// GetActiveSyncTaskPaths returns the file_paths of all tasks currently in RUNNING state for the given sync job.
+func GetActiveSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) ([]string, error) {
+	query := `SELECT file_path, metadata FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING' ORDER BY updated_at DESC`
+	rows, err := db.QueryContext(ctx, query, syncJobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		var meta json.RawMessage
+		if err := rows.Scan(&path, &meta); err != nil {
+			return nil, err
+		}
+		paths = append(paths, displayTaskName(path, meta))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return paths, nil
 }

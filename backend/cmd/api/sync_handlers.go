@@ -283,6 +283,12 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if job.Status == "RUNNING" || job.Status == "INDEXING" {
+		if activeFiles, err := db.GetActiveSyncTaskPaths(s.db, r.Context(), id); err == nil {
+			job.ActiveFiles = activeFiles
+		}
+	}
+
 	writeJSON(w, http.StatusOK, job)
 }
 
@@ -556,6 +562,13 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			}
 			if jobs == nil {
 				jobs = []db.SyncJob{}
+			}
+			for i := range jobs {
+				if jobs[i].Status == "RUNNING" || jobs[i].Status == "INDEXING" {
+					if activeFiles, err := db.GetActiveSyncTaskPaths(s.db, r.Context(), jobs[i].ID); err == nil {
+						jobs[i].ActiveFiles = activeFiles
+					}
+				}
 			}
 
 			data, err := json.Marshal(jobs)
