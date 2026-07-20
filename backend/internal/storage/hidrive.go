@@ -261,8 +261,25 @@ func (p *HiDriveProvider) StreamDownload(ctx context.Context, resourceType, file
 	return resp.Body, nil
 }
 
+func (p *HiDriveProvider) deleteIfExists(ctx context.Context, filePath string) error {
+	exists, _, err := p.FileExists(ctx, "files", filePath)
+	if err != nil {
+		return err
+	}
+	if exists {
+		if err := p.DeleteFile(ctx, "files", filePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
+		return err
+	}
+
+	if err := p.deleteIfExists(ctx, filePath); err != nil {
 		return err
 	}
 
@@ -291,7 +308,6 @@ func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	q := req.URL.Query()
 	q.Set("dir", p.cleanPath(dir))
 	q.Set("name", name)
-	q.Set("on_exist", "overwrite")
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := p.HTTPClient.Do(req)
@@ -304,7 +320,8 @@ func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePa
 		return fmt.Errorf("hidrive upload: %w", ErrAuth)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("hidrive upload failed, status: %d", resp.StatusCode)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("hidrive upload failed, status: %d, body: %s", resp.StatusCode, string(body))
 	}
 
 	return nil
@@ -322,6 +339,10 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
+		return err
+	}
+
+	if err := p.deleteIfExists(ctx, filePath); err != nil {
 		return err
 	}
 
@@ -360,7 +381,6 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		q := req.URL.Query()
 		q.Set("dir", p.cleanPath(dir))
 		q.Set("name", name)
-		q.Set("on_exist", "overwrite")
 		req.URL.RawQuery = q.Encode()
 
 		resp, err := p.HTTPClient.Do(req)
@@ -368,16 +388,18 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 			cancel()
 			return fmt.Errorf("hidrive chunked upload chunk %d: %w", chunkIndex, err)
 		}
-		resp.Body.Close()
-
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
 			cancel()
 			return fmt.Errorf("hidrive chunked upload: %w", ErrAuth)
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
 			cancel()
-			return fmt.Errorf("hidrive chunked upload chunk %d failed, status: %d", chunkIndex, resp.StatusCode)
+			return fmt.Errorf("hidrive chunked upload chunk %d failed, status: %d, body: %s", chunkIndex, resp.StatusCode, string(bodyBytes))
 		}
+		resp.Body.Close()
 
 		uploaded += chunkSizeActual
 		chunkIndex++
