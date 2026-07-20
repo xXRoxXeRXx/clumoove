@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -44,6 +45,7 @@ type davProvider struct {
 	// Nextcloud supports files/calendars/contacts; files-only providers (e.g.
 	// MagentaCLOUD) declare only "files".
 	supportedResourceTypes map[string]bool
+	createdDirs            sync.Map
 }
 
 // assertResourceType returns an error if the provider does not support the
@@ -690,6 +692,12 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 	currentPath := ""
 	for i, part := range parts {
 		currentPath = currentPath + "/" + part
+		dirKey := resourceType + ":" + currentPath
+
+		if _, exists := p.createdDirs.Load(dirKey); exists {
+			continue
+		}
+
 		u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, currentPath)
 
 		var req *http.Request
@@ -724,7 +732,9 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("nextcloud mkdir: %w", ErrAuth)
 		}
-		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
+			p.createdDirs.Store(dirKey, true)
+		} else {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
 	}
