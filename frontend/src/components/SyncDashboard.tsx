@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
-import { Play, Pause, ArrowLeft, RefreshCw, Download, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Play, Pause, ArrowLeft, RefreshCw, Download, CheckCircle2, XCircle, AlertTriangle, Loader2, HardDrive, Clock } from 'lucide-react';
 import type { SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
-import { useFormat } from '../utils/format';
+import { useFormat, formatBytes, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 
 interface SyncDashboardProps {
@@ -19,7 +19,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [threads, setThreads] = useState<number>(4);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
+  const [speed, setSpeed] = useState<number>(0);
+  const [eta, setEta] = useState<string>('');
   const threadsDraggingRef = useRef<boolean>(false);
+  const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
+  const lastActiveSpeed = useRef<number>(0);
+  const lastActiveTime = useRef<number>(0);
 
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
@@ -30,6 +35,69 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       setThreads(job.threads);
     }
   }, [job?.threads]);
+
+  // Live speed and ETA calculation helper (called on fetch/SSE updates)
+  const updateMetrics = useCallback((data: SyncJob) => {
+    if (data.status === 'COMPLETED') {
+      setSpeed(0);
+      setEta(t('dashboard.eta.done'));
+    } else if (data.status === 'PAUSED' || data.status === 'IDLE') {
+      setSpeed(0);
+      setEta('-');
+    } else if (data.status === 'PAUSED_CONNECTION_LOSS') {
+      setSpeed(0);
+      setEta(t('dashboard.eta.waitingConn'));
+    } else {
+      const processedBytes = data.processed_bytes || 0;
+      const liveBytes = typeof data.live_bytes === 'number' ? data.live_bytes : processedBytes;
+      const totalBytes = data.total_bytes || 0;
+      const now = Date.now();
+
+      progressHistory.current.push({ timestamp: now, bytes: liveBytes });
+      const windowLimit = now - 15000;
+      progressHistory.current = progressHistory.current.filter((item) => item.timestamp >= windowLimit);
+
+      if (progressHistory.current.length >= 2) {
+        const oldest = progressHistory.current[0];
+        const newest = progressHistory.current[progressHistory.current.length - 1];
+        const timeDiffSec = (newest.timestamp - oldest.timestamp) / 1000;
+
+        if (timeDiffSec > 0.5) {
+          const bytesDiff = newest.bytes - oldest.bytes;
+          let calculatedSpeed: number;
+
+          if (bytesDiff > 0) {
+            calculatedSpeed = bytesDiff / timeDiffSec;
+            lastActiveSpeed.current = calculatedSpeed;
+            lastActiveTime.current = now;
+          } else {
+            const timeSinceLastActive = now - lastActiveTime.current;
+            if (lastActiveSpeed.current > 0 && timeSinceLastActive < 15000) {
+              calculatedSpeed = lastActiveSpeed.current;
+            } else {
+              calculatedSpeed = 0;
+            }
+          }
+
+          setSpeed(calculatedSpeed);
+
+          const effectiveBytes = Math.min(totalBytes, Math.max(processedBytes, liveBytes));
+          const remainingBytes = Math.max(0, totalBytes - effectiveBytes);
+          if (remainingBytes <= 0 && totalBytes > 0) {
+            setEta(t('dashboard.eta.done'));
+          } else if (calculatedSpeed > 0 && totalBytes > 0) {
+            const etaSec = remainingBytes / calculatedSpeed;
+            setEta(formatDuration(etaSec, t));
+          } else {
+            setEta(t('dashboard.eta.computing'));
+          }
+        }
+      } else {
+        setSpeed(0);
+        setEta(t('dashboard.eta.computing'));
+      }
+    }
+  }, [t]);
 
   const commitThreadsChange = async (value: number) => {
     setThreadsLoading(true);
@@ -75,9 +143,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           } catch { /* ignore */ }
           throw new Error(msg);
         }
-        const data = await res.json();
+        const data: SyncJob = await res.json();
         if (!cancelled) {
           setJob(data);
+          updateMetrics(data);
           setLoading(false);
         }
       } catch (err: unknown) {
@@ -127,6 +196,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 const updated = jobs.find((j) => j.id === syncId);
                 if (updated && !cancelled) {
                   setJob(updated);
+                  updateMetrics(updated);
                 }
               } catch { /* ignore */ }
             }
@@ -141,7 +211,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       cancelled = true;
       controller.abort();
     };
-  }, [apiUrl, syncId, token, t, translateApiError]);
+  }, [apiUrl, syncId, token, t, translateApiError, updateMetrics]);
 
   const handleTriggerStart = async () => {
     setActionLoading(true);
@@ -280,6 +350,17 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       </div>
     );
   }
+
+  const totalBytes = job?.total_bytes || 0;
+  const processedBytes = job?.processed_bytes || 0;
+  const liveBytes = typeof job?.live_bytes === 'number' ? job.live_bytes : processedBytes;
+  const effectiveBytesDisplay = totalBytes > 0
+    ? Math.min(totalBytes, Math.max(processedBytes, liveBytes))
+    : processedBytes;
+
+  const byteProgressPercent = totalBytes > 0
+    ? Math.min(Math.round((effectiveBytesDisplay / totalBytes) * 100), 100)
+    : (job?.total_files && job.total_files > 0 ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100) : 0);
 
   return (
     <div className="w-full space-y-6 animate-fade-in">
@@ -436,6 +517,53 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
             {t('dashboard.threadsHint')}
           </p>
+        </div>
+
+        {/* Main metric card for progress, speed, bytes, and ETA */}
+        <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+
+          <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
+            <div>
+              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
+              <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
+                {byteProgressPercent}%
+              </h3>
+            </div>
+            <div className="text-right flex flex-col items-end">
+              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
+              <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
+                {formatBytes(speed)}/s
+              </p>
+            </div>
+          </div>
+
+          {/* Glowing Rounded Progress Bar */}
+          <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
+            <div
+              className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
+              style={{ width: `${byteProgressPercent}%` }}
+            >
+              <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+            <div className="flex items-center gap-2">
+              <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+              <span>
+                {t('dashboard.transferred')}:{' '}
+                <strong className="text-[var(--color-text-primary)]">
+                  {totalBytes > 0 ? formatBytes(effectiveBytesDisplay) : `${job.processed_files}`}
+                </strong>
+                {totalBytes > 0 ? ` / ${formatBytes(totalBytes)}` : ` / ${job.total_files}`}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+              <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
+            </div>
+          </div>
         </div>
 
         {/* Live / Last Run Statistics */}

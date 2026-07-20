@@ -342,8 +342,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
             setSpeed(calculatedSpeed);
 
-            // ETA calculation
-            const remainingBytes = payload.total_bytes - payload.processed_bytes;
+            // ETA calculation using effective bytes (in-flight live bytes reduce remaining bytes)
+            const effectiveBytes = Math.min(payload.total_bytes, Math.max(payload.processed_bytes, liveBytes));
+            const remainingBytes = Math.max(0, payload.total_bytes - effectiveBytes);
             if (remainingBytes <= 0) {
               setEta(t('dashboard.eta.done'));
             } else if (calculatedSpeed > 0) {
@@ -433,9 +434,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     );
   }
 
-  // Calculated stats
+  // Calculated stats using live stream bytes for smooth progress
+  const effectiveBytesDisplay = typeof data.live_bytes === 'number'
+    ? Math.min(data.total_bytes, Math.max(data.processed_bytes, data.live_bytes))
+    : data.processed_bytes;
+
   const byteProgressPercent = data.total_bytes > 0
-    ? Math.min(Math.round((data.processed_bytes / data.total_bytes) * 100), 100)
+    ? Math.min(Math.round((effectiveBytesDisplay / data.total_bytes) * 100), 100)
     : 0;
 
   const successFiles = Math.max(0, data.processed_files - data.failed_files - data.skipped_files);

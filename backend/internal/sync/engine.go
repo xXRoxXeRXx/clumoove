@@ -415,7 +415,9 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	// N (one per task) to ceil(N/500) (one batch statement per 500 rows).
 	allTasksToEnqueue := append(renameTasks, tasks...)
 	dbTasks := make([]*db.Task, 0, len(allTasksToEnqueue))
+	var totalBytes int64
 	for _, tc := range allTasksToEnqueue {
+		totalBytes += tc.fileSize
 		meta := map[string]interface{}{
 			"action": tc.action,
 		}
@@ -443,7 +445,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	e.queue.NotifyTaskAvailable(ctx, e.db)
 
 	// Update totals
-	_ = db.UpdateSyncJobTotals(e.db, job.ID, totalCreatedTasks)
+	_ = db.UpdateSyncJobTotals(e.db, job.ID, totalCreatedTasks, totalBytes)
 
 	// Transition to RUNNING
 	err = db.UpdateSyncJobStatus(e.db, job.ID, "RUNNING", nil)

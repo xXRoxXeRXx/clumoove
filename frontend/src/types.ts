@@ -72,7 +72,10 @@ export interface SyncJob {
   target_provider: string;
   target_url: string | null;
   total_files: number;
+  total_bytes?: number;
   processed_files: number;
+  processed_bytes?: number;
+  live_bytes?: number;
   changed_files: number;
   deleted_files: number;
   failed_files: number;

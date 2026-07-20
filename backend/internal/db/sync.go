@@ -27,22 +27,25 @@ type SyncJob struct {
 	TargetProvider              string         `json:"target_provider"`
 	Direction                   string         `json:"direction"`
 	ConflictStrategy            string         `json:"conflict_strategy"`
-	DeletePropagation          bool           `json:"delete_propagation"`
-	IntervalMinutes            int            `json:"interval_minutes"`
-	Threads                    int            `json:"threads"`
-	Status                     string         `json:"status"` // IDLE, INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
-	TargetDir                  string         `json:"target_dir"`
+	DeletePropagation           bool           `json:"delete_propagation"`
+	IntervalMinutes             int            `json:"interval_minutes"`
+	Threads                     int            `json:"threads"`
+	Status                      string         `json:"status"` // IDLE, INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+	TargetDir                   string         `json:"target_dir"`
 	SelectedPaths               StringArray    `json:"selected_paths,omitempty"`
-	LastRunAt                  sql.NullTime   `json:"last_run_at,omitempty"`
-	LastRunStatus              sql.NullString `json:"last_run_status,omitempty"`
-	ErrorMessage               sql.NullString `json:"error_message,omitempty"`
-	TotalFiles                 int            `json:"total_files"`
-	ProcessedFiles             int            `json:"processed_files"`
-	ChangedFiles               int            `json:"changed_files"`
-	DeletedFiles               int            `json:"deleted_files"`
-	FailedFiles                int            `json:"failed_files"`
-	CreatedAt                  time.Time      `json:"created_at"`
-	UpdatedAt                  time.Time      `json:"updated_at"`
+	LastRunAt                   sql.NullTime   `json:"last_run_at,omitempty"`
+	LastRunStatus               sql.NullString `json:"last_run_status,omitempty"`
+	ErrorMessage                sql.NullString `json:"error_message,omitempty"`
+	TotalFiles                  int            `json:"total_files"`
+	TotalBytes                  int64          `json:"total_bytes"`
+	ProcessedFiles              int            `json:"processed_files"`
+	ProcessedBytes              int64          `json:"processed_bytes"`
+	LiveBytes                   int64          `json:"live_bytes"`
+	ChangedFiles                int            `json:"changed_files"`
+	DeletedFiles                int            `json:"deleted_files"`
+	FailedFiles                 int            `json:"failed_files"`
+	CreatedAt                   time.Time      `json:"created_at"`
+	UpdatedAt                   time.Time      `json:"updated_at"`
 }
 
 // MarshalJSON serializes the sync job with nullable columns (sql.NullString,
@@ -124,7 +127,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		       source_provider, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
-		       total_files, processed_files, changed_files, deleted_files, failed_files,
+		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs WHERE id = $1
 	`
@@ -137,7 +140,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.Status, &s.TargetDir,
 		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
-		&s.TotalFiles, &s.ProcessedFiles, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
+		&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 		&s.CreatedAt, &s.UpdatedAt,
 	)
 	if err != nil {
@@ -166,7 +169,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 		       target_url, target_username, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
-		       total_files, processed_files, changed_files, deleted_files, failed_files,
+		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs
 		WHERE user_id = $1
@@ -186,7 +189,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 			&s.TargetURL, &s.TargetUsername, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.Status, &s.TargetDir,
 			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
-			&s.TotalFiles, &s.ProcessedFiles, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
+			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 			&s.CreatedAt, &s.UpdatedAt,
 		)
 		if err != nil {
@@ -212,14 +215,24 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	return err
 }
 
-// UpdateSyncJobTotals updates the total_files count calculated at index time
-func UpdateSyncJobTotals(db *sql.DB, id string, totalFiles int) error {
+// UpdateSyncJobTotals updates the total_files and total_bytes count calculated at index time
+func UpdateSyncJobTotals(db *sql.DB, id string, totalFiles int, totalBytes int64) error {
 	query := `
 		UPDATE sync_jobs
-		SET total_files = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2
+		SET total_files = $1, total_bytes = $2, processed_bytes = 0, live_bytes = 0, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $3
 	`
-	_, err := db.Exec(query, totalFiles, id)
+	_, err := db.Exec(query, totalFiles, totalBytes, id)
+	return err
+}
+
+// AddSyncJobLiveBytes adds bytes to the live_bytes counter of a sync job for real-time speed display
+func AddSyncJobLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
+	if bytesDelta <= 0 {
+		return nil
+	}
+	query := `UPDATE sync_jobs SET live_bytes = live_bytes + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
+	_, err := db.ExecContext(ctx, query, bytesDelta, id)
 	return err
 }
 
@@ -256,7 +269,7 @@ func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
 		       source_provider, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
-		       total_files, processed_files, changed_files, deleted_files, failed_files,
+		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs
 		WHERE status IN ('IDLE', 'INDEXING', 'RUNNING', 'PAUSED_CONNECTION_LOSS')
@@ -278,7 +291,7 @@ func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
 			&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.Status, &s.TargetDir,
 			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
-			&s.TotalFiles, &s.ProcessedFiles, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
+			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 			&s.CreatedAt, &s.UpdatedAt,
 		)
 		if err != nil {
@@ -423,8 +436,8 @@ func GetFailedSyncTasksForReport(db *sql.DB, syncJobID string) ([]Task, error) {
 	return tasks, rows.Err()
 }
 
-// IncrementSyncJobProgress updates processed/changed/deleted/failed counters
-func IncrementSyncJobProgress(db *sql.DB, ctx context.Context, id string, filesDelta, changedDelta, deletedDelta, failedDelta int) error {
+// IncrementSyncJobProgress updates processed/changed/deleted/failed counters and bytes
+func IncrementSyncJobProgress(db *sql.DB, ctx context.Context, id string, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -434,13 +447,15 @@ func IncrementSyncJobProgress(db *sql.DB, ctx context.Context, id string, filesD
 	query := `
 		UPDATE sync_jobs
 		SET processed_files = processed_files + $1,
-		    changed_files = changed_files + $2,
-		    deleted_files = deleted_files + $3,
-		    failed_files = failed_files + $4,
+		    processed_bytes = processed_bytes + $2,
+		    live_bytes = GREATEST(live_bytes, processed_bytes + $2),
+		    changed_files = changed_files + $3,
+		    deleted_files = deleted_files + $4,
+		    failed_files = failed_files + $5,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $5
+		WHERE id = $6
 	`
-	_, err = tx.ExecContext(ctx, query, filesDelta, changedDelta, deletedDelta, failedDelta, id)
+	_, err = tx.ExecContext(ctx, query, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, id)
 	if err != nil {
 		return err
 	}

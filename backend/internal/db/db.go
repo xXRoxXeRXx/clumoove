@@ -715,6 +715,19 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (idx_sync_jobs_status): %v\n", err)
 			}
 
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS total_bytes BIGINT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync_jobs total_bytes): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS processed_bytes BIGINT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync_jobs processed_bytes): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS live_bytes BIGINT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync_jobs live_bytes): %v\n", err)
+			}
+
 			_, err = db.Exec(`
 				CREATE OR REPLACE TRIGGER update_sync_jobs_updated_at
 				    BEFORE UPDATE ON sync_jobs
