@@ -328,7 +328,7 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string) error {
 		SELECT 
 			COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed,
 			COUNT(*) FILTER (WHERE status = 'SKIPPED') as skipped,
-			COUNT(*) FILTER (WHERE status = 'FAILED' AND next_retry_at IS NULL) as failed,
+			COUNT(*) FILTER (WHERE status = 'FAILED') as failed,
 			COUNT(*) FILTER (WHERE status = 'CANCELLED') as cancelled,
 			COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL)) as open
 		FROM tasks
