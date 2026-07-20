@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Pause, Play, XCircle, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useFormat, formatDuration } from '../utils/format';
+import { useFormat, formatDuration, type TFunc } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 
 interface DashboardProps {
