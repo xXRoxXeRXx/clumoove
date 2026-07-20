@@ -388,40 +388,7 @@ export function MigrationsDashboard({
             onSelectActiveSync={onSelectActiveSync}
             onStartNewSync={onStartNewMigration}
           />
-        ) : (
-          <>
-            {/* Status / Table */}
-            {loading ? (
-              <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
-              </div>
-            ) : error ? (
-              <div className="p-4 bg-[var(--color-error-bg)]/80 border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl text-xs font-mono text-center">
-                {error}
-              </div>
-            ) : migrations.length === 0 ? (
-              <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
-                <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
-                <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('migrations.noMigrations')}</p>
-                <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('migrations.dbEmpty')}</p>
-                <button
-                  onClick={onStartNewMigration}
-                  className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
-                >
-                  {t('migrations.startFirst')}
-                </button>
-              </div>
-            ) : (
-              /* Table unchanged */
-              null
-            )}
-          </>
-        )}
-
-
-        {/* Status / Table */}
-        {loading ? (
+        ) : loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-4">
             <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
             <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
