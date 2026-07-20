@@ -6,7 +6,9 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
+	"time"
 )
 
 // blockPrivateEgress, when true, additionally blocks RFC1918/ULA (private)
@@ -86,6 +88,8 @@ func egressDialer(host string) func(ctx context.Context, network, addr string) (
 			return nil, fmt.Errorf("egress: failed to resolve %q: %w", host, err)
 		}
 
+		sortIPsIPv4First(ips)
+
 		var lastErr error
 		for _, ip := range ips {
 			if blocked, reason := isBlockedIP(ip); blocked {
@@ -93,8 +97,8 @@ func egressDialer(host string) func(ctx context.Context, network, addr string) (
 				continue
 			}
 			target := net.JoinHostPort(ip.String(), port)
-			var d net.Dialer
-			conn, err := d.DialContext(ctx, network, target)
+			dialer := &net.Dialer{Timeout: 5 * time.Second}
+			conn, err := dialer.DialContext(ctx, network, target)
 			if err != nil {
 				lastErr = err
 				continue
@@ -106,6 +110,17 @@ func egressDialer(host string) func(ctx context.Context, network, addr string) (
 		}
 		return nil, fmt.Errorf("egress: host %q resolved to no dialable addresses", host)
 	}
+}
+
+func sortIPsIPv4First(ips []net.IP) {
+	sort.SliceStable(ips, func(i, j int) bool {
+		ip4_i := ips[i].To4() != nil
+		ip4_j := ips[j].To4() != nil
+		if ip4_i && !ip4_j {
+			return true
+		}
+		return false
+	})
 }
 
 // allowInsecureEgress reports whether an insecure (plaintext HTTP) S3 endpoint

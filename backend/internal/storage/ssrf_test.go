@@ -1,6 +1,9 @@
 package storage
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestValidateEgressURL(t *testing.T) {
 	blockPrivateEgress = false
@@ -43,5 +46,16 @@ func TestValidateEgressHostBlockPrivate(t *testing.T) {
 	}
 	if err := validateEgressHost("8.8.8.8"); err != nil {
 		t.Errorf("expected public IP 8.8.8.8 to be allowed, got: %v", err)
+	}
+}
+
+func TestSortIPsIPv4First(t *testing.T) {
+	ips := []net.IP{
+		net.ParseIP("2001:db8::1"),
+		net.ParseIP("198.51.100.1"),
+	}
+	sortIPsIPv4First(ips)
+	if ips[0].To4() == nil {
+		t.Errorf("expected first IP to be IPv4, got %s", ips[0])
 	}
 }
