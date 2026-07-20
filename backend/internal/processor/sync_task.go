@@ -122,7 +122,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload)
 		// Success
 		task.Status = "COMPLETED"
 		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 0, 1, 0) // filesDelta=1, deletedDelta=1
+		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 0, 1, 0, 0) // filesDelta=1, deletedDelta=1
 		return nil
 	}
 
@@ -153,7 +153,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload)
 		// Success
 		task.Status = "COMPLETED"
 		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0) // filesDelta=1, changedDelta=1
+		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, 0) // filesDelta=1, changedDelta=1
 		return nil
 	}
 
@@ -293,14 +293,27 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload)
 
 	go func() {
 		defer close(progressDone)
+		var bufferedBytes int64
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
 		for {
 			select {
 			case bytes, ok := <-progressChan:
 				if !ok {
+					if bufferedBytes > 0 {
+						_ = db.AddSyncJobLiveBytes(p.db, ctx, job.ID, bufferedBytes)
+						bufferedBytes = 0
+					}
 					return
 				}
+				bufferedBytes += bytes
 				atomic.StoreInt64(&lastByteNano, time.Now().UnixNano())
-				_ = bytes // Sync jobs do not count live bytes in DB
+			case <-ticker.C:
+				if bufferedBytes > 0 {
+					_ = db.AddSyncJobLiveBytes(p.db, ctx, job.ID, bufferedBytes)
+					bufferedBytes = 0
+				}
 			}
 		}
 	}()
@@ -383,7 +396,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload)
 	task.WorkerHash = sql.NullString{String: finalTargetHash, Valid: true}
 	task.TargetHash = sql.NullString{String: finalTargetHash, Valid: true}
 	_ = db.UpdateTaskStatus(p.db, task)
-	_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0) // filesDelta=1, changedDelta=1
+	_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, task.FileSize) // filesDelta=1, changedDelta=1, bytesDelta=task.FileSize
 	return nil
 }
 
@@ -460,12 +473,12 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
 		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 1, 0, 0, 1)
+		_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 1, 0, 0, 1, 0)
 
 		// Cancel other pending tasks
 		cancelled, cerr := db.CancelRemainingPendingSyncTasks(p.db, task.SyncJobID)
 		if cerr == nil && cancelled > 0 {
-			_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 0, 0, 0, cancelled)
+			_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 0, 0, 0, cancelled, 0)
 		}
 		return
 	}
@@ -481,7 +494,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		task.NextRetryAt = sql.NullTime{}
 		_ = db.UpdateTaskStatus(p.db, task)
 		p.clearConnLossTask(task.ID)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 1, 0, 0, 1)
+		_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 1, 0, 0, 1, 0)
 	}
 }
 
