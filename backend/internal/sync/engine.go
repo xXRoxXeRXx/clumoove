@@ -470,7 +470,8 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 			var openCount int
 			err := e.db.QueryRow(`
 				SELECT COUNT(*) FROM tasks 
-				WHERE sync_job_id = $1 AND status IN ('PENDING', 'RUNNING')
+				WHERE sync_job_id = $1 
+				  AND (status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
 			`, job.ID).Scan(&openCount)
 			if err != nil {
 				log.Printf("[SyncEngine] Error querying task progress for job %s: %v\n", syncJobID, err)
