@@ -27,6 +27,7 @@ type CloudResource struct {
 	Size         int64        `json:"size"`
 	IsDir        bool         `json:"is_dir"`
 	Hash         string       `json:"hash"`
+	ETag         string       `json:"etag,omitempty"`
 	LastModified time.Time    `json:"last_modified"`
 	Metadata     FileMetadata `json:"metadata"`
 }

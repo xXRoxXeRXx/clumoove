@@ -311,6 +311,7 @@ CREATE TABLE IF NOT EXISTS sync_state (
     mtime TIMESTAMP WITH TIME ZONE,
     source_hash TEXT,
     target_hash TEXT,
+    etag TEXT,
     UNIQUE (sync_job_id, side, rel_path)
 );
 
