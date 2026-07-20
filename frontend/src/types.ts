@@ -62,6 +62,7 @@ export interface Migration {
 export interface SyncJob {
   id: string;
   status: string;
+  threads?: number;
   direction: 'one_way' | 'two_way';
   interval_minutes: number;
   delete_propagation: boolean;

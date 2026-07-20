@@ -399,6 +399,7 @@ func main() {
 	mux.Handle("POST /api/sync/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResumeSync)))
 	mux.Handle("DELETE /api/sync/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteSync)))
 	mux.Handle("GET /api/sync/{id}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadSyncReport)))
+	mux.Handle("PUT /api/sync/{id}/threads", jwtMiddleware(http.HandlerFunc(server.handleSetSyncThreads)))
 
 	// Schedule Management Routes (Protected)
 	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
