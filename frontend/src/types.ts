@@ -13,7 +13,6 @@ export type Provider =
   | 'webdav'
   | 'magentacloud'
   | 'google'
-  | 'googlephotos'
   | 'smb'
   | 's3'
   | 'sftp'
@@ -34,8 +33,6 @@ export interface MigrationConfig {
   target_provider: Provider;
   source_profile_id?: string;
   target_profile_id?: string;
-  source_picker_session_id?: string;
-  source_picker_uri?: string;
 }
 
 export interface User {

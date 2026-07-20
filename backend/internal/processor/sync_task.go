@@ -367,7 +367,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload)
 		finalTargetHash = fmt.Sprintf("%x", sourceHasher.Sum(nil))
 	}
 
-	if tgtProvider != "googlephotos" && tgtProvider != "webdav" {
+	if tgtProvider != "webdav" {
 		targetVerifyHash, terr := tgtClient.GetFileHash(ctx, task.ResourceType, tgtPath)
 		if terr == nil && targetVerifyHash != "" {
 			_, cleanTgtHash := storage.ParseHashString(targetVerifyHash)
