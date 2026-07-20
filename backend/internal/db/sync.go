@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -475,4 +476,118 @@ func ListSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
 		states = append(states, s)
 	}
 	return states, rows.Err()
+}
+
+// BulkCreateSyncTasks inserts sync tasks in batches of batchSize rows per statement.
+// This is dramatically faster than N individual INSERTs for large sync passes with
+// many files (e.g. 1000 files → 2 DB round-trips instead of 1000).
+func BulkCreateSyncTasks(db *sql.DB, tasks []*Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	const batchSize = 500
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("bulk create tasks: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for start := 0; start < len(tasks); start += batchSize {
+		end := start + batchSize
+		if end > len(tasks) {
+			end = len(tasks)
+		}
+		batch := tasks[start:end]
+
+		// Build a multi-row INSERT: VALUES ($1,$2,...), ($9,$10,...), ...
+		// Each row has 8 params: migration_id, sync_job_id, file_path, file_size,
+		// source_hash, status, resource_type, metadata
+		const paramsPerRow = 8
+		args := make([]interface{}, 0, len(batch)*paramsPerRow)
+		valuesClauses := make([]string, 0, len(batch))
+
+		for i, t := range batch {
+			base := i * paramsPerRow
+			var migID, syncID sql.NullString
+			if t.MigrationID != "" {
+				migID = sql.NullString{String: t.MigrationID, Valid: true}
+			}
+			if t.SyncJobID != "" {
+				syncID = sql.NullString{String: t.SyncJobID, Valid: true}
+			}
+			args = append(args,
+				migID, syncID, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata,
+			)
+			valuesClauses = append(valuesClauses,
+				fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+					base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8),
+			)
+		}
+
+		query := "INSERT INTO tasks (migration_id, sync_job_id, file_path, file_size, source_hash, status, resource_type, metadata) VALUES " +
+			strings.Join(valuesClauses, ",")
+
+		if _, err := tx.Exec(query, args...); err != nil {
+			return fmt.Errorf("bulk create tasks: insert batch [%d:%d]: %w", start, end, err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// BulkUpsertSyncStates inserts or updates many sync_state rows inside a single
+// transaction. For each (sync_job_id, side, rel_path) pair that already exists
+// the size/mtime/hash columns are updated; new rows are inserted.
+// This replaces the per-file UpsertSyncState loop and is dramatically faster for
+// large directory trees (e.g. 1000 files → 1 tx with 1000 statements vs 1000 txs).
+func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []struct{ SyncJobID, Side, RelPath string }) error {
+	if len(upserts) == 0 && len(deletes) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("bulk upsert sync states: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Prepare the upsert statement once and reuse it for all rows.
+	upsertStmt, err := tx.Prepare(`
+		INSERT INTO sync_state (sync_job_id, side, rel_path, size, mtime, source_hash, target_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (sync_job_id, side, rel_path) DO UPDATE SET
+			size        = EXCLUDED.size,
+			mtime       = EXCLUDED.mtime,
+			source_hash = EXCLUDED.source_hash,
+			target_hash = EXCLUDED.target_hash
+	`)
+	if err != nil {
+		return fmt.Errorf("bulk upsert sync states: prepare upsert: %w", err)
+	}
+	defer upsertStmt.Close()
+
+	for _, s := range upserts {
+		if _, err := upsertStmt.Exec(s.SyncJobID, s.Side, s.RelPath, s.Size, s.Mtime, s.SourceHash, s.TargetHash); err != nil {
+			return fmt.Errorf("bulk upsert sync states: exec upsert %s/%s/%s: %w", s.SyncJobID, s.Side, s.RelPath, err)
+		}
+	}
+
+	// Prepare delete statement once and reuse it.
+	if len(deletes) > 0 {
+		deleteStmt, err := tx.Prepare(`DELETE FROM sync_state WHERE sync_job_id = $1 AND side = $2 AND rel_path = $3`)
+		if err != nil {
+			return fmt.Errorf("bulk upsert sync states: prepare delete: %w", err)
+		}
+		defer deleteStmt.Close()
+
+		for _, d := range deletes {
+			if _, err := deleteStmt.Exec(d.SyncJobID, d.Side, d.RelPath); err != nil {
+				return fmt.Errorf("bulk upsert sync states: exec delete %s/%s/%s: %w", d.SyncJobID, d.Side, d.RelPath, err)
+			}
+		}
+	}
+
+	return tx.Commit()
 }

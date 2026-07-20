@@ -411,8 +411,10 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		return
 	}
 
-	// Insert tasks into database
+	// Insert tasks into database — use bulk insert to reduce DB round-trips from
+	// N (one per task) to ceil(N/500) (one batch statement per 500 rows).
 	allTasksToEnqueue := append(renameTasks, tasks...)
+	dbTasks := make([]*db.Task, 0, len(allTasksToEnqueue))
 	for _, tc := range allTasksToEnqueue {
 		meta := map[string]interface{}{
 			"action": tc.action,
@@ -422,7 +424,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		}
 		metaJSON, _ := json.Marshal(meta)
 
-		t := &db.Task{
+		dbTasks = append(dbTasks, &db.Task{
 			SyncJobID:    job.ID,
 			FilePath:     tc.filePath,
 			FileSize:     tc.fileSize,
@@ -430,13 +432,15 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 			Status:       "PENDING",
 			ResourceType: tc.resourceType,
 			Metadata:     metaJSON,
-		}
-		_, err := db.CreateTask(e.db, t)
-		if err != nil {
-			e.failSync(syncJobID, fmt.Sprintf("Failed to create task in DB: %v", err))
-			return
-		}
+		})
 	}
+	if err := db.BulkCreateSyncTasks(e.db, dbTasks); err != nil {
+		e.failSync(syncJobID, fmt.Sprintf("Failed to create tasks in DB: %v", err))
+		return
+	}
+	// Wake idle worker threads immediately so they start processing without
+	// waiting for their next fallback poll cycle.
+	e.queue.NotifyTaskAvailable(ctx, e.db)
 
 	// Update totals
 	_ = db.UpdateSyncJobTotals(e.db, job.ID, totalCreatedTasks)
@@ -449,7 +453,9 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	}
 
 	// 8. Poll database until all tasks finish (or context is cancelled)
-	ticker := time.NewTicker(5 * time.Second)
+	// Poll every 1s: tight enough to react quickly when the last task finishes
+	// without adding noticeable DB load (only runs while the job is RUNNING).
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -591,6 +597,8 @@ func (e *Engine) failSync(id string, errMsg string) {
 }
 
 // updateSyncStates aligns sync_state entries with current listings, preserving the old states of failed files.
+// Uses BulkUpsertSyncStates to batch all upserts and deletes into a single transaction instead of N individual
+// round-trips (one per file), which is dramatically faster for large directory trees.
 func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]fileState, taskOutcomes map[string]string) {
 	allKeys := make(map[string]bool)
 	for k := range sourceMap {
@@ -599,6 +607,9 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 	for k := range targetMap {
 		allKeys[k] = true
 	}
+
+	var upserts []*db.SyncState
+	var deletes []struct{ SyncJobID, Side, RelPath string }
 
 	for S := range allKeys {
 		srcFile, hasSrc := sourceMap[S]
@@ -610,9 +621,9 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 			continue
 		}
 
-		// Update source side
+		// Source side
 		if hasSrc {
-			_ = db.UpsertSyncState(e.db, &db.SyncState{
+			upserts = append(upserts, &db.SyncState{
 				SyncJobID:  jobID,
 				Side:       "source",
 				RelPath:    S,
@@ -622,12 +633,12 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 				TargetHash: srcFile.Hash,
 			})
 		} else {
-			_ = db.DeleteSyncState(e.db, jobID, "source", S)
+			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "source", S})
 		}
 
-		// Update target side
+		// Target side
 		if hasTgt {
-			_ = db.UpsertSyncState(e.db, &db.SyncState{
+			upserts = append(upserts, &db.SyncState{
 				SyncJobID:  jobID,
 				Side:       "target",
 				RelPath:    S,
@@ -637,8 +648,12 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 				TargetHash: tgtFile.Hash,
 			})
 		} else {
-			_ = db.DeleteSyncState(e.db, jobID, "target", S)
+			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "target", S})
 		}
+	}
+
+	if err := db.BulkUpsertSyncStates(e.db, upserts, deletes); err != nil {
+		log.Printf("[SyncEngine] Warning: BulkUpsertSyncStates for job %s failed: %v\n", jobID, err)
 	}
 }
 

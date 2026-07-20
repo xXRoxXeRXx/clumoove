@@ -44,6 +44,11 @@ type Processor struct {
 	workerID     string
 	secretKey    string
 	maxThreads   int
+	// dbConnStr is the raw PostgreSQL DSN used to open a dedicated LISTEN
+	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
+	// Set via SetDBConnStr before calling Start. If empty, the worker falls back
+	// to periodic polling.
+	dbConnStr    string
 	activeTasks  sync.Map
 	refreshLocks sync.Map
 	throttlers   sync.Map
@@ -62,7 +67,7 @@ type Processor struct {
 	// failures it has seen. This lets the per-task connection-loss cap
 	// (maxConnLossTaskAttempts) count only network errors, not unrelated failures,
 	// so a task that failed twice for non-network reasons is not wrongly escalated
-	// to a full migration pause on its next (first) connection loss (P1-4).
+	// to a full migration pause on its next (first) network loss (P1-4).
 	connLossTaskAttempts sync.Map
 }
 
@@ -77,6 +82,13 @@ type syncEngineInterface interface {
 // a lost connection.
 func (p *Processor) SetSyncEngine(e syncEngineInterface) {
 	p.syncEngine = e
+}
+
+// SetDBConnStr sets the PostgreSQL DSN used to open a dedicated LISTEN
+// connection for immediate wake-up when new tasks are inserted.
+// Must be called before Start(). Falls back to polling if not set.
+func (p *Processor) SetDBConnStr(connStr string) {
+	p.dbConnStr = connStr
 }
 
 func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey string) *Processor {
@@ -238,11 +250,36 @@ func (p *Processor) Start(ctx context.Context) {
 		}
 	})
 
+	// Start a PostgreSQL LISTEN watcher so idle threads can be woken up
+	// immediately when new tasks are inserted (pg_notify 'task_available').
+	// Falls back to periodic polling if the listener cannot be established.
+	var notifyTasksCh <-chan struct{}
+	if p.dbConnStr != "" {
+		ch, err := queue.ListenForTasks(ctx, p.dbConnStr)
+		if err != nil {
+			log.Printf("[Worker %s] LISTEN task_available unavailable (falling back to polling): %v\n", p.workerID, err)
+		} else {
+			notifyTasksCh = ch
+			log.Printf("[Worker %s] LISTEN task_available active — idle threads will wake immediately on new tasks\n", p.workerID)
+		}
+	}
+
 	var wg sync.WaitGroup
 	for i := 0; i < p.maxThreads; i++ {
 		wg.Add(1)
 		go func(threadID int) {
 			defer wg.Done()
+			// fallbackPoll is the maximum time an idle thread waits before
+			// re-polling even without a notify signal. 5s is fine because
+			// pg_notify delivers the wake-up immediately in the common case.
+			// Without LISTEN it falls back to the old 2s behaviour so
+			// throughput is not affected when LISTEN is unavailable.
+			fallbackInterval := 5 * time.Second
+			if notifyTasksCh == nil {
+				// LISTEN unavailable: use the original 2s poll to maintain
+				// latency parity with the pre-optimisation behaviour.
+				fallbackInterval = 2 * time.Second
+			}
 			for {
 				select {
 				case <-ctx.Done():
@@ -260,8 +297,17 @@ func (p *Processor) Start(ctx context.Context) {
 					}
 
 					if payload == nil {
-						time.Sleep(2 * time.Second) // Sleep to avoid busy loop
-						continue                    // No task in queue
+						// No task: wait for a pg_notify signal or fallback timeout.
+						// This eliminates the busy-poll while still reacting quickly.
+						select {
+						case <-ctx.Done():
+							return
+						case <-notifyTasksCh:
+							// Woken by pg_notify — go straight back to DequeueSQL
+						case <-time.After(fallbackInterval):
+							// Periodic fallback poll
+						}
+						continue
 					}
 
 					if payload.SyncJobID != "" {
@@ -336,6 +382,9 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 				log.Printf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
 				if err := p.queue.RecoverAbandonedTasks(ctx, p.db, deadWorkerID); err != nil {
 					log.Printf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
+				} else {
+					// Wake idle threads so recovered tasks are picked up immediately.
+					p.queue.NotifyTaskAvailable(ctx, p.db)
 				}
 			}
 		}
@@ -371,6 +420,7 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	}
 	defer rows.Close()
 
+	var requeued int
 	for rows.Next() {
 		var taskID, migrationID string
 		if err := rows.Scan(&taskID, &migrationID); err != nil {
@@ -389,9 +439,14 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 		}
 
 		log.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
+		requeued++
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[RetryScheduler] rows error: %v\n", err)
+	}
+	// Wake idle worker threads so retry tasks are picked up immediately.
+	if requeued > 0 {
+		p.queue.NotifyTaskAvailable(ctx, p.db)
 	}
 }
 
