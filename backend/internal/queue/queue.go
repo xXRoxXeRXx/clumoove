@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 
+	_ "github.com/lib/pq" // needed for pq.NewListener
+	"github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -303,4 +305,58 @@ func (q *Queue) SubscribeToBandwidthChanges(ctx context.Context, callback func(e
 			backoff *= 2
 		}
 	}
+}
+
+// NotifyTaskAvailable sends a PostgreSQL NOTIFY on the 'task_available' channel.
+// Call this after inserting PENDING tasks so that idle worker threads wake up
+// immediately instead of waiting for their next 2-second poll cycle.
+func (q *Queue) NotifyTaskAvailable(ctx context.Context, db *sql.DB) {
+	if _, err := db.ExecContext(ctx, "SELECT pg_notify('task_available', '')"); err != nil {
+		log.Printf("[Queue] pg_notify task_available failed (non-fatal): %v\n", err)
+	}
+}
+
+// ListenForTasks opens a dedicated PostgreSQL LISTEN connection and returns a
+// channel that receives a value each time a 'task_available' notification
+// arrives. The channel is buffered (cap 1) so a burst of rapid notifications
+// does not pile up — the worker will re-poll after the first signal anyway.
+// The goroutine cleans up and the channel is closed when ctx is cancelled.
+func ListenForTasks(ctx context.Context, connStr string) (<-chan struct{}, error) {
+	minReconn := 5 * time.Second
+	maxReconn := 30 * time.Second
+
+	listener := pq.NewListener(connStr, minReconn, maxReconn, func(ev pq.ListenerEventType, err error) {
+		if err != nil {
+			log.Printf("[Queue] LISTEN connection event %d: %v\n", ev, err)
+		}
+	})
+
+	if err := listener.Listen("task_available"); err != nil {
+		listener.Close()
+		return nil, fmt.Errorf("failed to LISTEN on task_available: %w", err)
+	}
+
+	notifyCh := make(chan struct{}, 1)
+	go func() {
+		defer listener.Close()
+		defer close(notifyCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-listener.Notify:
+				if !ok {
+					return
+				}
+				// Non-blocking send: if the channel is already full (another notification
+				// is pending), skip this one — the worker will re-poll regardless.
+				select {
+				case notifyCh <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	return notifyCh, nil
 }

@@ -66,6 +66,7 @@ func main() {
 	// Create processor and sync engine, then wire them together so the
 	// connection-recovery scheduler can trigger a new sync pass.
 	proc := processor.NewProcessor(database, q, workerID, encryptionKey)
+	proc.SetDBConnStr(dbURL) // Enable pg_notify-based wake-up for idle worker threads
 	syncEng := appSync.NewEngine(database, q, encryptionKey)
 	proc.SetSyncEngine(syncEng)
 
