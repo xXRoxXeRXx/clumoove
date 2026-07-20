@@ -149,8 +149,30 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     finally { setActionLoading(false); }
   };
 
-  const handleDownloadReport = () => {
-    window.open(`${apiUrl}/api/sync/${syncId}/report`, '_blank');
+  const handleDownloadReport = async (e?: React.MouseEvent) => {
+    if (e) e.preventDefault();
+    try {
+      const response = await fetch(`${apiUrl}/api/sync/${syncId}/report`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(t('dashboard.downloadFailed'));
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sync_report_${syncId}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert(t('dashboard.downloadFailed'));
+    }
   };
 
   const getStatusBadge = (status: string) => {
