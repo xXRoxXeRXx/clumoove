@@ -11,7 +11,7 @@ interface FileBrowserProps {
   credentials: MigrationConfig;
   apiUrl: string;
   onBack: () => void;
-  onStartSuccess: (migrationId: string) => void;
+  onStartSuccess: (id: string, isSync?: boolean) => void;
   token: string;
 }
 
@@ -467,7 +467,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` },
           });
-          onStartSuccess(data.id);
+          onStartSuccess(data.id, true);
         } else {
           setError(t('sync.createFailed'));
         }
@@ -505,7 +505,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
         const data = await response.json();
         if (data.success && data.migration_id) {
-          onStartSuccess(data.migration_id);
+          onStartSuccess(data.migration_id, false);
         } else {
           setError(data.error_code ? translateApiError(data.error_code) : t('fileBrowser.errors.startError'));
         }
