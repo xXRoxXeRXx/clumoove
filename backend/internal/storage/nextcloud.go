@@ -108,7 +108,11 @@ func newDAVTransport(host string) *http.Transport {
 
 func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider, error) {
 	baseURL := strings.TrimSuffix(rawURL, "/")
-	if !strings.Contains(baseURL, "/remote.php/dav") {
+	if idx := strings.Index(baseURL, "/remote.php/dav"); idx != -1 {
+		baseURL = baseURL[:idx+len("/remote.php/dav")]
+	} else if idx := strings.Index(baseURL, "/remote.php/webdav"); idx != -1 {
+		baseURL = baseURL[:idx] + "/remote.php/dav"
+	} else {
 		baseURL = baseURL + "/remote.php/dav"
 	}
 
