@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, ArrowLeft, RefreshCw, Download, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import type { SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
@@ -17,10 +17,48 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+  const [threads, setThreads] = useState<number>(4);
+  const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
+  const threadsDraggingRef = useRef<boolean>(false);
 
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
   const translateApiError = useApiError();
+
+  useEffect(() => {
+    if (job?.threads !== undefined && !threadsDraggingRef.current) {
+      setThreads(job.threads);
+    }
+  }, [job?.threads]);
+
+  const commitThreadsChange = async (value: number) => {
+    setThreadsLoading(true);
+    try {
+      const response = await fetch(`${apiUrl}/api/sync/${syncId}/threads`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ threads: value }),
+      });
+      if (!response.ok) {
+        let msg = t('dashboard.threadsFailed');
+        try {
+          const body = await response.json();
+          if (body?.error_code) msg = translateApiError(body.error_code);
+        } catch { /* ignore */ }
+        alert(msg);
+        if (job?.threads) setThreads(job.threads);
+      }
+    } catch (err) {
+      console.error(err);
+      alert(t('dashboard.threadsFailed'));
+      if (job?.threads) setThreads(job.threads);
+    } finally {
+      setThreadsLoading(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -365,6 +403,39 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               {job.last_run_at ? formatDateTime(job.last_run_at) : '-'}
             </span>
           </div>
+        </div>
+
+        {/* Threads Slider */}
+        <div className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
+              {t('dashboard.threads')}
+            </label>
+            <span className="text-xs font-bold text-portal-orange font-mono">{threads}</span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={16}
+            step={1}
+            value={threads}
+            disabled={threadsLoading}
+            onChange={(e) => setThreads(Number(e.target.value))}
+            onPointerDown={() => { threadsDraggingRef.current = true; }}
+            onPointerUp={(e) => {
+              threadsDraggingRef.current = false;
+              commitThreadsChange(Number((e.target as HTMLInputElement).value));
+            }}
+            onKeyDown={() => { threadsDraggingRef.current = true; }}
+            onKeyUp={(e) => {
+              threadsDraggingRef.current = false;
+              commitThreadsChange(Number((e.target as HTMLInputElement).value));
+            }}
+            className="w-full"
+          />
+          <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
+            {t('dashboard.threadsHint')}
+          </p>
         </div>
 
         {/* Live / Last Run Statistics */}

@@ -591,3 +591,10 @@ func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []struct{ Sy
 
 	return tx.Commit()
 }
+
+// UpdateSyncJobThreads updates the thread count for a sync job.
+func UpdateSyncJobThreads(db *sql.DB, id string, threads int) error {
+	query := `UPDATE sync_jobs SET threads = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
+	_, err := db.Exec(query, threads, id)
+	return err
+}

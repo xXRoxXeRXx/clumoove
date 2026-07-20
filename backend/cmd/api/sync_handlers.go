@@ -602,3 +602,39 @@ func parseSyncTokenExpiry(raw *string) sql.NullTime {
 	}
 	return sql.NullTime{Time: exp, Valid: true}
 }
+
+func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	if err != nil || !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+		return
+	}
+
+	var req ThreadsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	threads := req.Threads
+	if threads < 1 || threads > 16 {
+		writeError(w, http.StatusBadRequest, ErrThreadsOutOfRange)
+		return
+	}
+
+	if err := db.UpdateSyncJobThreads(s.db, id, threads); err != nil {
+		log.Printf("Error updating threads for sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
