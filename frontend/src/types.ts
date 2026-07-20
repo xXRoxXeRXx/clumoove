@@ -79,6 +79,7 @@ export interface SyncJob {
   changed_files: number;
   deleted_files: number;
   failed_files: number;
+  active_files?: string[];
   last_run_at: string | null;
   last_run_status: string | null;
   error_message: string | null;
