@@ -119,16 +119,22 @@
   --color-bg-inverse: #000000;
 }
 
-/* Theme Transition - scoped to avoid interfering with animations */
+/* Theme Transition - scoped to major layout containers to avoid layout thrashing */
 @media (prefers-reduced-motion: no-preference) {
   body,
   .glass-panel,
+  .theme-transition,
   header,
   footer,
   main,
-  [class*="bg-"],
-  [class*="text-"],
-  [class*="border-"] {
+  nav,
+  aside,
+  section,
+  article,
+  button,
+  input,
+  select,
+  textarea {
     transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
   }
 }
