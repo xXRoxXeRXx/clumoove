@@ -14,6 +14,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
+	"backend/internal/queue"
 	"backend/internal/storage"
 )
 
@@ -23,13 +24,15 @@ import (
 type Indexer struct {
 	db            *sql.DB
 	encryptionKey string
+	queue         *queue.Queue
 }
 
 // NewIndexer creates a new Indexer instance
-func NewIndexer(database *sql.DB, encryptionKey string) *Indexer {
+func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue) *Indexer {
 	return &Indexer{
 		db:            database,
 		encryptionKey: encryptionKey,
+		queue:         q,
 	}
 }
 
@@ -225,13 +228,17 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 
+	// Wake idle worker threads immediately so they start picking up the freshly
+	// created PENDING tasks without waiting for the fallback poll cycle.
+	if idx.queue != nil {
+		idx.queue.NotifyTaskAvailable(ctx, idx.db)
+	}
+
 	log.Printf("Finished indexing migration %s. Total files: %d, Total size: %d bytes.\n", migID, totalFiles, totalBytes)
 	if len(indexErrors) > 0 {
 		log.Printf("Indexing migration %s completed with %d skipped folder error(s) (see report).\n", migID, len(indexErrors))
 	}
 }
-
-
 
 // ensureFreshSourceToken refreshes an OAuth source access token if it is expired
 // or near expiry (mirroring the worker's inline refresh). It returns the freshly
