@@ -407,12 +407,17 @@ func (p *Processor) RunRetryScheduler(ctx context.Context) {
 
 func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	query := `
-		SELECT t.id, t.migration_id
+		SELECT t.id, COALESCE(t.migration_id, t.sync_job_id, '')
 		FROM tasks t
-		JOIN migrations m ON t.migration_id = m.id
+		LEFT JOIN migrations m ON t.migration_id = m.id
+		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
 		WHERE t.status = 'FAILED' 
 		  AND t.next_retry_at <= $1
-		  AND m.status IN ('RUNNING', 'INDEXING')
+		  AND (
+		    (t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING'))
+		    OR
+		    (t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING'))
+		  )
 	`
 	rows, err := p.db.QueryContext(ctx, query, time.Now())
 	if err != nil {
@@ -422,8 +427,8 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 
 	var requeued int
 	for rows.Next() {
-		var taskID, migrationID string
-		if err := rows.Scan(&taskID, &migrationID); err != nil {
+		var taskID, parentID string
+		if err := rows.Scan(&taskID, &parentID); err != nil {
 			continue
 		}
 
@@ -438,7 +443,7 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 			continue
 		}
 
-		log.Printf("[RetryScheduler] Re-enqueued task %s for migration %s\n", taskID, migrationID)
+		log.Printf("[RetryScheduler] Re-enqueued task %s for migration/sync %s\n", taskID, parentID)
 		requeued++
 	}
 	if err := rows.Err(); err != nil {
@@ -451,10 +456,9 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 }
 
 // RunProgressReconciler periodically repairs counter drift between the cached
-// migration progress columns and the real task rows (see ReconcileMigrationProgress
-// in db for the rationale). It advances a stalled RUNNING/INDEXING migration to its
-// terminal state only once no open (PENDING/RUNNING) tasks remain, so a migration
-// can never again show "100% but RUNNING" or "COMPLETED but 99%".
+// migration/sync progress columns and the real task rows (see ReconcileMigrationProgress
+// in db for the rationale). It advances a stalled RUNNING/INDEXING migration or sync job
+// to its terminal state only once no open tasks remain.
 func (p *Processor) RunProgressReconciler(ctx context.Context) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -464,6 +468,7 @@ func (p *Processor) RunProgressReconciler(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.reconcileActiveMigrations(ctx)
+			p.reconcileActiveSyncJobs(ctx)
 		}
 	}
 }
@@ -502,6 +507,40 @@ func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
 	}
 }
 
+// reconcileActiveSyncJobs scans RUNNING/INDEXING sync jobs and reconciles their
+// progress counters and terminal status against authoritative task rows.
+func (p *Processor) reconcileActiveSyncJobs(ctx context.Context) {
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT DISTINCT sj.id
+		FROM sync_jobs sj
+		WHERE sj.status IN ('RUNNING', 'INDEXING')
+	`)
+	if err != nil {
+		log.Printf("[ProgressReconciler] Sync DB query error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[ProgressReconciler] Sync rows error: %v\n", err)
+		return
+	}
+
+	for _, id := range ids {
+		if err := db.ReconcileSyncJobProgress(p.db, id); err != nil {
+			log.Printf("[ProgressReconciler] error reconciling sync job %s: %v\n", id, err)
+		}
+	}
+}
+
 // RunOrphanedRunningTasksRecovery detects RUNNING tasks that are stuck (e.g. due to a worker
 // crashing or a thread dying silently) and resets them back to PENDING. It waits 5 minutes
 // after startup before the first scan.
@@ -525,16 +564,21 @@ func (p *Processor) RunOrphanedRunningTasksRecovery(ctx context.Context) {
 	}
 }
 
-// requeueOrphanedRunningTasks scans for RUNNING tasks belonging to active migrations whose
-// updated_at is older than 10 minutes (i.e. they were picked up but never finished).
+// requeueOrphanedRunningTasks scans for RUNNING tasks belonging to active migrations or sync jobs
+// whose updated_at is older than 10 minutes (i.e. they were picked up but never finished).
 func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 	query := `
-		SELECT t.id, t.migration_id
+		SELECT t.id, COALESCE(t.migration_id, t.sync_job_id, '')
 		FROM tasks t
-		JOIN migrations m ON t.migration_id = m.id
+		LEFT JOIN migrations m ON t.migration_id = m.id
+		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
 		WHERE t.status = 'RUNNING'
 		  AND t.updated_at < NOW() - INTERVAL '10 minutes'
-		  AND m.status IN ('RUNNING', 'INDEXING')
+		  AND (
+		    (t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING'))
+		    OR
+		    (t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING'))
+		  )
 	`
 	rows, err := p.db.QueryContext(ctx, query)
 	if err != nil {
@@ -545,8 +589,8 @@ func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 
 	var count int
 	for rows.Next() {
-		var taskID, migrationID string
-		if err := rows.Scan(&taskID, &migrationID); err != nil {
+		var taskID, parentID string
+		if err := rows.Scan(&taskID, &parentID); err != nil {
 			continue
 		}
 		_, err := p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL, updated_at=NOW() WHERE id=$1 AND status='RUNNING'", taskID)
@@ -561,6 +605,7 @@ func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 	}
 	if count > 0 {
 		log.Printf("[OrphanedTaskRecovery] Re-enqueued %d orphaned RUNNING tasks\n", count)
+		p.queue.NotifyTaskAvailable(ctx, p.db)
 	}
 }
 

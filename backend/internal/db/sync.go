@@ -328,9 +328,9 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string) error {
 		SELECT 
 			COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed,
 			COUNT(*) FILTER (WHERE status = 'SKIPPED') as skipped,
-			COUNT(*) FILTER (WHERE status = 'FAILED') as failed,
+			COUNT(*) FILTER (WHERE status = 'FAILED' AND next_retry_at IS NULL) as failed,
 			COUNT(*) FILTER (WHERE status = 'CANCELLED') as cancelled,
-			COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING')) as open
+			COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL)) as open
 		FROM tasks
 		WHERE sync_job_id = $1
 	`
@@ -345,6 +345,7 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string) error {
 		return nil
 	}
 
+	// Always repair cached file counts
 	updateQuery := `
 		UPDATE sync_jobs
 		SET processed_files = $1,
@@ -352,8 +353,40 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string) error {
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3
 	`
-	_, err = dbsql.Exec(updateQuery, completed + skipped, failed + cancelled, syncJobID)
-	return err
+	if _, err := dbsql.Exec(updateQuery, completed+skipped, failed+cancelled, syncJobID); err != nil {
+		return err
+	}
+
+	// If no open tasks remain, ensure a RUNNING/INDEXING sync job returns to IDLE state
+	if open == 0 {
+		finalRunStatus := "SUCCESS"
+		var finalErr *string
+		if failed > 0 {
+			if failed == total {
+				finalRunStatus = "FAILED"
+				msg := "All file transfer tasks failed"
+				finalErr = &msg
+			} else {
+				finalRunStatus = "PARTIAL"
+				msg := fmt.Sprintf("%d of %d tasks failed", failed, total)
+				finalErr = &msg
+			}
+		}
+
+		statusQuery := `
+			UPDATE sync_jobs
+			SET status = 'IDLE',
+			    last_run_status = $1,
+			    error_message = COALESCE($2, error_message),
+			    last_run_at = CURRENT_TIMESTAMP,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = $3 AND status IN ('RUNNING', 'INDEXING')
+		`
+		_, err = dbsql.Exec(statusQuery, finalRunStatus, finalErr, syncJobID)
+		return err
+	}
+
+	return nil
 }
 
 // GetFailedSyncTasksForReport retrieves failed sync tasks for a CSV report
