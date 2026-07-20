@@ -12,6 +12,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +21,7 @@ type WebDAVProvider struct {
 	Username   string
 	Password   string
 	HTTPClient *http.Client
+	createdDirs sync.Map
 }
 
 type webdavProgressReader struct {
@@ -529,6 +531,12 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	currentPath := ""
 	for _, part := range parts {
 		currentPath = currentPath + "/" + part
+		dirKey := currentPath
+
+		if _, exists := p.createdDirs.Load(dirKey); exists {
+			continue
+		}
+
 		u := p.buildResourceURL(currentPath)
 
 		req, err := p.newRequest("MKCOL", u, nil)
@@ -547,7 +555,9 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("webdav mkdir: %w", ErrAuth)
 		}
-		if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
+			p.createdDirs.Store(dirKey, true)
+		} else {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
 	}
