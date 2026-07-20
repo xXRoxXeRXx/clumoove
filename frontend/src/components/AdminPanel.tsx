@@ -233,11 +233,11 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
 
       {showCreate && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
-          <input placeholder={t('auth.email')} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
+          <input type="email" autoComplete="email" name="email" placeholder={t('auth.email')} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
             className={inputCls} />
-          <input placeholder={t('auth.name')} value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })}
+          <input type="text" autoComplete="name" name="display_name" placeholder={t('auth.name')} value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })}
             className={inputCls} />
-          <input type="password" placeholder={t('auth.password')} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
+          <input type="password" autoComplete="new-password" name="password" placeholder={t('auth.password')} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
             className={inputCls} />
           <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
             className={selectCls}>

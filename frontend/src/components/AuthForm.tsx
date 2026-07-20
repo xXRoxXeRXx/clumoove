@@ -223,6 +223,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </label>
               <input
                 type="password"
+                autoComplete="new-password"
+                name="new_password"
                 autoFocus
                 required
                 value={newPassword}
@@ -236,6 +238,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </label>
               <input
                 type="password"
+                autoComplete="new-password"
+                name="confirm_password"
                 required
                 value={confirmNewPassword}
                 onChange={(e) => setConfirmNewPassword(e.target.value)}

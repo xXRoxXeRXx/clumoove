@@ -485,12 +485,14 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
               )}
               <div className="space-y-1.5">
                 <label className={labelCls}>{t('connect.username')}</label>
-                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder="benutzername" />
+                <input type="text" autoComplete="username" name="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder="benutzername" />
               </div>
               <div className="space-y-1.5">
                 <label className={labelCls}>{t('settings.connections.passwordLabel')}</label>
                 <input
                   type="password"
+                  autoComplete="current-password"
+                  name="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className={inputCls}

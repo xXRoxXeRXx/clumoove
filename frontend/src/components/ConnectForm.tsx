@@ -571,7 +571,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         <div className="grid md:grid-cols-2 gap-8">
           
           {/* Source Host Card */}
-          <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group m-0">
+            <legend className="sr-only">{t('connect.sourceTitle')}</legend>
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
@@ -676,6 +677,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-source username"
+                      name="source_username"
                       placeholder="benutzername"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
@@ -688,6 +691,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                     <input
                       type="password"
+                      autoComplete="section-source current-password"
+                      name="source_password"
                       placeholder={t('connect.password')}
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
@@ -727,6 +732,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-source username"
+                      name="source_username"
                       placeholder="root"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
@@ -768,8 +775,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                       <input
                         type="password"
-                        placeholder={t('connect.password')}
-                        value={sourcePass}
+                      autoComplete="section-source current-password"
+                      name="source_password"
+                      placeholder={t('connect.password')}
+                      value={sourcePass}
                         onChange={(e) => setSourcePass(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
                         required
@@ -831,6 +840,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
                     <input
                       type="text"
+                      autoComplete="section-source username"
+                      name="source_username"
                       placeholder="AKIAIOSFODNN7EXAMPLE"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
@@ -843,6 +854,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
                     <input
                       type="password"
+                      autoComplete="section-source current-password"
+                      name="source_password"
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
@@ -884,6 +897,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-source username"
+                      name="source_username"
                       placeholder="benutzername"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
@@ -905,6 +920,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                     <input
                       type="password"
+                      autoComplete="section-source current-password"
+                      name="source_password"
                       placeholder="•••• •••• •••• ••••"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
@@ -931,6 +948,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-source username"
+                      name="source_username"
                       placeholder="benutzername"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
@@ -943,6 +962,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
+                      autoComplete="section-source current-password"
+                      name="source_password"
                       placeholder="•••• •••• •••• ••••"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
@@ -996,10 +1017,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 />
               )}
             </div>
-          </div>
+          </fieldset>
            
            {/* Target Host Card */}
-          <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group m-0">
+            <legend className="sr-only">{t('connect.targetTitle')}</legend>
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-navy to-portal-navy-light" />
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
@@ -1104,6 +1126,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-target username"
+                      name="target_username"
                       placeholder="benutzername"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
@@ -1116,6 +1140,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                     <input
                       type="password"
+                      autoComplete="section-target current-password"
+                      name="target_password"
                       placeholder={t('connect.password')}
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
@@ -1155,6 +1181,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-target username"
+                      name="target_username"
                       placeholder="root"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
@@ -1196,8 +1224,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                       <input
                         type="password"
-                        placeholder={t('connect.password')}
-                        value={targetPass}
+                      autoComplete="section-target current-password"
+                      name="target_password"
+                      placeholder={t('connect.password')}
+                      value={targetPass}
                         onChange={(e) => setTargetPass(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
                         required
@@ -1259,6 +1289,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
                     <input
                       type="text"
+                      autoComplete="section-target username"
+                      name="target_username"
                       placeholder="AKIAIOSFODNN7EXAMPLE"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
@@ -1271,6 +1303,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
                     <input
                       type="password"
+                      autoComplete="section-target current-password"
+                      name="target_password"
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
@@ -1312,6 +1346,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-target username"
+                      name="target_username"
                       placeholder="benutzername"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
@@ -1333,6 +1369,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                     <input
                       type="password"
+                      autoComplete="section-target current-password"
+                      name="target_password"
                       placeholder="•••• •••• •••• ••••"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
@@ -1359,6 +1397,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
                       type="text"
+                      autoComplete="section-target username"
+                      name="target_username"
                       placeholder="benutzername"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
@@ -1371,6 +1411,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
                       type="password"
+                      autoComplete="section-target current-password"
+                      name="target_password"
                       placeholder="•••• •••• •••• ••••"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
@@ -1424,7 +1466,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 />
               )}
             </div>
-          </div>
+          </fieldset>
         </div>
 
         {/* Helpful Info Guide Box */}
