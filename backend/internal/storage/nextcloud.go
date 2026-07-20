@@ -141,7 +141,6 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 }
 
 func (p *davProvider) Close() error {
-	p.HTTPClient.CloseIdleConnections()
 	return nil
 }
 

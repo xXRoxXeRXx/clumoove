@@ -107,7 +107,6 @@ func NewDropboxProvider(token string) (*DropboxProvider, error) {
 }
 
 func (p *DropboxProvider) Close() error {
-	p.HTTPClient.CloseIdleConnections()
 	return nil
 }
 
