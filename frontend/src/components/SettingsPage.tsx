@@ -783,6 +783,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <div className="relative group">
                   <input
                     type={showCurrentPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    name="current_password"
                     required
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
@@ -807,6 +809,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <div className="relative group">
                   <input
                     type={showNewPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    name="new_password"
                     required
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
@@ -831,6 +835,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <div className="relative group">
                   <input
                     type={showConfirmPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    name="confirm_password"
                     required
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
@@ -952,6 +958,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   </label>
                   <input
                     type="password"
+                    autoComplete="current-password"
+                    name="disable_password"
                     required
                     value={disablePassword}
                     onChange={(e) => setDisablePassword(e.target.value)}
@@ -1119,6 +1127,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <div className="relative group">
                   <input
                     type="password"
+                    autoComplete="current-password"
+                    name="smtp_password"
                     required={!smtpHasConfig}
                     value={smtpPassword}
                     onChange={(e) => setSmtpPassword(e.target.value)}
