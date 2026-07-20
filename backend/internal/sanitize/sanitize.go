@@ -25,6 +25,7 @@ var providerForbiddenChars = map[string][]rune{
 	"dropbox":  {'/'},
 	"google":   {'/'},
 	"nextcloud": {'/'},
+	"hidrive":  {'?'},
 	"magentacloud": {'/'},
 	"webdav":   {'/'},
 	"sftp":     {'/'},

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"path"
 	"strings"
 	"time"
@@ -74,10 +73,6 @@ func (p *HiDriveProvider) cleanPath(filePath string) string {
 	filePath = strings.TrimSpace(filePath)
 	if filePath == "" || filePath == "/" {
 		return "/"
-	}
-	decoded, err := url.PathUnescape(filePath)
-	if err == nil {
-		filePath = decoded
 	}
 	if !strings.HasPrefix(filePath, "/") {
 		filePath = "/" + filePath
@@ -262,27 +257,51 @@ func (p *HiDriveProvider) StreamDownload(ctx context.Context, resourceType, file
 }
 
 func (p *HiDriveProvider) deleteIfExists(ctx context.Context, filePath string) error {
-	exists, _, err := p.FileExists(ctx, "files", filePath)
-	if err != nil {
-		return err
-	}
-	if exists {
-		if err := p.DeleteFile(ctx, "files", filePath); err != nil {
-			return err
+	hdPath := p.cleanPath(filePath)
+
+	delFile := func() bool {
+		req, err := http.NewRequestWithContext(ctx, "DELETE", hidriveAPIBase+"/file", nil)
+		if err != nil {
+			return false
 		}
+		req.Header.Set("Authorization", "Bearer "+p.AccessToken)
+		q := req.URL.Query()
+		q.Set("path", hdPath)
+		req.URL.RawQuery = q.Encode()
+
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK
 	}
+
+	delDir := func() bool {
+		req, err := http.NewRequestWithContext(ctx, "DELETE", hidriveAPIBase+"/dir", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+p.AccessToken)
+		q := req.URL.Query()
+		q.Set("path", hdPath)
+		q.Set("recursive", "true")
+		req.URL.RawQuery = q.Encode()
+
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusOK
+	}
+
+	delFile()
+	delDir()
 	return nil
 }
 
-func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
-	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
-		return err
-	}
-
-	if err := p.deleteIfExists(ctx, filePath); err != nil {
-		return err
-	}
-
+func (p *HiDriveProvider) uploadFile(ctx context.Context, filePath string, stream io.Reader, size int64) error {
 	dir := path.Dir(filePath)
 	name := path.Base(filePath)
 
@@ -322,6 +341,32 @@ func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("hidrive upload failed, status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
+		return err
+	}
+
+	if err := p.deleteIfExists(ctx, filePath); err != nil {
+		return err
+	}
+
+	data, err := io.ReadAll(stream)
+	if err != nil {
+		return err
+	}
+
+	err = p.uploadFile(ctx, filePath, bytes.NewReader(data), size)
+	if err != nil && strings.Contains(err.Error(), "409") {
+		_ = p.deleteIfExists(ctx, filePath)
+		err = p.uploadFile(ctx, filePath, bytes.NewReader(data), size)
+	}
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -392,6 +437,12 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 			resp.Body.Close()
 			cancel()
 			return fmt.Errorf("hidrive chunked upload: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusConflict {
+			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			cancel()
+			return fmt.Errorf("hidrive chunked upload chunk %d conflict, status: %d, body: %s", chunkIndex, resp.StatusCode, string(bodyBytes))
 		}
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
