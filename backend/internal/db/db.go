@@ -748,11 +748,17 @@ func InitDB(connStr string) (*sql.DB, error) {
 					mtime TIMESTAMP WITH TIME ZONE,
 					source_hash TEXT,
 					target_hash TEXT,
+					etag TEXT,
 					UNIQUE (sync_job_id, side, rel_path)
 				)
 			`)
 			if err != nil {
 				log.Printf("Failed schema migration (create sync_state table): %v\n", err)
+			}
+
+			_, err = db.Exec(`ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS etag TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (alter sync_state add etag): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_state_job ON sync_state(sync_job_id, side)`)

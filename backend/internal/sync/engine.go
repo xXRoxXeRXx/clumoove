@@ -55,6 +55,7 @@ type fileState struct {
 	Size         int64
 	LastModified time.Time
 	Hash         string
+	ETag         string
 }
 
 // RunSyncPass performs a single sync pass: scans, computes delta, enqueues tasks, waits, and updates state.
@@ -146,9 +147,48 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		return
 	}
 
-	// 5. Enumerate Source and Target files
+	// 5. Load previous state from DB to enable ETag folder skipping and fast delta checks
+	prevStates, err := db.ListSyncStateByJob(e.db, job.ID)
+	if err != nil {
+		e.failSync(syncJobID, fmt.Sprintf("Failed to load sync state: %v", err))
+		return
+	}
+
+	prevSource := make(map[string]db.SyncState)
+	prevTarget := make(map[string]db.SyncState)
+	prevSourceDirETags := make(map[string]string)
+	prevTargetDirETags := make(map[string]string)
+	prevSourceFiles := make(map[string]fileState)
+	prevTargetFiles := make(map[string]fileState)
+
+	for _, state := range prevStates {
+		if state.Size == -1 {
+			if state.Side == "source" {
+				prevSourceDirETags[state.RelPath] = state.ETag
+			} else {
+				prevTargetDirETags[state.RelPath] = state.ETag
+			}
+		} else {
+			fs := fileState{
+				Path:         state.RelPath,
+				Size:         state.Size,
+				LastModified: state.Mtime.Time,
+				Hash:         state.SourceHash,
+				ETag:         state.ETag,
+			}
+			if state.Side == "source" {
+				prevSource[state.RelPath] = state
+				prevSourceFiles[state.RelPath] = fs
+			} else {
+				prevTarget[state.RelPath] = state
+				prevTargetFiles[state.RelPath] = fs
+			}
+		}
+	}
+
+	// 6. Enumerate Source and Target files (using parallel worker pool + ETag skipping)
 	log.Printf("[SyncEngine] Listing source files for job %s...\n", syncJobID)
-	sourceMap, srcErrors, err := e.listFiles(ctx, sourceClient, job.SelectedPaths)
+	sourceMap, sourceDirETags, srcErrors, err := e.listFiles(ctx, sourceClient, job.SelectedPaths, prevSourceDirETags, prevSourceFiles)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Source file listing failed: %v", err))
 		return
@@ -158,11 +198,6 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	}
 
 	log.Printf("[SyncEngine] Listing target files for job %s...\n", syncJobID)
-	// For one-way we must enumerate the entire target tree so we can detect
-	// files that were deleted on source and propagate the deletion. For two-way
-	// we only need the target prefixes that correspond to the selected source
-	// paths, which avoids creating spurious "modified on target" tasks for
-	// unrelated files living under TargetDir.
 	var targetScanPaths []string
 	if job.Direction == "two_way" && len(job.SelectedPaths) > 0 {
 		for _, sp := range job.SelectedPaths {
@@ -171,7 +206,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	} else {
 		targetScanPaths = []string{job.TargetDir}
 	}
-	targetRawMap, _, err := e.listFiles(ctx, targetClient, targetScanPaths)
+	targetRawMap, targetDirETags, _, err := e.listFiles(ctx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Target file listing failed: %v", err))
 		return
@@ -185,26 +220,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		targetMap[relPath] = file
 	}
 
-	// 6. Load previous state from DB
-	prevStates, err := db.ListSyncStateByJob(e.db, job.ID)
-	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to load sync state: %v", err))
-		return
-	}
-
-	prevSource := make(map[string]db.SyncState)
-	prevTarget := make(map[string]db.SyncState)
-	for _, state := range prevStates {
-		if state.Side == "source" {
-			prevSource[state.RelPath] = state
-		} else {
-			prevTarget[state.RelPath] = state
-		}
-	}
-
 	// isFirstPass is true when no sync state exists yet (initial run).
-	// On the first pass we treat every file that exists on *both* sides as
-	// already in-sync, so we don't create spurious conflict tasks.
 	isFirstPass := len(prevStates) == 0
 
 	// Wait for any tasks that may still be RUNNING from a previous pass before
@@ -406,7 +422,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	if totalCreatedTasks == 0 {
 		// No transfers needed: update stats immediately and complete run
 		_ = db.UpdateSyncJobRunStats(e.db, job.ID, "SUCCESS", nil, len(sourceMap), 0, 0, 0, 0)
-		e.updateSyncStates(job.ID, sourceMap, targetMap, nil)
+		e.updateSyncStates(job.ID, sourceMap, targetMap, sourceDirETags, targetDirETags, nil)
 		_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
 		return
 	}
@@ -520,7 +536,7 @@ SyncTasksDone:
 	}
 
 	// Update persistent states
-	e.updateSyncStates(job.ID, sourceMap, targetMap, taskOutcomes)
+	e.updateSyncStates(job.ID, sourceMap, targetMap, sourceDirETags, targetDirETags, taskOutcomes)
 
 	// Determine final outcome status
 	finalRunStatus := "SUCCESS"
@@ -602,7 +618,7 @@ func (e *Engine) failSync(id string, errMsg string) {
 // updateSyncStates aligns sync_state entries with current listings, preserving the old states of failed files.
 // Uses BulkUpsertSyncStates to batch all upserts and deletes into a single transaction instead of N individual
 // round-trips (one per file), which is dramatically faster for large directory trees.
-func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]fileState, taskOutcomes map[string]string) {
+func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]fileState, sourceDirETags, targetDirETags map[string]string, taskOutcomes map[string]string) {
 	allKeys := make(map[string]bool)
 	for k := range sourceMap {
 		allKeys[k] = true
@@ -634,6 +650,7 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 				Mtime:      sql.NullTime{Time: srcFile.LastModified, Valid: !srcFile.LastModified.IsZero()},
 				SourceHash: srcFile.Hash,
 				TargetHash: srcFile.Hash,
+				ETag:       srcFile.ETag,
 			})
 		} else {
 			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "source", S})
@@ -649,9 +666,34 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 				Mtime:      sql.NullTime{Time: tgtFile.LastModified, Valid: !tgtFile.LastModified.IsZero()},
 				SourceHash: tgtFile.Hash,
 				TargetHash: tgtFile.Hash,
+				ETag:       tgtFile.ETag,
 			})
 		} else {
 			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "target", S})
+		}
+	}
+
+	// Persist directory ETags with Size: -1
+	for dirPath, etag := range sourceDirETags {
+		if etag != "" {
+			upserts = append(upserts, &db.SyncState{
+				SyncJobID: jobID,
+				Side:      "source",
+				RelPath:   dirPath,
+				Size:      -1,
+				ETag:      etag,
+			})
+		}
+	}
+	for dirPath, etag := range targetDirETags {
+		if etag != "" {
+			upserts = append(upserts, &db.SyncState{
+				SyncJobID: jobID,
+				Side:      "target",
+				RelPath:   dirPath,
+				Size:      -1,
+				ETag:      etag,
+			})
 		}
 	}
 
@@ -660,77 +702,159 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 	}
 }
 
-// listFiles traverses paths recursively via BFS and returns details of all files.
-func (e *Engine) listFiles(ctx context.Context, client storage.StorageProvider, startPaths []string) (map[string]fileState, []db.IndexingErrorInput, error) {
+// listFiles traverses paths recursively using a parallel worker pool and hierarchical ETag folder skipping.
+func (e *Engine) listFiles(
+	ctx context.Context,
+	client storage.StorageProvider,
+	startPaths []string,
+	prevDirETags map[string]string,
+	prevFileStates map[string]fileState,
+) (map[string]fileState, map[string]string, []db.IndexingErrorInput, error) {
 	fileMap := make(map[string]fileState)
+	dirETagMap := make(map[string]string)
 	var indexErrors []db.IndexingErrorInput
+
+	var mu sync.Mutex
+	var errsMu sync.Mutex
+
+	addFile := func(fs fileState) {
+		mu.Lock()
+		fileMap[fs.Path] = fs
+		mu.Unlock()
+	}
+
+	addDirETag := func(dirPath, etag string) {
+		if etag == "" {
+			return
+		}
+		mu.Lock()
+		dirETagMap[dirPath] = etag
+		mu.Unlock()
+	}
+
+	addError := func(path, msg string) {
+		errsMu.Lock()
+		indexErrors = append(indexErrors, db.IndexingErrorInput{
+			Path:         path,
+			ResourceType: "files",
+			ErrorMessage: msg,
+		})
+		errsMu.Unlock()
+	}
+
+	skipSubtree := func(dirPath string) {
+		prefix := dirPath
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		for fp, fs := range prevFileStates {
+			if fp == dirPath || strings.HasPrefix(fp, prefix) {
+				fileMap[fp] = fs
+			}
+		}
+		for dp, etag := range prevDirETags {
+			if dp == dirPath || strings.HasPrefix(dp, prefix) {
+				dirETagMap[dp] = etag
+			}
+		}
+	}
+
+	type listJob struct {
+		dirPath string
+		etag    string
+	}
+
+	jobsChan := make(chan listJob, 100000)
+	var wg sync.WaitGroup
+	visited := make(map[string]bool)
+	var visitedMu sync.Mutex
+
+	enqueueDir := func(dirPath, etag string) {
+		visitedMu.Lock()
+		if visited[dirPath] {
+			visitedMu.Unlock()
+			return
+		}
+		visited[dirPath] = true
+		visitedMu.Unlock()
+
+		if etag != "" && prevDirETags[dirPath] != "" && etag == prevDirETags[dirPath] {
+			log.Printf("[SyncEngine] Hierarchical ETag match for directory %s: skipping subtree scan\n", dirPath)
+			skipSubtree(dirPath)
+			return
+		}
+
+		wg.Add(1)
+		jobsChan <- listJob{dirPath: dirPath, etag: etag}
+	}
 
 	for _, startPath := range startPaths {
 		if startPath == "" {
 			continue
 		}
-
 		res, err := client.InspectResource(ctx, "files", startPath)
 		if err != nil {
-			indexErrors = append(indexErrors, db.IndexingErrorInput{
-				Path:         startPath,
-				ResourceType: "files",
-				ErrorMessage: err.Error(),
-			})
+			addError(startPath, err.Error())
 			continue
 		}
 
 		if !res.IsDir {
-			fileMap[startPath] = fileState{
+			addFile(fileState{
 				Path:         startPath,
 				Size:         res.Size,
 				LastModified: res.LastModified,
 				Hash:         res.Hash,
-			}
+				ETag:         res.ETag,
+			})
 			continue
 		}
 
-		// BFS Queue
-		queue := []string{startPath}
-		visited := make(map[string]bool)
-		visited[startPath] = true
-
-		for len(queue) > 0 {
-			currentPath := queue[0]
-			queue = queue[1:]
-
-			if ctx.Err() != nil {
-				return nil, nil, ctx.Err()
-			}
-
-			files, err := client.GetDirectoryListing(ctx, "files", currentPath)
-			if err != nil {
-				indexErrors = append(indexErrors, db.IndexingErrorInput{
-					Path:         currentPath,
-					ResourceType: "files",
-					ErrorMessage: err.Error(),
-				})
-				continue
-			}
-
-			for _, file := range files {
-				if file.IsDir {
-					if !visited[file.Path] {
-						visited[file.Path] = true
-						queue = append(queue, file.Path)
-					}
-				} else {
-					fileMap[file.Path] = fileState{
-						Path:         file.Path,
-						Size:         file.Size,
-						LastModified: file.LastModified,
-						Hash:         file.Hash,
-					}
-				}
-			}
-		}
+		addDirETag(startPath, res.ETag)
+		enqueueDir(startPath, res.ETag)
 	}
-	return fileMap, indexErrors, nil
+
+	numWorkers := 16
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for job := range jobsChan {
+				func() {
+					defer wg.Done()
+
+					if ctx.Err() != nil {
+						return
+					}
+
+					files, err := client.GetDirectoryListing(ctx, "files", job.dirPath)
+					if err != nil {
+						addError(job.dirPath, err.Error())
+						return
+					}
+
+					for _, file := range files {
+						if file.IsDir {
+							addDirETag(file.Path, file.ETag)
+							enqueueDir(file.Path, file.ETag)
+						} else {
+							addFile(fileState{
+								Path:         file.Path,
+								Size:         file.Size,
+								LastModified: file.LastModified,
+								Hash:         file.Hash,
+								ETag:         file.ETag,
+							})
+						}
+					}
+				}()
+			}
+		}()
+	}
+
+	wg.Wait()
+	close(jobsChan)
+
+	return fileMap, dirETagMap, indexErrors, nil
 }
 
 // conflictNeedsRename reports whether a two-way conflict with the given strategy

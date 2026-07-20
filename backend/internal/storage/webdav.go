@@ -193,6 +193,10 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 					res.LastModified = t
 				}
 			}
+
+			if prop.GetETag != "" {
+				res.ETag = strings.Trim(prop.GetETag, `"`)
+			}
 		}
 	}
 
@@ -293,6 +297,10 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 					if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
 						res.LastModified = t
 					}
+				}
+
+				if prop.GetETag != "" {
+					res.ETag = strings.Trim(prop.GetETag, `"`)
 				}
 			}
 		}

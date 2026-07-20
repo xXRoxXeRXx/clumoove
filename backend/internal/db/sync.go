@@ -74,7 +74,7 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 	return json.Marshal(aux)
 }
 
-// SyncState represents the last known state of a file during a sync
+// SyncState represents the last known state of a file or directory during a sync
 type SyncState struct {
 	ID         string       `json:"id"`
 	SyncJobID  string       `json:"sync_job_id"`
@@ -84,6 +84,7 @@ type SyncState struct {
 	Mtime      sql.NullTime `json:"mtime,omitempty"`
 	SourceHash string       `json:"source_hash,omitempty"`
 	TargetHash string       `json:"target_hash,omitempty"`
+	ETag       string       `json:"etag,omitempty"`
 }
 
 // CreateSyncJob inserts a new sync job
@@ -215,11 +216,11 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	return err
 }
 
-// UpdateSyncJobTotals updates the total_files and total_bytes count calculated at index time
+// UpdateSyncJobTotals updates the total_files and total_bytes count calculated at index time and resets pass counters
 func UpdateSyncJobTotals(db *sql.DB, id string, totalFiles int, totalBytes int64) error {
 	query := `
 		UPDATE sync_jobs
-		SET total_files = $1, total_bytes = $2, processed_bytes = 0, live_bytes = 0, updated_at = CURRENT_TIMESTAMP
+		SET total_files = $1, total_bytes = $2, processed_files = 0, processed_bytes = 0, live_bytes = 0, changed_files = 0, deleted_files = 0, failed_files = 0, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3
 	`
 	_, err := db.Exec(query, totalFiles, totalBytes, id)
@@ -465,32 +466,41 @@ func IncrementSyncJobProgress(db *sql.DB, ctx context.Context, id string, filesD
 
 // UpsertSyncState inserts or updates a sync state row
 func UpsertSyncState(db *sql.DB, s *SyncState) error {
+	var etagVal sql.NullString
+	if s.ETag != "" {
+		etagVal = sql.NullString{String: s.ETag, Valid: true}
+	}
 	query := `
-		INSERT INTO sync_state (sync_job_id, side, rel_path, size, mtime, source_hash, target_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO sync_state (sync_job_id, side, rel_path, size, mtime, source_hash, target_hash, etag)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (sync_job_id, side, rel_path) DO UPDATE SET
 			size = EXCLUDED.size,
 			mtime = EXCLUDED.mtime,
 			source_hash = EXCLUDED.source_hash,
-			target_hash = EXCLUDED.target_hash
+			target_hash = EXCLUDED.target_hash,
+			etag = EXCLUDED.etag
 	`
-	_, err := db.Exec(query, s.SyncJobID, s.Side, s.RelPath, s.Size, s.Mtime, s.SourceHash, s.TargetHash)
+	_, err := db.Exec(query, s.SyncJobID, s.Side, s.RelPath, s.Size, s.Mtime, s.SourceHash, s.TargetHash, etagVal)
 	return err
 }
 
 // GetSyncState retrieves a single sync state
 func GetSyncState(db *sql.DB, syncJobID, side, relPath string) (*SyncState, error) {
 	query := `
-		SELECT id, sync_job_id, side, rel_path, size, mtime, source_hash, target_hash
+		SELECT id, sync_job_id, side, rel_path, size, mtime, source_hash, target_hash, etag
 		FROM sync_state
 		WHERE sync_job_id = $1 AND side = $2 AND rel_path = $3
 	`
 	var s SyncState
+	var etagVal sql.NullString
 	err := db.QueryRow(query, syncJobID, side, relPath).Scan(
-		&s.ID, &s.SyncJobID, &s.Side, &s.RelPath, &s.Size, &s.Mtime, &s.SourceHash, &s.TargetHash,
+		&s.ID, &s.SyncJobID, &s.Side, &s.RelPath, &s.Size, &s.Mtime, &s.SourceHash, &s.TargetHash, &etagVal,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if etagVal.Valid {
+		s.ETag = etagVal.String
 	}
 	return &s, nil
 }
@@ -505,7 +515,7 @@ func DeleteSyncState(db *sql.DB, syncJobID, side, relPath string) error {
 // ListSyncStateByJob lists all sync states for a job
 func ListSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
 	query := `
-		SELECT id, sync_job_id, side, rel_path, size, mtime, source_hash, target_hash
+		SELECT id, sync_job_id, side, rel_path, size, mtime, source_hash, target_hash, etag
 		FROM sync_state WHERE sync_job_id = $1
 	`
 	rows, err := db.Query(query, syncJobID)
@@ -517,9 +527,13 @@ func ListSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
 	var states []SyncState
 	for rows.Next() {
 		var s SyncState
-		err := rows.Scan(&s.ID, &s.SyncJobID, &s.Side, &s.RelPath, &s.Size, &s.Mtime, &s.SourceHash, &s.TargetHash)
+		var etagVal sql.NullString
+		err := rows.Scan(&s.ID, &s.SyncJobID, &s.Side, &s.RelPath, &s.Size, &s.Mtime, &s.SourceHash, &s.TargetHash, &etagVal)
 		if err != nil {
 			return nil, err
+		}
+		if etagVal.Valid {
+			s.ETag = etagVal.String
 		}
 		states = append(states, s)
 	}
