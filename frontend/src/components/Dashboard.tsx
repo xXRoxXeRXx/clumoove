@@ -1,21 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Pause, Play, XCircle, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useFormat } from '../utils/format';
+import { useFormat, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
-
-type TFunc = (key: string) => string;
-
-const formatDuration = (seconds: number, t: TFunc): string => {
-  if (seconds === Infinity || isNaN(seconds)) return t('dashboard.eta.computing');
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
-  if (mins < 60) return `${mins}m ${secs}s`;
-  const hrs = Math.floor(mins / 60);
-  const remMins = mins % 60;
-  return `${hrs}h ${remMins}m`;
-};
 
 interface DashboardProps {
   migrationId: string;

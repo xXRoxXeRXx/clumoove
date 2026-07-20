@@ -40,6 +40,19 @@ export const formatDateTime = (iso: string, lng?: string): string => {
   }).format(d);
 };
 
+type TFunc = (key: string) => string;
+
+export const formatDuration = (seconds: number, t: TFunc): string => {
+  if (seconds === Infinity || isNaN(seconds)) return t('dashboard.eta.computing');
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hrs}h ${remMins}m`;
+};
+
 export const useFormat = () => {
   const { i18n } = useTranslation();
   const lng = i18n.language;
