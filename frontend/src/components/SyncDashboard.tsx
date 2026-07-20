@@ -340,7 +340,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             </p>
           </div>
 
-          {job.failed_files > 0 && (
+          {(job.failed_files > 0 || job.last_run_status === 'PARTIAL' || job.last_run_status === 'FAILED') && (
             <button
               onClick={handleDownloadReport}
               className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer"
