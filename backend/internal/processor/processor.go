@@ -1178,7 +1178,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 		var errTargetHash error
 		// Retry the hash query: a transient Nextcloud error (502/503/423/timeout)
 		// returns an empty hash and would otherwise cause a false integrity failure.
-		// Retry until we get a real value (or exhaust attempts).
+		// Retrying non-retryable errors ("checksum not available", "not supported")
+		// adds 4s of useless sleep per file, so we break immediately for those.
 		for hashAttempt := 0; hashAttempt < 3; hashAttempt++ {
 			if mig.TargetProvider != "webdav" {
 				targetHashVal, errTargetHash = targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
@@ -1186,7 +1187,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 				errTargetHash = fmt.Errorf("webdav target hash not supported")
 				break
 			}
-			if errTargetHash == nil && targetHashVal != "" {
+			if (errTargetHash == nil && targetHashVal != "") || isNonRetryableHashError(errTargetHash) {
 				break
 			}
 			if hashAttempt < 2 {
@@ -1194,10 +1195,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			}
 		}
 		if errTargetHash != nil {
-			log.Printf("[INTEGRITY] GetFileHash failed after retries for %s: %v", targetPath, errTargetHash)
+			if !isNonRetryableHashError(errTargetHash) {
+				log.Printf("[INTEGRITY] GetFileHash failed after retries for %s: %v", targetPath, errTargetHash)
+			} else {
+				log.Printf("[INTEGRITY] No checksum available on target for %s (%v) — using size verification", targetPath, errTargetHash)
+			}
 		}
 
-		if errTargetHash == nil {
+		if errTargetHash == nil && targetHashVal != "" {
 			task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
 			targetReturnedAlgo, cleanTargetHash := storage.ParseHashString(targetHashVal)
 			if mig.TargetProvider == "dropbox" {
@@ -1798,4 +1803,17 @@ func verifyTargetSize(ctx context.Context, client storage.StorageProvider, resou
 		}
 	}
 	return exists, size, err
+}
+
+// isNonRetryableHashError reports whether a GetFileHash error (or nil error) indicates
+// that file hashes are permanently unsupported or unavailable for the file/provider,
+// meaning retries will not yield a hash and should be skipped immediately.
+func isNonRetryableHashError(err error) bool {
+	if err == nil {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "checksum not available") ||
+		strings.Contains(msg, "not supported") ||
+		strings.Contains(msg, "not implemented")
 }
