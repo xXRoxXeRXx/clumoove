@@ -102,6 +102,7 @@ CREATE INDEX IF NOT EXISTS idx_migrations_status ON migrations(status);
 CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_migration_status ON tasks(migration_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(status, created_at) WHERE status = 'PENDING';
 
 -- Auto-update updated_at triggers
 CREATE OR REPLACE FUNCTION update_updated_at_column()

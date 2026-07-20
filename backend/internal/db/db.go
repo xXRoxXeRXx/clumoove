@@ -19,8 +19,6 @@ import (
 
 	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
-
-	"backend/internal/storage"
 )
 
 // StringArray is a []string that implements sql.Scanner and driver.Valuer
@@ -425,6 +423,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_tasks_retry): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(status, created_at) WHERE status = 'PENDING'`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_pending): %v\n", err)
 			}
 
 			// Schedules table for Core Scheduler Engine
@@ -963,11 +966,6 @@ func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]
 // surface that instead of the raw transport path. For all other tasks we fall
 // back to the path basename.
 func displayTaskName(filePath string, meta json.RawMessage) string {
-	if storage.IsPickerPath(filePath) {
-		if handle, ok := storage.PickerHandleFromMetadata(meta); ok && handle.Name != "" {
-			return handle.Name
-		}
-	}
 	base := path.Base(filePath)
 	if base == "." || base == "/" || base == "" {
 		return filePath
