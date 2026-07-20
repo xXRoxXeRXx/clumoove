@@ -566,6 +566,29 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
         </div>
 
+        {/* Active Transfers Card */}
+        {(job.status === 'RUNNING' || job.status === 'INDEXING') && job.active_files && job.active_files.length > 0 && (
+          <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
+              <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
+              <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
+                {t('dashboard.activeTransfers', { count: job.active_files.length, threads: job.threads || 4 })}
+              </h4>
+            </div>
+            <div className="space-y-2">
+              {job.active_files.map((file, i) => {
+                const fileName = file.split('/').pop() || file;
+                return (
+                  <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
+                    <span className="truncate pr-4" title={file}>{fileName}</span>
+                    <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Live / Last Run Statistics */}
         <div className="space-y-3 pt-2">
           <h3 className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)]">
