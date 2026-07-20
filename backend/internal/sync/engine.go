@@ -283,9 +283,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 			if !hasPrevSrc {
 				srcModified = true // New file (not seen in a previous pass)
 			} else {
-				srcModified = srcFile.Size != pSrc.Size ||
-					(srcFile.Hash != "" && pSrc.SourceHash != "" && srcFile.Hash != pSrc.SourceHash) ||
-					(!srcFile.LastModified.IsZero() && pSrc.Mtime.Valid && !srcFile.LastModified.Equal(pSrc.Mtime.Time))
+				srcModified = isFileModified(srcFile, pSrc, true)
 			}
 		}
 
@@ -295,9 +293,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 			if !hasPrevTgt {
 				tgtModified = true // New file (not seen in a previous pass)
 			} else {
-				tgtModified = tgtFile.Size != pTgt.Size ||
-					(tgtFile.Hash != "" && pTgt.TargetHash != "" && tgtFile.Hash != pTgt.TargetHash) ||
-					(!tgtFile.LastModified.IsZero() && pTgt.Mtime.Valid && !tgtFile.LastModified.Equal(pTgt.Mtime.Time))
+				tgtModified = isFileModified(tgtFile, pTgt, false)
 			}
 		}
 
@@ -855,6 +851,50 @@ func (e *Engine) listFiles(
 	close(jobsChan)
 
 	return fileMap, dirETagMap, indexErrors, nil
+}
+
+// isFileModified determines whether a file has changed compared to its stored SyncState.
+func isFileModified(curr fileState, prev db.SyncState, isSource bool) bool {
+	// Size mismatch -> modified
+	if curr.Size != prev.Size {
+		return true
+	}
+
+	prevHash := prev.SourceHash
+	if !isSource {
+		prevHash = prev.TargetHash
+	}
+
+	// If hashes exist on both current file and previous state -> compare clean hashes
+	if curr.Hash != "" && prevHash != "" {
+		_, cleanCurr := storage.ParseHashString(curr.Hash)
+		_, cleanPrev := storage.ParseHashString(prevHash)
+		if cleanCurr != "" && cleanPrev != "" {
+			return cleanCurr != cleanPrev
+		}
+	}
+
+	// If ETags exist on current file and previous state -> compare ETags
+	if curr.ETag != "" && prev.ETag != "" {
+		cleanCurrETag := strings.Trim(curr.ETag, `"`)
+		cleanPrevETag := strings.Trim(prev.ETag, `"`)
+		if cleanCurrETag != "" && cleanPrevETag != "" {
+			return cleanCurrETag != cleanPrevETag
+		}
+	}
+
+	// Timestamp comparison with 2-second tolerance (ignores sub-second nanoseconds / FAT32 2s precision)
+	if !curr.LastModified.IsZero() && prev.Mtime.Valid {
+		diff := curr.LastModified.Sub(prev.Mtime.Time)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff >= 2*time.Second {
+			return true
+		}
+	}
+
+	return false
 }
 
 // conflictNeedsRename reports whether a two-way conflict with the given strategy

@@ -62,7 +62,7 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		Username: username,
 		Password: password,
 		HTTPClient: &http.Client{
-			Transport: tr,
+			Transport: newLoggingTransport(tr),
 			Timeout:   0,
 		},
 	}, nil

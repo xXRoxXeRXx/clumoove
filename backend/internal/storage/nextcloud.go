@@ -129,7 +129,7 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 			Username: username,
 			Password: password,
 			HTTPClient: &http.Client{
-				Transport: newDAVTransport(host),
+				Transport: newLoggingTransport(newDAVTransport(host)),
 				Timeout:   0,
 			},
 			Threads:   4,
