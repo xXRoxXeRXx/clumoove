@@ -324,7 +324,7 @@ func main() {
 	server := &APIServer{
 		db:            database,
 		queue:         q,
-		indexer:       indexer.NewIndexer(database, encryptionKey),
+		indexer:       indexer.NewIndexer(database, encryptionKey, q),
 		syncEngine:    syncEng,
 		encryptionKey: encryptionKey,
 		jwtSecret:     jwtSecret,
