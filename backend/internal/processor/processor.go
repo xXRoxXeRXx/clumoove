@@ -745,16 +745,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	if task.ResourceType == "files" {
 		// Use path (POSIX) rather than filepath: WebDAV/Nextcloud paths are always
 		// slash-separated, independent of the OS this server process runs on.
-		destFilePath := task.FilePath
-		// A Google Photos Picker source encodes a SOURCE-SIDE transport handle
-		// (a "/picker/<id>?base_url=…" path) in FilePath. That handle must never
-		// become the upload destination — it would create a literal "picker"
-		// folder and embed a credentialed query string in target filenames.
-		// Derive a clean, user-visible destination name instead.
-		if mig.SourceProvider == "googlephotos" && storage.IsPickerPath(destFilePath) {
-			destFilePath = storage.PickerTargetName(destFilePath)
-		}
-		targetPath = path.Clean(path.Join(mig.TargetDir, destFilePath))
+		targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
 	}
 
 	// 3a. Filename Sanitization (before conflict resolution)
@@ -768,10 +759,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 			_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
 		}
 
-		// Google Photos has no rename/overwrite-by-case semantics and the
-		// collision check issues an albums lookup that fails with
-		// "Invalid album ID" while also burning the scarce write quota. Skip it.
-		if sanitize.IsCaseInsensitive(mig.TargetProvider) && mig.TargetProvider != "googlephotos" {
+		if sanitize.IsCaseInsensitive(mig.TargetProvider) {
 			collision, err := sanitize.CheckCaseCollision(ctx, targetClient, task.ResourceType,
 				path.Dir(targetPath), path.Base(targetPath))
 			if err != nil {
@@ -1549,15 +1537,8 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	}
 	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
 
-	// Token still valid with >2 min margin (updated by a concurrent thread) → use as-is.
-	// Exception: googlephotos source tokens must always be refreshed because the
-	// photoslibrary.readonly scope (needed for full-resolution Picker downloads via
-	// mediaItems/{id}) is only granted on a fresh token after the scope was added.
-	// Without this, the Library lookup 403s and we fall back to the small Picker URL.
 	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
-		if provider != "googlephotos" || role != "source" {
-			return accessToken, nil
-		}
+		return accessToken, nil
 	}
 
 	log.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",

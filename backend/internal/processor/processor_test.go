@@ -72,7 +72,7 @@ func TestUseTempThenRename(t *testing.T) {
 	}{
 		{"renameable + overwrite", renameable, true, true},
 		{"renameable + no overwrite", renameable, false, false},
-		{"no-rename + overwrite (googlephotos)", noRename, true, false},
+		{"no-rename + overwrite", noRename, true, false},
 		{"no-rename + no overwrite", noRename, false, false},
 	}
 	for _, c := range cases {
