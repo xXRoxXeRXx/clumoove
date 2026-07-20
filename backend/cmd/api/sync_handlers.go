@@ -528,13 +528,19 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ticker := time.NewTicker(2 * time.Second)
+	// 3s poll is a good balance: fast enough to feel live, slow enough to not
+	// hammer the DB. Change-detection skips the flush when nothing changed.
+	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
 	// Periodic comment heartbeat keeps the SSE connection alive behind proxies
 	// that would otherwise GC an idle connection between data frames.
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
+
+	// lastJSON tracks the previous payload to avoid flushing identical data
+	// to the client on every tick when nothing has changed.
+	var lastJSON []byte
 
 	for {
 		select {
@@ -556,6 +562,12 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
+
+			// Only push to client when data actually changed
+			if string(data) == string(lastJSON) {
+				continue
+			}
+			lastJSON = data
 
 			fmt.Fprintf(w, "event: sync_jobs\ndata: %s\n\n", data)
 			flusher.Flush()
