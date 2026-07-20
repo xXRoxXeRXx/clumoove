@@ -58,7 +58,6 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 }
 
 func (p *GoogleProvider) Close() error {
-	p.httpClient.CloseIdleConnections()
 	return nil
 }
 

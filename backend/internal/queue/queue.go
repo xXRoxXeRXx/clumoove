@@ -98,16 +98,11 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 			)
 			ORDER BY t.created_at ASC
 			LIMIT 1
-		),
-		locked AS (
-			SELECT t.id
-			FROM tasks t
-			INNER JOIN candidate c ON t.id = c.id
-			FOR UPDATE SKIP LOCKED
+			FOR UPDATE OF t SKIP LOCKED
 		)
 		UPDATE tasks
 		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1
-		WHERE id = (SELECT id FROM locked)
+		WHERE id = (SELECT id FROM candidate)
 		RETURNING id, migration_id, sync_job_id
 	`
 	var payload Payload

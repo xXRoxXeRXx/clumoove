@@ -69,7 +69,6 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 }
 
 func (p *WebDAVProvider) Close() error {
-	p.HTTPClient.CloseIdleConnections()
 	return nil
 }
 
