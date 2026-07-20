@@ -508,7 +508,13 @@ function App() {
               <stop offset="100%" stopColor="#ffd700" stopOpacity="0" />
             </radialGradient>
             <pattern id="star-pattern" x="0" y="0" width="100" height="100" patternUnits="userSpaceOnUse">
-              <polygon points="50,4 53,22 72,22 57,33 63,51 50,41 37,51 43,33 28,22 47,22" fill="#ffd700" opacity="0.1" />
+              <g fill="#ffd700" opacity="0.1">
+                <circle cx="50" cy="55" r="22" />
+                <circle cx="32" cy="42" r="15" />
+                <circle cx="68" cy="42" r="15" />
+                <circle cx="42" cy="32" r="14" />
+                <circle cx="58" cy="32" r="14" />
+              </g>
             </pattern>
           </defs>
 
@@ -518,7 +524,7 @@ function App() {
           <circle cx="720" cy="100" r="280" fill="url(#glow-yellow)" />
           <circle cx="720" cy="800" r="280" fill="url(#glow-yellow)" />
 
-          {/* Star tiling */}
+          {/* Cloud tiling */}
           <rect x="0" y="0" width="1440" height="900" fill="url(#star-pattern)" />
 
           {/* Europa landmass (simplified, full map) */}
