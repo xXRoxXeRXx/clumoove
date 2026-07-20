@@ -33,7 +33,7 @@ func sanitizeSyncError(msg string) string {
 }
 
 // processSyncTask handles execution of a single task belonging to a sync job.
-func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload) (err error) {
+func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload, threadID int) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -74,6 +74,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload)
 	_ = json.Unmarshal(task.Metadata, &meta)
 	action, _ := meta["action"].(string)
 	side, _ := meta["side"].(string)
+
+	log.Printf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
+		p.workerID, threadID, strings.ToUpper(action), task.FilePath, task.FileSize, job.SourceProvider, job.TargetProvider)
 
 	// Decrypt credentials
 	sourcePass, err := crypto.Decrypt(job.SourcePasswordEncrypted, p.secretKey)

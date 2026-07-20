@@ -312,7 +312,7 @@ func (p *Processor) Start(ctx context.Context) {
 
 					if payload.SyncJobID != "" {
 						log.Printf("[Worker %s] Thread %d processing sync task %s for job %s\n", p.workerID, threadID, payload.TaskID, payload.SyncJobID)
-						err = p.processSyncTask(ctx, payload)
+						err = p.processSyncTask(ctx, payload, threadID)
 						if err != nil {
 							log.Printf("[Worker %s] Thread %d error processing sync task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
 							p.handleSyncTaskFailure(ctx, payload, err)
@@ -321,7 +321,7 @@ func (p *Processor) Start(ctx context.Context) {
 						}
 					} else {
 						log.Printf("[Worker %s] Thread %d processing migration task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
-						err = p.processTask(ctx, payload)
+						err = p.processTask(ctx, payload, threadID)
 						if err != nil {
 							log.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
 							p.handleTaskFailure(ctx, payload, err)
@@ -736,7 +736,7 @@ func useTempThenRename(target storage.StorageProvider, deleteAfterUpload bool) b
 	return deleteAfterUpload && target.SupportsAtomicRename()
 }
 
-func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (err error) {
+func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, threadID int) (err error) {
 	// Shadow ctx with a cancelable one
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -792,6 +792,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload) (er
 	if err != nil {
 		return fmt.Errorf("failed to fetch task: %w", err)
 	}
+
+	log.Printf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
+		p.workerID, threadID, strings.ToUpper(task.ResourceType), task.FilePath, task.FileSize, mig.SourceProvider, mig.TargetProvider)
 
 	// Decrypt credentials
 	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, p.secretKey)
