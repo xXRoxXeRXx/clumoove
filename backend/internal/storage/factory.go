@@ -26,7 +26,7 @@ func IsValidProvider(p string) bool {
 
 // Providers that require a user-supplied URL with a resolvable host. Providers
 // without a host (local, OAuth-only, or with a hardcoded endpoint such as
-// magentacloud/dropbox/google/googlephotos) are exempt from the URL-host check.
+// magentacloud/dropbox/google) are exempt from the URL-host check.
 var hostBasedProviders = map[string]bool{
 	"nextcloud": true,
 	"webdav":    true,
