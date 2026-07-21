@@ -274,7 +274,8 @@
     "connectionError": "Connection error",
     "oauth": "Connection established",
     "source": "Source",
-    "target": "Target"
+    "target": "Target",
+    "migrationJobDetail": "Transfer Details"
   },
   "settings": {
     "back": "Back",
