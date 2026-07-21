@@ -21,6 +21,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(0);
   const [eta, setEta] = useState<string>('');
+  const [now, setNow] = useState<number>(() => Date.now());
   const threadsDraggingRef = useRef<boolean>(false);
   const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
   const lastActiveSpeed = useRef<number>(0);
@@ -29,6 +30,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
   const translateApiError = useApiError();
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (job?.threads !== undefined && !threadsDraggingRef.current) {
@@ -544,112 +552,187 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </p>
         </div>
 
-        {/* Main metric card for progress, speed, bytes, and ETA */}
-        <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
-          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+        {/* Live Transfer Progress & Active Files Card (ONLY shown when sync is actively RUNNING or INDEXING) */}
+        {(job.status === 'RUNNING' || job.status === 'INDEXING') && (
+          <div className="space-y-4">
+            {/* Main metric card for progress, speed, bytes, and ETA */}
+            <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
 
-          <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-            <div>
-              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
-              <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
-                {byteProgressPercent}%
-              </h3>
-            </div>
-            <div className="text-right flex flex-col items-end">
-              <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
-              <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
-                {formatBytes(speed)}/s
-              </p>
-            </div>
-          </div>
+              <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
+                <div>
+                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
+                  <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
+                    {byteProgressPercent}%
+                  </h3>
+                </div>
+                <div className="text-right flex flex-col items-end">
+                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
+                  <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
+                    {formatBytes(speed)}/s
+                  </p>
+                </div>
+              </div>
 
-          {/* Glowing Rounded Progress Bar */}
-          <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
-            <div
-              className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
-              style={{ width: `${byteProgressPercent}%` }}
-            >
-              <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
-            </div>
-          </div>
+              {/* Glowing Rounded Progress Bar */}
+              <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
+                  style={{ width: `${byteProgressPercent}%` }}
+                >
+                  <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
+                </div>
+              </div>
 
-          <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-            <div className="flex items-center gap-2">
-              <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-              <span>
-                {t('dashboard.transferred')}:{' '}
-                <strong className="text-[var(--color-text-primary)]">
-                  {totalBytes > 0 ? formatBytes(effectiveBytesDisplay) : `${job.processed_files}`}
-                </strong>
-                {totalBytes > 0 ? ` / ${formatBytes(totalBytes)}` : ` / ${job.total_files}`}
-              </span>
+              <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                  <span>
+                    {t('dashboard.transferred')}:{' '}
+                    <strong className="text-[var(--color-text-primary)]">
+                      {totalBytes > 0 ? formatBytes(effectiveBytesDisplay) : `${job.processed_files}`}
+                    </strong>
+                    {totalBytes > 0 ? ` / ${formatBytes(totalBytes)}` : ` / ${job.total_files}`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 justify-end">
+                  <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                  <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2 justify-end">
-              <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-              <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
-            </div>
-          </div>
-        </div>
 
-        {/* Active Transfers Card */}
-        {(job.status === 'RUNNING' || job.status === 'INDEXING') && job.active_files && job.active_files.length > 0 && (
-          <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
-            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
-              <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
-              <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
-                {t('dashboard.activeTransfers', { count: job.active_files.length, threads: job.threads || 4 })}
-              </h4>
-            </div>
-            <div className="space-y-2">
-              {job.active_files.map((file, i) => {
-                const fileName = file.split('/').pop() || file;
-                return (
-                  <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
-                    <span className="truncate pr-4" title={file}>{fileName}</span>
-                    <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
-                  </div>
-                );
-              })}
-            </div>
+            {/* Active Files List */}
+            {job.active_files && job.active_files.length > 0 && (
+              <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
+                  <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
+                  <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
+                    {t('sync.activeTransfersTitle', { count: job.active_files.length, threads: job.threads || 4 })}
+                  </h4>
+                </div>
+                <div className="space-y-2">
+                  {job.active_files.map((file, i) => {
+                    const fileName = file.split('/').pop() || file;
+                    return (
+                      <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
+                        <span className="truncate pr-4" title={file}>{fileName}</span>
+                        <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Live / Last Run Statistics */}
-        <div className="space-y-3 pt-2">
-          <h3 className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)]">
-            {t('sync.runStats')}
-          </h3>
+        {/* Sync Status & Schedule Overview Card */}
+        {(() => {
+          let nextRunLabel = t('sync.neverRun');
+          if (job.status === 'PAUSED') {
+            nextRunLabel = t('sync.statusPaused');
+          } else if (job.last_run_at && job.interval_minutes > 0) {
+            const lastRunMs = new Date(job.last_run_at).getTime();
+            const nextRunMs = lastRunMs + job.interval_minutes * 60 * 1000;
+            const diffMs = nextRunMs - now;
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-slate-50 flex flex-col">
-              <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('sync.processedFiles')}</span>
-              <span className="font-display font-extrabold text-xl text-[var(--color-text-primary)] mt-1">
-                {job.processed_files} / {job.total_files}
-              </span>
-            </div>
+            if (diffMs <= 0) {
+              nextRunLabel = t('sync.nextRunDueNow');
+            } else {
+              const diffSec = Math.round(diffMs / 1000);
+              const formattedDuration = formatDuration(diffSec, t);
+              nextRunLabel = t('sync.nextRunDueIn', { duration: formattedDuration });
+            }
+          }
 
-            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-blue-50 flex flex-col">
-              <span className="text-[10px] font-mono uppercase text-blue-600 font-bold">{t('sync.changedFiles')}</span>
-              <span className="font-display font-extrabold text-xl text-blue-700 mt-1">
-                {job.changed_files}
-              </span>
-            </div>
+          const isSyncing = job.status === 'RUNNING' || job.status === 'INDEXING';
+          const isError = job.status === 'FAILED' || !!job.error_message;
+          const isPaused = job.status === 'PAUSED';
 
-            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-purple-50 flex flex-col">
-              <span className="text-[10px] font-mono uppercase text-brand-violet font-bold">{t('sync.deletedFiles')}</span>
-              <span className="font-display font-extrabold text-xl text-purple-700 mt-1">
-                {job.deleted_files}
-              </span>
-            </div>
+          return (
+            <div className="p-6 rounded-3xl border border-[var(--color-glass-border)] bg-[var(--color-bg-primary)] shadow-sm space-y-5">
+              <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4">
+                <div className="flex items-center gap-3">
+                  {isSyncing ? (
+                    <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold font-mono">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>{t('sync.statusSyncing')}</span>
+                    </div>
+                  ) : isError ? (
+                    <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold font-mono">
+                      <XCircle className="w-3.5 h-3.5" />
+                      <span>{t('sync.statusError')}</span>
+                    </div>
+                  ) : isPaused ? (
+                    <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold font-mono">
+                      <Pause className="w-3.5 h-3.5" />
+                      <span>{t('sync.statusPaused')}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold font-mono">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{t('sync.statusInSync')}</span>
+                    </div>
+                  )}
+                </div>
 
-            <div className="p-4 rounded-2xl border border-[var(--color-glass-border)] bg-rose-50 flex flex-col">
-              <span className="text-[10px] font-mono uppercase text-rose-600 font-bold">{t('sync.failedFiles')}</span>
-              <span className="font-display font-extrabold text-xl text-rose-700 mt-1">
-                {job.failed_files}
-              </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleTriggerStart}
+                    disabled={actionLoading || isSyncing}
+                    className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-portal-orange hover:bg-portal-orange-hover rounded-xl shadow-xs transition-colors disabled:opacity-50"
+                  >
+                    {actionLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Play className="w-3.5 h-3.5 fill-current" />
+                    )}
+                    <span>{t('sync.syncNow')}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)] font-mono uppercase">
+                    <Clock className="w-3.5 h-3.5 text-[var(--color-portal-navy-themed)]" />
+                    <span>{t('sync.lastRun')}</span>
+                  </div>
+                  <div className="mt-2">
+                    <span className="font-display font-extrabold text-base text-[var(--color-text-primary)] block">
+                      {job.last_run_at ? formatDateTime(job.last_run_at) : t('sync.neverRun')}
+                    </span>
+                    {job.last_run_at && (
+                      <span className="text-xs text-[var(--color-text-secondary)] mt-1 block">
+                        {job.failed_files > 0
+                          ? `${job.failed_files} Fehler beim letzten Lauf`
+                          : job.changed_files > 0
+                          ? `${job.changed_files} Datei(en) aktualisiert`
+                          : 'Keine Änderungen festgestellt'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] flex flex-col justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)] font-mono uppercase">
+                    <Clock className="w-3.5 h-3.5 text-portal-orange" />
+                    <span>{t('sync.nextRun')}</span>
+                  </div>
+                  <div className="mt-2">
+                    <span className="font-display font-extrabold text-base text-portal-navy mt-0.5 block">
+                      {nextRunLabel}
+                    </span>
+                    <span className="text-xs text-[var(--color-text-secondary)] mt-1 block">
+                      {t('sync.interval')}: {job.interval_minutes >= 60 && job.interval_minutes % 60 === 0 ? `${job.interval_minutes / 60} ${job.interval_minutes / 60 === 1 ? t('sync.hour') : t('sync.hours')}` : `${job.interval_minutes} ${t('sync.minutes')}`}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {job.error_message && (
           <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-xs font-mono text-rose-700 flex items-start gap-2">
