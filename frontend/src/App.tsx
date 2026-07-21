@@ -197,8 +197,6 @@ function App() {
   // first entry carries navigable state (replace, not push). Depends only on
   // initialStep (which is also stable) so this runs exactly once on mount.
   useEffect(() => {
-    // Seeding history state on mount is intentional; ignore set-state-in-effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     applyHistory(initialStep, urlMigId, true);
   // urlMigId is stable (backed by a ref), so this is effectively [initialStep].
   // eslint-disable-next-line react-hooks/exhaustive-deps

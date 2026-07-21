@@ -367,7 +367,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
   const byteProgressPercent = totalBytes > 0
     ? Math.min(Math.round((effectiveBytesDisplay / totalBytes) * 100), 100)
-    : (job?.total_files && job.total_files > 0 ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100) : 0);
+    : (job?.total_files && job.total_files > 0
+        ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100)
+        : (job?.status === 'IDLE' || job?.status === 'COMPLETED' ? 100 : 0));
 
   return (
     <div className="w-full space-y-6 animate-fade-in">
