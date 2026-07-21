@@ -40,7 +40,7 @@ export const formatDateTime = (iso: string, lng?: string): string => {
   }).format(d);
 };
 
-export type TFunc = (key: string, options?: any) => string;
+export type TFunc = (key: string, options?: Record<string, unknown>) => string;
 
 export const formatDuration = (seconds: number, t: TFunc): string => {
   if (seconds === Infinity || isNaN(seconds)) return t('dashboard.eta.computing');

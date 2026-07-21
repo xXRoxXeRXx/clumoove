@@ -417,7 +417,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 
 	if totalCreatedTasks == 0 {
 		// No transfers needed: update stats immediately and complete run
-		_ = db.UpdateSyncJobRunStats(e.db, job.ID, "SUCCESS", nil, len(sourceMap), 0, 0, 0, 0)
+		_ = db.UpdateSyncJobRunStats(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
 		e.updateSyncStates(job.ID, sourceMap, targetMap, sourceDirETags, targetDirETags, nil)
 		_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
 		return
@@ -571,7 +571,7 @@ SyncTasksDone:
 	}
 
 	// Persist run stats and set overall status to IDLE (waiting for next run)
-	_ = db.UpdateSyncJobRunStats(e.db, job.ID, finalRunStatus, finalErr, len(sourceMap), completed+skipped, changedCount, deletedCount, failed)
+	_ = db.UpdateSyncJobRunStats(e.db, job.ID, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed)
 	_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
 
 	log.Printf("[SyncEngine] Sync pass completed for job %s. Status: %s, Processed: %d, Changed: %d, Deleted: %d, Failed: %d\n",
