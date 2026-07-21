@@ -504,21 +504,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
       {/* Main Glass Panel containing all content */}
       <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6">
-        {/* Title, Status Badge & Action Controls */}
+        {/* Title, Status/Direction Badges & Action Controls */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
           <div className="space-y-1">
-            <div className="flex items-center gap-3">
-              <h1 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)]">
-                {t('migrations.migrationJobDetail')}
-              </h1>
-              {getStatusBadge(data.status)}
-            </div>
+            <h1 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)]">
+              {t('migrations.migrationJobDetail')}
+            </h1>
             <p className="text-xs text-[var(--color-text-muted)] font-mono">
               ID: {data.id}
             </p>
           </div>
 
           <div className="flex items-center gap-2.5 w-full md:w-auto justify-start md:justify-end flex-wrap">
+            {/* Direction Info Badge */}
+            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-extrabold text-portal-orange uppercase px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 shadow-2xs animate-pulse">
+              <ArrowRight className="w-3.5 h-3.5" />
+              <span>{t('sync.oneWay')}</span>
+            </span>
+
+            {/* Status Info Badge */}
+            {getStatusBadge(data.status)}
+
             {data.failed_files > 0 && (
               <button
                 onClick={handleDownloadReport}
@@ -567,14 +573,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 {t('dashboard.newMigration')}
               </button>
             )}
-          </div>
-        </div>
-
-        {/* Direction Indicator placed ABOVE the cards */}
-        <div className="flex justify-center items-center py-1">
-          <div className="flex items-center gap-1.5 font-mono text-[10px] font-extrabold text-portal-orange uppercase px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 shadow-2xs animate-pulse">
-            <ArrowRight className="w-3.5 h-3.5" />
-            <span>{t('sync.oneWay')}</span>
           </div>
         </div>
 
