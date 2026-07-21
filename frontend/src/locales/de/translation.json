@@ -275,7 +275,7 @@
     "oauth": "Verbindung hergestellt",
     "source": "Quelle",
     "target": "Ziel",
-    "migrationJobDetail": "Übertragungs-Details"
+    "migrationJobDetail": "Migrations-Details"
   },
   "settings": {
     "back": "Zurück",
