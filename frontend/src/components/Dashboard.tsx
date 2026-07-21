@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Pause, Play, XCircle, Loader2 } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Coffee, Pause, Play, XCircle, Loader2, ArrowLeft, ArrowRight, Folder, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatDuration, type TFunc } from '../utils/format';
 import { useApiError } from '../utils/apiError';
@@ -40,6 +40,15 @@ interface ProgressData {
   threads?: number;
   bandwidth_limit_mbps?: number;
   resource_stats?: MigrationResourceStats;
+  source_provider?: string;
+  source_url?: string | null;
+  target_provider?: string;
+  target_url?: string | null;
+  target_dir?: string;
+  selected_paths?: string[];
+  selected_calendars?: string[];
+  selected_contacts?: string[];
+  created_at?: string;
 }
 
 const renderResourceSection = (title: string, stats: ResourceStats | undefined, t: TFunc) => {
@@ -432,144 +441,317 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
   const successFiles = Math.max(0, data.processed_files - data.failed_files - data.skipped_files);
 
-  return (
-    <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in text-left">
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'COMPLETED':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            {t('status.completed')}
+          </span>
+        );
+      case 'FAILED':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+            <XCircle className="w-3.5 h-3.5" />
+            {t('status.failed')}
+          </span>
+        );
+      case 'COMPLETED_WITH_ERRORS':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {t('status.completedWithErrors')}
+          </span>
+        );
+      case 'PAUSED':
+      case 'PAUSED_CONNECTION_LOSS':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-750 border border-amber-250 animate-pulse">
+            <Pause className="w-3.5 h-3.5" />
+            {t('status.paused')}
+          </span>
+        );
+      case 'CANCELLED':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
+            <XCircle className="w-3.5 h-3.5" />
+            {t('status.cancelled')}
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            {t('status.transfer')}
+          </span>
+        );
+    }
+  };
 
-      {/* Background Mode Guarantee Stamp (Grab a coffee) */}
-      <div className="mb-6 p-4.5 bg-gradient-to-r from-portal-navy to-portal-navy-light text-white border border-white/10 rounded-2xl shadow-md flex items-center justify-between text-xs">
-        <div className="flex items-center gap-3">
-          <Coffee className="w-4 h-4 text-portal-orange shrink-0 animate-bounce" />
-          <span className="leading-snug">{t('dashboard.bgGuarantee')}</span>
-        </div>
+  return (
+    <div className="w-full max-w-4xl mx-auto py-2 space-y-6 animate-fade-in text-left">
+      {/* Top Back Navigation Button */}
+      <div>
+        <button
+          onClick={onReset}
+          className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[var(--color-border)] text-xs font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          {t('common.back')}
+        </button>
       </div>
 
-      {/* PAUSED CONNECTION LOSS WARNING */}
-      {data.status === 'PAUSED_CONNECTION_LOSS' && (
-        <div className="mb-6 p-5 border border-amber-250 bg-amber-50/70 backdrop-blur-md rounded-2xl flex items-start gap-4 animate-pulse-glow">
-          <AlertTriangle className="w-6 h-6 shrink-0 text-amber-600 mt-0.5" />
-          <div className="text-xs leading-relaxed text-[var(--color-text-secondary)] text-left">
-            <h4 className="font-display font-extrabold text-amber-900 uppercase tracking-wide">{t('dashboard.connLossTitle')}</h4>
-            <p className="text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
-              {t('dashboard.connLossText')}
-            </p>
+      {/* Main Container Card */}
+      <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6">
+
+        {/* Background Mode Guarantee Banner */}
+        <div className="p-4 bg-gradient-to-r from-portal-navy to-portal-navy-light text-white border border-white/10 rounded-2xl shadow-md flex items-center justify-between text-xs">
+          <div className="flex items-center gap-3">
+            <Coffee className="w-4 h-4 text-portal-orange shrink-0 animate-bounce" />
+            <span className="leading-snug">{t('dashboard.bgGuarantee')}</span>
           </div>
         </div>
-      )}
 
-      {/* Main Grid */}
-      <div className="grid md:grid-cols-3 gap-8">
+        {/* PAUSED CONNECTION LOSS WARNING */}
+        {data.status === 'PAUSED_CONNECTION_LOSS' && (
+          <div className="p-5 border border-amber-250 bg-amber-50/70 backdrop-blur-md rounded-2xl flex items-start gap-4 animate-pulse-glow">
+            <AlertTriangle className="w-6 h-6 shrink-0 text-amber-600 mt-0.5" />
+            <div className="text-xs leading-relaxed text-[var(--color-text-secondary)] text-left">
+              <h4 className="font-display font-extrabold text-amber-900 uppercase tracking-wide">{t('dashboard.connLossTitle')}</h4>
+              <p className="text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
+                {t('dashboard.connLossText')}
+              </p>
+            </div>
+          </div>
+        )}
 
-        {/* Progress & Metrics */}
-        <div className="md:col-span-2 space-y-8">
-
-          {/* Main metric card */}
-          <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
-
-            <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-              <div>
-                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
-                <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
-                  {byteProgressPercent}%
-                </h3>
-              </div>
-              <div className="text-right flex flex-col items-end">
-                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
-                <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
-                  {formatBytes(speed)}/s
-                </p>
+        {/* Top Details & Header Controls */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-border-light)] pb-5">
+          <div className="flex items-center gap-3">
+            <div>
+              <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)]">
+                {t('migrations.migrations')} #{data.id.slice(0, 8)}
+              </h2>
+              <div className="mt-1">
+                {getStatusBadge(data.status)}
               </div>
             </div>
+          </div>
 
-            {/* Glowing Rounded Progress Bar */}
-            <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
-              <div
-                className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
-                style={{ width: `${byteProgressPercent}%` }}
+          <div className="flex flex-wrap items-center gap-2">
+            {data.failed_files > 0 && (
+              <button
+                onClick={handleDownloadReport}
+                className="flex items-center gap-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] text-[var(--color-text-primary)] px-4 py-2 rounded-xl text-xs font-bold border border-[var(--color-border)] cursor-pointer transition-colors"
               >
-                <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              <div className="flex items-center gap-2">
-                <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                <span>{t('dashboard.transferred')}: <strong className="text-[var(--color-text-primary)]">{formatBytes(data.processed_bytes)}</strong> / {formatBytes(data.total_bytes)}</span>
-              </div>
-              <div className="flex items-center gap-2 justify-end">
-                <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
-              </div>
-            </div>
-          </div>
-
-          {/* Active Transfers Card */}
-          {(data.status === 'RUNNING' || data.status === 'INDEXING') && data.active_files && data.active_files.length > 0 && (
-            <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
-                <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
-                <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
-                  {t('dashboard.activeTransfers', { count: data.active_files.length, threads: data.threads || 4 })}
-                </h4>
-              </div>
-              <div className="space-y-2">
-                {data.active_files.map((file, i) => {
-                  const fileName = file.split('/').pop() || file;
-                  return (
-                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
-                      <span className="truncate pr-4" title={file}>{fileName}</span>
-                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Status card & Sidebar Column */}
-        <div className="space-y-6">
-          <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl flex flex-col items-center text-center">
-            <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-4">{t('dashboard.status')}</span>
-
-            {/* Status Stamp capsule */}
-            {data.status === 'COMPLETED' ? (
-              <div className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
-                {t('status.completed')}
-              </div>
-            ) : data.status === 'FAILED' ? (
-              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
-                {t('status.failed')}
-              </div>
-            ) : data.status === 'COMPLETED_WITH_ERRORS' ? (
-              <div className="bg-amber-50 text-amber-700 border border-amber-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
-                {t('status.completedWithErrors')}
-              </div>
-            ) : data.status === 'PAUSED_CONNECTION_LOSS' || data.status === 'PAUSED' ? (
-              <div className="bg-amber-50 text-amber-750 border border-amber-250 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
-                {t('status.paused')}
-              </div>
-            ) : data.status === 'CANCELLED' ? (
-              <div className="bg-rose-50 text-rose-700 border border-rose-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5">
-                {t('status.cancelled')}
-              </div>
-            ) : (
-              <div className="bg-blue-50 text-[var(--color-portal-navy-themed)] border border-blue-200 px-5 py-2 font-mono font-bold text-xs rounded-full shadow-xs mb-5 animate-pulse">
-                {t('status.transfer')}
-              </div>
+                <Download className="w-4 h-4 text-portal-orange" />
+                {t('dashboard.reportCsv')}
+              </button>
             )}
 
-            <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] tracking-wider uppercase mt-1">
-              {t('dashboard.job')}: {data.status}
-            </h4>
+            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED') && data.failed_files > 0 && (
+              <button
+                onClick={handleRetryFailed}
+                disabled={controlLoading !== null}
+                className="flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-all"
+              >
+                {controlLoading === 'retry' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                {t('dashboard.retryFailed')}
+              </button>
+            )}
+
+            {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
+              <button
+                onClick={() => handleMigrationControl('pause')}
+                disabled={controlLoading !== null}
+                className="flex items-center gap-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] text-[var(--color-text-primary)] px-4 py-2 rounded-xl text-xs font-bold border border-[var(--color-border)] cursor-pointer disabled:opacity-50 transition-colors"
+              >
+                {controlLoading === 'pause' ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" /> : <Pause className="w-4 h-4 text-amber-500" />}
+                {t('dashboard.pause')}
+              </button>
+            )}
+
+            {(data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS') && (
+              <button
+                onClick={() => handleMigrationControl('resume')}
+                disabled={controlLoading !== null}
+                className="flex items-center gap-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-4 py-2 rounded-xl text-xs font-bold border border-emerald-250 cursor-pointer disabled:opacity-50 transition-colors"
+              >
+                {controlLoading === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 text-emerald-600" />}
+                {t('dashboard.resume')}
+              </button>
+            )}
+
+            {(data.status === 'RUNNING' || data.status === 'INDEXING' || data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS') && (
+              <button
+                onClick={() => handleMigrationControl('cancel')}
+                disabled={controlLoading !== null}
+                className="flex items-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 px-4 py-2 rounded-xl text-xs font-bold border border-rose-200 cursor-pointer disabled:opacity-50 transition-colors"
+              >
+                {controlLoading === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                {t('dashboard.cancel')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Direction Indicator placed ABOVE the cards */}
+        <div className="flex justify-center items-center py-1">
+          <div className="flex items-center gap-1.5 font-mono text-[10px] font-extrabold text-portal-orange uppercase px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 shadow-2xs">
+            <ArrowRight className="w-3.5 h-3.5" />
+            <span>{t('sync.oneWay')}</span>
+          </div>
+        </div>
+
+        {/* Source & Target Connection Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Source Card */}
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <Folder className="w-4 h-4 text-portal-orange" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('migrations.source')}
+              </h3>
+            </div>
+            
+            <div className="space-y-2">
+              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
+                {data.source_provider || 'nextcloud'}
+              </div>
+              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
+                {data.source_url || t('migrations.oauth')}
+              </div>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {data.selected_paths && data.selected_paths.length > 0 ? (
+                  data.selected_paths.map((p, idx) => (
+                    <span key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                      <Folder className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                      <span>{p}</span>
+                    </span>
+                  ))
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                    <Folder className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                    <span>/</span>
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Target Card */}
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <Folder className="w-4 h-4 text-emerald-600" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('migrations.target')}
+              </h3>
+            </div>
+
+            <div className="space-y-2">
+              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
+                {data.target_provider || 'nextcloud'}
+              </div>
+              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
+                {data.target_url || t('migrations.oauth')}
+              </div>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                  <Folder className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>{data.target_dir || '/'}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Live Transfer Progress & Active Files (ONLY rendered when RUNNING or INDEXING) */}
+        {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
+          <div className="space-y-4 pt-2">
+            <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+
+              <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
+                <div>
+                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
+                  <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
+                    {byteProgressPercent}%
+                  </h3>
+                </div>
+                <div className="text-right flex flex-col items-end">
+                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
+                  <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
+                    {formatBytes(speed)}/s
+                  </p>
+                </div>
+              </div>
+
+              {/* Glowing Rounded Progress Bar */}
+              <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
+                <div
+                  className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
+                  style={{ width: `${byteProgressPercent}%` }}
+                >
+                  <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+                <div className="flex items-center gap-2">
+                  <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                  <span>{t('dashboard.transferred')}: <strong className="text-[var(--color-text-primary)]">{formatBytes(data.processed_bytes)}</strong> / {formatBytes(data.total_bytes)}</span>
+                </div>
+                <div className="flex items-center gap-2 justify-end">
+                  <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                  <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* Active Transfers List */}
+            {data.active_files && data.active_files.length > 0 && (
+              <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
+                  <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
+                  <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
+                    {t('dashboard.activeTransfers', { count: data.active_files.length, threads: data.threads || 4 })}
+                  </h4>
+                </div>
+                <div className="space-y-2">
+                  {data.active_files.map((file, i) => {
+                    const fileName = file.split('/').pop() || file;
+                    return (
+                      <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
+                        <span className="truncate pr-4" title={file}>{fileName}</span>
+                        <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Grid for Summary & Controls */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Summary / Stats Card */}
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <HardDrive className="w-4 h-4 text-portal-orange" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('migrations.status')} & {t('dashboard.progress')}
+              </h3>
+            </div>
 
             {data.error_message && (
-              <p className="font-mono text-[10px] text-rose-700 mt-4 bg-rose-50/80 border border-rose-250 p-3 rounded-2xl leading-normal text-left max-w-full overflow-hidden">
+              <p className="font-mono text-[10px] text-rose-700 bg-rose-50/80 border border-rose-250 p-3 rounded-2xl leading-normal text-left max-w-full overflow-hidden">
                 {t('dashboard.error')}: {data.error_message}
               </p>
             )}
 
-            <div className="w-full mt-6 space-y-2 font-sans text-xs border-t border-[var(--color-border-light)] pt-5 text-[var(--color-text-muted)]">
+            <div className="space-y-2 font-sans text-xs text-[var(--color-text-muted)]">
               {data.resource_stats ? (
                 <>
                   {renderResourceSection(t('dashboard.files'), data.resource_stats.files, t)}
@@ -601,148 +783,81 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             </div>
           </div>
 
-          {/* Bandwidth Limit Slider */}
-          {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-            <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl">
-          <div className="flex items-center justify-between mb-3">
-            <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
-              {t('dashboard.bandwidthLimit')}
-            </label>
-            <span className="text-xs font-bold text-portal-orange font-mono">
-              {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
-            </span>
-          </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={1000}
-                  step={1}
-                  value={bandwidthLimit}
-                  disabled={bandwidthLoading}
-                  onChange={(e) => setBandwidthLimit(Number(e.target.value))}
-                  onPointerUp={(e) => commitBandwidthChange(Number((e.target as HTMLInputElement).value))}
-                  className="w-full"
-                />
-              <div className="flex justify-between text-[9px] text-[var(--color-text-muted)] font-mono mt-2">
-                <span>0</span>
-                <span>10</span>
-                <span>20</span>
-                <span>30</span>
-                <span>40</span>
-                <span>50</span>
-              </div>
+          {/* Performance Sliders Card */}
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <RefreshCw className="w-4 h-4 text-portal-orange" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('dashboard.bandwidthLimit')} & {t('dashboard.threads')}
+              </h3>
             </div>
-          )}
 
-          {/* Threads Slider */}
-          {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-            <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl">
-              <div className="flex items-center justify-between mb-3">
-                <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
-                  {t('dashboard.threads')}
-                </label>
-                <span className="text-xs font-bold text-portal-orange font-mono">{threads}</span>
+            {(data.status === 'RUNNING' || data.status === 'INDEXING') ? (
+              <div className="space-y-5">
+                {/* Bandwidth Limit Slider */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
+                      {t('dashboard.bandwidthLimit')}
+                    </label>
+                    <span className="text-xs font-bold text-portal-orange font-mono">
+                      {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1000}
+                    step={1}
+                    value={bandwidthLimit}
+                    disabled={bandwidthLoading}
+                    onChange={(e) => setBandwidthLimit(Number(e.target.value))}
+                    onPointerUp={(e) => commitBandwidthChange(Number((e.target as HTMLInputElement).value))}
+                    className="w-full"
+                  />
+                </div>
+
+                {/* Threads Slider */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-[var(--color-text-secondary)]">
+                      {t('dashboard.threads')}
+                    </label>
+                    <span className="text-xs font-bold text-portal-orange font-mono">{threads}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={1}
+                    max={16}
+                    step={1}
+                    value={threads}
+                    disabled={threadsLoading}
+                    onChange={(e) => setThreads(Number(e.target.value))}
+                    onPointerDown={() => { threadsDraggingRef.current = true; }}
+                    onPointerUp={(e) => {
+                      threadsDraggingRef.current = false;
+                      commitThreadsChange(Number((e.target as HTMLInputElement).value));
+                    }}
+                    onKeyDown={() => { threadsDraggingRef.current = true; }}
+                    onKeyUp={(e) => {
+                      threadsDraggingRef.current = false;
+                      commitThreadsChange(Number((e.target as HTMLInputElement).value));
+                    }}
+                    className="w-full"
+                  />
+                  <p className="text-[9px] text-[var(--color-text-muted)] mt-2 leading-relaxed">
+                    {t('dashboard.threadsHint')}
+                  </p>
+                </div>
               </div>
-              <input
-                type="range"
-                min={1}
-                max={16}
-                step={1}
-                value={threads}
-                disabled={threadsLoading}
-                onChange={(e) => setThreads(Number(e.target.value))}
-                onPointerDown={() => { threadsDraggingRef.current = true; }}
-                onPointerUp={(e) => {
-                  threadsDraggingRef.current = false;
-                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
-                }}
-                onKeyDown={() => { threadsDraggingRef.current = true; }}
-                onKeyUp={(e) => {
-                  threadsDraggingRef.current = false;
-                  commitThreadsChange(Number((e.target as HTMLInputElement).value));
-                }}
-                className="w-full"
-              />
-              <p className="text-[9px] text-[var(--color-text-muted)] mt-2 leading-relaxed">
-                {t('dashboard.threadsHint')}
-              </p>
-            </div>
-          )}
-
-          {/* Action buttons */}
-          <div className="space-y-3">
-            {/* Report Download */}
-            {data.failed_files > 0 && (
-              <button
-                onClick={handleDownloadReport}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl shadow-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:border-[var(--color-border)] transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer"
-              >
-                <Download className="w-4 h-4 text-portal-orange" />
-                <span>{t('dashboard.reportCsv')}</span>
-              </button>
-            )}
-
-            {/* Retry Failed Elements */}
-            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED') && data.failed_files > 0 && (
-              <button
-                onClick={handleRetryFailed}
-                disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-portal-orange to-orange-500 text-white rounded-2xl font-mono text-[11px] font-bold uppercase tracking-wider shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-99 transition-all cursor-pointer disabled:opacity-50"
-              >
-                {controlLoading === 'retry' ? (
-                  <Loader2 className="w-4 h-4 animate-spin text-white" />
-                ) : (
-                  <RefreshCw className="w-4 h-4 text-white" />
-                )}
-                <span>{t('dashboard.retryFailed')}</span>
-              </button>
-            )}
-
-            {/* Migration Controls */}
-            {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-              <button
-                onClick={() => handleMigrationControl('pause')}
-                disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-2xl shadow-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:border-[var(--color-border)] transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
-              >
-                {controlLoading === 'pause' ? <Loader2 className="w-4 h-4 animate-spin text-amber-500" /> : <Pause className="w-4 h-4 text-amber-500" />}
-                <span>{t('dashboard.pause')}</span>
-              </button>
-            )}
-
-            {(data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS') && (
-              <button
-                onClick={() => handleMigrationControl('resume')}
-                disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-emerald-50 border border-emerald-250 rounded-2xl shadow-xs text-emerald-750 hover:bg-emerald-100 hover:border-emerald-350 transition-all font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50"
-              >
-                {controlLoading === 'resume' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 text-emerald-600" />}
-                <span>{t('dashboard.resume')}</span>
-              </button>
-            )}
-
-            {(data.status === 'RUNNING' || data.status === 'INDEXING' || data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS') && (
-              <button
-                onClick={() => handleMigrationControl('cancel')}
-                disabled={controlLoading !== null}
-                className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-[var(--color-bg-secondary)] border border-rose-200 rounded-2xl shadow-xs text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition-colors font-mono text-[11px] font-bold uppercase tracking-wider text-center cursor-pointer disabled:opacity-50 mt-2"
-              >
-                {controlLoading === 'cancel' ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
-                <span>{t('dashboard.cancel')}</span>
-              </button>
-            )}
-
-            {/* Reset Button */}
-            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED' || data.status === 'CANCELLED') && (
-              <button
-                onClick={onReset}
-                className="w-full flex items-center justify-center gap-2 py-3.5 px-4 bg-gradient-to-r from-portal-orange to-orange-500 text-white rounded-2xl font-mono text-[11px] font-bold uppercase tracking-wider shadow-xs hover:shadow-md hover:scale-[1.01] active:scale-99 transition-all cursor-pointer"
-              >
-                <span>{t('dashboard.newMigration')}</span>
-              </button>
+            ) : (
+              <div className="text-xs text-[var(--color-text-muted)] italic py-4 text-center font-mono">
+                {t('dashboard.status')}: {data.status}
+              </div>
             )}
           </div>
         </div>
+
       </div>
     </div>
   );
