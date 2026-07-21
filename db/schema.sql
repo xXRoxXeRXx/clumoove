@@ -322,11 +322,17 @@ ALTER TABLE tasks ALTER COLUMN migration_id DROP NOT NULL;
 
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE;
 
-ALTER TABLE tasks DROP CONSTRAINT IF EXISTS chk_task_job_type;
-ALTER TABLE tasks ADD CONSTRAINT chk_task_job_type CHECK (
-    (migration_id IS NOT NULL AND sync_job_id IS NULL) OR
-    (migration_id IS NULL AND sync_job_id IS NOT NULL)
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_task_job_type'
+    ) THEN
+        ALTER TABLE tasks ADD CONSTRAINT chk_task_job_type CHECK (
+            (migration_id IS NOT NULL AND sync_job_id IS NULL) OR
+            (migration_id IS NULL AND sync_job_id IS NOT NULL)
+        );
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_tasks_sync_status ON tasks(sync_job_id, status);
 
