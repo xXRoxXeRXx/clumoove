@@ -19,7 +19,9 @@
     "retry": "Erneut versuchen",
     "optional": "Optional",
     "user": "Benutzer",
-    "active": "Aktiv"
+    "active": "Aktiv",
+    "enabled": "Aktiviert",
+    "disabled": "Deaktiviert"
   },
   "nav": {
     "settings": "Einstellungen",
@@ -653,7 +655,14 @@
     "startFirst": "Erste Synchronisation einrichten",
     "openDetail": "Sync-Dashboard öffnen",
     "deleteJob": "Sync-Job löschen",
-    "deleteConfirm": "Sind Sie sicher, dass Sie diesen Sync-Job löschen möchten? Alle Konfigurationen und History gehen verloren."
+    "deleteConfirm": "Sind Sie sicher, dass Sie diesen Sync-Job löschen möchten? Alle Konfigurationen und History gehen verloren.",
+    "sourcePath": "Quell-Verzeichnis",
+    "targetPath": "Ziel-Verzeichnis",
+    "conflictStrategy": "Konfliktbehandlung",
+    "conflictSourceWins": "Quelle gewinnt (Überschreiben)",
+    "conflictKeepBoth": "Beide behalten (Konfliktkopie)",
+    "conflictSkip": "Überspringen",
+    "oneWayConflictNote": "Bei One-Way-Synchronisation überschreibt der Quell-Stand stets das Ziel."
   }
 }
 

@@ -313,6 +313,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             {t('status.paused')}
           </span>
         );
+      case 'PAUSED_CONNECTION_LOSS':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
+            <AlertTriangle className="w-4 h-4" />
+            {t('dashboard.eta.waitingConn')}
+          </span>
+        );
       case 'FAILED':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
@@ -438,11 +445,14 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             <div className="flex flex-col text-left">
               <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('migrations.source')}</span>
               <span className="font-bold text-sm text-[var(--color-text-primary)] capitalize">{job.source_provider}</span>
-              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[180px]">{job.source_url || t('migrations.oauth')}</span>
+              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">{job.source_url || t('migrations.oauth')}</span>
+              <span className="text-[11px] font-mono text-portal-navy mt-1 truncate max-w-[200px]" title={job.selected_paths?.join(', ') || '/'}>
+                {t('sync.sourcePath')}: {job.selected_paths && job.selected_paths.length > 0 ? job.selected_paths.join(', ') : '/'}
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 font-mono text-xs font-bold text-[var(--color-portal-orange-themed)] uppercase px-3 py-1.5 rounded-full bg-white shadow-xs border border-[var(--color-border)]">
+          <div className="flex items-center gap-2 font-mono text-xs font-bold text-[var(--color-portal-orange-themed)] uppercase px-3 py-1.5 rounded-full bg-white shadow-xs border border-[var(--color-border)] shrink-0">
             {job.direction === 'two_way' ? '↔ ' + t('sync.twoWay') : '→ ' + t('sync.oneWay')}
           </div>
 
@@ -450,7 +460,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             <div className="flex flex-col text-right">
               <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('migrations.target')}</span>
               <span className="font-bold text-sm text-[var(--color-text-primary)] capitalize">{job.target_provider}</span>
-              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[180px]">{job.target_url || t('migrations.oauth')}</span>
+              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">{job.target_url || t('migrations.oauth')}</span>
+              <span className="text-[11px] font-mono text-portal-navy mt-1 truncate max-w-[200px]" title={job.target_dir || '/'}>
+                {t('sync.targetPath')}: {job.target_dir || '/'}
+              </span>
             </div>
           </div>
         </div>
@@ -460,14 +473,24 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.interval')}</span>
             <span className="font-bold text-sm text-[var(--color-text-primary)] mt-1 block">
-              {job.interval_minutes} {t('sync.minutes')}
+              {job.interval_minutes >= 60 && job.interval_minutes % 60 === 0
+                ? `${job.interval_minutes / 60} ${job.interval_minutes / 60 === 1 ? t('sync.hour') : t('sync.hours')}`
+                : `${job.interval_minutes} ${t('sync.minutes')}`}
             </span>
           </div>
 
           <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.conflictStrategy')}</span>
             <span className="font-bold text-sm text-[var(--color-text-primary)] mt-1 block">
-              {job.conflict_strategy}
+              {job.direction === 'one_way'
+                ? t('sync.conflictSourceWins')
+                : job.conflict_strategy === 'OVERWRITE'
+                ? t('sync.conflictSourceWins')
+                : job.conflict_strategy === 'RENAME'
+                ? t('sync.conflictKeepBoth')
+                : job.conflict_strategy === 'SKIP'
+                ? t('sync.conflictSkip')
+                : job.conflict_strategy}
             </span>
           </div>
 
