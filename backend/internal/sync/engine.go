@@ -607,8 +607,9 @@ func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 }
 
 func (e *Engine) failSync(id string, errMsg string) {
-	log.Printf("[SyncEngine] Job %s failed: %s\n", id, errMsg)
-	_ = db.UpdateSyncJobStatus(e.db, id, "FAILED", &errMsg)
+	log.Printf("[SyncEngine] Job %s failed pass: %s\n", id, errMsg)
+	_ = db.UpdateSyncJobRunStats(e.db, id, "FAILED", &errMsg, 0, 0, 0, 0, 0)
+	_ = db.UpdateSyncJobStatus(e.db, id, "IDLE", &errMsg)
 }
 
 // updateSyncStates aligns sync_state entries with current listings, preserving the old states of failed files.
