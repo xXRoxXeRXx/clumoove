@@ -115,16 +115,23 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 	// 2. Trigger the job
 	err = s.triggerJob(ctx, schedule)
 	if err != nil {
-		log.Printf("[Scheduler] Error triggering job for schedule %s: %v",
-			schedule.ID, err)
-		// Deactivate the schedule to prevent an infinite retry loop (e.g. the
-		// linked task was deleted or is in an invalid state). The user can
-		// re-create the schedule via the API if needed.
-		if deactErr := db.DeactivateSchedule(s.db, schedule.ID); deactErr != nil {
-			log.Printf("[Scheduler] Error deactivating failed schedule %s: %v",
-				schedule.ID, deactErr)
+		log.Printf("[Scheduler] Error triggering job for schedule %s: %v", schedule.ID, err)
+		// For recurring cron jobs, DO NOT deactivate on transient trigger failure!
+		// Advance next_run_at so it retries automatically on the next interval.
+		if schedule.CronExpression.Valid {
+			nextRun, nErr := NextRun(schedule.CronExpression.String)
+			if nErr == nil {
+				_ = db.UpdateNextRunAt(s.db, schedule.ID, nextRun)
+				log.Printf("[Scheduler] Recurring schedule %s trigger failed; next retry scheduled at %s",
+					schedule.ID, nextRun.Format(time.RFC3339))
+			}
 		} else {
-			log.Printf("[Scheduler] Deactivated schedule %s after trigger failure", schedule.ID)
+			// One-shot job: deactivate after trigger failure
+			if deactErr := db.DeactivateSchedule(s.db, schedule.ID); deactErr != nil {
+				log.Printf("[Scheduler] Error deactivating failed schedule %s: %v", schedule.ID, deactErr)
+			} else {
+				log.Printf("[Scheduler] Deactivated one-shot schedule %s after trigger failure", schedule.ID)
+			}
 		}
 		return
 	}
@@ -270,8 +277,8 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 		return nil
 	}
 
-	if job.Status != "IDLE" {
-		return fmt.Errorf("sync job %s is in a terminal/non-runnable state (current: %s)", syncJobID, job.Status)
+	if job.Status != "IDLE" && job.Status != "FAILED" {
+		return fmt.Errorf("sync job %s is in a non-runnable state (current: %s)", syncJobID, job.Status)
 	}
 
 	go s.syncEngine.RunSyncPass(ctx, syncJobID)

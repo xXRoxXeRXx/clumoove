@@ -766,6 +766,18 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (idx_sync_state_job): %v\n", err)
 			}
 
+			// Re-activate any recurring sync schedules that were deactivated due to prior network trigger failures
+			_, err = db.Exec(`UPDATE schedules SET is_active = TRUE WHERE cron_expression IS NOT NULL AND is_active = FALSE`)
+			if err != nil {
+				log.Printf("Failed schema migration (reactivate recurring schedules): %v\n", err)
+			}
+
+			// Reset any sync jobs stuck in FAILED status back to IDLE so the scheduler can run them
+			_, err = db.Exec(`UPDATE sync_jobs SET status = 'IDLE' WHERE status = 'FAILED'`)
+			if err != nil {
+				log.Printf("Failed schema migration (reset FAILED sync jobs to IDLE): %v\n", err)
+			}
+
 			_, err = db.Exec(`ALTER TABLE tasks ALTER COLUMN migration_id DROP NOT NULL`)
 			if err != nil {
 				log.Printf("Failed schema migration (alter tasks migration_id drop not null): %v\n", err)
