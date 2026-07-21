@@ -788,8 +788,19 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (alter tasks add sync_job_id): %v\n", err)
 			}
 
-			_, _ = db.Exec(`ALTER TABLE tasks DROP CONSTRAINT IF EXISTS chk_task_job_type`)
-			_, err = db.Exec(`ALTER TABLE tasks ADD CONSTRAINT chk_task_job_type CHECK ((migration_id IS NOT NULL AND sync_job_id IS NULL) OR (migration_id IS NULL AND sync_job_id IS NOT NULL))`)
+			_, err = db.Exec(`
+				DO $$
+				BEGIN
+					IF NOT EXISTS (
+						SELECT 1 FROM pg_constraint WHERE conname = 'chk_task_job_type'
+					) THEN
+						ALTER TABLE tasks ADD CONSTRAINT chk_task_job_type CHECK (
+							(migration_id IS NOT NULL AND sync_job_id IS NULL) OR
+							(migration_id IS NULL AND sync_job_id IS NOT NULL)
+						);
+					END IF;
+				END $$;
+			`)
 			if err != nil {
 				log.Printf("Failed schema migration (chk_task_job_type constraint): %v\n", err)
 			}
