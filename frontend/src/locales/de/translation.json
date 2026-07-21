@@ -272,7 +272,9 @@
     "deleteError": "Fehler beim Löschen",
     "loadFailed": "Der Verlauf konnte nicht geladen werden.",
     "connectionError": "Verbindungsfehler",
-    "oauth": "Verbindung hergestellt"
+    "oauth": "Verbindung hergestellt",
+    "source": "Quelle",
+    "target": "Ziel"
   },
   "settings": {
     "back": "Zurück",

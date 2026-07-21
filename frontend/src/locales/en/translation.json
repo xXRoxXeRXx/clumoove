@@ -272,7 +272,9 @@
     "deleteError": "Error during deletion",
     "loadFailed": "Could not load transfer history.",
     "connectionError": "Connection error",
-    "oauth": "Connection established"
+    "oauth": "Connection established",
+    "source": "Source",
+    "target": "Target"
   },
   "settings": {
     "back": "Back",
