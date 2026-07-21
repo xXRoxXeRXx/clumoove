@@ -274,7 +274,8 @@
     "connectionError": "Verbindungsfehler",
     "oauth": "Verbindung hergestellt",
     "source": "Quelle",
-    "target": "Ziel"
+    "target": "Ziel",
+    "migrationJobDetail": "Übertragungs-Details"
   },
   "settings": {
     "back": "Zurück",
