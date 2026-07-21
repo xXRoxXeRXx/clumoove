@@ -90,23 +90,29 @@ func egressDialer(host string) func(ctx context.Context, network, addr string) (
 
 		sortIPsIPv4First(ips)
 
-		var lastErr error
+		var errMsgs []string
 		for _, ip := range ips {
 			if blocked, reason := isBlockedIP(ip); blocked {
-				lastErr = fmt.Errorf("egress to %s (%s) is not allowed (%s)", host, ip, reason)
+				errMsgs = append(errMsgs, fmt.Sprintf("%s blocked (%s)", ip, reason))
 				continue
 			}
 			target := net.JoinHostPort(ip.String(), port)
+			dialNetwork := network
+			if ip.To4() != nil {
+				dialNetwork = "tcp4"
+			} else {
+				dialNetwork = "tcp6"
+			}
 			dialer := &net.Dialer{Timeout: 5 * time.Second}
-			conn, err := dialer.DialContext(ctx, network, target)
+			conn, err := dialer.DialContext(ctx, dialNetwork, target)
 			if err != nil {
-				lastErr = err
+				errMsgs = append(errMsgs, fmt.Sprintf("%s (%s): %v", target, dialNetwork, err))
 				continue
 			}
 			return conn, nil
 		}
-		if lastErr != nil {
-			return nil, lastErr
+		if len(errMsgs) > 0 {
+			return nil, fmt.Errorf("egress connection to %s failed: %s", host, strings.Join(errMsgs, " | "))
 		}
 		return nil, fmt.Errorf("egress: host %q resolved to no dialable addresses", host)
 	}
