@@ -394,7 +394,26 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
       {/* Main Glass Panel containing all content */}
       <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6">
-        {/* Title, Status/Direction Badges & Action Controls */}
+        {/* Top Badges Row (Above Title & Action Buttons) */}
+        <div className="flex items-center gap-2.5 pb-2">
+          {/* Status Info Badge (links) */}
+          {getStatusBadge(job.status)}
+
+          {/* Direction Info Badge (rechts daneben) */}
+          {job.direction === 'two_way' ? (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-extrabold text-indigo-700 uppercase px-3 py-1.5 rounded-full bg-indigo-50 border border-indigo-200 shadow-2xs">
+              <ArrowLeftRight className="w-3.5 h-3.5" />
+              <span>{t('sync.twoWay')}</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-extrabold text-portal-orange uppercase px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 shadow-2xs animate-pulse">
+              <ArrowRight className="w-3.5 h-3.5" />
+              <span>{t('sync.oneWay')}</span>
+            </span>
+          )}
+        </div>
+
+        {/* Title & Action Controls */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
           <div className="space-y-1">
             <h1 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)]">
@@ -406,22 +425,6 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
 
           <div className="flex items-center gap-2.5 w-full md:w-auto justify-start md:justify-end flex-wrap">
-            {/* Direction Info Badge */}
-            {job.direction === 'two_way' ? (
-              <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-extrabold text-indigo-700 uppercase px-3 py-1.5 rounded-full bg-indigo-50 border border-indigo-200 shadow-2xs">
-                <ArrowLeftRight className="w-3.5 h-3.5" />
-                <span>{t('sync.twoWay')}</span>
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-extrabold text-portal-orange uppercase px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 shadow-2xs animate-pulse">
-                <ArrowRight className="w-3.5 h-3.5" />
-                <span>{t('sync.oneWay')}</span>
-              </span>
-            )}
-
-            {/* Status Info Badge */}
-            {getStatusBadge(job.status)}
-
             {(job.failed_files > 0 || job.last_run_status === 'PARTIAL' || job.last_run_status === 'FAILED') && (
               <button
                 onClick={handleDownloadReport}
