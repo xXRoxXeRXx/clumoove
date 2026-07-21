@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X } from 'lucide-react';
+import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X, Info } from 'lucide-react';
 import type { CloudFile, MigrationConfig } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -1007,67 +1007,80 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             </div>
 
             {/* Conflict Strategy block selector */}
-            <div className="space-y-3 text-xs">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.conflictHandling')}</label>
-              <div className="space-y-2">
-                {/* SKIP card */}
-                <button
-                  type="button"
-                  onClick={() => setConflictStrategy('SKIP')}
-                  className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
-                    conflictStrategy === 'SKIP'
-                      ? 'bg-[var(--color-bg-tertiary)]/50 border-portal-navy text-[var(--color-portal-navy-themed)] font-bold shadow-xs'
-                      : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="font-display">{t('fileBrowser.skip')}</span>
-                    {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
-                  </div>
-                  <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'SKIP' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
-                    {t('fileBrowser.skipDesc')}
-                  </p>
-                </button>
-
-                {/* OVERWRITE card */}
-                <button
-                  type="button"
-                  onClick={() => setConflictStrategy('OVERWRITE')}
-                  className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
-                    conflictStrategy === 'OVERWRITE'
-                      ? 'bg-[var(--color-bg-tertiary)]/50 border-portal-navy text-[var(--color-portal-navy-themed)] font-bold shadow-xs'
-                      : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="font-display">{t('fileBrowser.overwrite')}</span>
-                    {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
-                  </div>
-                  <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'OVERWRITE' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
-                    {t('fileBrowser.overwriteDesc')}
-                  </p>
-                </button>
-
-                {/* RENAME card */}
-                <button
-                  type="button"
-                  onClick={() => setConflictStrategy('RENAME')}
-                  className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
-                    conflictStrategy === 'RENAME'
-                      ? 'bg-[var(--color-bg-tertiary)]/50 border-portal-navy text-[var(--color-portal-navy-themed)] font-bold shadow-xs'
-                      : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-xs font-semibold">
-                    <span className="font-display">{t('fileBrowser.rename')}</span>
-                    {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
-                  </div>
-                  <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'RENAME' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
-                    {t('fileBrowser.renameDesc')}
-                  </p>
-                </button>
+            {jobType === 'sync' && direction === 'one_way' ? (
+              <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 text-amber-900 text-xs font-mono flex items-center gap-2">
+                <Info className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>{t('sync.oneWayConflictNote')}</span>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3 text-xs">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.conflictHandling')}</label>
+                <div className="space-y-2">
+                  {/* OVERWRITE card */}
+                  <button
+                    type="button"
+                    onClick={() => setConflictStrategy('OVERWRITE')}
+                    className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
+                      conflictStrategy === 'OVERWRITE'
+                        ? 'bg-[var(--color-bg-tertiary)]/50 border-portal-navy text-[var(--color-portal-navy-themed)] font-bold shadow-xs'
+                        : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs font-semibold">
+                      <span className="font-display">
+                        {jobType === 'sync' ? t('sync.conflictSourceWins') : t('fileBrowser.overwrite')}
+                      </span>
+                      {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
+                    </div>
+                    <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'OVERWRITE' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
+                      {t('fileBrowser.overwriteDesc')}
+                    </p>
+                  </button>
+
+                  {/* RENAME card */}
+                  <button
+                    type="button"
+                    onClick={() => setConflictStrategy('RENAME')}
+                    className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
+                      conflictStrategy === 'RENAME'
+                        ? 'bg-[var(--color-bg-tertiary)]/50 border-portal-navy text-[var(--color-portal-navy-themed)] font-bold shadow-xs'
+                        : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs font-semibold">
+                      <span className="font-display">
+                        {jobType === 'sync' ? t('sync.conflictKeepBoth') : t('fileBrowser.rename')}
+                      </span>
+                      {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
+                    </div>
+                    <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'RENAME' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
+                      {t('fileBrowser.renameDesc')}
+                    </p>
+                  </button>
+
+                  {/* SKIP card */}
+                  <button
+                    type="button"
+                    onClick={() => setConflictStrategy('SKIP')}
+                    className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
+                      conflictStrategy === 'SKIP'
+                        ? 'bg-[var(--color-bg-tertiary)]/50 border-portal-navy text-[var(--color-portal-navy-themed)] font-bold shadow-xs'
+                        : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs font-semibold">
+                      <span className="font-display">
+                        {jobType === 'sync' ? t('sync.conflictSkip') : t('fileBrowser.skip')}
+                      </span>
+                      {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
+                    </div>
+                    <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'SKIP' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
+                      {t('fileBrowser.skipDesc')}
+                    </p>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Thread count selector */}
             <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">

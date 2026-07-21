@@ -707,21 +707,27 @@ function SyncList({
               </td>
               <td className="py-4 px-4">
                 <div className="flex items-center gap-2.5">
-                  <div className="flex flex-col text-left">
+                  <div className="flex flex-col text-left min-w-0">
                     <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize">
                       {job.source_provider}
                     </span>
-                    <span className="text-[10px] text-[var(--color-text-muted)] max-w-[100px] truncate block">
+                    <span className="text-[10px] text-[var(--color-text-muted)] max-w-[130px] truncate block">
                       {job.source_url || t('migrations.oauth')}
+                    </span>
+                    <span className="text-[10px] font-mono text-portal-navy max-w-[130px] truncate block" title={job.selected_paths?.join(', ') || '/'}>
+                      {t('sync.sourcePath')}: {job.selected_paths && job.selected_paths.length > 0 ? job.selected_paths.join(', ') : '/'}
                     </span>
                   </div>
                   <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
-                  <div className="flex flex-col text-left">
+                  <div className="flex flex-col text-left min-w-0">
                     <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize">
                       {job.target_provider}
                     </span>
-                    <span className="text-[10px] text-[var(--color-text-muted)] max-w-[100px] truncate block">
+                    <span className="text-[10px] text-[var(--color-text-muted)] max-w-[130px] truncate block">
                       {job.target_url || t('migrations.oauth')}
+                    </span>
+                    <span className="text-[10px] font-mono text-portal-navy max-w-[130px] truncate block" title={job.target_dir || '/'}>
+                      {t('sync.targetPath')}: {job.target_dir || '/'}
                     </span>
                   </div>
                 </div>
@@ -733,14 +739,19 @@ function SyncList({
                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
                   job.status === 'RUNNING' || job.status === 'INDEXING'
                     ? 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse'
-                    : job.status === 'PAUSED'
+                    : job.status === 'PAUSED' || job.status === 'PAUSED_CONNECTION_LOSS'
                     ? 'bg-slate-100 text-slate-700 border-slate-200'
                     : job.status === 'FAILED'
                     ? 'bg-rose-50 text-rose-700 border-rose-200'
                     : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 }`}>
                   {job.status === 'RUNNING' || job.status === 'INDEXING' ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                  {job.status}
+                  {job.status === 'IDLE' ? t('sync.statusIdle') :
+                   job.status === 'RUNNING' ? t('status.active') :
+                   job.status === 'INDEXING' ? t('status.indexing') :
+                   job.status === 'PAUSED' ? t('status.paused') :
+                   job.status === 'PAUSED_CONNECTION_LOSS' ? t('dashboard.eta.waitingConn') :
+                   job.status === 'FAILED' ? t('status.failed') : job.status}
                 </span>
               </td>
               <td className="py-4 px-4 whitespace-nowrap text-xs font-mono text-[var(--color-text-secondary)]">

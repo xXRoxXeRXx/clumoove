@@ -71,6 +71,8 @@ export interface SyncJob {
   source_url: string | null;
   target_provider: string;
   target_url: string | null;
+  target_dir?: string;
+  selected_paths?: string[];
   total_files: number;
   total_bytes?: number;
   processed_files: number;

@@ -19,7 +19,9 @@
     "retry": "Retry",
     "optional": "Optional",
     "user": "User",
-    "active": "Active"
+    "active": "Active",
+    "enabled": "Enabled",
+    "disabled": "Disabled"
   },
   "nav": {
     "settings": "Settings",
@@ -653,7 +655,14 @@
     "startFirst": "Start your first sync job",
     "openDetail": "Open Sync Dashboard",
     "deleteJob": "Delete Sync Job",
-    "deleteConfirm": "Are you sure you want to delete this sync job? All configuration and history will be lost."
+    "deleteConfirm": "Are you sure you want to delete this sync job? All configuration and history will be lost.",
+    "sourcePath": "Source Directory",
+    "targetPath": "Target Directory",
+    "conflictStrategy": "Conflict Handling",
+    "conflictSourceWins": "Source Wins (Overwrite)",
+    "conflictKeepBoth": "Keep Both (Conflict Copy)",
+    "conflictSkip": "Skip Conflict",
+    "oneWayConflictNote": "In one-way sync, source state always overwrites target."
   }
 }
 
