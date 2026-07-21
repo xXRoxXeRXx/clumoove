@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Pause, ArrowLeft, RefreshCw, Download, CheckCircle2, XCircle, AlertTriangle, Loader2, HardDrive, Clock } from 'lucide-react';
+import { Play, Pause, ArrowLeft, RefreshCw, Download, CheckCircle2, XCircle, AlertTriangle, Loader2, HardDrive, Clock, Folder, ArrowRight, ArrowLeftRight } from 'lucide-react';
 import type { SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatBytes, formatDuration } from '../utils/format';
@@ -450,30 +450,74 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
         </div>
 
-        {/* Source -> Target Connection Banner */}
-        <div className="p-4 rounded-2xl bg-[var(--color-bg-tertiary)]/60 border border-[var(--color-border)] flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <div className="flex flex-col text-left">
-              <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('migrations.source')}</span>
-              <span className="font-bold text-sm text-[var(--color-text-primary)] capitalize">{job.source_provider}</span>
-              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">{job.source_url || t('migrations.oauth')}</span>
-              <span className="text-[11px] font-mono text-portal-navy mt-1 truncate max-w-[200px]" title={job.selected_paths?.join(', ') || '/'}>
-                {t('sync.sourcePath')}: {job.selected_paths && job.selected_paths.length > 0 ? job.selected_paths.join(', ') : '/'}
+        {/* Source -> Target Connection Flow Banner */}
+        <div className="p-5 rounded-2xl bg-[var(--color-bg-tertiary)]/70 border border-[var(--color-border)] flex flex-col lg:flex-row items-center justify-between gap-6 relative overflow-hidden shadow-2xs">
+          {/* Source System Card */}
+          <div className="flex-1 w-full flex flex-col gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="text-[10px] font-bold font-mono uppercase text-portal-orange px-2.5 py-0.5 rounded-md bg-orange-50 border border-orange-200">
+                {t('migrations.source')}
               </span>
+              <span className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
+                {job.source_provider}
+              </span>
+            </div>
+            <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal pl-0.5">
+              {job.source_url || t('migrations.oauth')}
+            </div>
+            
+            {/* Source Paths styled as Tag Pills */}
+            <div className="flex flex-wrap gap-1.5 mt-1.5">
+              {job.selected_paths && job.selected_paths.length > 0 ? (
+                job.selected_paths.map((p, idx) => (
+                  <span key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                    <Folder className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                    <span>{p}</span>
+                  </span>
+                ))
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                  <Folder className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                  <span>/</span>
+                </span>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center gap-2 font-mono text-xs font-bold text-[var(--color-portal-orange-themed)] uppercase px-3 py-1.5 rounded-full bg-white shadow-xs border border-[var(--color-border)] shrink-0">
-            {job.direction === 'two_way' ? '↔ ' + t('sync.twoWay') : '→ ' + t('sync.oneWay')}
+          {/* Directional Flow Arrow */}
+          <div className="flex flex-col items-center justify-center gap-1 shrink-0 z-10 py-2">
+            {job.direction === 'two_way' ? (
+              <div className="flex items-center gap-1.5 font-mono text-[10px] font-extrabold text-indigo-700 uppercase px-3 py-1.5 rounded-full bg-indigo-50 border border-indigo-200 shadow-2xs">
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+                <span>{t('sync.twoWay')}</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 font-mono text-[10px] font-extrabold text-portal-orange uppercase px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 shadow-2xs animate-pulse">
+                <ArrowRight className="w-3.5 h-3.5" />
+                <span>{t('sync.oneWay')}</span>
+              </div>
+            )}
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-            <div className="flex flex-col text-right">
-              <span className="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">{t('migrations.target')}</span>
-              <span className="font-bold text-sm text-[var(--color-text-primary)] capitalize">{job.target_provider}</span>
-              <span className="text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">{job.target_url || t('migrations.oauth')}</span>
-              <span className="text-[11px] font-mono text-portal-navy mt-1 truncate max-w-[200px]" title={job.target_dir || '/'}>
-                {t('sync.targetPath')}: {job.target_dir || '/'}
+          {/* Target System Card */}
+          <div className="flex-1 w-full flex flex-col gap-2 lg:items-end lg:text-right">
+            <div className="flex items-center gap-2.5 lg:flex-row-reverse">
+              <span className="text-[10px] font-bold font-mono uppercase text-emerald-700 px-2.5 py-0.5 rounded-md bg-emerald-50 border border-emerald-200">
+                {t('migrations.target')}
+              </span>
+              <span className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
+                {job.target_provider}
+              </span>
+            </div>
+            <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal pr-0.5">
+              {job.target_url || t('migrations.oauth')}
+            </div>
+
+            {/* Target Path styled as Tag Pill */}
+            <div className="flex flex-wrap gap-1.5 mt-1.5 lg:justify-end">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                <Folder className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span>{job.target_dir || '/'}</span>
               </span>
             </div>
           </div>
