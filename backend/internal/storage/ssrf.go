@@ -83,7 +83,7 @@ func egressDialer(host string) func(ctx context.Context, network, addr string) (
 			port = ""
 		}
 
-		ips, err := net.LookupIP(host)
+		ips, err := resolveEgressIPs(ctx, host)
 		if err != nil {
 			return nil, fmt.Errorf("egress: failed to resolve %q: %w", host, err)
 		}
@@ -129,6 +129,31 @@ func sortIPsIPv4First(ips []net.IP) {
 	})
 }
 
+// resolveEgressIPs resolves both IPv4 (A) and IPv6 (AAAA) records for a hostname,
+// placing IPv4 addresses first to ensure reliable dual-stack fallback on environments
+// where IPv6 routing may be unavailable.
+func resolveEgressIPs(ctx context.Context, host string) ([]net.IP, error) {
+	var ips []net.IP
+
+	// 1. Explicitly resolve IPv4 addresses first
+	ip4s, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err == nil {
+		ips = append(ips, ip4s...)
+	}
+
+	// 2. Resolve IPv6 addresses second
+	ip6s, err := net.DefaultResolver.LookupIP(ctx, "ip6", host)
+	if err == nil {
+		ips = append(ips, ip6s...)
+	}
+
+	if len(ips) == 0 {
+		// Fallback to standard LookupIP if explicit resolution yielded no records
+		return net.LookupIP(host)
+	}
+	return ips, nil
+}
+
 // allowInsecureEgress reports whether an insecure (plaintext HTTP) S3 endpoint
 // host is permitted. This is the single source of truth for the S3 insecure-HTTP
 // guard (P1-7): it mirrors the old per-provider loopback/RFC1918 check but
@@ -163,7 +188,7 @@ func checkHostEgress(host string) error {
 
 	// Hostname: resolve and inspect every address. This is defense in
 	// depth alongside the per-connection re-validation in egressDialer.
-	ips, err := net.LookupIP(host)
+	ips, err := resolveEgressIPs(context.Background(), host)
 	if err != nil {
 		return fmt.Errorf("failed to resolve host %q: %w", host, err)
 	}
