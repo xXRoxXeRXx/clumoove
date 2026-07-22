@@ -488,6 +488,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             {t('status.completedWithErrors')}
           </span>
         );
+      case 'VERIFYING':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 animate-pulse">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            {t('status.verifying')}
+          </span>
+        );
       case 'PAUSED':
       case 'PAUSED_CONNECTION_LOSS':
         return (
