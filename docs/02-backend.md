@@ -67,23 +67,26 @@ Responsibilities:
 migrations** so the schema self-heals on first boot:
 
 - `CREATE TABLE IF NOT EXISTS` for `users`, `refresh_tokens`, `settings`, `schedules`, `audit_log`,
-  `user_smtp_settings`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`.
+  `user_smtp_settings`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`,
+  `connection_profiles`, `sync_jobs`, `sync_state`.
 - `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for every new column added over time (e.g.
   `user_id`, `source_provider`/`target_provider`, `resource_type`, `threads`, OAuth token columns,
   `selected_paths`/`selected_calendars`/`selected_contacts`, `bandwidth_limit_mbps`, TOTP columns,
-  audit columns, etc.).
-- Useful indexes: `idx_migrations_user_id`, `idx_tasks_migration_status`, `idx_tasks_retry`
-  (partial), `idx_schedules_next_run` (partial), `idx_audit_log_*`.
+  `sync_job_id` on `tasks`, audit columns, etc.).
+- Useful indexes: `idx_migrations_user_id`, `idx_tasks_migration_status`, `idx_tasks_sync_status`,
+  `idx_tasks_retry` (partial), `idx_schedules_next_run` (partial), `idx_conn_profiles_user`,
+  `idx_sync_jobs_user_id`, `idx_sync_state_job`, `idx_audit_log_*`.
 - Connection pool sizing derived from `MAX_THREADS` (`val*2`, min 50).
 - **Default-credential rejection:** if the DB host is publicly reachable and the DSN still contains
   `postgres:postgres@`, startup fails (local/private hosts are exempted).
 
 Key query helpers include `CreateMigration`, `GetMigration`, `UpdateMigrationStatus`,
 `UpdateMigrationStatusIfIndexing`, `IncrementMigrationProgress` (transitions to `COMPLETED`/`FAILED`),
+`CreateSyncJob`, `GetSyncJob`, `ListSyncJobs`, `CreateConnectionProfile`, `ListConnectionProfiles`,
 `CreateTask`, `GetTask`, `UpdateTaskStatus`, `ResetMigrationForReindex` (TOCTOU-safe),
 `RecordIndexingErrors`, `WriteAuditLog`, `GetDueSchedules`, `UpdateNextRunAt`, `DeactivateSchedule`,
-`VerifyMigrationOwnership`, `EnsureAdminUser`, `ListUsers`, `GetGlobalStats`, `ListAllMigrations`,
-`ListAuditLog`, and paginated admin views.
+`VerifyMigrationOwnership`, `VerifySyncOwnership`, `EnsureAdminUser`, `ListUsers`, `GetGlobalStats`,
+`ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
 
 ### `StringArray` & JSONB
 

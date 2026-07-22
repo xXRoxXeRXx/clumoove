@@ -124,12 +124,13 @@ A console warning is emitted when the API is reached over plaintext HTTP on a no
 | Component | Role |
 | :-------- | :--- |
 | `AuthForm` | Login, registration, TOTP code entry, password reset request. |
-| `ConnectForm` | Choose source/target provider + credentials; calls `/migration/connect`; on success hands config + listed files to the next step. |
+| `ConnectForm` | Choose source/target provider + credentials; supports saved connection profiles; calls `/migration/connect`; on success hands config + listed files to the next step. |
 | `FileBrowser` | Pick paths/calendars/contacts, conflict strategy, target dir, threads, bandwidth, optional `scheduled_time`; calls `/migration/start`; drops secrets from memory after success. |
 | `Dashboard` | Live progress for a migration via the `/migration/{id}/ws` WebSocket (token query param); shows files/calendars/contacts stats, pause/resume/cancel, threads/bandwidth controls, CSV report download. |
-| `MigrationsDashboard` | Lists the user's migrations with status; opens a selected migration or starts a new one. |
-| `SettingsPage` | Display name, password change, avatar (cropper), 2FA setup/enable/disable, email change, per-user SMTP settings + test. |
-| `AdminPanel` | (ADMIN) user list/suspend/reactivate/delete/role, global stats, all-migrations view, audit log. |
+| `MigrationsDashboard` | Lists the user's migrations and sync jobs with status; opens a selected migration/sync or starts a new one. |
+| `SyncDashboard` | Live progress and details for synchronization jobs (delta stats, changed/deleted files, pause/resume/threads). |
+| `SettingsPage` | Display name, password change, avatar (cropper), 2FA setup/enable/disable, email change, per-user SMTP settings + test, connection profile management. |
+| `AdminPanel` | (ADMIN) user list/suspend/reactivate/delete/role, global stats, all-migrations view, all-syncs view, audit log. |
 | `LanguageSwitcher` | Switch `de`/`en`; persisted to `localStorage` by the detector. |
 
 ---

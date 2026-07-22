@@ -74,7 +74,8 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | Column | Type | Notes |
 | :----- | :--- | :---- |
 | `id` | UUID PK | |
-| `migration_id` | UUID → `migrations` ON DELETE CASCADE | |
+| `migration_id` | UUID → `migrations` ON DELETE CASCADE | Nullable (either `migration_id` OR `sync_job_id` set via `chk_task_job_type`) |
+| `sync_job_id` | UUID → `sync_jobs` ON DELETE CASCADE | Nullable |
 | `file_path` | TEXT | |
 | `file_size` | BIGINT | |
 | `source_hash` / `worker_hash` / `target_hash` | TEXT | `algo:hash` or `SIZE:n` or `DYNAMIC` |
@@ -85,6 +86,55 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `attempts` | INT | |
 | `next_retry_at` | TIMESTAMPTZ | backoff scheduling |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+### `connection_profiles`
+| Column | Type | Notes |
+| :----- | :--- | :---- |
+| `id` | UUID PK | `gen_random_uuid()` |
+| `user_id` | UUID → `users` ON DELETE CASCADE | owner (UNIQUE with `name`) |
+| `name` | TEXT NOT NULL | profile name |
+| `provider` | TEXT NOT NULL | whitelisted provider |
+| `url` / `username` | TEXT | |
+| `password_encrypted` / `refresh_token_encrypted` | TEXT | AES-GCM |
+| `token_expires_at` | TIMESTAMPTZ | |
+| `oauth_user` | TEXT | |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+### `sync_jobs`
+| Column | Type | Notes |
+| :----- | :--- | :---- |
+| `id` | UUID PK | `gen_random_uuid()` |
+| `user_id` | UUID → `users` ON DELETE CASCADE | owner |
+| `source_url` / `target_url` | TEXT | |
+| `source_username` / `target_username` | TEXT | |
+| `source_password_encrypted` / `target_password_encrypted` | TEXT | AES-GCM |
+| `source_refresh_token_encrypted` / `target_refresh_token_encrypted` | TEXT | OAuth (AES-GCM) |
+| `source_token_expires_at` / `target_token_expires_at` | TIMESTAMPTZ | |
+| `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted |
+| `direction` | TEXT NOT NULL DEFAULT `one_way` | `one_way`, `two_way` |
+| `conflict_strategy` | TEXT NOT NULL DEFAULT `OVERWRITE` | `OVERWRITE`, `SKIP`, `RENAME` |
+| `delete_propagation` | BOOLEAN NOT NULL DEFAULT FALSE | |
+| `interval_minutes` | INT NOT NULL DEFAULT 15 | |
+| `threads` | INT NOT NULL DEFAULT 4 | |
+| `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `RUNNING`, `PAUSED`, `FAILED` |
+| `target_dir` | TEXT NOT NULL DEFAULT `/` | |
+| `selected_paths` | JSONB | |
+| `last_run_at` | TIMESTAMPTZ | |
+| `last_run_status` / `error_message` | TEXT | |
+| `total_files` / `processed_files` / `changed_files` / `deleted_files` / `failed_files` | INT | counters |
+| `total_bytes` / `processed_bytes` / `live_bytes` | BIGINT | counters |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+### `sync_state`
+| Column | Type | Notes |
+| :----- | :--- | :---- |
+| `id` | UUID PK | `gen_random_uuid()` |
+| `sync_job_id` | UUID → `sync_jobs` ON DELETE CASCADE | UNIQUE with `(side, rel_path)` |
+| `side` | TEXT NOT NULL | `source`, `target` |
+| `rel_path` | TEXT NOT NULL | |
+| `size` | BIGINT NOT NULL DEFAULT 0 | |
+| `mtime` | TIMESTAMPTZ | |
+| `source_hash` / `target_hash` / `etag` | TEXT | |
 
 ### `schedules`
 | Column | Type | Notes |
@@ -156,7 +206,12 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | :---- | :-- | :------ |
 | `idx_migrations_user_id` | `migrations(user_id)` | ownership lookups |
 | `idx_tasks_migration_status` | `tasks(migration_id, status)` | dequeue/progress |
+| `idx_tasks_sync_status` | `tasks(sync_job_id, status)` | sync dequeue/progress |
 | `idx_tasks_retry` | `tasks(status, next_retry_at) WHERE status='FAILED' AND next_retry_at IS NOT NULL` | retry scanner |
+| `idx_conn_profiles_user` | `connection_profiles(user_id)` | profile ownership lookups |
+| `idx_sync_jobs_user_id` | `sync_jobs(user_id)` | sync job ownership lookups |
+| `idx_sync_jobs_status` | `sync_jobs(status)` | active sync job queries |
+| `idx_sync_state_job` | `sync_state(sync_job_id, side)` | sync delta tracking lookup |
 | `idx_schedules_next_run` | `schedules(next_run_at) WHERE is_active=TRUE` | scheduler due scan |
 | `idx_schedules_user_id` | `schedules(user_id)` | |
 | `idx_schedules_task` | `schedules(task_type, task_id)` | |
