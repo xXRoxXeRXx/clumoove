@@ -675,6 +675,20 @@
     "conflictKeepBoth": "Keep Both (Conflict Copy)",
     "conflictSkip": "Skip Conflict",
     "oneWayConflictNote": "In one-way sync, source state always overwrites target."
+  },
+  "paths": {
+    "moreItems": "+{{count}} more",
+    "modalTitle": "Selected Paths ({{count}})",
+    "searchPlaceholder": "Filter paths / files...",
+    "filterAll": "All ({{count}})",
+    "filterFolders": "Folders ({{count}})",
+    "filterFiles": "Files ({{count}})",
+    "copyAll": "Copy Paths",
+    "copied": "Copied!",
+    "close": "Close",
+    "noResults": "No matching paths found",
+    "folderType": "Folder",
+    "fileType": "File"
   }
 }
 

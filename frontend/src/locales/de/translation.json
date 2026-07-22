@@ -675,6 +675,20 @@
     "conflictKeepBoth": "Beide behalten (Konfliktkopie)",
     "conflictSkip": "Überspringen",
     "oneWayConflictNote": "Bei One-Way-Synchronisation überschreibt der Quell-Stand stets das Ziel."
+  },
+  "paths": {
+    "moreItems": "+{{count}} weitere",
+    "modalTitle": "Ausgewählte Pfade ({{count}})",
+    "searchPlaceholder": "Pfade / Dateien filtern...",
+    "filterAll": "Alle ({{count}})",
+    "filterFolders": "Ordner ({{count}})",
+    "filterFiles": "Dateien ({{count}})",
+    "copyAll": "Pfade kopieren",
+    "copied": "Kopiert!",
+    "close": "Schließen",
+    "noResults": "Keine übereinstimmenden Pfade gefunden",
+    "folderType": "Ordner",
+    "fileType": "Datei"
   }
 }
 
