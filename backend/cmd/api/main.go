@@ -546,12 +546,13 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 // Unlike ConnectRequest it only requires source credentials and a resource_type;
 // the target is not contacted (we are only browsing what to migrate from).
 type BrowseRequest struct {
-	SourceURL      string `json:"source_url"`
-	SourceUsername string `json:"source_username"`
-	SourcePassword string `json:"source_password"`
-	SourceProvider string `json:"source_provider"`
-	ResourceType   string `json:"resource_type"` // "calendars", "contacts", or "files"
-	Path           string `json:"path"`
+	SourceURL       string `json:"source_url"`
+	SourceUsername  string `json:"source_username"`
+	SourcePassword  string `json:"source_password"`
+	SourceProvider  string `json:"source_provider"`
+	SourceProfileID string `json:"source_profile_id"`
+	ResourceType    string `json:"resource_type"` // "calendars", "contacts", or "files"
+	Path            string `json:"path"`
 }
 
 // normalizeProviderURL returns the canonical URL for providers that have a
@@ -655,6 +656,21 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.SourceProfileID != "" {
+		src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
+			Provider: req.SourceProvider,
+			URL:      req.SourceURL,
+			Username: req.SourceUsername,
+			Password: req.SourcePassword,
+		})
+		if err == nil {
+			req.SourceProvider = src.Provider
+			req.SourceURL = src.URL
+			req.SourceUsername = src.Username
+			req.SourcePassword = src.Password
+		}
+	}
+
 	if req.SourceProvider == "" {
 		req.SourceProvider = "nextcloud"
 	}
@@ -699,10 +715,10 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For files, return all resources. For calendars/contacts, only return directories (collections).
+	// For files, return all resources. For calendars/contacts, return all returned collections.
 	var collections []storage.CloudResource
 	for _, item := range items {
-		if req.ResourceType == "files" || item.IsDir {
+		if req.ResourceType == "files" || req.ResourceType == "calendars" || req.ResourceType == "contacts" || item.IsDir {
 			collections = append(collections, item)
 		}
 	}

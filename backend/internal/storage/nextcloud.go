@@ -342,6 +342,7 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 	}
 
 	prefixPath := p.pb.listingPrefix(basePath, p.Username, resourceType)
+	prefixLower := strings.ToLower(prefixPath)
 
 	for _, r := range multistatus.Responses {
 		decodedHref, err := url.PathUnescape(r.Href)
@@ -349,11 +350,12 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 			decodedHref = r.Href
 		}
 
-		if !strings.HasPrefix(decodedHref, prefixPath) {
+		hrefLower := strings.ToLower(decodedHref)
+		if !strings.HasPrefix(hrefLower, prefixLower) {
 			continue
 		}
 
-		relativeHref := strings.TrimPrefix(decodedHref, prefixPath)
+		relativeHref := decodedHref[len(prefixPath):]
 		if relativeHref == "" {
 			relativeHref = "/"
 		}
@@ -374,6 +376,9 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 			if strings.Contains(pstat.Status, "200 OK") {
 				prop := pstat.Prop
 				res.IsDir = prop.ResourceType.Collection != nil
+				if resourceType == "calendars" || resourceType == "contacts" {
+					res.IsDir = true
+				}
 
 				if !res.IsDir {
 					if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X, Info } from 'lucide-react';
 import type { CloudFile, MigrationConfig } from '../types';
 import { useTranslation } from 'react-i18next';
@@ -102,6 +102,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     () => Object.keys(selectedPaths).filter((p) => selectedPaths[p]),
     [selectedPaths]
   );
+
+
 
   // Minimum selectable start time: now + 1 minute, formatted in the user's
   // local timezone (datetime-local inputs expect local time, not UTC).
@@ -233,7 +235,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     fetchTargetChildren('/');
   };
 
-  const fetchCalendars = async (force?: boolean) => {
+  const fetchCalendars = useCallback(async (force?: boolean) => {
     if (!force && (calendars.length > 0 || loadingCalendars)) return;
     setLoadingCalendars(true);
     try {
@@ -248,6 +250,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           source_username: credentials.source_username,
           source_password: credentials.source_password,
           source_provider: credentials.source_provider,
+          source_profile_id: credentials.source_profile_id,
           resource_type: 'calendars',
         }),
       });
@@ -272,9 +275,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     } finally {
       setLoadingCalendars(false);
     }
-  };
+  }, [apiUrl, credentials, calendars.length, loadingCalendars, t, token, translateApiError]);
 
-  const fetchContacts = async (force?: boolean) => {
+  const fetchContacts = useCallback(async (force?: boolean) => {
     if (!force && (contacts.length > 0 || loadingContacts)) return;
     setLoadingContacts(true);
     try {
@@ -289,6 +292,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           source_username: credentials.source_username,
           source_password: credentials.source_password,
           source_provider: credentials.source_provider,
+          source_profile_id: credentials.source_profile_id,
           resource_type: 'contacts',
         }),
       });
@@ -313,7 +317,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     } finally {
       setLoadingContacts(false);
     }
-  };
+  }, [apiUrl, credentials, contacts.length, loadingContacts, t, token, translateApiError]);
+
+  useEffect(() => {
+    if (credentials.source_provider === 'nextcloud' || credentials.source_provider === 'google') {
+      const timer = setTimeout(() => {
+        void fetchCalendars();
+        void fetchContacts();
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [credentials.source_provider, fetchCalendars, fetchContacts]);
 
   const handleTabChange = (tab: 'files' | 'calendars' | 'contacts') => {
     setActiveTab(tab);
@@ -337,6 +351,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           source_username: credentials.source_username,
           source_password: credentials.source_password,
           source_provider: credentials.source_provider,
+          source_profile_id: credentials.source_profile_id,
           resource_type: 'files',
           path: folderPath,
         }),
