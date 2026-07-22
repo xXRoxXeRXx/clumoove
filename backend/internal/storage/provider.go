@@ -74,3 +74,19 @@ type StorageProvider interface {
 	// step and relies on the provider having already written to the final name.
 	SupportsAtomicRename() bool
 }
+
+// ProgressReader wraps an io.Reader and emits the number of bytes read
+// to ProgressChan. It is shared across storage providers for upload progress tracking.
+type ProgressReader struct {
+	Reader       io.Reader
+	ProgressChan chan<- int64
+}
+
+func (pr *ProgressReader) Read(p []byte) (int, error) {
+	n, err := pr.Reader.Read(p)
+	if n > 0 && pr.ProgressChan != nil {
+		pr.ProgressChan <- int64(n)
+	}
+	return n, err
+}
+

@@ -90,6 +90,8 @@ type DropboxProvider struct {
 	HTTPClient  *http.Client
 }
 
+var _ StorageProvider = (*DropboxProvider)(nil)
+
 func NewDropboxProvider(token string) (*DropboxProvider, error) {
 	tr := &http.Transport{
 		ForceAttemptHTTP2:     true,
@@ -113,6 +115,9 @@ func NewDropboxProvider(token string) (*DropboxProvider, error) {
 }
 
 func (p *DropboxProvider) Close() error {
+	if p.HTTPClient != nil {
+		p.HTTPClient.CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -195,7 +200,7 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if resourceType != "files" {
-		return nil, nil // Dropbox only supports files
+		return nil, fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
 	}
 
 	pathArg := p.cleanPath(dirPath)

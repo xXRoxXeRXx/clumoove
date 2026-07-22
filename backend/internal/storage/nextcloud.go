@@ -145,6 +145,9 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 }
 
 func (p *davProvider) Close() error {
+	if p.HTTPClient != nil {
+		p.HTTPClient.CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -516,7 +519,7 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 	// over standard WebDAV; wrap the stream to keep progress reporting alive.
 	if p.disableChunkedUpload {
 		if progressChan != nil {
-			stream = &webdavProgressReader{reader: stream, progressChan: progressChan}
+			stream = &ProgressReader{Reader: stream, ProgressChan: progressChan}
 		}
 		return p.StreamUpload(ctx, resourceType, filePath, stream, fileSize)
 	}
@@ -1136,6 +1139,8 @@ func (nextcloudPaths) listingPrefix(basePath, username, resourceType string) str
 type NextcloudProvider struct {
 	*davProvider
 }
+
+var _ StorageProvider = (*NextcloudProvider)(nil)
 
 var hexRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
 

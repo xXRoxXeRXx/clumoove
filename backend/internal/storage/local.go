@@ -20,6 +20,8 @@ type LocalProvider struct {
 	root string
 }
 
+var _ StorageProvider = (*LocalProvider)(nil)
+
 func NewLocalProvider() (*LocalProvider, error) {
 	root := os.Getenv("LOCAL_STORAGE_ROOT")
 	if root == "" {
