@@ -840,6 +840,19 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+
+	// Try lightweight HEAD request first (Nextcloud returns OC-Checksum in HTTP header directly)
+	headReq, err := p.newRequest("HEAD", u, nil)
+	if err == nil {
+		headReq = headReq.WithContext(ctx)
+		if headResp, err := p.HTTPClient.Do(headReq); err == nil {
+			headResp.Body.Close()
+			if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
+				return chk, nil
+			}
+		}
+	}
+
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
 			<d:prop>
@@ -862,6 +875,9 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 	}
 	defer resp.Body.Close()
 
+	if chk := resp.Header.Get("OC-Checksum"); chk != "" {
+		return chk, nil
+	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)
 	}
@@ -891,18 +907,6 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 		}
 	}
 
-	// Try extracting checksum from HEAD response headers if PROPFIND didn't yield it
-	headReq, err := p.newRequest("HEAD", u, nil)
-	if err == nil {
-		headReq = headReq.WithContext(ctx)
-		if headResp, err := p.HTTPClient.Do(headReq); err == nil {
-			headResp.Body.Close()
-			if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
-				return chk, nil
-			}
-		}
-	}
-
 	return "", fmt.Errorf("checksum not available")
 }
 
@@ -913,6 +917,25 @@ func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath str
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+
+	// Try lightweight HEAD request first (returns 200 OK with Content-Length or 404 Not Found directly)
+	headReq, err := p.newRequest("HEAD", u, nil)
+	if err == nil {
+		headReq = headReq.WithContext(ctx)
+		if resp, err := p.HTTPClient.Do(headReq); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true, resp.ContentLength, nil
+			}
+			if resp.StatusCode == http.StatusNotFound {
+				return false, 0, nil
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				return false, 0, fmt.Errorf("nextcloud file-exists: %w", ErrAuth)
+			}
+		}
+	}
+
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propfind xmlns:d="DAV:">
 	<d:prop>

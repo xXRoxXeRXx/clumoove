@@ -397,6 +397,24 @@ func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	u := p.buildResourceURL(filePath)
+
+	headReq, err := p.newRequest("HEAD", u, nil)
+	if err == nil {
+		headReq = headReq.WithContext(ctx)
+		if resp, err := p.HTTPClient.Do(headReq); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return true, resp.ContentLength, nil
+			}
+			if resp.StatusCode == http.StatusNotFound {
+				return false, 0, nil
+			}
+			if resp.StatusCode == http.StatusUnauthorized {
+				return false, 0, fmt.Errorf("webdav file-exists: %w", ErrAuth)
+			}
+		}
+	}
+
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propfind xmlns:d="DAV:">
 	<d:prop>
