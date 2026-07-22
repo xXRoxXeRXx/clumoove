@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X, Info } from 'lucide-react';
 import type { CloudFile, MigrationConfig } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
+import { SelectedPathsViewer } from './SelectedPathsViewer';
 
 
 interface FileBrowserProps {
@@ -96,6 +97,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [enableScheduling, setEnableScheduling] = useState(false);
   const [scheduledTime, setScheduledTime] = useState('');
   const [bandwidthLimit, setBandwidthLimit] = useState(0);
+
+  const pathsToMigrate = useMemo(
+    () => Object.keys(selectedPaths).filter((p) => selectedPaths[p]),
+    [selectedPaths]
+  );
 
   // Minimum selectable start time: now + 1 minute, formatted in the user's
   // local timezone (datetime-local inputs expect local time, not UTC).
@@ -683,24 +689,94 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     );
   };
   return (
-    <div className="w-full max-w-4xl mx-auto py-2 animate-fade-in text-left">
+    <div className="w-full max-w-5xl mx-auto py-2 animate-fade-in text-left space-y-6">
       
-      {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <button
-          onClick={onBack}
-          className="px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[11px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm"
-        >
-          <ArrowLeft className="w-3.5 h-3.5 stroke-[2.5] inline-block mr-1.5 align-text-bottom" />
-          <span>{t('common.back')}</span>
-        </button>
-        <div>
-          <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-portal-navy-themed)] tracking-tight">
-            {t('fileBrowser.title')}
-          </h1>
-          <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">
-            {t('fileBrowser.subtitle')}
-          </p>
+      {/* Top Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--color-border-light)] pb-5">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={onBack}
+            className="px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[11px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm shrink-0"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 stroke-[2.5] inline-block mr-1.5 align-text-bottom" />
+            <span>{t('common.back')}</span>
+          </button>
+          <div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-portal-navy-themed)] tracking-tight">
+                {t('fileBrowser.title')}
+              </h1>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-portal-orange/10 text-portal-orange border border-portal-orange/30">
+                {jobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
+              </span>
+            </div>
+            <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">
+              {t('fileBrowser.subtitle')}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Source & Target Connection Cards Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Source Card */}
+        <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 shadow-2xs">
+          <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-2.5">
+            <div className="flex items-center gap-2">
+              <Folder className="w-4 h-4 text-portal-orange shrink-0" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('migrations.source')}
+              </h3>
+            </div>
+            <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
+              {pathsToMigrate.length} {pathsToMigrate.length === 1 ? 'Element' : 'Elemente'}
+            </span>
+          </div>
+          
+          <div className="space-y-2">
+            <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize flex items-center gap-2">
+              <span>{credentials.source_provider || 'nextcloud'}</span>
+            </div>
+            <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
+              {credentials.source_url || t('migrations.oauth')}
+            </div>
+            <SelectedPathsViewer paths={pathsToMigrate} maxVisible={3} />
+          </div>
+        </div>
+
+        {/* Target Card */}
+        <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 shadow-2xs">
+          <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-2.5">
+            <div className="flex items-center gap-2">
+              <Folder className="w-4 h-4 text-emerald-600 shrink-0" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('migrations.target')}
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={openTargetBrowser}
+              className="text-[10px] font-mono font-bold text-portal-navy hover:text-portal-orange transition-colors cursor-pointer underline flex items-center gap-1"
+            >
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>{t('fileBrowser.selectFolder')}</span>
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
+              {credentials.target_provider || 'nextcloud'}
+            </div>
+            <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
+              {credentials.target_url || t('migrations.oauth')}
+            </div>
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-xs font-mono text-[var(--color-portal-navy-themed)] shadow-2xs font-bold">
+                <Folder className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span>{targetDir || '/'}</span>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -719,7 +795,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                 }`}
               >
-                {t('fileBrowser.files')}
+                {t('fileBrowser.files')} ({pathsToMigrate.length})
               </button>
               {(credentials.source_provider === 'nextcloud' || credentials.source_provider === 'google') && (
                 <>

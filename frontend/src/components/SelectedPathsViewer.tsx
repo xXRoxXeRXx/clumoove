@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { 
   Folder, 
+  FolderOpen,
   File, 
   FileText, 
   Image as ImageIcon, 
@@ -11,7 +12,11 @@ import {
   Check, 
   X, 
   Eye, 
-  Layers
+  Layers,
+  ChevronRight,
+  ChevronDown,
+  List,
+  FolderTree
 } from 'lucide-react';
 
 interface SelectedPathsViewerProps {
@@ -20,6 +25,13 @@ interface SelectedPathsViewerProps {
 }
 
 type PathType = 'folder' | 'image' | 'video' | 'document' | 'file';
+
+interface TreeNode {
+  name: string;
+  path: string;
+  isDir: boolean;
+  children: TreeNode[];
+}
 
 const getPathType = (path: string): PathType => {
   if (!path) return 'file';
@@ -57,6 +69,101 @@ const getPathIcon = (type: PathType, className = "w-3.5 h-3.5 shrink-0") => {
   }
 };
 
+const buildTreeFromPaths = (paths: string[]): TreeNode[] => {
+  const rootNodes: TreeNode[] = [];
+  const nodeMap = new Map<string, TreeNode>();
+
+  paths.forEach((rawPath) => {
+    if (!rawPath) return;
+    const cleanPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+    const parts = cleanPath.split('/').filter(Boolean);
+    const isDir = rawPath.endsWith('/') || getPathType(rawPath) === 'folder';
+
+    let currentPath = '';
+    let parentChildren = rootNodes;
+
+    parts.forEach((part, idx) => {
+      const isLast = idx === parts.length - 1;
+      currentPath += `/${part}`;
+      const nodeIsDir = isLast ? isDir : true;
+
+      let existingNode = nodeMap.get(currentPath);
+      if (!existingNode) {
+        existingNode = {
+          name: part,
+          path: currentPath + (nodeIsDir ? '/' : ''),
+          isDir: nodeIsDir,
+          children: [],
+        };
+        nodeMap.set(currentPath, existingNode);
+        parentChildren.push(existingNode);
+      } else if (nodeIsDir && !existingNode.isDir) {
+        existingNode.isDir = true;
+      }
+      parentChildren = existingNode.children;
+    });
+  });
+
+  const sortNodes = (nodes: TreeNode[]) => {
+    nodes.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
+    });
+    nodes.forEach((n) => {
+      if (n.children.length > 0) sortNodes(n.children);
+    });
+  };
+
+  sortNodes(rootNodes);
+  return rootNodes;
+};
+
+const TreeItem: React.FC<{ node: TreeNode; depth: number }> = ({ node, depth }) => {
+  const [isExpanded, setIsExpanded] = useState(true);
+  const type = getPathType(node.path);
+
+  return (
+    <div className="select-none font-sans text-xs">
+      <div
+        className="flex items-center gap-2.5 py-1.5 px-2 hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors duration-150 rounded-lg group"
+        style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        onClick={() => {
+          if (node.isDir) setIsExpanded(!isExpanded);
+        }}
+      >
+        {node.isDir ? (
+          <span className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-[var(--color-portal-navy-themed)] transition-colors">
+            {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+          </span>
+        ) : (
+          <span className="w-4 h-4" />
+        )}
+
+        <span className="shrink-0">
+          {node.isDir ? (
+            isExpanded ? <FolderOpen className="w-4 h-4 text-amber-500" /> : <Folder className="w-4 h-4 text-amber-500" />
+          ) : (
+            getPathIcon(type, "w-4 h-4")
+          )}
+        </span>
+
+        <span className="text-[11.5px] font-mono text-[var(--color-text-primary)] truncate flex-grow">
+          {node.name}
+        </span>
+      </div>
+
+      {node.isDir && isExpanded && node.children.length > 0 && (
+        <div className="relative">
+          <div className="absolute left-[15px] top-0 bottom-2.5 border-l border-[var(--color-border)]/60" />
+          {node.children.map((child) => (
+            <TreeItem key={child.path} node={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
   paths,
   maxVisible = 3,
@@ -65,10 +172,13 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'folders' | 'files'>('all');
+  const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
   const [copied, setCopied] = useState(false);
 
   const pathList = useMemo(() => paths || [], [paths]);
   const hasPaths = pathList.length > 0;
+
+  const treeNodes = useMemo(() => buildTreeFromPaths(pathList), [pathList]);
 
   const visiblePaths = useMemo(() => {
     return hasPaths ? pathList.slice(0, maxVisible) : [];
@@ -120,7 +230,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               return (
                 <span
                   key={idx}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs max-w-[200px] truncate"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs max-w-[200px] truncate"
                   title={p}
                 >
                   {getPathIcon(type)}
@@ -141,7 +251,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
             )}
           </>
         ) : (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
             <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span>/</span>
           </span>
@@ -185,70 +295,113 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               </button>
             </div>
 
-            {/* Controls: Search & Tabs */}
+            {/* Controls: Search & View Switcher & Tabs */}
             <div className="p-4 border-b border-[var(--color-border-light)] space-y-3 bg-[var(--color-bg-primary)]">
-              {/* Search input */}
-              <div className="relative">
-                <Search className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={t('paths.searchPlaceholder')}
-                  className="w-full pl-9 pr-4 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-portal-navy/30 transition-all placeholder:text-[var(--color-text-muted)]"
-                />
-                {searchQuery && (
+              <div className="flex items-center gap-2">
+                {/* Search input */}
+                <div className="relative flex-grow">
+                  <Search className="w-4 h-4 text-[var(--color-text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder={t('paths.searchPlaceholder')}
+                    className="w-full pl-9 pr-8 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-portal-navy/30 transition-all placeholder:text-[var(--color-text-muted)]"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* View Mode Toggle: Tree vs List */}
+                <div className="flex bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-1 rounded-xl shrink-0">
                   <button
                     type="button"
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] cursor-pointer"
+                    onClick={() => setViewMode('tree')}
+                    className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                      viewMode === 'tree'
+                        ? 'bg-portal-navy text-white shadow-2xs'
+                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                    }`}
+                    title="Baumansicht"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <FolderTree className="w-4 h-4" />
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('list')}
+                    className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                      viewMode === 'list'
+                        ? 'bg-portal-navy text-white shadow-2xs'
+                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                    }`}
+                    title="Listenansicht"
+                  >
+                    <List className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
 
-              {/* Filter Tabs */}
-              <div className="flex items-center gap-1.5 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setFilterType('all')}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
-                    filterType === 'all'
-                      ? 'bg-portal-navy text-white shadow-2xs'
-                      : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
-                  }`}
-                >
-                  {t('paths.filterAll', { count: stats.total })}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterType('folders')}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
-                    filterType === 'folders'
-                      ? 'bg-portal-navy text-white shadow-2xs'
-                      : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
-                  }`}
-                >
-                  {t('paths.filterFolders', { count: stats.folders })}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilterType('files')}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
-                    filterType === 'files'
-                      ? 'bg-portal-navy text-white shadow-2xs'
-                      : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
-                  }`}
-                >
-                  {t('paths.filterFiles', { count: stats.files })}
-                </button>
-              </div>
+              {/* Filter Tabs (Visible in List Mode or when searching) */}
+              {viewMode === 'list' && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setFilterType('all')}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+                      filterType === 'all'
+                        ? 'bg-portal-navy text-white shadow-2xs'
+                        : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
+                    }`}
+                  >
+                    {t('paths.filterAll', { count: stats.total })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterType('folders')}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+                      filterType === 'folders'
+                        ? 'bg-portal-navy text-white shadow-2xs'
+                        : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
+                    }`}
+                  >
+                    {t('paths.filterFolders', { count: stats.folders })}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFilterType('files')}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+                      filterType === 'files'
+                        ? 'bg-portal-navy text-white shadow-2xs'
+                        : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
+                    }`}
+                  >
+                    {t('paths.filterFiles', { count: stats.files })}
+                  </button>
+                </div>
+              )}
             </div>
 
-            {/* List Body */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-1.5 max-h-[50vh]">
-              {filteredPaths.length > 0 ? (
+            {/* List / Tree Body */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-1.5 max-h-[50vh] scrollbar-portal">
+              {viewMode === 'tree' && !searchQuery.trim() ? (
+                treeNodes.length > 0 ? (
+                  treeNodes.map((node) => (
+                    <TreeItem key={node.path} node={node} depth={0} />
+                  ))
+                ) : (
+                  <div className="py-12 text-center text-xs text-[var(--color-text-muted)] space-y-2">
+                    <Folder className="w-8 h-8 mx-auto opacity-30 text-amber-500" />
+                    <p>{t('paths.noResults')}</p>
+                  </div>
+                )
+              ) : filteredPaths.length > 0 ? (
                 filteredPaths.map((p, idx) => {
                   const type = getPathType(p);
                   const isFold = type === 'folder';
@@ -314,3 +467,4 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
     </>
   );
 };
+
