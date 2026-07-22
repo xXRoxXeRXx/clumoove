@@ -470,9 +470,21 @@ func (p *SFTPProvider) CreateParentDirectories(ctx context.Context, resourceType
 	return p.CreateDirectory(ctx, resourceType, dir)
 }
 
+var globalSFTPCreatedDirs sync.Map
+
 func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+
+	cleanDirPath := p.cleanPath(dirPath)
+	if cleanDirPath == "." || cleanDirPath == "/" {
+		return nil
+	}
+
+	globalDirKey := p.Host + "|" + p.Username + "|" + cleanDirPath
+	if _, exists := globalSFTPCreatedDirs.Load(globalDirKey); exists {
+		return nil
 	}
 
 	p.mu.Lock()
@@ -481,16 +493,12 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 		return p.handleError(err)
 	}
 
-	cleanDirPath := p.cleanPath(dirPath)
-	if cleanDirPath == "." || cleanDirPath == "/" {
-		return nil
-	}
-
 	err := p.sftpClient.MkdirAll(cleanDirPath)
 	if err != nil {
 		return p.handleError(fmt.Errorf("sftp mkdirall failed: %w", err))
 	}
 
+	globalSFTPCreatedDirs.Store(globalDirKey, true)
 	return nil
 }
 
