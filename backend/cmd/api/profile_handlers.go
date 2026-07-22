@@ -44,26 +44,26 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 		return base, errors.New("profile not found")
 	}
 
-	provider := base.Provider
+	provider := p.Provider
 	if provider == "" {
-		provider = p.Provider
+		provider = base.Provider
 	}
-	urlStr := base.URL
+	urlStr := p.URL
 	if urlStr == "" {
-		urlStr = p.URL
+		urlStr = base.URL
 	}
-	username := base.Username
+	username := p.Username
 	if username == "" {
-		username = p.Username
+		username = base.Username
 	}
 	password := base.Password
-	if password == "" && p.PasswordEncrypted != "" {
+	if p.PasswordEncrypted != "" {
 		if dec, derr := crypto.Decrypt(p.PasswordEncrypted, s.encryptionKey); derr == nil {
 			password = dec
 		}
 	}
 	refreshToken := base.RefreshToken
-	if refreshToken == "" && p.RefreshTokenEncrypted != "" {
+	if p.RefreshTokenEncrypted != "" {
 		if dec, derr := crypto.Decrypt(p.RefreshTokenEncrypted, s.encryptionKey); derr == nil {
 			refreshToken = dec
 		}
