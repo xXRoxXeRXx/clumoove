@@ -252,6 +252,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
     let isMounted = true;
 
+    const sanitizeErrorMsg = (val: unknown): string => {
+      if (typeof val === 'string') return val;
+      if (val && typeof val === 'object' && 'String' in val && (val as { Valid?: boolean }).Valid) {
+        return String((val as { String?: unknown }).String || '');
+      }
+      return '';
+    };
+
     // Fetch initial migration details immediately to avoid waiting for initial WS tick
     fetch(`${apiUrl}/api/migration/${migrationId}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -259,6 +267,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       .then((res) => (res.ok ? res.json() : null))
       .then((initialData) => {
         if (isMounted && initialData) {
+          initialData.error_message = sanitizeErrorMsg(initialData.error_message);
           setData((prev) => (prev ? { ...initialData, ...prev } : initialData));
         }
       })
@@ -279,6 +288,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         console.error("Failed to parse progress data:", err);
         return;
       }
+      payload.error_message = sanitizeErrorMsg(payload.error_message);
       setData((prev) => (prev ? { ...prev, ...payload } : payload));
 
       if (payload.bandwidth_limit_mbps !== undefined) {
@@ -822,7 +832,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
         </div>
 
-        {data.error_message && (
+        {typeof data.error_message === 'string' && data.error_message.trim() !== '' && (
           <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-xs font-mono text-rose-700 flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
             <span>{data.error_message}</span>
