@@ -275,7 +275,14 @@
     "oauth": "Connection established",
     "source": "Source",
     "target": "Target",
-    "migrationJobDetail": "Transfer Details"
+    "migrationJobDetail": "Transfer Details",
+    "searchPlaceholder": "Search transfers (provider, URL, ID)...",
+    "filterAll": "All Statuses",
+    "filterActive": "Active",
+    "filterCompleted": "Completed",
+    "filterFailed": "Failed",
+    "filterPaused": "Paused",
+    "newSync": "New Synchronization"
   },
   "settings": {
     "back": "Back",

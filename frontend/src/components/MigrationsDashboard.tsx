@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, AlertTriangle, Loader2 } from 'lucide-react';
+import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, AlertTriangle, Loader2, Search, Plus } from 'lucide-react';
 import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -31,6 +31,9 @@ export function MigrationsDashboard({
   const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
   const [syncLoading, setSyncLoading] = useState<boolean>(true);
   const [syncError, setSyncError] = useState<string>('');
+
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
 
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
@@ -371,13 +374,22 @@ export function MigrationsDashboard({
             </p>
           </div>
           
-          <button
-            onClick={onStartNewMigration}
-            className="group flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-[var(--color-text-inverse)] px-5 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
-          >
-            <Play className="w-4 h-4 fill-white group-hover:scale-110 transition-transform" />
-            <span>{t('migrations.newMigration')}</span>
-          </button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={onStartNewMigration}
+              className="group flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-5 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
+            >
+              <Play className="w-4 h-4 fill-white group-hover:scale-110 transition-transform" />
+              <span>{t('migrations.newMigration')}</span>
+            </button>
+            <button
+              onClick={onStartNewMigration}
+              className="group flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 px-4 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 backdrop-blur-md cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" />
+              <span>{t('migrations.newSync')}</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -442,93 +454,158 @@ export function MigrationsDashboard({
         </div>
       </div>
 
-      {/* Main Section with Tabs */}
-      <div className="glass-panel rounded-3xl border border-[var(--color-glass-border)]/50 shadow-portal p-6">
+      {/* Main Section with Segmented Pill Tabs & Search Filter Bar */}
+      <div className="glass-panel rounded-3xl border border-[var(--color-glass-border)]/50 shadow-portal p-6 space-y-6">
         
-        {/* Navigation Tabs Header */}
-        <div className="flex items-center justify-between border-b border-[var(--color-border)] mb-6 pb-2">
-          <div className="flex items-center gap-6">
+        {/* Navigation Tabs & Controls Header */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-[var(--color-border)] pb-4 gap-4">
+          {/* Segmented Pill Tabs */}
+          <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] p-1 rounded-full border border-[var(--color-border)]">
             <button
               onClick={() => setActiveTab('migrations')}
-              className={`pb-2 text-sm font-display font-extrabold transition-all cursor-pointer border-b-2 ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
                 activeTab === 'migrations'
-                  ? 'border-portal-orange text-[var(--color-portal-navy-themed)]'
-                  : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                  ? 'bg-portal-orange text-white shadow-xs'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
               }`}
             >
-              {t('sync.tabMigrations')}
+              <span>{t('sync.tabMigrations')}</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'migrations' ? 'bg-white/20 text-white' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+                {migrations.length}
+              </span>
             </button>
             <button
               onClick={() => setActiveTab('sync')}
-              className={`pb-2 text-sm font-display font-extrabold transition-all cursor-pointer border-b-2 ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
                 activeTab === 'sync'
-                  ? 'border-portal-orange text-[var(--color-portal-navy-themed)]'
-                  : 'border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                  ? 'bg-portal-orange text-white shadow-xs'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
               }`}
             >
-              {t('sync.tabSyncs')}
+              <span>{t('sync.tabSyncs')}</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'sync' ? 'bg-white/20 text-white' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+                {syncJobs.length}
+              </span>
             </button>
           </div>
 
-          <button
-            onClick={() => {
-              void fetchMigrations();
-              void fetchSyncJobs();
-            }}
-            className="p-2 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 transition-all cursor-pointer"
-            title={t('common.refresh')}
-          >
-            <RefreshCw className={`w-4 h-4 ${(loading || syncLoading) ? 'animate-spin' : ''}`} />
-          </button>
+          {/* Search Input & Status Filter Dropdown */}
+          <div className="flex items-center gap-2.5 w-full sm:w-auto">
+            <div className="relative flex-1 sm:w-64">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder={t('migrations.searchPlaceholder')}
+                className="w-full pl-9 pr-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs font-mono text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 transition-all cursor-pointer"
+            >
+              <option value="all">{t('migrations.filterAll')}</option>
+              <option value="active">{t('migrations.filterActive')}</option>
+              <option value="completed">{t('migrations.filterCompleted')}</option>
+              <option value="failed">{t('migrations.filterFailed')}</option>
+              <option value="paused">{t('migrations.filterPaused')}</option>
+            </select>
+
+            <button
+              onClick={() => {
+                void fetchMigrations();
+                void fetchSyncJobs();
+              }}
+              className="p-2 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 transition-all cursor-pointer shrink-0"
+              title={t('common.refresh')}
+            >
+              <RefreshCw className={`w-4 h-4 ${(loading || syncLoading) ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
 
-        {activeTab === 'sync' ? (
-          <SyncList
-            apiUrl={apiUrl}
-            token={token}
-            syncJobs={syncJobs}
-            loading={syncLoading}
-            error={syncError}
-            setSyncJobs={setSyncJobs}
-            onSelectActiveSync={onSelectActiveSync}
-            onStartNewSync={onStartNewMigration}
-          />
-        ) : loading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
-            <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
-          </div>
-        ) : error ? (
-          <div className="p-4 bg-[var(--color-error-bg)]/80 border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl text-xs font-mono text-center">
-            {error}
-          </div>
-        ) : migrations.length === 0 ? (
-          <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
-            <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
-            <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('migrations.noMigrations')}</p>
-            <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('migrations.dbEmpty')}</p>
-            <button
-              onClick={onStartNewMigration}
-              className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
-            >
-              {t('migrations.startFirst')}
-            </button>
-          </div>
-        ) : (
-          <div className="overflow-x-auto scrollbar-portal">
-            <table className="w-full text-left border-collapse min-w-[600px]">
-              <thead>
-                <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
-                  <th className="py-4.5 px-4 font-semibold">{t('migrations.createdAt')}</th>
-                  <th className="py-4.5 px-4 font-semibold">{t('migrations.sourceTarget')}</th>
-                  <th className="py-4.5 px-4 font-semibold">{t('migrations.status')}</th>
-                  <th className="py-4.5 px-4 font-semibold">{t('migrations.progress')}</th>
-                  <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {migrations.map((mig) => {
-                  const createdDate = formatDateTime(mig.created_at);
+        {/* Filtered Data Rendering */}
+        {(() => {
+          const filteredMigrations = migrations.filter((m) => {
+            const matchSearch = !searchTerm || [m.id, m.source_provider, m.target_provider, m.source_url, m.target_url]
+              .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
+            if (!matchSearch) return false;
+
+            if (statusFilter === 'active') return m.status === 'RUNNING' || m.status === 'INDEXING';
+            if (statusFilter === 'completed') return m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS';
+            if (statusFilter === 'failed') return m.status === 'FAILED' || m.status === 'CANCELLED';
+            if (statusFilter === 'paused') return m.status === 'PAUSED' || m.status === 'PAUSED_CONNECTION_LOSS';
+            return true;
+          });
+
+          if (activeTab === 'sync') {
+            return (
+              <SyncList
+                apiUrl={apiUrl}
+                token={token}
+                syncJobs={syncJobs}
+                searchTerm={searchTerm}
+                statusFilter={statusFilter}
+                loading={syncLoading}
+                error={syncError}
+                setSyncJobs={setSyncJobs}
+                onSelectActiveSync={onSelectActiveSync}
+                onStartNewSync={onStartNewMigration}
+              />
+            );
+          }
+
+          if (loading) {
+            return (
+              <div className="flex flex-col items-center justify-center py-20 gap-4">
+                <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+                <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
+              </div>
+            );
+          }
+
+          if (error) {
+            return (
+              <div className="p-4 bg-[var(--color-error-bg)]/80 border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl text-xs font-mono text-center">
+                {error}
+              </div>
+            );
+          }
+
+          if (filteredMigrations.length === 0) {
+            return (
+              <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
+                <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
+                <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('migrations.noMigrations')}</p>
+                <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('migrations.dbEmpty')}</p>
+                <button
+                  onClick={onStartNewMigration}
+                  className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
+                >
+                  {t('migrations.startFirst')}
+                </button>
+              </div>
+            );
+          }
+
+          return (
+            <div className="overflow-x-auto scrollbar-portal">
+              <table className="w-full text-left border-collapse min-w-[600px]">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
+                    <th className="py-4.5 px-4 font-semibold">{t('migrations.createdAt')}</th>
+                    <th className="py-4.5 px-4 font-semibold">{t('migrations.sourceTarget')}</th>
+                    <th className="py-4.5 px-4 font-semibold">{t('migrations.status')}</th>
+                    <th className="py-4.5 px-4 font-semibold">{t('migrations.progress')}</th>
+                    <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredMigrations.map((mig) => {
+                    const createdDate = formatDateTime(mig.created_at);
 
                   return (
                     <tr
@@ -641,8 +718,9 @@ export function MigrationsDashboard({
                 })}
               </tbody>
             </table>
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
       </div>
     </div>
@@ -653,6 +731,8 @@ function SyncList({
   apiUrl,
   token,
   syncJobs,
+  searchTerm = '',
+  statusFilter = 'all',
   loading,
   error,
   setSyncJobs,
@@ -662,6 +742,8 @@ function SyncList({
   apiUrl: string;
   token: string;
   syncJobs: SyncJob[];
+  searchTerm?: string;
+  statusFilter?: string;
   loading: boolean;
   error: string;
   setSyncJobs: React.Dispatch<React.SetStateAction<SyncJob[]>>;
@@ -697,6 +779,18 @@ function SyncList({
     }
   };
 
+  const filteredSyncJobs = syncJobs.filter((job) => {
+    const matchSearch = !searchTerm || [job.id, job.source_provider, job.target_provider, job.source_url, job.target_url]
+      .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
+    if (!matchSearch) return false;
+
+    if (statusFilter === 'active') return job.status === 'RUNNING' || job.status === 'INDEXING';
+    if (statusFilter === 'completed') return job.status === 'COMPLETED' || (job.status === 'IDLE' && job.last_run_status !== 'FAILED');
+    if (statusFilter === 'failed') return job.status === 'FAILED' || (job.status === 'IDLE' && job.last_run_status === 'FAILED');
+    if (statusFilter === 'paused') return job.status === 'PAUSED' || job.status === 'PAUSED_CONNECTION_LOSS';
+    return true;
+  });
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
@@ -714,7 +808,7 @@ function SyncList({
     );
   }
 
-  if (syncJobs.length === 0) {
+  if (filteredSyncJobs.length === 0) {
     return (
       <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
         <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
@@ -744,7 +838,7 @@ function SyncList({
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
-          {syncJobs.map((job) => (
+          {filteredSyncJobs.map((job) => (
             <tr
               key={job.id}
               onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}

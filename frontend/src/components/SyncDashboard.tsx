@@ -382,11 +382,11 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
   return (
     <div className="w-full space-y-6 animate-fade-in">
-      {/* Back Button on its own line */}
-      <div>
+      {/* Back Button Header */}
+      <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-[var(--color-border)] text-xs font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+          className="flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs font-mono font-bold text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs transition-all cursor-pointer"
         >
           <ArrowLeft className="w-4 h-4" />
           {t('common.back')}
@@ -394,7 +394,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       </div>
 
       {/* Main Glass Panel containing all content */}
-      <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6">
+      <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal hover:shadow-portal-hover transition-all duration-300 space-y-6">
         {/* Top Badges Row (Above Title & Action Buttons) */}
         <div className="flex items-center justify-end gap-2.5 pb-2">
           {/* Status Info Badge */}

@@ -706,6 +706,28 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   return (
     <div className="w-full max-w-5xl mx-auto py-2 animate-fade-in text-left space-y-6">
       
+      {/* Wizard Step Progress Banner */}
+      <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-xs">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center justify-center w-8 h-8 rounded-full bg-portal-orange text-white font-mono font-bold text-xs shadow-xs">
+            3
+          </span>
+          <div className="flex flex-col text-left">
+            <span className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)]">
+              {t('fileBrowser.title')}
+            </span>
+            <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+              Schritt 3 von 3: Daten auswählen & Einstellungen festlegen
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-portal-orange bg-portal-orange/10 px-3 py-1 rounded-full border border-portal-orange/20">
+          <Folder className="w-3.5 h-3.5" />
+          <span>Datenauswahl</span>
+        </div>
+      </div>
+
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--color-border-light)] pb-5">
         <div className="flex items-center gap-4">
