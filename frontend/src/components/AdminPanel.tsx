@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Users as UsersIcon, Activity, BarChart3, ScrollText, UserPlus, Ban, CheckCircle2, Trash2, ShieldCheck, ShieldOff, RefreshCw, CloudSync, SlidersHorizontal } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
-import { adminApi, type AdminUser, type AdminStats, type AdminMigration, type AuditEntry, type ApiResult } from '../utils/adminApi';
+import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
 import { Toggle } from './Toggle';
 
@@ -317,15 +317,28 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
 }
 
 // ---------------------------------------------------------------------------
-// Migrations tab
+// Migrations & Syncs tab (Transfers)
 // ---------------------------------------------------------------------------
+
+interface UnifiedTransfer {
+  id: string;
+  type: 'MIGRATION' | 'SYNC';
+  owner_email: string;
+  status: string;
+  source_provider: string;
+  target_provider: string;
+  processed_files: number;
+  total_files: number;
+  processed_bytes: number;
+  created_at: string;
+}
 
 function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
   apiUrl: string; token: string;
   formatBytes: (n: number) => string; formatDateTime: (iso: string) => string;
 }) {
   const { t } = useTranslation();
-  const [items, setItems] = useState<AdminMigration[]>([]);
+  const [items, setItems] = useState<UnifiedTransfer[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -334,12 +347,45 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
     let cancelled = false;
     (async () => {
       setLoading(true);
-      const res = await adminApi.listMigrations(apiUrl, token, { page, limit: LIMIT });
+      const [mRes, sRes] = await Promise.all([
+        adminApi.listMigrations(apiUrl, token, { page, limit: LIMIT }),
+        adminApi.listSyncs(apiUrl, token, { page, limit: LIMIT }),
+      ]);
       setLoading(false);
-      if (res.ok && !cancelled) {
-        setItems(res.data?.migrations ?? []);
-        setTotal(res.data?.total ?? 0);
-      }
+      if (cancelled) return;
+
+      const mItems: UnifiedTransfer[] = (mRes.ok ? mRes.data?.migrations ?? [] : []).map((m) => ({
+        id: m.id,
+        type: 'MIGRATION',
+        owner_email: m.owner_email,
+        status: m.status,
+        source_provider: m.source_provider,
+        target_provider: m.target_provider,
+        processed_files: m.processed_files,
+        total_files: m.total_files,
+        processed_bytes: m.processed_bytes,
+        created_at: m.created_at,
+      }));
+
+      const sItems: UnifiedTransfer[] = (sRes.ok ? sRes.data?.syncs ?? [] : []).map((s) => ({
+        id: s.id,
+        type: 'SYNC',
+        owner_email: s.owner_email,
+        status: s.status,
+        source_provider: s.source_provider,
+        target_provider: s.target_provider,
+        processed_files: s.processed_files,
+        total_files: s.total_files,
+        processed_bytes: s.processed_bytes,
+        created_at: s.created_at,
+      }));
+
+      const combined = [...mItems, ...sItems].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      setItems(combined);
+      setTotal((mRes.ok ? mRes.data?.total ?? 0 : 0) + (sRes.ok ? sRes.data?.total ?? 0 : 0));
     })();
     return () => { cancelled = true; };
   }, [apiUrl, token, page]);
@@ -353,6 +399,7 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
           <thead className="bg-[var(--color-bg-tertiary)]/60 text-[var(--color-text-muted)]">
             <tr>
               <th className="text-left px-3 py-2 font-semibold">{t('admin.migrations.owner')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('admin.transfers.type')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('migrations.status')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('admin.migrations.sourceTarget')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('dashboard.progress')}</th>
@@ -363,6 +410,13 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
             {items.map((m) => (
               <tr key={m.id} className="border-t border-[var(--color-border)]">
                 <td className="px-3 py-2">{m.owner_email || <span className="text-[var(--color-text-muted)]">—</span>}</td>
+                <td className="px-3 py-2">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    m.type === 'SYNC' ? 'bg-sky-100 text-sky-700' : 'bg-purple-100 text-purple-700'
+                  }`}>
+                    {m.type === 'SYNC' ? t('admin.transfers.sync') : t('admin.transfers.migration')}
+                  </span>
+                </td>
                 <td className="px-3 py-2"><StatusBadge status={m.status} /></td>
                 <td className="px-3 py-2">{m.source_provider} → {m.target_provider}</td>
                 <td className="px-3 py-2">{m.processed_files}/{m.total_files} · {formatBytes(m.processed_bytes)}</td>
@@ -370,7 +424,7 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
               </tr>
             ))}
             {!loading && items.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-[var(--color-text-muted)]">{t('migrations.dbEmpty')}</td></tr>
+              <tr><td colSpan={6} className="px-3 py-6 text-center text-[var(--color-text-muted)]">{t('migrations.dbEmpty')}</td></tr>
             )}
           </tbody>
         </table>
@@ -384,6 +438,7 @@ function StatusBadge({ status }: { status: string }) {
   const { t } = useTranslation();
   const map: Record<string, string> = {
     COMPLETED: 'bg-emerald-100 text-emerald-700',
+    IDLE: 'bg-emerald-100 text-emerald-700',
     FAILED: 'bg-rose-100 text-rose-700',
     CANCELLED: 'bg-gray-100 text-gray-600',
     RUNNING: 'bg-portal-orange/15 text-portal-orange',
@@ -420,16 +475,19 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
     </div>
   );
 
+  const totalSyncs = Object.values(stats.syncs_by_status || {}).reduce((a, b) => a + b, 0);
+
   return (
     <SectionCard icon={BarChart3} title={t('admin.tabs.stats')}>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {card(t('admin.stats.totalUsers'), stats.total_users)}
         {card(t('admin.stats.activeUsers'), stats.active_users)}
         {card(t('admin.stats.totalMigrations'), Object.values(stats.migrations_by_status).reduce((a, b) => a + b, 0))}
+        {card(t('admin.stats.totalSyncs'), totalSyncs)}
         {card(t('admin.stats.totalTasks'), Object.values(stats.tasks_by_status).reduce((a, b) => a + b, 0))}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-4 rounded-2xl border border-[var(--color-border)]">
           <div className="text-xs font-bold text-[var(--color-portal-navy-themed)] mb-3">{t('admin.stats.migrationsByStatus')}</div>
           <div className="space-y-1.5">
@@ -440,6 +498,18 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
               </div>
             ))}
             {Object.keys(stats.migrations_by_status).length === 0 && <div className="text-[var(--color-text-muted)]">—</div>}
+          </div>
+        </div>
+        <div className="p-4 rounded-2xl border border-[var(--color-border)]">
+          <div className="text-xs font-bold text-[var(--color-portal-navy-themed)] mb-3">{t('admin.stats.syncsByStatus')}</div>
+          <div className="space-y-1.5">
+            {Object.entries(stats.syncs_by_status || {}).map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between text-xs">
+                <StatusBadge status={k} />
+                <span className="font-mono">{v}</span>
+              </div>
+            ))}
+            {Object.keys(stats.syncs_by_status || {}).length === 0 && <div className="text-[var(--color-text-muted)]">—</div>}
           </div>
         </div>
         <div className="p-4 rounded-2xl border border-[var(--color-border)]">
@@ -497,6 +567,7 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
     'LOGIN_SUCCESS', 'LOGIN_FAILED', 'REGISTRATION', 'USER_CREATED', 'USER_SUSPENDED', 'USER_REACTIVATED',
     'USER_DELETED', 'USER_ROLE_CHANGED', 'MIGRATION_CREATED', 'MIGRATION_STARTED', 'MIGRATION_COMPLETED',
     'MIGRATION_FAILED', 'MIGRATION_PAUSED', 'MIGRATION_RESUMED', 'MIGRATION_CANCELLED', 'MIGRATION_DELETED',
+    'SYNC_CREATED', 'SYNC_STARTED', 'SYNC_COMPLETED', 'SYNC_FAILED', 'SYNC_PAUSED', 'SYNC_RESUMED', 'SYNC_DELETED',
     'SETTING_UPDATED', '2FA_ENABLED', '2FA_DISABLED',
   ];
 

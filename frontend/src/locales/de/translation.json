@@ -580,6 +580,11 @@
       "roleChanged": "Rolle aktualisiert.",
       "deletedOk": "Benutzer gelöscht."
     },
+    "transfers": {
+      "type": "Typ",
+      "migration": "Migration",
+      "sync": "Sync"
+    },
     "migrations": {
       "owner": "Besitzer",
       "sourceTarget": "Quelle → Ziel",
@@ -589,8 +594,10 @@
       "totalUsers": "Benutzer",
       "activeUsers": "Aktive Benutzer",
       "totalMigrations": "Übertragungen",
+      "totalSyncs": "Synchronisierungen",
       "totalTasks": "Aufgaben",
       "migrationsByStatus": "Übertragungen nach Status",
+      "syncsByStatus": "Syncs nach Status",
       "tasksByStatus": "Aufgaben nach Status"
     },
     "audit": {
@@ -618,6 +625,13 @@
         "MIGRATION_RESUMED": "Übertragung fortgesetzt",
         "MIGRATION_CANCELLED": "Übertragung abgebrochen",
         "MIGRATION_DELETED": "Übertragung gelöscht",
+        "SYNC_CREATED": "Sync erstellt",
+        "SYNC_STARTED": "Sync gestartet",
+        "SYNC_COMPLETED": "Sync abgeschlossen",
+        "SYNC_FAILED": "Sync fehlgeschlagen",
+        "SYNC_PAUSED": "Sync pausiert",
+        "SYNC_RESUMED": "Sync fortgesetzt",
+        "SYNC_DELETED": "Sync gelöscht",
         "SETTING_UPDATED": "Einstellung geändert",
         "2FA_ENABLED": "2FA aktiviert",
         "2FA_DISABLED": "2FA deaktiviert"

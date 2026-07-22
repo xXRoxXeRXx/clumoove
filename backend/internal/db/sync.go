@@ -685,3 +685,64 @@ func GetActiveSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) (
 	}
 	return paths, nil
 }
+
+// AdminSyncView is a sync job row enriched with the owner's email for the admin view.
+type AdminSyncView struct {
+	SyncJob
+	OwnerEmail string `json:"owner_email"`
+}
+
+// SyncListParams filters/paginates the admin-wide sync job listing.
+type SyncListParams struct {
+	Page  int
+	Limit int
+}
+
+// ListAllSyncJobs returns every sync job across all users (read-only oversight).
+func ListAllSyncJobs(database *sql.DB, p SyncListParams) ([]AdminSyncView, int, error) {
+	var total int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM sync_jobs`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (p.Page - 1) * p.Limit
+	if offset < 0 {
+		offset = 0
+	}
+
+	query := `
+		SELECT s.id, s.user_id, s.source_url, s.source_username, s.source_provider,
+		       s.target_url, s.target_username, s.target_provider, s.direction, s.conflict_strategy,
+		       s.delete_propagation, s.interval_minutes, s.threads, s.status, s.target_dir,
+		       s.selected_paths, s.last_run_at, s.last_run_status, s.error_message,
+		       s.total_files, s.total_bytes, s.processed_files, s.processed_bytes, s.live_bytes, s.changed_files, s.deleted_files, s.failed_files,
+		       s.created_at, s.updated_at, COALESCE(u.email, '')
+		FROM sync_jobs s
+		LEFT JOIN users u ON u.id = s.user_id
+		ORDER BY s.created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := database.Query(query, p.Limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	views := []AdminSyncView{}
+	for rows.Next() {
+		var v AdminSyncView
+		if err := rows.Scan(
+			&v.ID, &v.UserID, &v.SourceURL, &v.SourceUsername, &v.SourceProvider,
+			&v.TargetURL, &v.TargetUsername, &v.TargetProvider, &v.Direction, &v.ConflictStrategy,
+			&v.DeletePropagation, &v.IntervalMinutes, &v.Threads, &v.Status, &v.TargetDir,
+			&v.SelectedPaths, &v.LastRunAt, &v.LastRunStatus, &v.ErrorMessage,
+			&v.TotalFiles, &v.TotalBytes, &v.ProcessedFiles, &v.ProcessedBytes, &v.LiveBytes, &v.ChangedFiles, &v.DeletedFiles, &v.FailedFiles,
+			&v.CreatedAt, &v.UpdatedAt, &v.OwnerEmail,
+		); err != nil {
+			return nil, 0, err
+		}
+		views = append(views, v)
+	}
+	return views, total, nil
+}
+

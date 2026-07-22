@@ -121,6 +121,13 @@ const (
 	AuditUserRoleChanged   AuditAction = "USER_ROLE_CHANGED"
 	Audit2FAEnabled        AuditAction = "2FA_ENABLED"
 	Audit2FADisabled       AuditAction = "2FA_DISABLED"
+	AuditSyncCreated       AuditAction = "SYNC_CREATED"
+	AuditSyncStarted       AuditAction = "SYNC_STARTED"
+	AuditSyncCompleted     AuditAction = "SYNC_COMPLETED"
+	AuditSyncFailed        AuditAction = "SYNC_FAILED"
+	AuditSyncPaused        AuditAction = "SYNC_PAUSED"
+	AuditSyncResumed       AuditAction = "SYNC_RESUMED"
+	AuditSyncDeleted       AuditAction = "SYNC_DELETED"
 )
 
 // AuditEntry is a single audit-log record. UserID is the acting principal
@@ -2038,6 +2045,7 @@ type GlobalStats struct {
 	TotalUsers         int            `json:"total_users"`
 	ActiveUsers        int            `json:"active_users"`
 	MigrationsByStatus map[string]int `json:"migrations_by_status"`
+	SyncsByStatus      map[string]int `json:"syncs_by_status"`
 	TasksByStatus      map[string]int `json:"tasks_by_status"`
 }
 
@@ -2045,6 +2053,7 @@ type GlobalStats struct {
 func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
 	stats := &GlobalStats{
 		MigrationsByStatus: map[string]int{},
+		SyncsByStatus:      map[string]int{},
 		TasksByStatus:      map[string]int{},
 	}
 	if err := database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&stats.TotalUsers); err != nil {
@@ -2067,6 +2076,22 @@ func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
 		stats.MigrationsByStatus[status] = n
 	}
 	rows.Close()
+
+	rows, err = database.Query(`SELECT status, COUNT(*) FROM sync_jobs GROUP BY status`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		stats.SyncsByStatus[status] = n
+	}
+	rows.Close()
+
 	rows, err = database.Query(`SELECT status, COUNT(*) FROM tasks GROUP BY status`)
 	if err != nil {
 		return nil, err

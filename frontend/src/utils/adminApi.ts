@@ -11,6 +11,7 @@ export interface AdminStats {
   total_users: number;
   active_users: number;
   migrations_by_status: Record<string, number>;
+  syncs_by_status: Record<string, number>;
   tasks_by_status: Record<string, number>;
 }
 
@@ -28,6 +29,25 @@ export interface AdminMigration {
   processed_bytes: number;
   created_at: string;
   owner_email: string;
+}
+
+export interface AdminSync {
+  id: string;
+  user_id: string;
+  owner_email: string;
+  source_provider: string;
+  source_url?: string | null;
+  target_provider: string;
+  target_url?: string | null;
+  direction: string;
+  interval_minutes: number;
+  status: string;
+  total_files: number;
+  processed_files: number;
+  total_bytes: number;
+  processed_bytes: number;
+  last_run_at?: string | null;
+  created_at: string;
 }
 
 export interface AuditEntry {
@@ -61,6 +81,11 @@ export interface ListUsersResult {
 
 export interface ListMigrationsResult {
   migrations: AdminMigration[];
+  total: number;
+}
+
+export interface ListSyncsResult {
+  syncs: AdminSync[];
   total: number;
 }
 
@@ -120,6 +145,8 @@ export const adminApi = {
   stats: (apiUrl: string, token: string) => call<AdminStats>(apiUrl, token, 'GET', '/api/admin/stats'),
   listMigrations: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
     call<ListMigrationsResult>(apiUrl, token, 'GET', `/api/admin/migrations${buildQuery(params)}`),
+  listSyncs: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
+    call<ListSyncsResult>(apiUrl, token, 'GET', `/api/admin/syncs${buildQuery(params)}`),
   auditLog: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
     call<AuditLogResult>(apiUrl, token, 'GET', `/api/audit/log${buildQuery(params)}`),
 };

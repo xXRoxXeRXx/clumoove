@@ -251,6 +251,12 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[Sync] Warning: sync job %s created but schedule creation failed: %v\n", jobID, err)
 	}
 
+	s.writeAudit(r, db.AuditSyncCreated, jobID, userID, map[string]interface{}{
+		"source_provider": req.SourceProvider,
+		"target_provider": req.TargetProvider,
+		"direction":       req.Direction,
+	})
+
 	writeJSON(w, http.StatusOK, map[string]string{"id": jobID})
 }
 
@@ -329,6 +335,8 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 	// Asynchronously run pass
 	go s.syncEngine.RunSyncPass(s.ctx, id)
 
+	s.writeAudit(r, db.AuditSyncStarted, id, userID, nil)
+
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -371,6 +379,8 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 	// Deactivate schedule
 	_, _ = s.db.Exec(`UPDATE schedules SET is_active = FALSE WHERE task_type = 'sync' AND task_id = $1`, id)
 
+	s.writeAudit(r, db.AuditSyncPaused, id, userID, nil)
+
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -400,6 +410,8 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 	nextRun := time.Now()
 	_, _ = s.db.Exec(`UPDATE schedules SET is_active = TRUE, next_run_at = $1 WHERE task_type = 'sync' AND task_id = $2`, nextRun, id)
 
+	s.writeAudit(r, db.AuditSyncResumed, id, userID, nil)
+
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
@@ -428,9 +440,12 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 
 	err = db.DeleteSyncJobCascade(s.db, id)
 	if err != nil {
+		log.Printf("Failed to delete sync job: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+
+	s.writeAudit(r, db.AuditSyncDeleted, id, userID, nil)
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
