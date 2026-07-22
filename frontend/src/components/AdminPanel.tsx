@@ -94,7 +94,7 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
             onClick={() => setTab(key)}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
               tab === key
-                ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+                ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
                 : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
             }`}
           >

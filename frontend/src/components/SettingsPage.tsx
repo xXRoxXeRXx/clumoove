@@ -499,7 +499,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={() => setTab('account')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
             tab === 'account'
-              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
@@ -510,7 +510,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={() => setTab('connections')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
             tab === 'connections'
-              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
@@ -521,7 +521,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={() => setTab('appearance')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
             tab === 'appearance'
-              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
@@ -532,7 +532,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={() => setTab('notifications')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
             tab === 'notifications'
-              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
@@ -543,7 +543,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={() => setTab('about')}
           className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
             tab === 'about'
-              ? 'bg-portal-orange/10 border-portal-orange text-[var(--color-portal-orange-themed)]'
+              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
