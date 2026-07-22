@@ -28,9 +28,28 @@ export function MigrationsDashboard({
   const [error, setError] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
 
+  const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
+  const [syncLoading, setSyncLoading] = useState<boolean>(true);
+  const [syncError, setSyncError] = useState<string>('');
+
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
+
+  const fetchSyncJobs = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiUrl}/api/sync`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(t('sync.loadFailed'));
+      const data = await res.json();
+      setSyncJobs(data || []);
+    } catch (err: unknown) {
+      setSyncError(err instanceof Error ? err.message : t('sync.loadFailed'));
+    } finally {
+      setSyncLoading(false);
+    }
+  }, [apiUrl, token, t]);
 
   const fetchMigrations = useCallback(async () => {
     try {
@@ -148,6 +167,72 @@ export function MigrationsDashboard({
     };
   }, [apiUrl, token, t]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let retryDelay = 2000;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const controller = new AbortController();
+
+    const connectSync = async () => {
+      if (cancelled) return;
+      void fetchSyncJobs();
+      try {
+        const res = await fetch(`${apiUrl}/api/sync/stream`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (!cancelled) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let idx: number;
+          while ((idx = buffer.indexOf('\n\n')) !== -1) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+
+            let event = 'message';
+            let data = '';
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('event:')) event = line.slice(6).trim();
+              else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+            }
+
+            if (event === 'sync_jobs' && data) {
+              try {
+                setSyncJobs(JSON.parse(data) || []);
+                setSyncError('');
+                setSyncLoading(false);
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
+      } catch {
+        if (cancelled || controller.signal.aborted) return;
+      }
+
+      if (!cancelled) {
+        retryTimer = setTimeout(connectSync, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 30000);
+      }
+    };
+
+    connectSync();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      controller.abort();
+    };
+  }, [apiUrl, token, fetchSyncJobs]);
+
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     
@@ -244,15 +329,28 @@ export function MigrationsDashboard({
   };
 
   const totalMigrations = migrations.length;
+  const totalSyncs = syncJobs.length;
+  const totalTransfers = totalMigrations + totalSyncs;
+
   const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING').length;
+  const activeSyncs = syncJobs.filter(s => s.status === 'RUNNING' || s.status === 'INDEXING').length;
+  const activeTotal = activeMigrations + activeSyncs;
+
   const completedMigrations = migrations.filter(m => m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS').length;
   const failedMigrations = migrations.filter(m => m.status === 'FAILED' || m.status === 'CANCELLED').length;
-  
-  const successRate = (completedMigrations + failedMigrations) > 0 
-    ? Math.round((completedMigrations / (completedMigrations + failedMigrations)) * 100) 
+
+  const completedSyncs = syncJobs.filter(s => s.status === 'COMPLETED' || (s.status === 'IDLE' && s.last_run_status !== 'FAILED')).length;
+  const failedSyncs = syncJobs.filter(s => s.status === 'FAILED' || (s.status === 'IDLE' && s.last_run_status === 'FAILED')).length;
+
+  const totalCompleted = completedMigrations + completedSyncs;
+  const totalFailed = failedMigrations + failedSyncs;
+
+  const successRate = (totalCompleted + totalFailed) > 0 
+    ? Math.round((totalCompleted / (totalCompleted + totalFailed)) * 100) 
     : 100;
 
-  const totalBytesMigrated = migrations.reduce((acc, m) => acc + (m.processed_bytes || 0), 0);
+  const totalBytesMigrated = migrations.reduce((acc, m) => acc + (m.processed_bytes || 0), 0)
+    + syncJobs.reduce((acc, s) => acc + (s.processed_bytes || 0), 0);
 
   return (
     <div className="w-full space-y-6 animate-fade-in">
@@ -298,7 +396,7 @@ export function MigrationsDashboard({
           </div>
         </div>
 
-        {/* Total Migrations */}
+        {/* Total Migrations + Sync Jobs */}
         <div className="glass-panel border border-[var(--color-glass-border)]/50 rounded-2xl p-4.5 shadow-portal flex items-center gap-4">
           <div className="p-3 bg-purple-50 text-brand-violet rounded-xl">
             <Layers className="w-5 h-5 stroke-[2]" />
@@ -306,26 +404,26 @@ export function MigrationsDashboard({
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.migrations')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
-              {totalMigrations}
+              {totalTransfers}
             </span>
           </div>
         </div>
 
         {/* Active Transits */}
         <div className="glass-panel border border-[var(--color-glass-border)]/50 rounded-2xl p-4.5 shadow-portal flex items-center gap-4 relative overflow-hidden">
-          {activeMigrations > 0 && (
+          {activeTotal > 0 && (
             <div className="absolute top-2 right-2 flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </div>
           )}
           <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
-            <RefreshCw className={`w-5 h-5 stroke-[2] ${activeMigrations > 0 ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-5 h-5 stroke-[2] ${activeTotal > 0 ? 'animate-spin' : ''}`} />
           </div>
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.active')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
-              {activeMigrations}
+              {activeTotal}
             </span>
           </div>
         </div>
@@ -373,11 +471,14 @@ export function MigrationsDashboard({
           </div>
 
           <button
-            onClick={activeTab === 'migrations' ? fetchMigrations : undefined}
+            onClick={() => {
+              void fetchMigrations();
+              void fetchSyncJobs();
+            }}
             className="p-2 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 transition-all cursor-pointer"
             title={t('common.refresh')}
           >
-            <RefreshCw className={`w-4 h-4 ${loading && activeTab === 'migrations' ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${(loading || syncLoading) ? 'animate-spin' : ''}`} />
           </button>
         </div>
 
@@ -385,6 +486,10 @@ export function MigrationsDashboard({
           <SyncList
             apiUrl={apiUrl}
             token={token}
+            syncJobs={syncJobs}
+            loading={syncLoading}
+            error={syncError}
+            setSyncJobs={setSyncJobs}
             onSelectActiveSync={onSelectActiveSync}
             onStartNewSync={onStartNewMigration}
           />
@@ -500,7 +605,7 @@ export function MigrationsDashboard({
                                   mig.total_files > 0
                                     ? (mig.processed_files / mig.total_files) * 100
                                     : 0
-                                  }%`,
+                                } %`,
                               }}
                             />
                           </div>
@@ -547,84 +652,27 @@ export function MigrationsDashboard({
 function SyncList({
   apiUrl,
   token,
+  syncJobs,
+  loading,
+  error,
+  setSyncJobs,
   onSelectActiveSync,
   onStartNewSync,
 }: {
   apiUrl: string;
   token: string;
+  syncJobs: SyncJob[];
+  loading: boolean;
+  error: string;
+  setSyncJobs: React.Dispatch<React.SetStateAction<SyncJob[]>>;
   onSelectActiveSync?: (id: string) => void;
   onStartNewSync: () => void;
 }) {
-  const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
 
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
   const translateApiError = useApiError();
-
-  const fetchSyncJobs = useCallback(async () => {
-    try {
-      const res = await fetch(`${apiUrl}/api/sync`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(t('sync.loadFailed'));
-      const data = await res.json();
-      setSyncJobs(data || []);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : t('sync.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [apiUrl, token, t]);
-
-  useEffect(() => {
-    // SSE Stream
-    const controller = new AbortController();
-    const connectSSE = async () => {
-      void fetchSyncJobs();
-      try {
-        const res = await fetch(`${apiUrl}/api/sync/stream`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          let idx: number;
-          while ((idx = buffer.indexOf('\n\n')) !== -1) {
-            const frame = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-
-            let event = 'message';
-            let data = '';
-            for (const line of frame.split('\n')) {
-              if (line.startsWith('event:')) event = line.slice(6).trim();
-              else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
-            }
-
-            if (event === 'sync_jobs' && data) {
-              try {
-                setSyncJobs(JSON.parse(data) || []);
-                setLoading(false);
-              } catch { /* ignore */ }
-            }
-          }
-        }
-      } catch { /* ignore */ }
-    };
-
-    connectSSE();
-    return () => controller.abort();
-  }, [apiUrl, token, fetchSyncJobs]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
