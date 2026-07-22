@@ -293,7 +293,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? ''
       : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass;
 
-    if (sourceProvider === 'sftp') {
+    // A selected saved profile supplies the credentials server-side, so the
+    // client-side field checks are satisfied by its presence.
+    const sourceProfileSelected = sourceProfileId !== '';
+    const targetProfileSelected = targetProfileId !== '';
+
+    if (sourceProvider === 'sftp' && !sourceProfileSelected) {
       if (!sourceSftpHost.trim()) {
         setError(t('connect.errors.sourceSftpHost'));
         return;
@@ -303,7 +308,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         return;
       }
     }
-    if (targetProvider === 'sftp') {
+    if (targetProvider === 'sftp' && !targetProfileSelected) {
       if (!targetSftpHost.trim()) {
         setError(t('connect.errors.targetSftpHost'));
         return;
@@ -313,25 +318,25 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         return;
       }
     }
-    if (sourceProvider === 'smb') {
+    if (sourceProvider === 'smb' && !sourceProfileSelected) {
       if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
         setError(t('connect.errors.sourceSmb'));
         return;
       }
     }
-    if (sourceProvider === 's3') {
+    if (sourceProvider === 's3' && !sourceProfileSelected) {
       if (!sourceS3Bucket.trim() || !sourceS3Region.trim()) {
         setError(t('connect.errors.sourceS3'));
         return;
       }
     }
-    if (targetProvider === 'smb') {
+    if (targetProvider === 'smb' && !targetProfileSelected) {
       if (!targetSmbHost.trim() || !targetSmbShare.trim()) {
         setError(t('connect.errors.targetSmb'));
         return;
       }
     }
-    if (targetProvider === 's3') {
+    if (targetProvider === 's3' && !targetProfileSelected) {
       if (!targetS3Bucket.trim() || !targetS3Region.trim()) {
         setError(t('connect.errors.targetS3'));
         return;
@@ -340,11 +345,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
     const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local';
     const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'local';
-
-    // A selected saved profile supplies the credentials server-side, so the
-    // client-side field checks are satisfied by its presence.
-    const sourceProfileSelected = sourceProfileId !== '';
-    const targetProfileSelected = targetProfileId !== '';
 
     if (
       (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
