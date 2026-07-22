@@ -86,3 +86,40 @@ func TestShouldRefreshToken(t *testing.T) {
 		t.Error("shouldRefreshToken(expired) = false; want true")
 	}
 }
+
+func TestIsFileMatchingTarget(t *testing.T) {
+	now := time.Now()
+
+	// 1. Matching size and timestamp within 2s tolerance
+	src := fileState{Path: "/test.txt", Size: 1024, LastModified: now}
+	tgt := fileState{Path: "/test.txt", Size: 1024, LastModified: now.Add(1 * time.Second)}
+	if !isFileMatchingTarget(src, tgt) {
+		t.Error("isFileMatchingTarget matching size and mtime within 2s = false; want true")
+	}
+
+	// 2. Size mismatch
+	tgtSizeMismatch := fileState{Path: "/test.txt", Size: 2048, LastModified: now}
+	if isFileMatchingTarget(src, tgtSizeMismatch) {
+		t.Error("isFileMatchingTarget size mismatch = true; want false")
+	}
+
+	// 3. Matching hashes
+	srcHash := fileState{Path: "/test.txt", Size: 1024, Hash: "sha1:abc12345"}
+	tgtHash := fileState{Path: "/test.txt", Size: 1024, Hash: "sha1:abc12345"}
+	if !isFileMatchingTarget(srcHash, tgtHash) {
+		t.Error("isFileMatchingTarget matching hashes = false; want true")
+	}
+
+	// 4. Mismatched hashes
+	tgtHashMismatch := fileState{Path: "/test.txt", Size: 1024, Hash: "sha1:xyz98765"}
+	if isFileMatchingTarget(srcHash, tgtHashMismatch) {
+		t.Error("isFileMatchingTarget mismatched hashes = true; want false")
+	}
+
+	// 5. Mismatched timestamp (> 2s) without hash
+	tgtTimeMismatch := fileState{Path: "/test.txt", Size: 1024, LastModified: now.Add(5 * time.Second)}
+	if isFileMatchingTarget(src, tgtTimeMismatch) {
+		t.Error("isFileMatchingTarget time mismatch > 2s = true; want false")
+	}
+}
+
