@@ -251,6 +251,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     const wsUrl = `${wsProto}://${apiUrlObj.host}/api/migration/${migrationId}/ws`;
 
     let isMounted = true;
+
+    // Fetch initial migration details immediately to avoid waiting for initial WS tick
+    fetch(`${apiUrl}/api/migration/${migrationId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((initialData) => {
+        if (isMounted && initialData) {
+          setData((prev) => (prev ? { ...initialData, ...prev } : initialData));
+        }
+      })
+      .catch((err) => console.error('Initial migration fetch error:', err));
+
     // Pass the JWT as the subprotocol (2nd arg) so the secure HTTPS path works.
     let ws = new WebSocket(wsUrl, token);
 
@@ -266,7 +279,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         console.error("Failed to parse progress data:", err);
         return;
       }
-      setData(payload);
+      setData((prev) => (prev ? { ...prev, ...payload } : payload));
 
       if (payload.bandwidth_limit_mbps !== undefined) {
         setBandwidthLimit(payload.bandwidth_limit_mbps);
