@@ -48,6 +48,7 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		ForceAttemptHTTP2:     false,
 		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
 		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
