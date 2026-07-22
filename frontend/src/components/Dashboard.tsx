@@ -3,6 +3,7 @@ import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Pause, Play, XCir
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatDuration, type TFunc } from '../utils/format';
 import { useApiError } from '../utils/apiError';
+import { SelectedPathsViewer } from './SelectedPathsViewer';
 
 interface DashboardProps {
   migrationId: string;
@@ -505,12 +506,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       {/* Main Glass Panel containing all content */}
       <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6">
         {/* Top Badges Row (Above Title & Action Buttons) */}
-        <div className="flex items-center gap-2.5 pb-2">
-          {/* Status Info Badge (links) */}
+        <div className="flex items-center justify-end gap-2.5 pb-2">
+          {/* Status Info Badge */}
           {getStatusBadge(data.status)}
 
-          {/* Direction Info Badge (rechts daneben) */}
-          <span className="inline-flex items-center gap-1.5 font-mono text-[11px] font-extrabold text-portal-orange uppercase px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 shadow-2xs animate-pulse">
+          {/* Direction Info Badge (rechtsbündig) */}
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-orange-700 px-3 py-1 rounded-full bg-orange-50 border border-orange-200">
             <ArrowRight className="w-3.5 h-3.5" />
             <span>{t('sync.oneWay')}</span>
           </span>
@@ -597,21 +598,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
                 {data.source_url || t('migrations.oauth')}
               </div>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {data.selected_paths && data.selected_paths.length > 0 ? (
-                  data.selected_paths.map((p, idx) => (
-                    <span key={idx} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
-                      <Folder className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-                      <span>{p}</span>
-                    </span>
-                  ))
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
-                    <Folder className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-                    <span>/</span>
-                  </span>
-                )}
-              </div>
+              <SelectedPathsViewer paths={data.selected_paths} />
             </div>
           </div>
 
