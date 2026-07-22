@@ -1076,20 +1076,22 @@ func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath 
 	}
 
 	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	unixSec := meta.ModifiedTime.Unix()
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propertyupdate xmlns:d="DAV:">
   <d:set>
     <d:prop>
-      <d:lastmodified>%s</d:lastmodified>
+      <d:lastmodified>%d</d:lastmodified>
     </d:prop>
   </d:set>
-</d:propertyupdate>`, meta.ModifiedTime.UTC().Format(time.RFC3339))
+</d:propertyupdate>`, unixSec)
 
 	req, err := p.newRequest("PROPPATCH", u, strings.NewReader(body))
 	if err != nil {
 		return nil
 	}
 	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
+	req.Header.Set("X-OC-MTime", strconv.FormatInt(unixSec, 10))
 	req = req.WithContext(ctx)
 
 	resp, err := p.HTTPClient.Do(req)
