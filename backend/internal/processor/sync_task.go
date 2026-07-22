@@ -203,12 +203,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		tgtProvider = job.TargetProvider
 	}
 
-	if ok, err := srcClient.Connect(ctx); !ok {
-		return fmt.Errorf("source connection failed: %w", err)
-	}
-	if ok, err := tgtClient.Connect(ctx); !ok {
-		return fmt.Errorf("target connection failed: %w", err)
-	}
+
 
 	// Create directories if needed
 	if err := tgtClient.CreateParentDirectories(ctx, task.ResourceType, tgtPath); err != nil {
