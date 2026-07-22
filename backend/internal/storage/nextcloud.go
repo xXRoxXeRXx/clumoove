@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -93,14 +92,16 @@ type XMLChecksums struct {
 
 func newDAVTransport(host string) *http.Transport {
 	return &http.Transport{
-		ForceAttemptHTTP2:     false,
-		TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper),
-		MaxIdleConns:          100,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          500,
 		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       90 * time.Second,
+		MaxConnsPerHost:       200,
+		IdleConnTimeout:       120 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Minute,
+		ReadBufferSize:        64 * 1024,
+		WriteBufferSize:       64 * 1024,
 		// Pin egress to a re-validated IP on every connection so a DNS
 		// rebind between validation and connect cannot reach internal/metadata
 		// addresses. The original hostname stays in the request URL, preserving

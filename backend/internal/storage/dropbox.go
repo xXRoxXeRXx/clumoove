@@ -92,12 +92,16 @@ type DropboxProvider struct {
 
 func NewDropboxProvider(token string) (*DropboxProvider, error) {
 	tr := &http.Transport{
-		MaxIdleConns:          100,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          500,
 		MaxIdleConnsPerHost:   100,
-		IdleConnTimeout:       90 * time.Second,
+		MaxConnsPerHost:       200,
+		IdleConnTimeout:       120 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Minute,
+		ReadBufferSize:        64 * 1024,
+		WriteBufferSize:       64 * 1024,
 	}
 	return &DropboxProvider{
 		AccessToken: token,

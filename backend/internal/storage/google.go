@@ -32,8 +32,21 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 		return nil, fmt.Errorf("google provider requires an oauth token")
 	}
 
+	tr := &http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          500,
+		MaxIdleConnsPerHost:   100,
+		MaxConnsPerHost:       200,
+		IdleConnTimeout:       120 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ReadBufferSize:        64 * 1024,
+		WriteBufferSize:       64 * 1024,
+	}
+	baseClient := &http.Client{Transport: tr}
+	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, baseClient)
+
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	client := oauth2.NewClient(ctx, ts)
+	client := oauth2.NewClient(ctxWithClient, ts)
 
 	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
