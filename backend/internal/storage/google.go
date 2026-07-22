@@ -647,12 +647,20 @@ func (p *GoogleProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	return p.CreateDirectory(ctx, resourceType, dirPath)
 }
 
+var globalGoogleCreatedDirs sync.Map
+
 func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if resourceType != "files" {
 		return fmt.Errorf("CreateDirectory not implemented for %s", resourceType)
 	}
+
+	globalDirKey := dirPath
+	if _, exists := globalGoogleCreatedDirs.Load(globalDirKey); exists {
+		return nil
+	}
+
 	parts := strings.Split(strings.Trim(dirPath, "/"), "/")
 	currentID := "root"
 	for _, part := range parts {
@@ -679,6 +687,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 			currentID = res.Files[0].Id
 		}
 	}
+	globalGoogleCreatedDirs.Store(globalDirKey, true)
 	return nil
 }
 

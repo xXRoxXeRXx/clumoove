@@ -435,9 +435,21 @@ func (p *SMBProvider) CreateParentDirectories(ctx context.Context, resourceType,
 	return p.CreateDirectory(ctx, resourceType, dir)
 }
 
+var globalSMBCreatedDirs sync.Map
+
 func (p *SMBProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)
+	}
+
+	cleanDirPath := p.cleanPath(dirPath)
+	if cleanDirPath == "." {
+		return nil
+	}
+
+	globalDirKey := p.Host + "|" + p.Share + "|" + cleanDirPath
+	if _, exists := globalSMBCreatedDirs.Load(globalDirKey); exists {
+		return nil
 	}
 
 	p.mu.Lock()
@@ -446,10 +458,6 @@ func (p *SMBProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 		return p.handleError(err)
 	}
 
-	cleanDirPath := p.cleanPath(dirPath)
-	if cleanDirPath == "." {
-		return nil
-	}
 	fsWithCtx := p.fs.WithContext(ctx)
 
 	err := fsWithCtx.MkdirAll(cleanDirPath, 0755)
@@ -457,6 +465,7 @@ func (p *SMBProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 		return p.handleError(fmt.Errorf("smb mkdirall failed: %w", err))
 	}
 
+	globalSMBCreatedDirs.Store(globalDirKey, true)
 	return nil
 }
 
