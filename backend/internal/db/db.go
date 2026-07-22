@@ -190,6 +190,37 @@ type Migration struct {
 	BandwidthLimitMbps          int                     `json:"bandwidth_limit_mbps"`
 }
 
+// MarshalJSON serializes the migration with nullable columns (sql.NullString,
+// sql.NullTime) resolved to plain JSON strings/null so frontend consumers don't
+// receive raw driver structs like {"String":"...","Valid":true}.
+func (m Migration) MarshalJSON() ([]byte, error) {
+	type alias Migration
+	aux := struct {
+		*alias
+		UserID               *string `json:"user_id,omitempty"`
+		ErrorMessage         string  `json:"error_message"`
+		SourceTokenExpiresAt *string `json:"source_token_expires_at,omitempty"`
+		TargetTokenExpiresAt *string `json:"target_token_expires_at,omitempty"`
+	}{
+		alias: (*alias)(&m),
+	}
+	if m.UserID.Valid {
+		aux.UserID = &m.UserID.String
+	}
+	if m.ErrorMessage.Valid {
+		aux.ErrorMessage = m.ErrorMessage.String
+	}
+	if m.SourceTokenExpiresAt.Valid {
+		iso := m.SourceTokenExpiresAt.Time.Format(time.RFC3339)
+		aux.SourceTokenExpiresAt = &iso
+	}
+	if m.TargetTokenExpiresAt.Valid {
+		iso := m.TargetTokenExpiresAt.Time.Format(time.RFC3339)
+		aux.TargetTokenExpiresAt = &iso
+	}
+	return json.Marshal(aux)
+}
+
 type Task struct {
 	ID           string          `json:"id"`
 	MigrationID  string          `json:"migration_id"`
