@@ -126,7 +126,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   };
 
   // Build the final provider URL for the source side (mirrors handleSubmit's logic).
-  const finalSourceUrlValue = (): string => sourceProvider === 'smb'
+  const finalSourceUrlValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'smb'
     ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
     : sourceProvider === 's3'
     ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
@@ -134,10 +134,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
     : sourceProvider === 'magentacloud' || sourceProvider === 'local'
     ? ''
-    : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl);
+    : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl));
 
   // Build the final provider URL for the target side.
-  const finalTargetUrlValue = (): string => targetProvider === 'smb'
+  const finalTargetUrlValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'smb'
     ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
     : targetProvider === 's3'
     ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
@@ -145,7 +145,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${targetSftpHost}:${targetSftpPort}`
     : targetProvider === 'magentacloud' || targetProvider === 'local'
     ? ''
-    : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl);
+    : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl));
 
   // Persist a connection as a reusable profile (called after a successful connect).
   const saveProfile = async (role: 'source' | 'target', name: string) => {
@@ -262,7 +262,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalSourceUrl = sourceProvider === 'smb'
+
+    // A selected saved profile supplies the credentials server-side, so the
+    // client-side field checks are satisfied by its presence.
+    const sourceProfileSelected = sourceProfileId !== '';
+    const targetProfileSelected = targetProfileId !== '';
+
+    const finalSourceUrl = sourceProfileSelected ? '' : (sourceProvider === 'smb'
       ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
       : sourceProvider === 's3'
       ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
@@ -270,14 +276,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
       : sourceProvider === 'magentacloud' || sourceProvider === 'local'
       ? ''
-      : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl);
-    const finalSourceUser = sourceProvider === 'local'
+      : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl));
+    const finalSourceUser = sourceProfileSelected ? '' : (sourceProvider === 'local'
       ? ''
-      : (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser;
-    const finalSourcePass = sourceProvider === 'local'
+      : (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser);
+    const finalSourcePass = sourceProfileSelected ? '' : (sourceProvider === 'local'
       ? ''
-      : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass;
-    const finalTargetUrl = targetProvider === 'smb'
+      : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass);
+    const finalTargetUrl = targetProfileSelected ? '' : (targetProvider === 'smb'
       ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
       : targetProvider === 's3'
       ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
@@ -285,18 +291,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `sftp://${targetSftpHost}:${targetSftpPort}`
       : targetProvider === 'magentacloud' || targetProvider === 'local'
       ? ''
-      : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl);
-    const finalTargetUser = targetProvider === 'local'
+      : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl));
+    const finalTargetUser = targetProfileSelected ? '' : (targetProvider === 'local'
       ? ''
-      : (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser;
-    const finalTargetPass = targetProvider === 'local'
+      : (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser);
+    const finalTargetPass = targetProfileSelected ? '' : (targetProvider === 'local'
       ? ''
-      : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass;
-
-    // A selected saved profile supplies the credentials server-side, so the
-    // client-side field checks are satisfied by its presence.
-    const sourceProfileSelected = sourceProfileId !== '';
-    const targetProfileSelected = targetProfileId !== '';
+      : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass);
 
     if (sourceProvider === 'sftp' && !sourceProfileSelected) {
       if (!sourceSftpHost.trim()) {
