@@ -746,3 +746,44 @@ func ListAllSyncJobs(database *sql.DB, p SyncListParams) ([]AdminSyncView, int, 
 	return views, total, nil
 }
 
+// GetUnverifiedCompletedSyncTasks fetches tasks for a sync job that completed but have checksum_verified = FALSE.
+func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID string) ([]*Task, error) {
+	query := `
+		SELECT id, sync_job_id, resource_type, file_path, file_size, status,
+		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
+		       checksum_verified, created_at, updated_at
+		FROM tasks
+		WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE
+	`
+	rows, err := db.QueryContext(ctx, query, syncJobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []*Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(
+			&t.ID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+			&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
+			&t.ChecksumVerified, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, &t)
+	}
+	return tasks, rows.Err()
+}
+
+// UpdateSyncStateTargetHash updates the target_hash in sync_state for a specific file.
+func UpdateSyncStateTargetHash(db *sql.DB, ctx context.Context, syncJobID, relPath, targetHash string) error {
+	query := `
+		UPDATE sync_state
+		SET target_hash = $3
+		WHERE sync_job_id = $1 AND side = 'target' AND rel_path = $2
+	`
+	_, err := db.ExecContext(ctx, query, syncJobID, relPath, targetHash)
+	return err
+}
+

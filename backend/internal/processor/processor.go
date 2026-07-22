@@ -263,6 +263,7 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunOrphanedRunningTasksRecovery(ctx)
 	go p.RunCompletionNotifier(ctx)
 	go p.RunProgressReconciler(ctx)
+	go p.RunChecksumVerifier(ctx)
 
 	// Start Cancel Listener
 	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {

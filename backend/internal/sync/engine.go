@@ -504,7 +504,37 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	}
 
 SyncTasksDone:
-	log.Printf("[SyncEngine] All tasks finished for job %s. Writing outcomes...\n", syncJobID)
+	log.Printf("[SyncEngine] All tasks finished for job %s. Checking verification requirements...\n", syncJobID)
+
+	var unverifiedCount int
+	_ = e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID).Scan(&unverifiedCount)
+	if unverifiedCount > 0 {
+		log.Printf("[SyncEngine] Transitioning job %s to VERIFYING status (%d unverified tasks)...\n", syncJobID, unverifiedCount)
+		_ = db.UpdateSyncJobStatus(e.db, job.ID, "VERIFYING", nil)
+
+		verifyTimeout := time.After(2 * time.Minute)
+		verifyTicker := time.NewTicker(1 * time.Second)
+
+		for verifying := true; verifying; {
+			select {
+			case <-ctx.Done():
+				verifying = false
+			case <-verifyTimeout:
+				log.Printf("[SyncEngine] Verification timeout reached for job %s\n", syncJobID)
+				verifying = false
+			case <-verifyTicker.C:
+				var currentStatus string
+				if err := e.db.QueryRow(`SELECT status FROM sync_jobs WHERE id = $1`, job.ID).Scan(&currentStatus); err == nil {
+					if currentStatus != "VERIFYING" {
+						verifying = false
+					}
+				}
+			}
+		}
+		verifyTicker.Stop()
+	}
+
+	log.Printf("[SyncEngine] Writing outcomes for job %s...\n", syncJobID)
 
 	// 9. Process final statistics and state updates
 	var total, completed, skipped, failed int

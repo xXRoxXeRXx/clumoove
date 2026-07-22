@@ -315,6 +315,13 @@ export function MigrationsDashboard({
             {t('status.indexing')}
           </span>
         );
+      case 'VERIFYING':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 animate-pulse">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            {t('status.verifying')}
+          </span>
+        );
       case 'PAUSED_CONNECTION_LOSS':
       case 'PAUSED':
         return (

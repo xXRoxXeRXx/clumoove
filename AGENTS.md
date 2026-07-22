@@ -19,6 +19,7 @@
   - `RunRetryScheduler` — re-enqueues tasks whose `next_retry_at <= NOW()` every 10 s
   - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s
   - `RunOrphanedRunningTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
+  - `RunChecksumVerifier` — performs automated post-migration cryptographic checksum validation for `VERIFYING` migrations every 10 s
 - **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google/Google Photos refresh tokens before expiry.
 - **Core Scheduler Engine**: A background daemon in `cmd/api` (`scheduler.Run`) checks for due schedules every minute and triggers the linked job (migration/sync/backup). It uses `github.com/robfig/cron/v3` for cron parsing/next-run calculation. Schedules live in the `schedules` table; a Redis `SET NX` lock (`schedule:lock:{id}`, 2-min TTL) ensures only one API instance triggers a given schedule in a multi-instance deployment.
 - **Indexer package**: `backend/internal/indexer` holds the shared indexing logic (`Indexer.Start`). Both the immediate `handleStart` path and the scheduler's `triggerMigration` call it, so scheduled migrations actually create PENDING tasks. Selected paths/calendars/contacts are persisted on the `migrations` row (`selected_paths`/`selected_calendars`/`selected_contacts` JSONB) and read at trigger time.

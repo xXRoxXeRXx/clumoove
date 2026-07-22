@@ -453,6 +453,8 @@
   "status": {
     "completed": "COMPLETED",
     "completedWithErrors": "COMPLETED WITH ERRORS",
+    "verifying": "VERIFYING CHECKSUMS",
+    "verified": "100% CHECKSUM VERIFIED",
     "failed": "FAILED",
     "cancelled": "CANCELLED",
     "running": "ACTIVE",

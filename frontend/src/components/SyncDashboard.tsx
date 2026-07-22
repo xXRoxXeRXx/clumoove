@@ -315,6 +315,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             {t('status.indexing')}
           </span>
         );
+      case 'VERIFYING':
+        return (
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 animate-pulse">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {t('status.verifying')}
+          </span>
+        );
       case 'PAUSED':
         return (
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
