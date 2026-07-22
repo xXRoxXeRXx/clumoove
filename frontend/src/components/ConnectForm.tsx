@@ -3,8 +3,11 @@ import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-r
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
 
-type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
 import { useApiError } from '../utils/apiError';
+import { ProfileSelect } from './connect/ProfileSelect';
+import { SaveProfileRow } from './connect/SaveProfileRow';
+
+type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
 
 interface ConnectFormProps {
   onConnectSuccess: (config: MigrationConfig, initialFiles: CloudFile[]) => void;
@@ -1481,82 +1484,4 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   );
 };
 
-// ProfileSelect renders the "use saved profile" dropdown at the top of a
-// ConnectForm card. It is only shown when at least one saved profile exists.
-// Selecting a profile applies its credentials and hides the rest of the form.
-function ProfileSelect({ profiles, selectedId, onSelect, onClear }: {
-  profiles: { id: string; name: string; provider: string }[];
-  selectedId: string;
-  onSelect: (id: string) => void;
-  onClear: () => void;
-}) {
-  const { t } = useTranslation();
-  if (profiles.length === 0) return null;
-
-  return (
-    <div className="space-y-1.5">
-      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('settings.connections.useProfile')}</label>
-      <div className="flex gap-2">
-        <select
-          value={selectedId}
-          onChange={(e) => onSelect(e.target.value)}
-          className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
-        >
-          <option value="">—</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        {selectedId && (
-          <button type="button" onClick={onClear} className="px-3 py-2 rounded-xl text-[10px] font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer">
-            {t('common.cancel')}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// SaveProfileRow renders the "save as profile" checkbox + name input at the
-// bottom of a ConnectForm card. The parent only renders it when no saved
-// profile is currently selected, so the option disappears once the user has
-// chosen to reuse a stored profile.
-function SaveProfileRow({ idPrefix, checked, saveName, onSaveChange, onNameChange }: {
-  idPrefix: string;
-  checked: boolean;
-  saveName: string;
-  onSaveChange: (v: boolean) => void;
-  onNameChange: (v: string) => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="pt-1">
-      <label className="flex items-center gap-2 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          id={`saveProfile-${idPrefix}`}
-          checked={checked}
-          onChange={(e) => onSaveChange(e.target.checked)}
-          className="w-4 h-4 rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange/30 cursor-pointer"
-        />
-        <span className="text-[10px] text-[var(--color-text-secondary)] font-sans">
-          {t('settings.connections.saveProfile')}
-        </span>
-      </label>
-      {checked && (
-        <div className="mt-2 space-y-1.5">
-          <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('settings.connections.nameLabel')}</label>
-          <input
-            type="text"
-            value={saveName}
-            onChange={(e) => onNameChange(e.target.value)}
-            placeholder={idPrefix === 'source' ? t('connect.sourceTitle') : t('connect.targetTitle')}
-            className="w-full px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
-          />
-          <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>
-        </div>
-      )}
-    </div>
-  );
-}
 
