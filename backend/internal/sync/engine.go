@@ -820,6 +820,9 @@ func (e *Engine) listFiles(
 	numWorkers := 16
 	for i := 0; i < numWorkers; i++ {
 		go func() {
+			workerFiles := make(map[string]fileState)
+			workerDirETags := make(map[string]string)
+
 			for job := range jobsChan {
 				func() {
 					defer wg.Done()
@@ -834,37 +837,34 @@ func (e *Engine) listFiles(
 						return
 					}
 
-					var localFiles []fileState
-					var localDirETags []dirETagItem
-
 					for _, file := range files {
 						if file.IsDir {
 							if file.ETag != "" {
-								localDirETags = append(localDirETags, dirETagItem{path: file.Path, etag: file.ETag})
+								workerDirETags[file.Path] = file.ETag
 							}
 							enqueueDir(file.Path, file.ETag)
 						} else {
-							localFiles = append(localFiles, fileState{
+							workerFiles[file.Path] = fileState{
 								Path:         file.Path,
 								Size:         file.Size,
 								LastModified: file.LastModified,
 								Hash:         file.Hash,
 								ETag:         file.ETag,
-							})
+							}
 						}
-					}
-
-					if len(localFiles) > 0 || len(localDirETags) > 0 {
-						mu.Lock()
-						for _, f := range localFiles {
-							fileMap[f.Path] = f
-						}
-						for _, d := range localDirETags {
-							dirETagMap[d.path] = d.etag
-						}
-						mu.Unlock()
 					}
 				}()
+			}
+
+			if len(workerFiles) > 0 || len(workerDirETags) > 0 {
+				mu.Lock()
+				for k, v := range workerFiles {
+					fileMap[k] = v
+				}
+				for k, v := range workerDirETags {
+					dirETagMap[k] = v
+				}
+				mu.Unlock()
 			}
 		}()
 	}
