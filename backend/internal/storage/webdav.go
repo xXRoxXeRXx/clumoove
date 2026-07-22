@@ -15,25 +15,21 @@ import (
 	"time"
 )
 
+var _ StorageProvider = (*WebDAVProvider)(nil)
+
 type WebDAVProvider struct {
-	BaseURL    string
-	Username   string
-	Password   string
-	HTTPClient *http.Client
+	BaseURL     string
+	Username    string
+	Password    string
+	HTTPClient  *http.Client
 	createdDirs sync.Map
 }
 
-type webdavProgressReader struct {
-	reader       io.Reader
-	progressChan chan<- int64
-}
-
-func (pr *webdavProgressReader) Read(p []byte) (int, error) {
-	n, err := pr.reader.Read(p)
-	if n > 0 && pr.progressChan != nil {
-		pr.progressChan <- int64(n)
+func (p *WebDAVProvider) assertFilesOnly(resourceType string) error {
+	if resourceType != "files" {
+		return fmt.Errorf("resource type %q not supported by WebDAV provider", resourceType)
 	}
-	return n, err
+	return nil
 }
 
 func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, error) {
@@ -73,6 +69,9 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 }
 
 func (p *WebDAVProvider) Close() error {
+	if p.HTTPClient != nil {
+		p.HTTPClient.CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -131,6 +130,9 @@ func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
 }
 
 func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return CloudResource{}, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	u := p.buildResourceURL(resourcePath)
@@ -208,6 +210,9 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 }
 
 func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return nil, err
+	}
 	u := p.buildResourceURL(dirPath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
@@ -315,6 +320,9 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 }
 
 func (p *WebDAVProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return nil, err
+	}
 	u := p.buildResourceURL(filePath)
 	req, err := p.newRequest("GET", u, nil)
 	if err != nil {
@@ -340,6 +348,9 @@ func (p *WebDAVProvider) StreamDownload(ctx context.Context, resourceType, fileP
 }
 
 func (p *WebDAVProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return err
+	}
 	u := p.buildResourceURL(filePath)
 
 	err := p.CreateParentDirectories(ctx, resourceType, filePath)
@@ -387,14 +398,20 @@ func (p *WebDAVProvider) StreamUpload(ctx context.Context, resourceType, filePat
 }
 
 func (p *WebDAVProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
-	progressReader := &webdavProgressReader{
-		reader:       stream,
-		progressChan: progressChan,
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return err
+	}
+	progressReader := &ProgressReader{
+		Reader:       stream,
+		ProgressChan: progressChan,
 	}
 	return p.StreamUpload(ctx, resourceType, filePath, progressReader, size)
 }
 
 func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return false, 0, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	u := p.buildResourceURL(filePath)
@@ -475,6 +492,9 @@ func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath 
 }
 
 func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	u := p.buildResourceURL(filePath)
@@ -500,6 +520,9 @@ func (p *WebDAVProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 }
 
 func (p *WebDAVProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	u := p.buildResourceURL(oldPath)
@@ -533,6 +556,9 @@ func (p *WebDAVProvider) SupportsAtomicRename() bool {
 }
 
 func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	return "", fmt.Errorf("checksum not available")
@@ -543,6 +569,9 @@ func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath
 var globalWebDAVCreatedDirs sync.Map
 
 func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	dir := path.Dir(filePath)
@@ -598,6 +627,9 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 // the WebDAV server using MKCOL requests. It is idempotent — 405 Method Not Allowed
 // (already exists) is treated as success.
 func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	// Ensure all ancestor directories exist first.

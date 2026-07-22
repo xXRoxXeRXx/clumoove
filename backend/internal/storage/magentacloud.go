@@ -49,6 +49,8 @@ type MagentacloudProvider struct {
 	*davProvider
 }
 
+var _ StorageProvider = (*MagentacloudProvider)(nil)
+
 func NewMagentacloudProvider(username, password string) (*MagentacloudProvider, error) {
 	return &MagentacloudProvider{
 		davProvider: &davProvider{
