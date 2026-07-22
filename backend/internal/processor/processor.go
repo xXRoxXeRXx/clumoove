@@ -69,6 +69,43 @@ type Processor struct {
 	// so a task that failed twice for non-network reasons is not wrongly escalated
 	// to a full migration pause on its next (first) network loss (P1-4).
 	connLossTaskAttempts sync.Map
+	// providerCache caches storage.StorageProvider instances per migration role
+	// to eliminate TCP/TLS/SSH/SMB connection setup overhead on every file task.
+	providerCache sync.Map
+}
+
+type cachedProviderEntry struct {
+	client   storage.StorageProvider
+	credHash string
+}
+
+func (p *Processor) getOrCreateProvider(ctx context.Context, key, providerType, urlStr, username, password string) (storage.StorageProvider, func(), error) {
+	credHash := fmt.Sprintf("%s:%s:%s:%s", providerType, urlStr, username, password)
+	if val, ok := p.providerCache.Load(key); ok {
+		entry := val.(*cachedProviderEntry)
+		if entry.credHash == credHash {
+			return entry.client, func() {}, nil
+		}
+		entry.client.Close()
+		p.providerCache.Delete(key)
+	}
+
+	client, err := storage.NewProvider(ctx, providerType, urlStr, username, password)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	entry := &cachedProviderEntry{
+		client:   client,
+		credHash: credHash,
+	}
+	actual, loaded := p.providerCache.LoadOrStore(key, entry)
+	if loaded {
+		client.Close()
+		return actual.(*cachedProviderEntry).client, func() {}, nil
+	}
+
+	return client, func() {}, nil
 }
 
 // syncEngineInterface is a minimal interface so the processor package does not
@@ -819,17 +856,21 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
 
-	// Create storage providers
-	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	// Get or create cached storage providers
+	sourceKey := fmt.Sprintf("%s:source", mig.ID)
+	targetKey := fmt.Sprintf("%s:target", mig.ID)
+
+	sourceClient, closeSource, err := p.getOrCreateProvider(ctx, sourceKey, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
-		return fmt.Errorf("failed to create source client")
+		return fmt.Errorf("failed to create source client: %w", err)
 	}
-	defer sourceClient.Close()
-	targetClient, err := storage.NewProvider(ctx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
+	defer closeSource()
+
+	targetClient, closeTarget, err := p.getOrCreateProvider(ctx, targetKey, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
 	if err != nil {
-		return fmt.Errorf("failed to create target client")
+		return fmt.Errorf("failed to create target client: %w", err)
 	}
-	defer targetClient.Close()
+	defer closeTarget()
 
 	if nc, ok := sourceClient.(*storage.NextcloudProvider); ok {
 		nc.Threads = mig.Threads
@@ -1065,7 +1106,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		// doing so previously caused processed_bytes to exceed total_bytes when a
 		// file was retried (e.g. after a hash mismatch re-ran the whole upload).
 		var bufferedBytes int64
-		ticker := time.NewTicker(1 * time.Second)
+		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 
 		for {

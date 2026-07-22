@@ -812,6 +812,11 @@ func (e *Engine) listFiles(
 		enqueueDir(startPath, res.ETag)
 	}
 
+	type dirETagItem struct {
+		path string
+		etag string
+	}
+
 	numWorkers := 16
 	for i := 0; i < numWorkers; i++ {
 		go func() {
@@ -829,12 +834,17 @@ func (e *Engine) listFiles(
 						return
 					}
 
+					var localFiles []fileState
+					var localDirETags []dirETagItem
+
 					for _, file := range files {
 						if file.IsDir {
-							addDirETag(file.Path, file.ETag)
+							if file.ETag != "" {
+								localDirETags = append(localDirETags, dirETagItem{path: file.Path, etag: file.ETag})
+							}
 							enqueueDir(file.Path, file.ETag)
 						} else {
-							addFile(fileState{
+							localFiles = append(localFiles, fileState{
 								Path:         file.Path,
 								Size:         file.Size,
 								LastModified: file.LastModified,
@@ -842,6 +852,17 @@ func (e *Engine) listFiles(
 								ETag:         file.ETag,
 							})
 						}
+					}
+
+					if len(localFiles) > 0 || len(localDirETags) > 0 {
+						mu.Lock()
+						for _, f := range localFiles {
+							fileMap[f.Path] = f
+						}
+						for _, d := range localDirETags {
+							dirETagMap[d.path] = d.etag
+						}
+						mu.Unlock()
 					}
 				}()
 			}
