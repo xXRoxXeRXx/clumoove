@@ -325,23 +325,10 @@ func (p *SFTPProvider) StreamUpload(ctx context.Context, resourceType, filePath 
 	return nil
 }
 
-type sftpProgressReader struct {
-	reader       io.Reader
-	progressChan chan<- int64
-}
-
-func (pr *sftpProgressReader) Read(p []byte) (int, error) {
-	n, err := pr.reader.Read(p)
-	if n > 0 && pr.progressChan != nil {
-		pr.progressChan <- int64(n)
-	}
-	return n, err
-}
-
 func (p *SFTPProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
-	progressReader := &sftpProgressReader{
-		reader:       stream,
-		progressChan: progressChan,
+	progressReader := &ProgressReader{
+		Reader:       stream,
+		ProgressChan: progressChan,
 	}
 	return p.StreamUpload(ctx, resourceType, filePath, progressReader, size)
 }

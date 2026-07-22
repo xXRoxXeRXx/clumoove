@@ -27,6 +27,24 @@ type GoogleProvider struct {
 	pathCache       sync.Map // path string -> folderID string
 }
 
+var _ StorageProvider = (*GoogleProvider)(nil)
+
+func isGoogleAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var gErr *googleapi.Error
+	if errors.As(err, &gErr) {
+		return gErr.Code == http.StatusUnauthorized || gErr.Code == http.StatusForbidden
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "unauthorized") ||
+		strings.Contains(errStr, "invalid credentials") ||
+		strings.Contains(errStr, "invalid_grant") ||
+		strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "403")
+}
+
 func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, error) {
 	if token == "" {
 		return nil, fmt.Errorf("google provider requires an oauth token")
@@ -71,6 +89,9 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 }
 
 func (p *GoogleProvider) Close() error {
+	if p.httpClient != nil {
+		p.httpClient.CloseIdleConnections()
+	}
 	return nil
 }
 
@@ -79,14 +100,23 @@ func (p *GoogleProvider) Connect(ctx context.Context) (bool, error) {
 	defer cancel()
 	// Verify Drive access
 	if _, err := p.driveService.About.Get().Fields("user").Context(ctx).Do(); err != nil {
+		if isGoogleAuthError(err) {
+			return false, fmt.Errorf("google drive connect: %w", ErrAuth)
+		}
 		return false, fmt.Errorf("google drive not accessible: %w", err)
 	}
 	// Verify Calendar access
 	if _, err := p.calendarService.CalendarList.List().MaxResults(1).Context(ctx).Do(); err != nil {
+		if isGoogleAuthError(err) {
+			return false, fmt.Errorf("google calendar connect: %w", ErrAuth)
+		}
 		return false, fmt.Errorf("google calendar not accessible: %w", err)
 	}
 	// Verify People (Contacts) access
 	if _, err := p.peopleService.People.Get("people/me").PersonFields("names").Context(ctx).Do(); err != nil {
+		if isGoogleAuthError(err) {
+			return false, fmt.Errorf("google contacts connect: %w", ErrAuth)
+		}
 		return false, fmt.Errorf("google contacts (people) not accessible: %w", err)
 	}
 	return true, nil
@@ -519,7 +549,7 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 
 		var uploadStream io.Reader = stream
 		if progressChan != nil {
-			uploadStream = &googleProgressReader{r: stream, progressChan: progressChan}
+			uploadStream = &ProgressReader{Reader: stream, ProgressChan: progressChan}
 		}
 
 		_, err = p.driveService.Files.Create(f).Context(ctx).Media(uploadStream).Do()
@@ -586,11 +616,14 @@ func (p *GoogleProvider) FileExists(ctx context.Context, resourceType, filePath 
 			if strings.Contains(strings.ToLower(err.Error()), "not found") {
 				return false, 0, nil
 			}
+			if isGoogleAuthError(err) {
+				return false, 0, fmt.Errorf("google file-exists: %w", ErrAuth)
+			}
 			return false, 0, err
 		}
 		return true, res.Size, nil
 	}
-	return false, 0, nil
+	return false, 0, fmt.Errorf("FileExists not implemented for %s", resourceType)
 }
 
 func (p *GoogleProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
@@ -704,18 +737,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 	return nil
 }
 
-type googleProgressReader struct {
-	r            io.Reader
-	progressChan chan<- int64
-}
 
-func (pr *googleProgressReader) Read(p []byte) (n int, err error) {
-	n, err = pr.r.Read(p)
-	if n > 0 && pr.progressChan != nil {
-		pr.progressChan <- int64(n)
-	}
-	return n, err
-}
 
 // Helpers for ICS/VCF conversions
 

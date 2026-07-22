@@ -319,23 +319,10 @@ func (p *SMBProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 	return nil
 }
 
-type smbProgressReader struct {
-	reader       io.Reader
-	progressChan chan<- int64
-}
-
-func (pr *smbProgressReader) Read(p []byte) (int, error) {
-	n, err := pr.reader.Read(p)
-	if n > 0 && pr.progressChan != nil {
-		pr.progressChan <- int64(n)
-	}
-	return n, err
-}
-
 func (p *SMBProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
-	progressReader := &smbProgressReader{
-		reader:       stream,
-		progressChan: progressChan,
+	progressReader := &ProgressReader{
+		Reader:       stream,
+		ProgressChan: progressChan,
 	}
 	return p.StreamUpload(ctx, resourceType, filePath, progressReader, size)
 }
