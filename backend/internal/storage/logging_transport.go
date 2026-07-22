@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -20,22 +21,27 @@ func newLoggingTransport(base http.RoundTripper) http.RoundTripper {
 }
 
 func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	traceEnabled := os.Getenv("LOG_HTTP_TRACE") == "1"
 	sanitizedURL := req.URL.Redacted()
-	depth := req.Header.Get("Depth")
-	depthStr := ""
-	if depth != "" {
-		depthStr = fmt.Sprintf(" [Depth: %s]", depth)
+
+	if traceEnabled {
+		depth := req.Header.Get("Depth")
+		depthStr := ""
+		if depth != "" {
+			depthStr = fmt.Sprintf(" [Depth: %s]", depth)
+		}
+		log.Printf("[HTTP Request] %s %s%s\n", req.Method, sanitizedURL, depthStr)
 	}
 
-	log.Printf("[HTTP Request] %s %s%s\n", req.Method, sanitizedURL, depthStr)
 	start := time.Now()
 	resp, err := t.base.RoundTrip(req)
 	duration := time.Since(start)
 
 	if err != nil {
-		log.Printf("[HTTP Response] %s %s -> ERROR: %v (%v)\n", req.Method, sanitizedURL, err, duration)
-	} else {
+		log.Printf("[HTTP Error] %s %s -> ERROR: %v (%v)\n", req.Method, sanitizedURL, err, duration)
+	} else if resp.StatusCode >= 400 || traceEnabled {
 		log.Printf("[HTTP Response] %s %s -> %s (%v)\n", req.Method, sanitizedURL, resp.Status, duration)
 	}
 	return resp, err
 }
+

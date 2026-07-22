@@ -34,13 +34,13 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 
 	tr := &http.Transport{
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          500,
-		MaxIdleConnsPerHost:   100,
-		MaxConnsPerHost:       200,
+		MaxIdleConns:          1000,
+		MaxIdleConnsPerHost:   500,
+		MaxConnsPerHost:       500,
 		IdleConnTimeout:       120 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		ReadBufferSize:        64 * 1024,
-		WriteBufferSize:       64 * 1024,
+		ReadBufferSize:        256 * 1024,
+		WriteBufferSize:       256 * 1024,
 	}
 	baseClient := &http.Client{Transport: tr}
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, baseClient)

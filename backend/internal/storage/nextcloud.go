@@ -93,15 +93,15 @@ type XMLChecksums struct {
 func newDAVTransport(host string) *http.Transport {
 	return &http.Transport{
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          500,
-		MaxIdleConnsPerHost:   100,
-		MaxConnsPerHost:       200,
+		MaxIdleConns:          1000,
+		MaxIdleConnsPerHost:   500,
+		MaxConnsPerHost:       500,
 		IdleConnTimeout:       120 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Minute,
-		ReadBufferSize:        64 * 1024,
-		WriteBufferSize:       64 * 1024,
+		ReadBufferSize:        256 * 1024,
+		WriteBufferSize:       256 * 1024,
 		// Pin egress to a re-validated IP on every connection so a DNS
 		// rebind between validation and connect cannot reach internal/metadata
 		// addresses. The original hostname stays in the request URL, preserving

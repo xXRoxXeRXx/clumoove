@@ -922,77 +922,61 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 	}
 
-	exists, existingSize, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
-	if err != nil {
-		return fmt.Errorf("failed to check if target file exists: %w", err)
-	}
+	if task.ResourceType == "files" && mig.ConflictStrategy == "OVERWRITE" {
+		// Optimization: for OVERWRITE on files, bypass the pre-flight FileExists
+		// network query (PROPFIND/HEAD) since the file will be overwritten regardless.
+		deleteAfterUpload = true
+	} else {
+		exists, existingSize, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
+		if err != nil {
+			return fmt.Errorf("failed to check if target file exists: %w", err)
+		}
 
-	if exists {
-		// Calendars and contacts are always overwritten: they are dynamic data and
-		// a SKIP would silently leave stale entries from a previous failed run.
-		if task.ResourceType != "files" {
-			err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
-			if err != nil {
-				return fmt.Errorf("failed to delete existing calendar/contact entry for overwrite: %w", err)
-			}
-		} else {
-			switch mig.ConflictStrategy {
-			case "SKIP":
-				// Decide whether to skip or overwrite:
-				// - A retry (attempts > 0) means the existing target file is a leftover of
-				//   a previously failed upload (e.g. a 423 FileLocked error aborted the
-				//   transfer after the file was already created in the target). The file may
-				//   be partial/corrupt, so it MUST be re-transferred and verified by the
-				//   3-way hash check below — never skipped. Skipping it here would also
-				//   miscount a failed-then-retried file as "skipped" instead of "transferred".
-				// - If the existing target file's size already matches the source size AND
-				//   this is the first attempt, it is complete and correct (pre-existing or
-				//   already-migrated) -> safe to skip.
-				// - Otherwise the existing file is partial/stale (e.g. an interrupted upload
-				//   from a worker restart left a partial file) -> overwrite so we never leave
-				//   an incomplete file behind and miscount it as "skipped".
-				if task.Attempts > 0 {
-					// Retry of a previously failed transfer: always overwrite and let the
-					// downstream hash verification confirm integrity.
-					deleteAfterUpload = true
-				} else if exists && existingSize == task.FileSize {
-					task.Status = "SKIPPED"
-					task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
-					_ = db.UpdateTaskStatus(p.db, task)
-					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
-					_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
-					return nil
+		if exists {
+			// Calendars and contacts are always overwritten: they are dynamic data and
+			// a SKIP would silently leave stale entries from a previous failed run.
+			if task.ResourceType != "files" {
+				err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
+				if err != nil {
+					return fmt.Errorf("failed to delete existing calendar/contact entry for overwrite: %w", err)
 				}
-				// Partial/stale or size-unknown existing file, or a retry -> overwrite
-				// instead of skip.
-				deleteAfterUpload = true
-
-			case "OVERWRITE":
-				// Do NOT delete before upload — if upload fails, the original would be lost.
-				// Instead, mark that we should delete after a successful upload.
-				deleteAfterUpload = true
-
-			case "RENAME":
-				// Generate new target name
-				dir := path.Dir(targetPath)
-				ext := path.Ext(targetPath)
-				base := strings.TrimSuffix(path.Base(targetPath), ext)
-
-				counter := 1
-				for {
-					candidatePath := path.Join(dir, fmt.Sprintf("%s_copy%d%s", base, counter, ext))
-					candidateExists, _, err := targetClient.FileExists(ctx, task.ResourceType, candidatePath)
-					if err != nil {
-						return fmt.Errorf("failed to check existence of rename candidate: %w", err)
+			} else {
+				switch mig.ConflictStrategy {
+				case "SKIP":
+					if task.Attempts > 0 {
+						deleteAfterUpload = true
+					} else if exists && existingSize == task.FileSize {
+						task.Status = "SKIPPED"
+						task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
+						_ = db.UpdateTaskStatus(p.db, task)
+						_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
+						_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+						return nil
 					}
-					if !candidateExists {
-						targetPath = candidatePath
-						_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
-						break
-					}
-					counter++
-					if counter > 100 {
-						return fmt.Errorf("failed to rename target file after 100 attempts")
+					deleteAfterUpload = true
+
+				case "RENAME":
+					// Generate new target name
+					dir := path.Dir(targetPath)
+					ext := path.Ext(targetPath)
+					base := strings.TrimSuffix(path.Base(targetPath), ext)
+
+					counter := 1
+					for {
+						candidatePath := path.Join(dir, fmt.Sprintf("%s_copy%d%s", base, counter, ext))
+						candidateExists, _, err := targetClient.FileExists(ctx, task.ResourceType, candidatePath)
+						if err != nil {
+							return fmt.Errorf("failed to check existence of rename candidate: %w", err)
+						}
+						if !candidateExists {
+							targetPath = candidatePath
+							_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
+							break
+						}
+						counter++
+						if counter > 100 {
+							return fmt.Errorf("failed to rename target file after 100 attempts")
+						}
 					}
 				}
 			}
