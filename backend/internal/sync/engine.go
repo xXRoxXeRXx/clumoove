@@ -277,23 +277,30 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		pSrc, hasPrevSrc := prevSource[S]
 		pTgt, hasPrevTgt := prevTarget[S]
 
+		// Direct equality check between source and target file
+		inSyncDirectMatch := hasSrc && hasTgt && isFileMatchingTarget(srcFile, tgtFile)
+
 		// Source modified check
 		srcModified := false
 		if hasSrc {
-			if !hasPrevSrc {
-				srcModified = true // New file (not seen in a previous pass)
-			} else {
+			if inSyncDirectMatch {
+				srcModified = false
+			} else if hasPrevSrc {
 				srcModified = isFileModified(srcFile, pSrc, true)
+			} else {
+				srcModified = true
 			}
 		}
 
 		// Target modified check
 		tgtModified := false
 		if hasTgt {
-			if !hasPrevTgt {
-				tgtModified = true // New file (not seen in a previous pass)
-			} else {
+			if inSyncDirectMatch {
+				tgtModified = false
+			} else if hasPrevTgt {
 				tgtModified = isFileModified(tgtFile, pTgt, false)
+			} else {
+				tgtModified = true
 			}
 		}
 
@@ -917,6 +924,45 @@ func isFileModified(curr fileState, prev db.SyncState, isSource bool) bool {
 	}
 
 	return false
+}
+
+// isFileMatchingTarget determines whether a source file and a target file are identical in content/metadata.
+func isFileMatchingTarget(src, tgt fileState) bool {
+	// Size mismatch -> not matching
+	if src.Size != tgt.Size {
+		return false
+	}
+
+	// If hashes exist on both source and target -> compare clean hashes
+	if src.Hash != "" && tgt.Hash != "" {
+		_, cleanSrc := storage.ParseHashString(src.Hash)
+		_, cleanTgt := storage.ParseHashString(tgt.Hash)
+		if cleanSrc != "" && cleanTgt != "" {
+			return cleanSrc == cleanTgt
+		}
+	}
+
+	// If ETags exist on both source and target -> compare clean ETags
+	if src.ETag != "" && tgt.ETag != "" {
+		cleanSrcETag := strings.Trim(src.ETag, `"`)
+		cleanTgtETag := strings.Trim(tgt.ETag, `"`)
+		if cleanSrcETag != "" && cleanTgtETag != "" {
+			return cleanSrcETag == cleanTgtETag
+		}
+	}
+
+	// Timestamp comparison with 2-second tolerance if timestamps are valid on both
+	if !src.LastModified.IsZero() && !tgt.LastModified.IsZero() {
+		diff := src.LastModified.Sub(tgt.LastModified)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff >= 2*time.Second {
+			return false
+		}
+	}
+
+	return true
 }
 
 // conflictNeedsRename reports whether a two-way conflict with the given strategy
