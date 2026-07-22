@@ -86,10 +86,16 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 	// pool limits how often DNS is actually hit.
 	httpClient := &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 100,
-			IdleConnTimeout:     90 * time.Second,
-			TLSHandshakeTimeout: 10 * time.Second,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          500,
+			MaxIdleConnsPerHost:   100,
+			MaxConnsPerHost:       200,
+			IdleConnTimeout:       120 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ResponseHeaderTimeout: 5 * time.Minute,
+			ReadBufferSize:        64 * 1024,
+			WriteBufferSize:       64 * 1024,
 		},
 	}
 	if endpoint != "" {

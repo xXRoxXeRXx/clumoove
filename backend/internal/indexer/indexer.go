@@ -289,6 +289,25 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 	visited := make(map[string]bool)
 	visited[startPath] = true
 
+	var taskBatch []*db.Task
+	flushBatch := func() {
+		if len(taskBatch) == 0 {
+			return
+		}
+		if err := db.BulkCreateSyncTasks(database, taskBatch); err != nil {
+			log.Printf("Indexing batch insert error: %v", err)
+			for _, t := range taskBatch {
+				*indexErrors = append(*indexErrors, db.IndexingErrorInput{
+					Path:         t.FilePath,
+					ResourceType: t.ResourceType,
+					ErrorMessage: "failed to create task batch: " + sanitizeError(err.Error()),
+				})
+			}
+		}
+		taskBatch = taskBatch[:0]
+	}
+	defer flushBatch()
+
 	for len(queue) > 0 {
 		currentPath := queue[0]
 		queue = queue[1:]
@@ -347,18 +366,12 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					Status:       "PENDING",
 					Metadata:     metaJSON,
 				}
-				if _, err := db.CreateTask(database, task); err != nil {
-					// A single DB hiccup must not abort the whole index: record and skip.
-					*indexErrors = append(*indexErrors, db.IndexingErrorInput{
-						Path:         file.Path,
-						ResourceType: resourceType,
-						ErrorMessage: "failed to create task: " + sanitizeError(err.Error()),
-					})
-					log.Printf("Indexing: skipping file %s (failed to create task): %v", file.Path, err)
-					continue
-				}
+				taskBatch = append(taskBatch, task)
 				*totalFiles++
 				*totalBytes += file.Size
+				if len(taskBatch) >= 500 {
+					flushBatch()
+				}
 			}
 		}
 	}
