@@ -670,6 +670,10 @@ func (p *davProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string,
 	return lastErr
 }
 
+// globalNextcloudCreatedDirs caches directory existence across Nextcloud provider instances within the worker process.
+// Key format: BaseURL + "|" + Username + "|" + resourceType + ":" + currentPath
+var globalNextcloudCreatedDirs sync.Map
+
 func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	if err := p.assertResourceType(resourceType); err != nil {
 		return err
@@ -692,9 +696,14 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 	currentPath := ""
 	for i, part := range parts {
 		currentPath = currentPath + "/" + part
-		dirKey := resourceType + ":" + currentPath
+		localDirKey := resourceType + ":" + currentPath
+		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
 
-		if _, exists := p.createdDirs.Load(dirKey); exists {
+		if _, exists := p.createdDirs.Load(localDirKey); exists {
+			continue
+		}
+		if _, exists := globalNextcloudCreatedDirs.Load(globalDirKey); exists {
+			p.createdDirs.Store(localDirKey, true)
 			continue
 		}
 
@@ -733,7 +742,8 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 			return fmt.Errorf("nextcloud mkdir: %w", ErrAuth)
 		}
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
-			p.createdDirs.Store(dirKey, true)
+			p.createdDirs.Store(localDirKey, true)
+			globalNextcloudCreatedDirs.Store(globalDirKey, true)
 		} else {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
@@ -811,7 +821,12 @@ func (p *davProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("nextcloud mkdir: %w", ErrAuth)
 	}
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
+		localDirKey := resourceType + ":" + dirPath
+		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
+		p.createdDirs.Store(localDirKey, true)
+		globalNextcloudCreatedDirs.Store(globalDirKey, true)
+	} else {
 		return fmt.Errorf("failed to create directory %s, status: %d", dirPath, resp.StatusCode)
 	}
 	return nil

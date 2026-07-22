@@ -518,6 +518,10 @@ func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath
 	return "", fmt.Errorf("checksum not available")
 }
 
+// globalWebDAVCreatedDirs caches directory existence across WebDAV provider instances within the worker process.
+// Key format: BaseURL + "|" + Username + "|" + currentPath
+var globalWebDAVCreatedDirs sync.Map
+
 func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -531,9 +535,14 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	currentPath := ""
 	for _, part := range parts {
 		currentPath = currentPath + "/" + part
-		dirKey := currentPath
+		localDirKey := currentPath
+		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
 
-		if _, exists := p.createdDirs.Load(dirKey); exists {
+		if _, exists := p.createdDirs.Load(localDirKey); exists {
+			continue
+		}
+		if _, exists := globalWebDAVCreatedDirs.Load(globalDirKey); exists {
+			p.createdDirs.Store(localDirKey, true)
 			continue
 		}
 
@@ -556,7 +565,8 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 			return fmt.Errorf("webdav mkdir: %w", ErrAuth)
 		}
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
-			p.createdDirs.Store(dirKey, true)
+			p.createdDirs.Store(localDirKey, true)
+			globalWebDAVCreatedDirs.Store(globalDirKey, true)
 		} else {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
@@ -593,7 +603,12 @@ func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("webdav mkdir: %w", ErrAuth)
 	}
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusMethodNotAllowed {
+	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
+		localDirKey := dirPath
+		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
+		p.createdDirs.Store(localDirKey, true)
+		globalWebDAVCreatedDirs.Store(globalDirKey, true)
+	} else {
 		return fmt.Errorf("failed to create directory %s, status: %d", dirPath, resp.StatusCode)
 	}
 	return nil
