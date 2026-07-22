@@ -74,7 +74,37 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 
 ---
 
-## 3. Schedules
+## 3. Sync Engine
+
+| Method | Path | Protection | Description |
+| :----- | :--- | :--------- | :---------- |
+| `GET` | `/sync` | JWT | List the user's sync jobs. |
+| `GET` | `/sync/stream` | JWT | SSE sync-stream for real-time progress. |
+| `POST` | `/sync` | JWT | Create a new sync job (`one_way` / `two_way`). |
+| `GET` | `/sync/{id}` | JWT (own) | Sync job status + stats. |
+| `POST` | `/sync/{id}/start` | JWT (own) | Manually trigger a sync run. |
+| `POST` | `/sync/{id}/pause` | JWT (own) | Pause a running sync job. |
+| `POST` | `/sync/{id}/resume` | JWT (own) | Resume a paused sync job. |
+| `DELETE` | `/sync/{id}` | JWT (own) | Delete sync job + cascading state/tasks. |
+| `GET` | `/sync/{id}/report` | JWT (own) | Download CSV report for sync errors. |
+| `PUT` | `/sync/{id}/threads` | JWT (own) | Live thread count adjustment. |
+
+---
+
+## 4. Connection Profiles
+
+| Method | Path | Protection | Description |
+| :----- | :--- | :--------- | :---------- |
+| `GET` | `/profiles` | JWT | List stored connection profiles for the current user. |
+| `POST` | `/profiles` | JWT | Create a reusable connection profile. |
+| `GET` | `/profiles/{id}` | JWT (own) | Profile details. |
+| `PUT` | `/profiles/{id}` | JWT (own) | Update connection profile. |
+| `DELETE` | `/profiles/{id}` | JWT (own) | Delete connection profile. |
+| `POST` | `/profiles/{id}/test` | JWT (own) | Perform connection test using saved profile credentials. |
+
+---
+
+## 5. Schedules
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -84,7 +114,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 
 ---
 
-## 4. Settings
+## 6. Settings
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -98,7 +128,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 
 ---
 
-## 5. Admin (ADMIN only)
+## 7. Admin (ADMIN only)
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -110,11 +140,12 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `GET` | `/admin/users` | admin | Paginated user list. |
 | `GET` | `/admin/stats` | admin | Global stats (users, migrations/tasks by status). |
 | `GET` | `/admin/migrations` | admin | All migrations across users (with owner email). |
+| `GET` | `/admin/syncs` | admin | All sync jobs across users (with owner email). |
 | `GET` | `/audit/log` | admin | Paginated/filtered audit log. |
 
 ---
 
-## 6. OAuth & WebSocket
+## 8. OAuth & WebSocket
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -124,7 +155,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 
 ---
 
-## 7. Start Request Shape (reference)
+## 9. Start Request Shape (reference)
 
 `POST /api/migration/start` accepts a `StartRequest`:
 
@@ -156,15 +187,15 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 Validation rules applied server-side:
 - At least one of `paths`/`calendars`/`contacts` required.
 - Provider values must be in the whitelist (`nextcloud`, `webdav`, `dropbox`, `google`, `smb`, `s3`,
-  `sftp`, `magentacloud`).
-- `magentacloud` is files-only (rejects calendars/contacts on source or target).
+  `sftp`, `magentacloud`, `local`).
+- `magentacloud` and `local` are files-only (reject calendars/contacts on source or target).
 - Per-user cap of `maxActiveMigrations` (10) simultaneous active migrations.
 - `threads` clamped to 1–16; `bandwidth_limit_mbps` clamped to 0–1000.
 - `scheduled_time`, when present, must parse as RFC3339 and be in the future.
 
 ---
 
-## 8. Error Codes
+## 10. Error Codes
 
 Error codes are typed constants (`APIErrorCode`). Examples include `ErrMigrationNotOwned`,
 `ErrMigrationNotFound`, `ErrMigrationInvalidState`, `ErrProviderUnsupported`, `ErrSourceConnectionFailed`,
@@ -172,3 +203,4 @@ Error codes are typed constants (`APIErrorCode`). Examples include `ErrMigration
 `ErrCorsOriginUntrusted`, `ErrInvalidBody`, `ErrNoSourcePaths`, `ErrEncryptionFailed`,
 `ErrTooManyActiveMigrations`, and many more. Each must be added to **both** locale files under
 `errors.*`. The frontend maps unknown codes to `errors.UNKNOWN`.
+

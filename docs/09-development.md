@@ -42,29 +42,30 @@ The frontend resolves the API via `getApiUrl()` (see
 
 ## 2. Code Quality & Checks
 
-Run these from the repo root / respective directories:
+Run these from the respective component directories:
 
 ```bash
 # Go (from backend/)
-go vet ./backend/...
-go build ./backend/...
+cd backend && go vet ./...
+cd backend && go build ./...
 
-# TypeScript typecheck (frontend/)
-npx tsc --noEmit --project frontend/tsconfig.app.json
+# TypeScript typecheck (from frontend/)
+cd frontend && npx tsc --noEmit --project tsconfig.app.json
 
-# Frontend lint
-npx eslint frontend/src
+# Frontend lint (from frontend/)
+cd frontend && npx eslint src
 ```
 
 File-scoped commands referenced in `AGENTS.md`:
 
 | Task | Command |
 | :--- | :------ |
-| Go typecheck/lint | `go vet ./backend/...` |
-| TS typecheck | `npx tsc --noEmit --project frontend/tsconfig.app.json` |
-| JS/TS lint | `npx eslint frontend/src` |
+| Go typecheck/lint | `(cd backend && go vet ./...)` |
+| TS typecheck | `(cd frontend && npx tsc --noEmit --project tsconfig.app.json)` |
+| JS/TS lint | `(cd frontend && npx eslint src)` |
 
 ---
+
 
 ## 3. Conventions
 
