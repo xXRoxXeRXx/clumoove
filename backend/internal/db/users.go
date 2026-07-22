@@ -93,14 +93,18 @@ func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 	`
 	var u User
 	var mime sql.NullString
+	var totpSecret sql.NullString
 	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
-		&u.TotpEnabled, &u.TotpSecretEnc, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
+		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {
 		return nil, err
 	}
 	if mime.Valid {
 		u.AvatarMime = mime.String
+	}
+	if totpSecret.Valid {
+		u.TotpSecretEnc = totpSecret.String
 	}
 	return &u, nil
 }
@@ -114,14 +118,18 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	`
 	var u User
 	var mime sql.NullString
+	var totpSecret sql.NullString
 	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
-		&u.TotpEnabled, &u.TotpSecretEnc, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
+		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {
 		return nil, err
 	}
 	if mime.Valid {
 		u.AvatarMime = mime.String
+	}
+	if totpSecret.Valid {
+		u.TotpSecretEnc = totpSecret.String
 	}
 	return &u, nil
 }
