@@ -22,17 +22,14 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 
 ## Features
 
-- **Seven storage providers** as any source/target combination: Nextcloud, generic WebDAV, Dropbox, Google Drive,
-  S3-compatible, SMB/CIFS and SFTP.
-- **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic
-  worker-recovery, exponential backoff, and connection-loss auto-pause.
+- **Nine storage providers** as any source/target combination: Nextcloud, MagentaCLOUD, generic WebDAV, Dropbox, Google Drive, S3-compatible, SMB/CIFS, SFTP, and Local server sandbox.
+- **Sync Engine & Migration Engine** — full support for one-shot/scheduled migrations as well as recurring one-way and two-way folder synchronizations.
+- **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations and sync jobs.
+- **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic worker-recovery, exponential backoff, and connection-loss auto-pause.
 - **Data integrity** verified by a 3-way hash check (source / in-memory / target) on every transferred file.
-- **Scheduler engine** for one-shot (deferred) and recurring (`cron`) migrations, with overlap protection and
-  multi-instance safety.
-- **Live control** — pause, resume, cancel, adjust thread count and bandwidth limit, and watch progress over a
-  token-secured WebSocket feed.
-- **Multi-tenancy & security** — per-user isolation, TOTP 2FA, AES-256-GCM credential encryption, JWT key segregation,
-  CORS whitelist, refresh-token rotation and rate limiting.
+- **Scheduler engine** for one-shot (deferred) and recurring (`cron`) migrations and syncs, with overlap protection and multi-instance safety.
+- **Live control** — pause, resume, cancel, adjust thread count and bandwidth limit, and watch progress over a token-secured WebSocket feed.
+- **Multi-tenancy & security** — per-user isolation, TOTP 2FA, AES-256-GCM credential encryption, JWT key segregation, CORS whitelist, refresh-token rotation and rate limiting.
 - **i18n** — the frontend is localized (`de` fallback, `en`) via `i18next`/`react-i18next`.
 
 ## Supported providers
@@ -40,13 +37,14 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 | Provider | Protocol | Auth | Resource types |
 | :--- | :--- | :--- | :--- |
 | **Nextcloud** | WebDAV + OC extensions | User / password | Files, calendars, contacts |
+| **MagentaCLOUD** | WebDAV (fixed endpoint) | User / password | Files |
 | **Generic WebDAV** | WebDAV | User / password | Files |
 | **Dropbox** | Dropbox API v2 | OAuth2 | Files |
 | **Google Drive** | Google Drive API v3 | OAuth2 | Files, calendars, contacts |
-| **Google Photos** | Google Photos Library API | OAuth2 (separate client, `photoslibrary.readonly.appcreateddata` + `photoslibrary.appendonly` scopes) | Files (albums = folders, media = files) |
 | **S3-compatible** | S3 (Wasabi, MinIO, B2…) | Access / secret key | Files |
 | **SMB / CIFS** | SMB2/SMB3 | User / password | Files |
 | **SFTP** | SSH SFTP | User / password (or key) | Files |
+| **Local Storage** | Server filesystem sandbox | None (server path) | Files |
 
 See [`docs/05-storage-providers.md`](./docs/05-storage-providers.md) for the provider interface, factory and SSRF
 protection details.
@@ -117,7 +115,6 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | `REDIS_PASSWORD` | Redis password. **Required** — no default; the server refuses to start with an empty/known value. |
 | `DATABASE_URL` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials (Drive/Calendar/Contacts). |
-| `GOOGLE_PHOTOS_CLIENT_ID` / `GOOGLE_PHOTOS_CLIENT_SECRET` | Google **Photos** OAuth2 credentials (distinct client, scopes `photoslibrary.readonly.appcreateddata` + `photoslibrary.appendonly`). |
 | `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. |
 | `MAX_THREADS` | Global max parallelism per worker process (default `16`). |
 
@@ -140,9 +137,9 @@ npm run dev                 # Vite dev server on :5173
 Code quality:
 
 ```bash
-go vet ./backend/...
-npx tsc --noEmit --project frontend/tsconfig.app.json
-npx eslint frontend/src
+cd backend && go vet ./...
+cd frontend && npx tsc --noEmit --project tsconfig.app.json
+cd frontend && npx eslint src
 ```
 
 See [`docs/09-development.md`](./docs/09-development.md) for conventions and the full local setup.

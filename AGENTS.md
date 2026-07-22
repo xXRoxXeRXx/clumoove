@@ -7,9 +7,9 @@
 ## File-Scoped Commands
 | Task | Command |
 |------|---------|
-| Go Typecheck/Lint | `go vet ./backend/...` |
-| TS Typecheck | `npx tsc --noEmit --project frontend/tsconfig.app.json` |
-| JS/TS Lint | `npx eslint frontend/src` |
+| Go Typecheck/Lint | `(cd backend && go vet ./...)` |
+| TS Typecheck | `(cd frontend && npx tsc --noEmit --project tsconfig.app.json)` |
+| JS/TS Lint | `(cd frontend && npx eslint src)` |
 
 ## Architecture Overview
 - **Two Go entrypoints**: `cmd/api` (HTTP API gateway) and `cmd/worker` (migration engine). Both share the same module `backend/`.
@@ -107,5 +107,5 @@ The full reference lives in `/docs` (`01-architecture`, `02-backend`, `03-fronte
 
 **Keep both in sync.** When either changes, update the other:
 - AGENTS.md must remain a **strict subset** of `/docs` — no contradictory statements.
-- The **File-Scoped Commands** table here and the command block in `09-development.md` must match exactly (`go vet ./backend/...`, `npx tsc --noEmit --project frontend/tsconfig.app.json`, `npx eslint frontend/src`).
+- The **File-Scoped Commands** table here and the command block in `09-development.md` must match exactly (`(cd backend && go vet ./...)`, `(cd frontend && npx tsc --noEmit --project tsconfig.app.json)`, `(cd frontend && npx eslint src)`).
 - The **Security** section (SSRF, rate limiting, security headers, audit, 2FA, admin bootstrap, startup refusal) and **Storage Providers** (whitelist, conflict resolution, sanitize) are the highest-risk areas for drift — cross-check against `07-security.md` and `05-storage-providers.md` after any change.

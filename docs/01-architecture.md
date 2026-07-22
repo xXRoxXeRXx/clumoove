@@ -21,10 +21,10 @@ cache, and migration workers. Every migration is tied to a user account and isol
 ┌────────────────────┐          ┌──────────────────────────┐
 │  Go API Gateway    │◀────────▶│  PostgreSQL 15           │
 │  (cmd/api) :8000   │  CRUD,    │  - users, migrations,    │
-│  Auth, WS, OAuth,  │  Auth,    │    tasks, schedules,     │
-│  Scheduler,        │  Indexing │    audit_log, tokens     │
-│  Rotation Daemon   │          │  - also the task QUEUE   │
-└─────────┬──────────┘          │    (SKIP LOCKED)         │
+│  Auth, WS, OAuth,  │  Auth,    │    sync_jobs, sync_state,│
+│  Scheduler, Sync,  │  Indexing │    profiles, tasks,      │
+│  Rotation Daemon   │          │    schedules, audit_log  │
+└─────────┬──────────┘          │  - also the task QUEUE   │
           │                      └──────────────────────────┘
           │ (Redis: Pub/Sub, locks, heartbeats)
           ▼
@@ -38,7 +38,7 @@ cache, and migration workers. Every migration is tied to a user account and isol
        ▼      ▼
 ┌──────────────┐   ┌──────────────┐
 │  Source Store │   │ Target Store  │  (Nextcloud, WebDAV, Dropbox, Google,
-└──────────────┘   └──────────────┘   S3, SMB, SFTP, MagentaCLOUD)
+└──────────────┘   └──────────────┘   S3, SMB, SFTP, MagentaCLOUD, Local)
 ```
 
 > **Important:** The task queue runs **natively in PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`).
@@ -51,11 +51,11 @@ cache, and migration workers. Every migration is tied to a user account and isol
 
 | Component | Entrypoint | Responsibilities |
 | :-------- | :--------- | :--------------- |
-| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), WebSocket upgrades, OAuth callbacks, OAuth rotation daemon, scheduler daemon, admin endpoints. |
+| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), WebSocket upgrades, OAuth callbacks, OAuth rotation daemon, scheduler daemon, sync engine endpoints, connection profile management, admin endpoints. |
 | **Worker Engine** | `backend/cmd/worker` | Dequeue tasks via SQL, stream transfer with integrity verification, conflict resolution, retry/backoff, worker liveness, connection-loss recovery, orphan recovery, completion notifier. |
-| **PostgreSQL** | container `migration-postgres` | System of record **and** queue. Stores users, credentials (encrypted), migrations, tasks, schedules, audit log, OAuth/refresh tokens, settings. |
+| **PostgreSQL** | container `migration-postgres` | System of record **and** queue. Stores users, credentials (encrypted), migrations, sync jobs, sync state, connection profiles, tasks, schedules, audit log, OAuth/refresh tokens, settings. |
 | **Redis** | container `migration-redis` | Liveness keys, recovery/schedule distributed locks, cancel & bandwidth Pub/Sub. Password-protected, not exposed to host. |
-| **Frontend** | container `migration-frontend` | SPA: login, connect form, file browser, live dashboard, settings, admin panel. |
+| **Frontend** | container `migration-frontend` | SPA: login, connect form, file browser, live dashboard, sync view/dashboard, connection profiles, settings, admin panel. |
 
 ---
 

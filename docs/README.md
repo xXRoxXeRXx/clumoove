@@ -35,7 +35,7 @@ There is also a conceptual document:
 - **Queue:** Native in PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`). Redis is used **only** for
   worker heartbeats, distributed recovery locks (`SET NX`), and cancel/bandwidth Pub/Sub.
 - **Frontend:** React 19 + TypeScript SPA, bundled with Vite 8, Tailwind CSS v4.
-- **Data:** PostgreSQL 15 (metadata, users, tasks, schedules, audit log) + Redis 7 (coordination).
+- **Data:** PostgreSQL 15 (metadata, users, migrations, sync jobs, sync state, profiles, tasks, schedules, audit log) + Redis 7 (coordination).
 - **Languages:** `de` (fallback) and `en`, localized via `i18next`/`react-i18next`.
 
 ---
