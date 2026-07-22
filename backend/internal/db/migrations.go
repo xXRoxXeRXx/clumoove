@@ -356,7 +356,8 @@ func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
 				COALESCE(SUM(file_size) FILTER (WHERE status = 'COMPLETED'), 0) AS done_bytes,
 				COUNT(*) FILTER (WHERE status = 'SKIPPED') AS skip_files,
 				COUNT(*) FILTER (WHERE status = 'FAILED') AS fail_files,
-				COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING')) AS active_files
+				COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING')) AS active_files,
+				COUNT(*) FILTER (WHERE status = 'COMPLETED' AND checksum_verified = FALSE) AS unverified_files
 			FROM tasks
 			WHERE migration_id = $1
 		),
@@ -374,6 +375,7 @@ func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
 		    status = CASE
 		        WHEN m.status IN ('CANCELLED', 'PAUSED', 'PAUSED_CONNECTION_LOSS') THEN m.status
 		        WHEN t.active_files > 0 THEN 'RUNNING'
+		        WHEN t.unverified_files > 0 THEN 'VERIFYING'
 		        WHEN (t.fail_files + e.err_files) > 0 THEN 'COMPLETED_WITH_ERRORS'
 		        ELSE 'COMPLETED'
 		    END,

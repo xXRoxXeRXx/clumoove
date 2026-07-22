@@ -453,6 +453,8 @@
   "status": {
     "completed": "ABGESCHLOSSEN",
     "completedWithErrors": "ABGESCHLOSSEN MIT FEHLERN",
+    "verifying": "PRÜFSUMMEN PRÜFEN",
+    "verified": "100% PRÜFSUMMEN-BESTÄTIGT",
     "failed": "FEHLGESCHLAGEN",
     "cancelled": "ABGEBROCHEN",
     "running": "AKTIV",

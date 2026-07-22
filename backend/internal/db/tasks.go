@@ -20,11 +20,12 @@ type Task struct {
 	ErrorMessage sql.NullString  `json:"error_message,omitempty"`
 	NextRetryAt  sql.NullTime    `json:"next_retry_at,omitempty"`
 	WorkerHash   sql.NullString  `json:"worker_hash,omitempty"`
-	SourceHash   sql.NullString  `json:"source_hash,omitempty"`
-	TargetHash   sql.NullString  `json:"target_hash,omitempty"`
-	Metadata     json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	SourceHash       sql.NullString  `json:"source_hash,omitempty"`
+	TargetHash       sql.NullString  `json:"target_hash,omitempty"`
+	ChecksumVerified bool            `json:"checksum_verified"`
+	Metadata         json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
 type TaskInput struct {
@@ -70,13 +71,15 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, migration_id, resource_type, file_path, file_size, status,
-		       attempts, error_message, next_retry_at, worker_hash, created_at, updated_at
+		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
+		       checksum_verified, created_at, updated_at
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
 		&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
-		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.CreatedAt, &t.UpdatedAt,
+		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
+		&t.ChecksumVerified, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -87,10 +90,53 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 func UpdateTaskStatus(db *sql.DB, t *Task) error {
 	query := `
 		UPDATE tasks
-		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $6
+		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
+		    source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $9
 	`
-	_, err := db.Exec(query, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash, t.ID)
+	_, err := db.Exec(query, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash,
+		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID)
+	return err
+}
+
+func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID string) ([]*Task, error) {
+	query := `
+		SELECT id, migration_id, resource_type, file_path, file_size, status,
+		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
+		       checksum_verified, created_at, updated_at
+		FROM tasks
+		WHERE migration_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE
+	`
+	rows, err := db.QueryContext(ctx, query, migrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tasks []*Task
+	for rows.Next() {
+		var t Task
+		if err := rows.Scan(
+			&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+			&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
+			&t.ChecksumVerified, &t.CreatedAt, &t.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, &t)
+	}
+	return tasks, rows.Err()
+}
+
+func MarkTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHash string) error {
+	query := `
+		UPDATE tasks
+		SET checksum_verified = TRUE,
+		    target_hash = CASE WHEN $2 <> '' THEN $2 ELSE target_hash END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`
+	_, err := db.ExecContext(ctx, query, taskID, targetHash)
 	return err
 }
 
