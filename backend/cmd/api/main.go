@@ -423,6 +423,7 @@ func main() {
 	mux.Handle("GET /api/admin/users", jwtMiddleware(http.HandlerFunc(server.handleAdminListUsers)))
 	mux.Handle("GET /api/admin/stats", jwtMiddleware(http.HandlerFunc(server.handleAdminStats)))
 	mux.Handle("GET /api/admin/migrations", jwtMiddleware(http.HandlerFunc(server.handleAdminListMigrations)))
+	mux.Handle("GET /api/admin/syncs", jwtMiddleware(http.HandlerFunc(server.handleAdminListSyncs)))
 	mux.Handle("GET /api/audit/log", jwtMiddleware(http.HandlerFunc(server.handleAdminAuditLog)))
 
 	// WebSockets & OAuth Callbacks (Require custom/token-based verification inside handler)
@@ -4072,6 +4073,36 @@ func (s *APIServer) handleAdminListMigrations(w http.ResponseWriter, r *http.Req
 		"total":      total,
 		"page":       page,
 		"limit":      limit,
+	})
+}
+
+func (s *APIServer) handleAdminListSyncs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.adminActorID(w, r); !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+
+	syncs, total, err := db.ListAllSyncJobs(s.db, db.SyncListParams{Page: page, Limit: limit})
+	if err != nil {
+		log.Printf("Admin list syncs: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"syncs": syncs,
+		"total": total,
+		"page":  page,
+		"limit": limit,
 	})
 }
 

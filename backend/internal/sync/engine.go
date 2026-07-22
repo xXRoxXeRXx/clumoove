@@ -581,6 +581,16 @@ SyncTasksDone:
 	_ = db.UpdateSyncJobRunStats(e.db, job.ID, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed)
 	_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
 
+	auditAction := db.AuditSyncCompleted
+	if finalRunStatus == "FAILED" {
+		auditAction = db.AuditSyncFailed
+	}
+	db.WriteAuditLog(e.db, db.AuditEntry{
+		UserID: sql.NullString{String: job.UserID, Valid: job.UserID != ""},
+		Action: auditAction,
+		Target: job.ID,
+	})
+
 	log.Printf("[SyncEngine] Sync pass completed for job %s. Status: %s, Processed: %d, Changed: %d, Deleted: %d, Failed: %d\n",
 		syncJobID, finalRunStatus, completed+skipped, changedCount, deletedCount, failed)
 }
@@ -617,6 +627,13 @@ func (e *Engine) failSync(id string, errMsg string) {
 	log.Printf("[SyncEngine] Job %s failed pass: %s\n", id, errMsg)
 	_ = db.UpdateSyncJobRunStats(e.db, id, "FAILED", &errMsg, 0, 0, 0, 0, 0)
 	_ = db.UpdateSyncJobStatus(e.db, id, "IDLE", &errMsg)
+	if ownerID, err := db.GetSyncJobOwnerID(e.db, id); err == nil {
+		db.WriteAuditLog(e.db, db.AuditEntry{
+			UserID: sql.NullString{String: ownerID, Valid: ownerID != ""},
+			Action: db.AuditSyncFailed,
+			Target: id,
+		})
+	}
 }
 
 // updateSyncStates aligns sync_state entries with current listings, preserving the old states of failed files.
