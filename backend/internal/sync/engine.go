@@ -265,6 +265,9 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		allKeys[k] = true
 	}
 
+	log.Printf("[SyncEngine] Job %s delta breakdown: sourceMap=%d, targetMap=%d, prevSource=%d, prevTarget=%d, allKeys=%d, isFirstPass=%v\n",
+		syncJobID, len(sourceMap), len(targetMap), len(prevSource), len(prevTarget), len(allKeys), isFirstPass)
+
 	type taskToCreate struct {
 		filePath     string
 		fileSize     int64
