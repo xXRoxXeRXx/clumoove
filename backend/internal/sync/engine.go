@@ -160,26 +160,27 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	prevTargetFiles := make(map[string]fileState)
 
 	for _, state := range prevStates {
+		cPath := cleanRelPath(state.RelPath)
 		if state.Size == -1 {
 			if state.Side == "source" {
-				prevSourceDirETags[state.RelPath] = state.ETag
+				prevSourceDirETags[cPath] = state.ETag
 			} else {
-				prevTargetDirETags[state.RelPath] = state.ETag
+				prevTargetDirETags[cPath] = state.ETag
 			}
 		} else {
 			fs := fileState{
-				Path:         state.RelPath,
+				Path:         cPath,
 				Size:         state.Size,
 				LastModified: state.Mtime.Time,
 				Hash:         state.SourceHash,
 				ETag:         state.ETag,
 			}
 			if state.Side == "source" {
-				prevSource[state.RelPath] = state
-				prevSourceFiles[state.RelPath] = fs
+				prevSource[cPath] = state
+				prevSourceFiles[cPath] = fs
 			} else {
-				prevTarget[state.RelPath] = state
-				prevTargetFiles[state.RelPath] = fs
+				prevTarget[cPath] = state
+				prevTargetFiles[cPath] = fs
 			}
 		}
 	}
@@ -210,10 +211,10 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		return
 	}
 
-	// Map target paths to source-side relative paths
+	// Map target paths to source-side relative paths and ensure cleanRelPath
 	targetMap := make(map[string]fileState)
 	for targetPath, file := range targetRawMap {
-		relPath := getSourceRelPath(targetPath, job.TargetDir)
+		relPath := cleanRelPath(getSourceRelPath(targetPath, job.TargetDir))
 		file.Path = relPath
 		targetMap[relPath] = file
 	}
@@ -330,12 +331,11 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 			srcDeleted := !hasSrc && hasPrevSrc
 			tgtDeleted := !hasTgt && hasPrevTgt
 
-			// On the very first pass, files that exist on both sides have no
-			// previous state.  Treating them as "both modified" would trigger a
-			// spurious conflict on every existing file. Instead we treat them as
-			// already in-sync so only genuinely new/changed files are acted upon.
-			if isFirstPass && hasSrc && hasTgt {
-				// Both exist, no prior baseline — record state only, no task.
+			// On the very first pass, files that exist on both sides and match in content/size/hash
+			// require no action. If they exist on both sides but do NOT match, fall through to
+			// sync/conflict handling so they are brought in sync.
+			if isFirstPass && hasSrc && hasTgt && inSyncDirectMatch {
+				// Both exist and match — record state only, no task needed.
 				continue
 			}
 

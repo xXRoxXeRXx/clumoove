@@ -123,3 +123,26 @@ func TestIsFileMatchingTarget(t *testing.T) {
 	}
 }
 
+func TestCleanRelPath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"", "/"},
+		{"/", "/"},
+		{"file.txt", "/file.txt"},
+		{"/file.txt", "/file.txt"},
+		{"folder/sub/", "/folder/sub"},
+		{"/folder/sub/file.txt", "/folder/sub/file.txt"},
+		{"./folder/../file.txt", "/file.txt"},
+	}
+
+	for _, tt := range tests {
+		got := cleanRelPath(tt.input)
+		if got != tt.expected {
+			t.Errorf("cleanRelPath(%q) = %q; want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+
