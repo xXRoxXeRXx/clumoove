@@ -1082,17 +1082,22 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </div>
 
                 {/* Delete propagation */}
-                <div className="flex items-center gap-2 pt-1">
+                <div className="flex items-start gap-2 pt-1">
                   <input
                     type="checkbox"
                     id="deletePropagation"
                     checked={deletePropagation}
                     onChange={(e) => setDeletePropagation(e.target.checked)}
-                    className="rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
+                    className="mt-0.5 rounded text-amber-600 focus:ring-amber-500 cursor-pointer"
                   />
-                  <label htmlFor="deletePropagation" className="text-[11px] font-bold text-amber-950 cursor-pointer">
-                    {t('sync.deletePropagation')}
-                  </label>
+                  <div className="flex flex-col">
+                    <label htmlFor="deletePropagation" className="text-[11px] font-bold text-amber-950 cursor-pointer">
+                      {t('sync.deletePropagation')}
+                    </label>
+                    <span className="text-[10px] text-amber-900/70">
+                      {t('sync.deletePropagationHelp')}
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
