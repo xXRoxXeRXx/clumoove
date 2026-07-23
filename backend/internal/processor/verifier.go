@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"path"
+	"strings"
 	"time"
 
 	"backend/internal/crypto"
@@ -103,7 +105,14 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 			continue
 		}
 
-		targetHash, errHash := targetClient.GetFileHash(ctx, task.ResourceType, task.FilePath)
+		targetPath := task.FilePath
+		if mig.TargetDir != "" && mig.TargetDir != "/" {
+			if !strings.HasPrefix(task.FilePath, mig.TargetDir+"/") && task.FilePath != mig.TargetDir {
+				targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
+			}
+		}
+
+		targetHash, errHash := targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
 		if errHash == nil && targetHash != "" {
 			sourceHash := task.SourceHash.String
 			if sourceHash == "" {
@@ -116,10 +125,10 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 
 				if (sourceAlgo == targetAlgo || sourceAlgo == "UNKNOWN" || targetAlgo == "UNKNOWN") && cleanSource != "" && cleanTarget != "" {
 					if cleanSource == cleanTarget {
-						log.Printf("[VERIFIER] Checksum match confirmed for %s (hash=%s)\n", task.FilePath, targetHash)
+						log.Printf("[VERIFIER] Checksum match confirmed for %s (hash=%s)\n", targetPath, targetHash)
 						_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 					} else {
-						log.Printf("[VERIFIER] Checksum MISMATCH detected for %s: source=%s target=%s\n", task.FilePath, cleanSource, cleanTarget)
+						log.Printf("[VERIFIER] Checksum MISMATCH detected for %s: source=%s target=%s\n", targetPath, cleanSource, cleanTarget)
 						task.Status = "FAILED"
 						task.ErrorMessage = sql.NullString{String: "checksum mismatch during post-verification", Valid: true}
 						_ = db.UpdateTaskStatus(p.db, task)
@@ -205,7 +214,14 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		default:
 		}
 
-		targetHash, errHash := targetClient.GetFileHash(ctx, task.ResourceType, task.FilePath)
+		targetPath := task.FilePath
+		if job.TargetDir != "" && job.TargetDir != "/" {
+			if !strings.HasPrefix(task.FilePath, job.TargetDir+"/") && task.FilePath != job.TargetDir {
+				targetPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
+			}
+		}
+
+		targetHash, errHash := targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
 		if errHash == nil && targetHash != "" {
 			sourceHash := task.SourceHash.String
 			if sourceHash == "" {
@@ -218,11 +234,11 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 
 				if (sourceAlgo == targetAlgo || sourceAlgo == "UNKNOWN" || targetAlgo == "UNKNOWN") && cleanSource != "" && cleanTarget != "" {
 					if cleanSource == cleanTarget {
-						log.Printf("[VERIFIER] Checksum match confirmed for sync file %s (hash=%s)\n", task.FilePath, targetHash)
+						log.Printf("[VERIFIER] Checksum match confirmed for sync file %s (hash=%s)\n", targetPath, targetHash)
 						_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
-						_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, task.FilePath, targetHash)
+						_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 					} else {
-						log.Printf("[VERIFIER] Checksum MISMATCH detected for sync file %s: source=%s target=%s\n", task.FilePath, cleanSource, cleanTarget)
+						log.Printf("[VERIFIER] Checksum MISMATCH detected for sync file %s: source=%s target=%s\n", targetPath, cleanSource, cleanTarget)
 						task.Status = "FAILED"
 						task.ErrorMessage = sql.NullString{String: "checksum mismatch during post-verification", Valid: true}
 						_ = db.UpdateTaskStatus(p.db, task)
@@ -233,7 +249,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 			}
 
 			_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
-			_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, task.FilePath, targetHash)
+			_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 		} else {
 			_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, "")
 		}
