@@ -231,21 +231,23 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	jobThrottler := throttler.(*throttle.MigrationThrottler)
 	throttledDownloadStream := throttle.NewThrottledReader(downloadStream, jobThrottler, downloadCtx)
 
-	// Hash calculations
 	var sourceHasher hash.Hash
 	sourceAlgo := "SHA1"
+	sourceHashStr := ""
 
 	if task.SourceHash.Valid && task.SourceHash.String != "" && srcProvider != "webdav" {
-		algo, _ := storage.ParseHashString(task.SourceHash.String)
+		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
 		if algo != "ETAG" {
+			sourceHashStr = cleanHash
 			sourceAlgo = algo
 		}
 	} else {
 		if srcProvider != "webdav" {
 			if fetchedHash, err := srcClient.GetFileHash(ctx, task.ResourceType, srcPath); err == nil {
-				algo, _ := storage.ParseHashString(fetchedHash)
+				algo, cleanHash := storage.ParseHashString(fetchedHash)
 				if algo != "ETAG" {
 					task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
+					sourceHashStr = cleanHash
 					sourceAlgo = algo
 				}
 			}
@@ -346,6 +348,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	hashingReader := io.TeeReader(throttledDownloadStream, activeWriter)
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
+	if sourceHashStr != "" && sourceAlgo != "ETAG" {
+		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
+	}
 	defer uploadCancel()
 
 	if task.FileSize > chunkedUploadThreshold {

@@ -791,6 +791,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// Use the same file-size-scaled deadline as the download phase so neither
 	// times out before the other for a given file size.
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
+	if sourceHashStr != "" && sourceAlgo != "ETAG" {
+		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
+	}
 	defer uploadCancel()
 
 	// If size > chunkedUploadThreshold (50 MiB), do chunked upload
