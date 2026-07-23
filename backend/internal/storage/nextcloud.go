@@ -493,6 +493,9 @@ func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 		contentType = "text/vcard; charset=utf-8"
 	}
 	req.Header.Set("Content-Type", contentType)
+	if chkVal, ok := ctx.Value("oc-checksum").(string); ok && chkVal != "" {
+		req.Header.Set("OC-Checksum", chkVal)
+	}
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
@@ -610,6 +613,9 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 	req.Header.Set("Destination", destURL)
 	req.Header.Set("Overwrite", "T")
 	req.Header.Set("OC-Total-Length", strconv.FormatInt(fileSize, 10))
+	if chkVal, ok := ctx.Value("oc-checksum").(string); ok && chkVal != "" {
+		req.Header.Set("OC-Checksum", chkVal)
+	}
 
 	resp, err = p.HTTPClient.Do(req)
 	if err != nil {
