@@ -315,7 +315,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 
 		if job.Direction == "one_way" {
 			// One-Way: Source -> Target
-			if hasSrc && srcModified {
+			if hasSrc && (srcModified || !hasTgt) {
 				// Upload / Update
 				tasks = append(tasks, taskToCreate{
 					filePath:     S,
@@ -383,8 +383,8 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 						action:       "upload",
 					})
 				}
-			} else if hasSrc && srcModified && (!hasTgt || !tgtModified) {
-				// Modified on source only (upload to target)
+			} else if hasSrc && (srcModified || (!hasTgt && !tgtDeleted)) {
+				// Present on source, and (modified OR missing from target and not deleted on target) -> upload to target
 				tasks = append(tasks, taskToCreate{
 					filePath:     S,
 					fileSize:     srcFile.Size,
@@ -392,8 +392,8 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 					resourceType: "files",
 					action:       "upload",
 				})
-			} else if hasTgt && tgtModified && (!hasSrc || !srcModified) {
-				// Modified on target only (download back to source)
+			} else if hasTgt && (tgtModified || (!hasSrc && !srcDeleted)) {
+				// Present on target, and (modified OR missing from source and not deleted on source) -> download to source
 				tasks = append(tasks, taskToCreate{
 					filePath:     S,
 					fileSize:     tgtFile.Size,
