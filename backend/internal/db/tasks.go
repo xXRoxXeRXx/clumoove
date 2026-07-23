@@ -70,16 +70,16 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
-		SELECT id, migration_id, resource_type, file_path, file_size, status,
+		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
-		       checksum_verified, created_at, updated_at
+		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
-		&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+		&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
 		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
-		&t.ChecksumVerified, &t.CreatedAt, &t.UpdatedAt,
+		&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -101,9 +101,9 @@ func UpdateTaskStatus(db *sql.DB, t *Task) error {
 
 func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID string) ([]*Task, error) {
 	query := `
-		SELECT id, migration_id, resource_type, file_path, file_size, status,
+		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
-		       checksum_verified, created_at, updated_at
+		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks
 		WHERE migration_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE
 	`
@@ -117,9 +117,9 @@ func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID st
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(
-			&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+			&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
 			&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
-			&t.ChecksumVerified, &t.CreatedAt, &t.UpdatedAt,
+			&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
