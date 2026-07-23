@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"path"
 	"sync"
 	"time"
 
@@ -187,7 +186,20 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 
 	// 6. Enumerate Source and Target files (using parallel worker pool + ETag skipping)
 	log.Printf("[SyncEngine] Listing source files for job %s...\n", syncJobID)
-	sourceMap, sourceDirETags, srcErrors, err := e.listFiles(ctx, sourceClient, job.SelectedPaths, prevSourceDirETags, prevSourceFiles)
+	var sourceStartPaths []string
+	if len(job.SelectedPaths) > 0 {
+		for _, sp := range job.SelectedPaths {
+			csp := cleanRelPath(sp)
+			if csp != "" {
+				sourceStartPaths = append(sourceStartPaths, csp)
+			}
+		}
+	}
+	if len(sourceStartPaths) == 0 {
+		sourceStartPaths = []string{"/"}
+	}
+
+	sourceMap, sourceDirETags, srcErrors, err := e.listFiles(ctx, sourceClient, sourceStartPaths, prevSourceDirETags, prevSourceFiles)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Source file listing failed: %v", err))
 		return
@@ -197,14 +209,9 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	}
 
 	log.Printf("[SyncEngine] Listing target files for job %s...\n", syncJobID)
-	var targetScanPaths []string
-	if job.Direction == "two_way" && len(job.SelectedPaths) > 0 {
-		for _, sp := range job.SelectedPaths {
-			targetScanPaths = append(targetScanPaths, path.Clean(path.Join(job.TargetDir, sp)))
-		}
-	} else {
-		targetScanPaths = []string{job.TargetDir}
-	}
+	cleanTargetDir := cleanRelPath(job.TargetDir)
+	targetScanPaths := []string{cleanTargetDir}
+
 	targetRawMap, targetDirETags, _, err := e.listFiles(ctx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Target file listing failed: %v", err))
