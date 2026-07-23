@@ -101,8 +101,6 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 	}
 	defer cleanup()
 
-	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in migration %s\n", total, migrationID)
-
 	numWorkers := mig.Threads
 	if numWorkers <= 0 {
 		numWorkers = 4
@@ -110,6 +108,8 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 	if numWorkers > total {
 		numWorkers = total
 	}
+
+	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in migration %s (%d workers)\n", total, migrationID, numWorkers)
 
 	taskChan := make(chan *db.Task, total)
 	for _, t := range unverifiedTasks {
@@ -196,7 +196,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 				}
 
 				current := processedCount.Add(1)
-				if current%250 == 0 || current == int64(total) {
+				if current == 1 || current%50 == 0 || current == int64(total) {
 					log.Printf("[VERIFIER] Migration %s verification progress: %d/%d tasks processed (%.1f%%)\n",
 						migrationID, current, total, float64(current)/float64(total)*100.0)
 				}
@@ -272,8 +272,6 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	}
 	defer cleanup()
 
-	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in sync job %s\n", total, syncJobID)
-
 	numWorkers := job.Threads
 	if numWorkers <= 0 {
 		numWorkers = 4
@@ -281,6 +279,8 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	if numWorkers > total {
 		numWorkers = total
 	}
+
+	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in sync job %s (%d workers)\n", total, syncJobID, numWorkers)
 
 	taskChan := make(chan *db.Task, total)
 	for _, t := range unverifiedTasks {
@@ -364,7 +364,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 				}
 
 				current := processedCount.Add(1)
-				if current%250 == 0 || current == int64(total) {
+				if current == 1 || current%50 == 0 || current == int64(total) {
 					log.Printf("[VERIFIER] Sync job %s verification progress: %d/%d tasks processed (%.1f%%)\n",
 						syncJobID, current, total, float64(current)/float64(total)*100.0)
 				}
