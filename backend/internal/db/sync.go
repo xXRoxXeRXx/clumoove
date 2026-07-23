@@ -619,13 +619,14 @@ func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []struct{ Sy
 
 	// Prepare the upsert statement once and reuse it for all rows.
 	upsertStmt, err := tx.Prepare(`
-		INSERT INTO sync_state (sync_job_id, side, rel_path, size, mtime, source_hash, target_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO sync_state (sync_job_id, side, rel_path, size, mtime, source_hash, target_hash, etag)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (sync_job_id, side, rel_path) DO UPDATE SET
 			size        = EXCLUDED.size,
 			mtime       = EXCLUDED.mtime,
 			source_hash = EXCLUDED.source_hash,
-			target_hash = EXCLUDED.target_hash
+			target_hash = EXCLUDED.target_hash,
+			etag        = EXCLUDED.etag
 	`)
 	if err != nil {
 		return fmt.Errorf("bulk upsert sync states: prepare upsert: %w", err)
@@ -633,7 +634,11 @@ func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []struct{ Sy
 	defer upsertStmt.Close()
 
 	for _, s := range upserts {
-		if _, err := upsertStmt.Exec(s.SyncJobID, s.Side, s.RelPath, s.Size, s.Mtime, s.SourceHash, s.TargetHash); err != nil {
+		var etagVal sql.NullString
+		if s.ETag != "" {
+			etagVal = sql.NullString{String: s.ETag, Valid: true}
+		}
+		if _, err := upsertStmt.Exec(s.SyncJobID, s.Side, s.RelPath, s.Size, s.Mtime, s.SourceHash, s.TargetHash, etagVal); err != nil {
 			return fmt.Errorf("bulk upsert sync states: exec upsert %s/%s/%s: %w", s.SyncJobID, s.Side, s.RelPath, err)
 		}
 	}

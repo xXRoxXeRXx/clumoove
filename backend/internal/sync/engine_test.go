@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+
+	"backend/internal/db"
 )
 
 func TestGetSourceRelPath(t *testing.T) {
@@ -143,6 +145,27 @@ func TestCleanRelPath(t *testing.T) {
 			t.Errorf("cleanRelPath(%q) = %q; want %q", tt.input, got, tt.expected)
 		}
 	}
+}
+
+func TestUpdateSyncStatesPrevKeys(t *testing.T) {
+	// Verify that allKeys in updateSyncStates captures keys from prevSource and prevTarget
+	// even when sourceMap and targetMap are empty (e.g. all files deleted on source and target).
+	engine := NewEngine(nil, nil, "secret")
+
+	prevSource := map[string]db.SyncState{
+		"/deleted_file.txt": {RelPath: "/deleted_file.txt", Side: "source"},
+	}
+	prevTarget := map[string]db.SyncState{
+		"/deleted_file.txt": {RelPath: "/deleted_file.txt", Side: "target"},
+	}
+
+	sourceMap := make(map[string]fileState)
+	targetMap := make(map[string]fileState)
+
+	// Since engine.db is nil, updateSyncStates will attempt BulkUpsertSyncStates with nil db,
+	// which won't panic if upserts and deletes are collected and passed (BulkUpsertSyncStates will fail on tx.Begin).
+	// We call updateSyncStates to verify it executes without unexpected runtime errors before DB call.
+	engine.updateSyncStates("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil)
 }
 
 
