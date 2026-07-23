@@ -29,12 +29,24 @@ func cleanRelPath(p string) string {
 // updateSyncStates aligns sync_state entries with current listings, preserving the old states of failed files.
 // Uses BulkUpsertSyncStates to batch all upserts and deletes into a single transaction instead of N individual
 // round-trips (one per file), which is dramatically faster for large directory trees.
-func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]fileState, sourceDirETags, targetDirETags map[string]string, taskOutcomes map[string]string) {
+func (e *Engine) updateSyncStates(
+	jobID string,
+	sourceMap, targetMap map[string]fileState,
+	prevSource, prevTarget map[string]db.SyncState,
+	sourceDirETags, targetDirETags map[string]string,
+	taskOutcomes map[string]string,
+) {
 	allKeys := make(map[string]bool)
 	for k := range sourceMap {
 		allKeys[cleanRelPath(k)] = true
 	}
 	for k := range targetMap {
+		allKeys[cleanRelPath(k)] = true
+	}
+	for k := range prevSource {
+		allKeys[cleanRelPath(k)] = true
+	}
+	for k := range prevTarget {
 		allKeys[cleanRelPath(k)] = true
 	}
 
@@ -108,6 +120,10 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 				ETag:      etag,
 			})
 		}
+	}
+
+	if e.db == nil {
+		return
 	}
 
 	if err := db.BulkUpsertSyncStates(e.db, upserts, deletes); err != nil {
