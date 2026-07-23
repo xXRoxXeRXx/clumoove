@@ -93,12 +93,19 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	// Setup clients depending on action
 	if action == "delete" {
+		sourceClient, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+		if err != nil {
+			return fmt.Errorf("failed to create source client: %w", err)
+		}
+		defer sourceClient.Close()
+
+		targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+		if err != nil {
+			return fmt.Errorf("failed to create target client: %w", err)
+		}
+		defer targetClient.Close()
+
 		if side == "source" {
-			sourceClient, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
-			if err != nil {
-				return fmt.Errorf("failed to create source client: %w", err)
-			}
-			defer sourceClient.Close()
 			if ok, err := sourceClient.Connect(ctx); !ok {
 				return fmt.Errorf("failed to connect to source for delete: %w", err)
 			}
@@ -106,13 +113,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			if err != nil {
 				return fmt.Errorf("failed to delete source file: %w", err)
 			}
-			pruneEmptyParentDirectories(ctx, sourceClient, task.ResourceType, task.FilePath, "/")
+			_, _ = targetClient.Connect(ctx)
+			pruneEmptyParentDirectories(ctx, sourceClient, targetClient, task.ResourceType, task.FilePath, "/", job.TargetDir)
 		} else {
-			targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
-			if err != nil {
-				return fmt.Errorf("failed to create target client: %w", err)
-			}
-			defer targetClient.Close()
 			if ok, err := targetClient.Connect(ctx); !ok {
 				return fmt.Errorf("failed to connect to target for delete: %w", err)
 			}
@@ -121,7 +124,8 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			if err != nil {
 				return fmt.Errorf("failed to delete target file: %w", err)
 			}
-			pruneEmptyParentDirectories(ctx, targetClient, task.ResourceType, tgtPath, job.TargetDir)
+			_, _ = sourceClient.Connect(ctx)
+			pruneEmptyParentDirectories(ctx, targetClient, sourceClient, task.ResourceType, tgtPath, job.TargetDir, "/")
 		}
 
 		// Success
@@ -570,9 +574,11 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 	}
 }
 
-// pruneEmptyParentDirectories recursively checks parent directories of a deleted file and removes any that are empty.
-func pruneEmptyParentDirectories(ctx context.Context, client storage.StorageProvider, resourceType, filePath, stopDir string) {
+// pruneEmptyParentDirectories recursively checks parent directories of a deleted file and removes any that are empty,
+// provided they also no longer exist on the other storage provider (e.g. after a directory rename/delete).
+func pruneEmptyParentDirectories(ctx context.Context, client, otherClient storage.StorageProvider, resourceType, filePath, stopDir, otherStopDir string) {
 	stopDir = path.Clean(stopDir)
+	otherStopDir = path.Clean(otherStopDir)
 	currDir := path.Clean(path.Dir(filePath))
 
 	for currDir != "/" && currDir != "." && currDir != stopDir {
@@ -581,11 +587,25 @@ func pruneEmptyParentDirectories(ctx context.Context, client storage.StorageProv
 			// Stop pruning if directory still contains items or listing fails
 			break
 		}
-		// Directory is completely empty! Prune it.
+
+		// Check if this directory still exists on the opposing storage provider
+		if otherClient != nil {
+			relDir := currDir
+			if stopDir != "/" && stopDir != "." {
+				relDir = strings.TrimPrefix(currDir, stopDir)
+			}
+			otherDir := path.Clean(path.Join(otherStopDir, relDir))
+			if res, err := otherClient.InspectResource(ctx, resourceType, otherDir); err == nil && res.IsDir {
+				// The directory STILL EXISTS on the other side (user only deleted files, kept folder)! Do not prune!
+				break
+			}
+		}
+
+		// Directory is completely empty AND does not exist on the other side! Prune it.
 		if err := client.DeleteFile(ctx, resourceType, currDir); err != nil {
 			break
 		}
-		log.Printf("[SyncTask] Pruned empty parent directory %s\n", currDir)
+		log.Printf("[SyncTask] Pruned empty parent directory %s (no longer on other side)\n", currDir)
 		currDir = path.Clean(path.Dir(currDir))
 	}
 }
