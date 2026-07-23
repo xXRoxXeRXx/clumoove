@@ -146,9 +146,20 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 					}
 				}
 
-				taskCtx, taskCancel := context.WithTimeout(ctx, 15*time.Second)
-				targetHash, errHash := targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
-				taskCancel()
+				var targetHash string
+				var errHash error
+				for attempt := 0; attempt < 3; attempt++ {
+					taskCtx, taskCancel := context.WithTimeout(ctx, 15*time.Second)
+					targetHash, errHash = targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
+					taskCancel()
+
+					if (errHash == nil && targetHash != "") || isNonRetryableHashError(errHash) {
+						break
+					}
+					if attempt < 2 {
+						time.Sleep(2 * time.Second)
+					}
+				}
 
 				if errHash == nil && targetHash != "" {
 					sourceHash := task.SourceHash.String
@@ -162,6 +173,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 
 						if (sourceAlgo == targetAlgo || sourceAlgo == "UNKNOWN" || targetAlgo == "UNKNOWN") && cleanSource != "" && cleanTarget != "" {
 							if cleanSource == cleanTarget {
+								log.Printf("[VERIFIER] Checksum match confirmed for %s (hash=%s)\n", targetPath, targetHash)
 								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 							} else {
 								log.Printf("[VERIFIER] Checksum MISMATCH detected for %s: source=%s target=%s\n", targetPath, cleanSource, cleanTarget)
@@ -177,6 +189,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 						_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 					}
 				} else {
+					log.Printf("[VERIFIER] Target checksum not available for %s — using size verification\n", targetPath)
 					_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, "")
 				}
 
@@ -296,9 +309,20 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 					}
 				}
 
-				taskCtx, taskCancel := context.WithTimeout(ctx, 15*time.Second)
-				targetHash, errHash := targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
-				taskCancel()
+				var targetHash string
+				var errHash error
+				for attempt := 0; attempt < 3; attempt++ {
+					taskCtx, taskCancel := context.WithTimeout(ctx, 15*time.Second)
+					targetHash, errHash = targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
+					taskCancel()
+
+					if (errHash == nil && targetHash != "") || isNonRetryableHashError(errHash) {
+						break
+					}
+					if attempt < 2 {
+						time.Sleep(2 * time.Second)
+					}
+				}
 
 				if errHash == nil && targetHash != "" {
 					sourceHash := task.SourceHash.String
@@ -312,6 +336,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 
 						if (sourceAlgo == targetAlgo || sourceAlgo == "UNKNOWN" || targetAlgo == "UNKNOWN") && cleanSource != "" && cleanTarget != "" {
 							if cleanSource == cleanTarget {
+								log.Printf("[VERIFIER] Checksum match confirmed for sync file %s (hash=%s)\n", targetPath, targetHash)
 								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 								_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 							} else {
@@ -330,6 +355,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 						_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 					}
 				} else {
+					log.Printf("[VERIFIER] Target checksum not available for sync file %s — using size verification\n", targetPath)
 					_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, "")
 				}
 
