@@ -856,14 +856,17 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 		headReq = headReq.WithContext(ctx)
 		if headResp, err := p.HTTPClient.Do(headReq); err == nil {
 			headResp.Body.Close()
-			if headResp.StatusCode == http.StatusNotFound {
+			if headResp.StatusCode == http.StatusOK {
+				if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
+					return chk, nil
+				}
+				// 200 OK without OC-Checksum: fall through to PROPFIND for XML properties
+			} else if headResp.StatusCode == http.StatusNotFound {
 				return "", fmt.Errorf("file not found: %s", filePath)
-			}
-			if headResp.StatusCode == http.StatusUnauthorized {
+			} else if headResp.StatusCode == http.StatusUnauthorized {
 				return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)
-			}
-			if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
-				return chk, nil
+			} else {
+				return "", fmt.Errorf("HEAD for hash failed: status %d", headResp.StatusCode)
 			}
 		}
 	}
@@ -947,6 +950,9 @@ func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath str
 			}
 			if resp.StatusCode == http.StatusUnauthorized {
 				return false, 0, fmt.Errorf("nextcloud file-exists: %w", ErrAuth)
+			}
+			if resp.StatusCode >= 400 {
+				return false, 0, fmt.Errorf("HEAD check failed with status: %d", resp.StatusCode)
 			}
 		}
 	}
