@@ -324,8 +324,16 @@ func isFileMatchingTarget(src, tgt fileState) bool {
 		}
 	}
 
-	// When sizes match down to the byte and hashes do not conflict, treat as matching
-	// (WebDAV targets update getlastmodified to HTTP upload time instead of preserving source mtime).
+	if !src.LastModified.IsZero() && !tgt.LastModified.IsZero() {
+		diff := src.LastModified.Sub(tgt.LastModified)
+		if diff < 0 {
+			diff = -diff
+		}
+		if diff >= 2*time.Second {
+			return false
+		}
+	}
+
 	return true
 }
 
