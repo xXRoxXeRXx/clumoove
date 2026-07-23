@@ -83,7 +83,12 @@ type XMLProp struct {
 }
 
 type XMLResourceType struct {
-	Collection *struct{} `xml:"collection"`
+	Collection        *struct{} `xml:"collection"`
+	Calendar          *struct{} `xml:"calendar"`
+	Addressbook       *struct{} `xml:"addressbook"`
+	ScheduleInbox     *struct{} `xml:"schedule-inbox"`
+	ScheduleOutbox    *struct{} `xml:"schedule-outbox"`
+	NotificationInbox *struct{} `xml:"notification-inbox"`
 }
 
 type XMLChecksums struct {
@@ -371,14 +376,13 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 		res.Path = relativeHref
 		res.Name = path.Base(relativeHref)
 
+		var isOK bool
 		// Parse properties
 		for _, pstat := range r.Propstat {
 			if strings.Contains(pstat.Status, "200 OK") {
+				isOK = true
 				prop := pstat.Prop
 				res.IsDir = prop.ResourceType.Collection != nil
-				if resourceType == "calendars" || resourceType == "contacts" {
-					res.IsDir = true
-				}
 
 				if !res.IsDir {
 					if size, err := strconv.ParseInt(prop.GetContentLength, 10, 64); err == nil {
@@ -408,6 +412,62 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 				}
 			}
 		}
+
+		if !isOK {
+			continue
+		}
+
+		// At top-level listing (dirPath == "/" or ""), filter out non-calendar/non-contact system items (e.g. inbox, outbox, notifications, trashbin)
+		if cleanDirPath == "/" {
+			if resourceType == "calendars" {
+				isCal := false
+				for _, pstat := range r.Propstat {
+					if strings.Contains(pstat.Status, "200 OK") {
+						prop := pstat.Prop
+						if prop.ResourceType.Calendar != nil {
+							isCal = true
+						} else if prop.ResourceType.Collection != nil {
+							nameLower := strings.ToLower(res.Name)
+							if prop.ResourceType.ScheduleInbox == nil &&
+								prop.ResourceType.ScheduleOutbox == nil &&
+								prop.ResourceType.NotificationInbox == nil &&
+								nameLower != "inbox" && nameLower != "outbox" &&
+								nameLower != "notifications" && nameLower != "notification-inbox" &&
+								nameLower != "trashbin" && nameLower != "trash" {
+								isCal = true
+							}
+						}
+					}
+				}
+				if !isCal {
+					continue
+				}
+			} else if resourceType == "contacts" {
+				isCard := false
+				for _, pstat := range r.Propstat {
+					if strings.Contains(pstat.Status, "200 OK") {
+						prop := pstat.Prop
+						if prop.ResourceType.Addressbook != nil {
+							isCard = true
+						} else if prop.ResourceType.Collection != nil {
+							nameLower := strings.ToLower(res.Name)
+							if prop.ResourceType.ScheduleInbox == nil &&
+								prop.ResourceType.ScheduleOutbox == nil &&
+								prop.ResourceType.NotificationInbox == nil &&
+								nameLower != "inbox" && nameLower != "outbox" &&
+								nameLower != "notifications" && nameLower != "notification-inbox" &&
+								nameLower != "trashbin" && nameLower != "trash" {
+								isCard = true
+							}
+						}
+					}
+				}
+				if !isCard {
+					continue
+				}
+			}
+		}
+
 		resources = append(resources, res)
 	}
 
