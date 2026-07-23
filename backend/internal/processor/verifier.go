@@ -118,10 +118,8 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 	close(taskChan)
 
 	var (
-		processedCount  atomic.Int64
-		unsupportedCount atomic.Int64
-		wg               sync.WaitGroup
-		cancelPass       atomic.Bool
+		processedCount atomic.Int64
+		wg             sync.WaitGroup
 	)
 
 	for i := 0; i < numWorkers; i++ {
@@ -129,9 +127,6 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 		go func() {
 			defer wg.Done()
 			for task := range taskChan {
-				if cancelPass.Load() {
-					return
-				}
 				select {
 				case <-ctx.Done():
 					return
@@ -154,16 +149,6 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 				taskCtx, taskCancel := context.WithTimeout(ctx, 15*time.Second)
 				targetHash, errHash := targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
 				taskCancel()
-
-				if errHash != nil && isNonRetryableHashError(errHash) {
-					if unsupportedCount.Add(1) >= 10 {
-						if cancelPass.CompareAndSwap(false, true) {
-							log.Printf("[VERIFIER] Target provider returns unsupported checksums (%v) — bulk verifying remaining tasks for migration %s\n", errHash, migrationID)
-							_ = db.MarkAllMigrationTasksVerified(p.db, ctx, migrationID)
-						}
-						return
-					}
-				}
 
 				if errHash == nil && targetHash != "" {
 					sourceHash := task.SourceHash.String
@@ -289,10 +274,8 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	close(taskChan)
 
 	var (
-		processedCount  atomic.Int64
-		unsupportedCount atomic.Int64
-		wg               sync.WaitGroup
-		cancelPass       atomic.Bool
+		processedCount atomic.Int64
+		wg             sync.WaitGroup
 	)
 
 	for i := 0; i < numWorkers; i++ {
@@ -300,9 +283,6 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		go func() {
 			defer wg.Done()
 			for task := range taskChan {
-				if cancelPass.Load() {
-					return
-				}
 				select {
 				case <-ctx.Done():
 					return
@@ -319,16 +299,6 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 				taskCtx, taskCancel := context.WithTimeout(ctx, 15*time.Second)
 				targetHash, errHash := targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
 				taskCancel()
-
-				if errHash != nil && isNonRetryableHashError(errHash) {
-					if unsupportedCount.Add(1) >= 10 {
-						if cancelPass.CompareAndSwap(false, true) {
-							log.Printf("[VERIFIER] Target provider returns unsupported checksums (%v) — bulk verifying remaining tasks for sync job %s\n", errHash, syncJobID)
-							_ = db.MarkAllSyncTasksVerified(p.db, ctx, syncJobID)
-						}
-						return
-					}
-				}
 
 				if errHash == nil && targetHash != "" {
 					sourceHash := task.SourceHash.String
