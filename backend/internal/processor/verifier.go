@@ -103,7 +103,10 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 
 	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in migration %s\n", total, migrationID)
 
-	numWorkers := 8
+	numWorkers := mig.Threads
+	if numWorkers <= 0 {
+		numWorkers = 4
+	}
 	if numWorkers > total {
 		numWorkers = total
 	}
@@ -271,7 +274,10 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 
 	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in sync job %s\n", total, syncJobID)
 
-	numWorkers := 8
+	numWorkers := job.Threads
+	if numWorkers <= 0 {
+		numWorkers = 4
+	}
 	if numWorkers > total {
 		numWorkers = total
 	}
