@@ -860,7 +860,13 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 				if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
 					return chk, nil
 				}
-				// 200 OK without OC-Checksum: fall through to PROPFIND for XML properties
+				if etag := headResp.Header.Get("OC-ETag"); etag != "" {
+					return "ETAG:" + strings.Trim(etag, `"`), nil
+				}
+				if etag := headResp.Header.Get("ETag"); etag != "" {
+					return "ETAG:" + strings.Trim(etag, `"`), nil
+				}
+				// 200 OK without OC-Checksum/ETag: fall through to PROPFIND for XML properties
 			} else if headResp.StatusCode == http.StatusNotFound {
 				return "", fmt.Errorf("file not found: %s", filePath)
 			} else if headResp.StatusCode == http.StatusUnauthorized {
@@ -876,6 +882,7 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 			<d:prop>
 				<oc:checksums/>
 				<d:getcontenthash/>
+				<d:getetag/>
 			</d:prop>
 		</d:propfind>`)
 
@@ -920,6 +927,9 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 				}
 				if pstat.Prop.GetContentHash != "" {
 					return pstat.Prop.GetContentHash, nil
+				}
+				if pstat.Prop.GetETag != "" {
+					return "ETAG:" + strings.Trim(pstat.Prop.GetETag, `"`), nil
 				}
 			}
 		}
