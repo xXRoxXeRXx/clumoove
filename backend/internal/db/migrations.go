@@ -425,6 +425,7 @@ func GetMigrationOwnerID(database queryExecer, migrationID string) (string, erro
 }
 
 func DeleteMigrationCascade(db *sql.DB, migrationID string) error {
+	_ = DeleteSchedulesForTask(db, "migration", migrationID)
 	query := `DELETE FROM migrations WHERE id = $1`
 	_, err := db.Exec(query, migrationID)
 	return err
