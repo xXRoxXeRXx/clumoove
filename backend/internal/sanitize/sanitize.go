@@ -1,9 +1,20 @@
 package sanitize
 
 import (
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
+
+var credURLRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s:@]+@`)
+var credQueryRe = regexp.MustCompile(`(?i)((?:base_url|access_token|token)=)[^&\s]+`)
+
+// SanitizeError redacts credentials from any URLs embedded in an error message.
+// It strips user:pass userinfo and credential-bearing query values.
+func SanitizeError(msg string) string {
+	msg = credURLRe.ReplaceAllString(msg, "${1}***:***@")
+	return credQueryRe.ReplaceAllString(msg, "${1}***")
+}
 
 type SanitizeResult struct {
 	OriginalName  string

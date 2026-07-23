@@ -13,6 +13,13 @@ var ErrDuplicateUID = errors.New("sabredav: duplicate UID index violation")
 // Use errors.Is to detect it rather than substring-matching error strings.
 var ErrAuth = errors.New("authentication failed: invalid credentials")
 
+// ErrHashNotSupported is returned when a provider does not support file checksum calculations.
+var ErrHashNotSupported = errors.New("checksum hash not supported")
+
+// ErrChecksumNotAvailable is returned when a checksum is not available for a specific file or resource.
+var ErrChecksumNotAvailable = errors.New("checksum not available")
+
+
 type FileMetadata struct {
 	ModifiedTime time.Time         `json:"modified_time,omitempty"`
 	Description  string            `json:"description,omitempty"`
