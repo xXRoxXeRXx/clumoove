@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -116,6 +117,14 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 	err = s.triggerJob(ctx, schedule)
 	if err != nil {
 		log.Printf("[Scheduler] Error triggering job for schedule %s: %v", schedule.ID, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			if deactErr := db.DeactivateSchedule(s.db, schedule.ID); deactErr != nil {
+				log.Printf("[Scheduler] Error deactivating schedule %s for missing job: %v", schedule.ID, deactErr)
+			} else {
+				log.Printf("[Scheduler] Deactivated schedule %s (linked %s %s no longer exists)", schedule.ID, schedule.TaskType, schedule.TaskID)
+			}
+			return
+		}
 		// For recurring cron jobs, DO NOT deactivate on transient trigger failure!
 		// Advance next_run_at so it retries automatically on the next interval.
 		if schedule.CronExpression.Valid {
