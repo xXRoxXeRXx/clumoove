@@ -212,11 +212,15 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	cleanTargetDir := cleanRelPath(job.TargetDir)
 	targetScanPaths := []string{cleanTargetDir}
 
-	targetRawMap, targetDirETags, _, err := e.listFiles(ctx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
+	targetRawMap, targetDirETags, tgtErrors, err := e.listFiles(ctx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Target file listing failed: %v", err))
 		return
 	}
+	if len(tgtErrors) > 0 {
+		log.Printf("[SyncEngine] Warning: encountered %d indexing errors on target for job %s (e.g. %v)\n", len(tgtErrors), syncJobID, tgtErrors[0])
+	}
+	log.Printf("[SyncEngine] Job %s target raw files listed: %d (targetScanPaths=%v)\n", syncJobID, len(targetRawMap), targetScanPaths)
 
 	// Map target paths to source-side relative paths and ensure cleanRelPath
 	targetMap := make(map[string]fileState)
