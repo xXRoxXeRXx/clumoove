@@ -324,14 +324,6 @@ func isFileMatchingTarget(src, tgt fileState) bool {
 		}
 	}
 
-	if src.ETag != "" && tgt.ETag != "" {
-		cleanSrcETag := strings.Trim(src.ETag, `"`)
-		cleanTgtETag := strings.Trim(tgt.ETag, `"`)
-		if cleanSrcETag != "" && cleanTgtETag != "" {
-			return cleanSrcETag == cleanTgtETag
-		}
-	}
-
 	if !src.LastModified.IsZero() && !tgt.LastModified.IsZero() {
 		diff := src.LastModified.Sub(tgt.LastModified)
 		if diff < 0 {
