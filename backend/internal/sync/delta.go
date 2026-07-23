@@ -173,28 +173,6 @@ func (e *Engine) listFiles(
 		errsMu.Unlock()
 	}
 
-	skipSubtree := func(dirPath string) {
-		cleanDir := cleanRelPath(dirPath)
-		prefix := cleanDir
-		if prefix != "/" && !strings.HasSuffix(prefix, "/") {
-			prefix += "/"
-		}
-		mu.Lock()
-		defer mu.Unlock()
-		for fp, fs := range prevFileStates {
-			cfp := cleanRelPath(fp)
-			if cfp == cleanDir || (prefix != "/" && strings.HasPrefix(cfp, prefix)) {
-				fileMap[cfp] = fs
-			}
-		}
-		for dp, etag := range prevDirETags {
-			cdp := cleanRelPath(dp)
-			if cdp == cleanDir || (prefix != "/" && strings.HasPrefix(cdp, prefix)) {
-				dirETagMap[cdp] = etag
-			}
-		}
-	}
-
 	type listJob struct {
 		dirPath string
 		etag    string
@@ -214,12 +192,6 @@ func (e *Engine) listFiles(
 		}
 		visited[cdir] = true
 		visitedMu.Unlock()
-
-		if etag != "" && prevDirETags[cdir] != "" && etag == prevDirETags[cdir] {
-			log.Printf("[SyncEngine] Hierarchical ETag match for directory %s: skipping subtree scan\n", cdir)
-			skipSubtree(cdir)
-			return
-		}
 
 		wg.Add(1)
 		jobsChan <- listJob{dirPath: dirPath, etag: etag}
