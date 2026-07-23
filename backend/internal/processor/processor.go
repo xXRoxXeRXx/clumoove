@@ -659,6 +659,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	if mig.SourceProvider == "dropbox" {
 		sourceAlgo = "DROPBOX"
+	} else if mig.SourceProvider == "google" {
+		sourceAlgo = "MD5"
 	}
 
 	// Instantiate source hasher
@@ -682,6 +684,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	} else if mig.TargetProvider == "s3" {
 		targetAlgo = "SHA256"
 		targetHasher = sha256.New()
+	} else if mig.TargetProvider == "google" {
+		targetAlgo = "MD5"
+		targetHasher = md5.New()
 	} else {
 		targetAlgo = "SHA1"
 		targetHasher = sha1.New()
@@ -696,7 +701,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		activeWriter = io.MultiWriter(sourceHasher, targetHasher)
 	}
 
-	// Setup progress notification channel
 	progressChan := make(chan int64, 10)
 	progressDone := make(chan struct{})
 
@@ -883,10 +887,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		// Retrying non-retryable errors ("checksum not available", "not supported")
 		// adds 4s of useless sleep per file, so we break immediately for those.
 		for hashAttempt := 0; hashAttempt < 3; hashAttempt++ {
-			if mig.TargetProvider != "webdav" {
+			if mig.TargetProvider != "webdav" && mig.TargetProvider != "smb" {
 				targetHashVal, errTargetHash = targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
 			} else {
-				errTargetHash = fmt.Errorf("webdav target hash not supported")
+				errTargetHash = fmt.Errorf("checksum not available")
 				break
 			}
 			if (errTargetHash == nil && targetHashVal != "") || isNonRetryableHashError(errTargetHash) {

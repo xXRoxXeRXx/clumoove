@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"path"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -826,7 +825,7 @@ func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePat
 	return "DROPBOX:" + res.Hash, nil
 }
 
-var globalDropboxCreatedDirs sync.Map
+var globalDropboxCreatedDirs = newBoundedDirCache(5000)
 
 func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -841,7 +840,7 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 	}
 
 	globalDirKey := p.AccessToken + "|" + cleanDir
-	if _, exists := globalDropboxCreatedDirs.Load(globalDirKey); exists {
+	if globalDropboxCreatedDirs.Contains(globalDirKey) {
 		return nil
 	}
 
@@ -867,7 +866,7 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		globalDropboxCreatedDirs.Store(globalDirKey, true)
+		globalDropboxCreatedDirs.Add(globalDirKey)
 		return nil
 	}
 
@@ -877,7 +876,7 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&errResp); err == nil {
 			if strings.Contains(errResp.ErrorSummary, "path/conflict") {
-				globalDropboxCreatedDirs.Store(globalDirKey, true)
+				globalDropboxCreatedDirs.Add(globalDirKey)
 				return nil
 			}
 		}

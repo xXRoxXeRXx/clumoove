@@ -688,7 +688,7 @@ func (p *davProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string,
 
 // globalNextcloudCreatedDirs caches directory existence across Nextcloud provider instances within the worker process.
 // Key format: BaseURL + "|" + Username + "|" + resourceType + ":" + currentPath
-var globalNextcloudCreatedDirs sync.Map
+var globalNextcloudCreatedDirs = newBoundedDirCache(5000)
 
 func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	if err := p.assertResourceType(resourceType); err != nil {
@@ -718,7 +718,7 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 		if _, exists := p.createdDirs.Load(localDirKey); exists {
 			continue
 		}
-		if _, exists := globalNextcloudCreatedDirs.Load(globalDirKey); exists {
+		if globalNextcloudCreatedDirs.Contains(globalDirKey) {
 			p.createdDirs.Store(localDirKey, true)
 			continue
 		}
@@ -759,7 +759,7 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 		}
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
 			p.createdDirs.Store(localDirKey, true)
-			globalNextcloudCreatedDirs.Store(globalDirKey, true)
+			globalNextcloudCreatedDirs.Add(globalDirKey)
 		} else {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
@@ -841,7 +841,7 @@ func (p *davProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 		localDirKey := resourceType + ":" + dirPath
 		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
 		p.createdDirs.Store(localDirKey, true)
-		globalNextcloudCreatedDirs.Store(globalDirKey, true)
+		globalNextcloudCreatedDirs.Add(globalDirKey)
 	} else {
 		return fmt.Errorf("failed to create directory %s, status: %d", dirPath, resp.StatusCode)
 	}

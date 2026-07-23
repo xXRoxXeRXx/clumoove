@@ -475,7 +475,7 @@ func (p *S3Provider) GetFileHash(ctx context.Context, resourceType, filePath str
 		}
 	}
 
-	return "", nil
+	return "", fmt.Errorf("checksum not available")
 }
 
 func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {

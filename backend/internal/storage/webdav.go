@@ -562,14 +562,12 @@ func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath
 	if err := p.assertFilesOnly(resourceType); err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
 	return "", ErrChecksumNotAvailable
 }
 
 // globalWebDAVCreatedDirs caches directory existence across WebDAV provider instances within the worker process.
 // Key format: BaseURL + "|" + Username + "|" + currentPath
-var globalWebDAVCreatedDirs sync.Map
+var globalWebDAVCreatedDirs = newBoundedDirCache(5000)
 
 func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	if err := p.assertFilesOnly(resourceType); err != nil {
@@ -593,7 +591,7 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 		if _, exists := p.createdDirs.Load(localDirKey); exists {
 			continue
 		}
-		if _, exists := globalWebDAVCreatedDirs.Load(globalDirKey); exists {
+		if globalWebDAVCreatedDirs.Contains(globalDirKey) {
 			p.createdDirs.Store(localDirKey, true)
 			continue
 		}
@@ -618,7 +616,7 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 		}
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
 			p.createdDirs.Store(localDirKey, true)
-			globalWebDAVCreatedDirs.Store(globalDirKey, true)
+			globalWebDAVCreatedDirs.Add(globalDirKey)
 		} else {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
@@ -662,7 +660,7 @@ func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 		localDirKey := dirPath
 		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
 		p.createdDirs.Store(localDirKey, true)
-		globalWebDAVCreatedDirs.Store(globalDirKey, true)
+		globalWebDAVCreatedDirs.Add(globalDirKey)
 	} else {
 		return fmt.Errorf("failed to create directory %s, status: %d", dirPath, resp.StatusCode)
 	}

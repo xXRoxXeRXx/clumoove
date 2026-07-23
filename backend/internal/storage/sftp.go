@@ -2,8 +2,6 @@ package storage
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -412,36 +410,7 @@ func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath s
 	if resourceType != "files" {
 		return "", fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return "", p.handleError(err)
-	}
-
-	if p.sshClient == nil || p.sftpClient == nil {
-		return "", nil
-	}
-
-	cleanPath := p.cleanPath(filePath)
-
-	// Compute the SHA-1 in-process by streaming the remote file through the
-	// SFTP client instead of shelling out to `sha1sum` over an SSH session.
-	// This removes the only remote-shell dependency and any quoting concerns.
-	f, err := p.sftpClient.Open(cleanPath)
-	if err != nil {
-		// A missing/uned file is not a hash error; mirror the prior
-		// behaviour of returning an empty hash in that case.
-		return "", nil
-	}
-	defer f.Close()
-
-	h := sha1.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", nil
-	}
-
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return "", fmt.Errorf("checksum not available")
 }
 
 func (p *SFTPProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
@@ -457,7 +426,7 @@ func (p *SFTPProvider) CreateParentDirectories(ctx context.Context, resourceType
 	return p.CreateDirectory(ctx, resourceType, dir)
 }
 
-var globalSFTPCreatedDirs sync.Map
+var globalSFTPCreatedDirs = newBoundedDirCache(5000)
 
 func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
@@ -470,7 +439,7 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 	}
 
 	globalDirKey := p.Host + "|" + p.Username + "|" + cleanDirPath
-	if _, exists := globalSFTPCreatedDirs.Load(globalDirKey); exists {
+	if globalSFTPCreatedDirs.Contains(globalDirKey) {
 		return nil
 	}
 
@@ -485,7 +454,7 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 		return p.handleError(fmt.Errorf("sftp mkdirall failed: %w", err))
 	}
 
-	globalSFTPCreatedDirs.Store(globalDirKey, true)
+	globalSFTPCreatedDirs.Add(globalDirKey)
 	return nil
 }
 
