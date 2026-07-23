@@ -140,6 +140,26 @@ func MarkTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHas
 	return err
 }
 
+func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID string) error {
+	query := `
+		UPDATE tasks
+		SET checksum_verified = TRUE, updated_at = CURRENT_TIMESTAMP
+		WHERE migration_id = $1 AND checksum_verified = FALSE
+	`
+	_, err := db.ExecContext(ctx, query, migrationID)
+	return err
+}
+
+func MarkAllSyncTasksVerified(db *sql.DB, ctx context.Context, syncJobID string) error {
+	query := `
+		UPDATE sync_tasks
+		SET checksum_verified = TRUE, updated_at = CURRENT_TIMESTAMP
+		WHERE sync_job_id = $1 AND checksum_verified = FALSE
+	`
+	_, err := db.ExecContext(ctx, query, syncJobID)
+	return err
+}
+
 func UpdateTaskFilePath(db *sql.DB, taskID, newFilePath string) error {
 	query := `UPDATE tasks SET file_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	_, err := db.Exec(query, newFilePath, taskID)
