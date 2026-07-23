@@ -236,8 +236,15 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		val = "true"
 	}
 
+	needsSetup, err := db.IsSetupRequired(s.db)
+	if err != nil {
+		log.Printf("handleGetSettings: failed to check setup status: %v\n", err)
+		needsSetup = false
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"registrations_enabled": val,
+		"needs_setup":           needsSetup,
 		"local_storage_enabled": os.Getenv("LOCAL_STORAGE_ROOT") != "",
 		"oauth_providers":       oauth.ConfiguredProviders(),
 	})
