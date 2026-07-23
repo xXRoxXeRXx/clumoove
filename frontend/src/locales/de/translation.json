@@ -38,6 +38,9 @@
     "select": "Sprache auswählen"
   },
   "auth": {
+    "setupAdminTitle": "Administrator-Erstanlage",
+    "setupAdminSubtitle": "Willkommen bei Clumoove! Erstelle das erste Administrator-Konto, um zu beginnen.",
+    "createAdminAccount": "Administrator anlegen",
     "welcomeBack": "Willkommen zurück",
     "createAccount": "Konto erstellen",
     "portalLogin": "Clumoove Anmeldung",
@@ -464,6 +467,7 @@
     "transfer": "ÜBERTRAGUNG"
   },
   "errors": {
+    "SETUP_ALREADY_COMPLETED": "Die Administrator-Erstanlage wurde bereits durchgeführt.",
     "UNKNOWN": "Ein unerwarteter Fehler ist aufgetreten.",
     "INVALID_BODY": "Ungültige Anfrage.",
     "UNAUTHORIZED": "Keine Berechtigung.",

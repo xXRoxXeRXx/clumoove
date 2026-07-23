@@ -1,13 +1,9 @@
 package db
 
 import (
-	"crypto/rand"
 	"database/sql"
 	"fmt"
-	"log"
 	"time"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 type User struct {
@@ -246,44 +242,14 @@ func CountActiveAdmins(database *sql.DB) (int, error) {
 	return n, err
 }
 
-func EnsureAdminUser(database *sql.DB, email, displayName string) (created bool, generatedPassword string, err error) {
-	var existingID string
-	var existingRole string
-	err = database.QueryRow(`SELECT id, role FROM users WHERE email = $1`, email).Scan(&existingID, &existingRole)
-	if err == sql.ErrNoRows {
-		pass, genErr := generateRandomPassword(24)
-		if genErr != nil {
-			return false, "", genErr
-		}
-		hash, hashErr := bcrypt.GenerateFromPassword([]byte(pass), 12)
-		if hashErr != nil {
-			return false, "", hashErr
-		}
-		dn := displayName
-		if dn == "" {
-			dn = email
-		}
-		u, createErr := CreateUserWithRole(database, email, string(hash), dn, "ADMIN", true)
-		if createErr != nil {
-			return false, "", createErr
-		}
-		if u.ID == "" {
-			return false, "", fmt.Errorf("admin user creation returned empty id")
-		}
-		return true, pass, nil
-	}
+// IsSetupRequired checks if there are no users in the database, requiring initial admin setup.
+func IsSetupRequired(database *sql.DB) (bool, error) {
+	var count int
+	err := database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
 	if err != nil {
-		return false, "", err
+		return false, err
 	}
-
-	if existingRole != "ADMIN" {
-		log.Printf("WARNING: bootstrap admin email %q already exists with role %q; refusing to auto-promote (possible pre-registration collision)", email, existingRole)
-		return false, "", nil
-	}
-	if _, err := database.Exec(`UPDATE users SET active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, existingID); err != nil {
-		return false, "", err
-	}
-	return false, "", nil
+	return count == 0, nil
 }
 
 func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
@@ -476,16 +442,4 @@ func UpdateUserAvatar(db *sql.DB, id string, data []byte, mime string) error {
 func DeleteUserAvatar(db *sql.DB, id string) error {
 	_, err := db.Exec(`UPDATE users SET avatar = NULL, avatar_mime = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id)
 	return err
-}
-
-func generateRandomPassword(n int) (string, error) {
-	const chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*"
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	for i := range b {
-		b[i] = chars[int(b[i])%len(chars)]
-	}
-	return string(b), nil
 }

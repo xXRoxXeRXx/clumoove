@@ -132,49 +132,17 @@ User-supplied provider URLs are validated before any egress (`storage/ssrf.go`):
 
 ---
 
-## 11. Admin Bootstrap
+## 11. Admin Setup Wizard
 
-`ADMIN_EMAIL`/`ADMIN_DISPLAY_NAME` create an initial ADMIN on first start (idempotent across restarts).
-A strong random 24-char password is generated and printed **exactly once** to stdout;
-`must_change_password = TRUE`.
+On a fresh installation where no users exist in the database (`COUNT(*) == 0`), Clumoove automatically prompts for initial administrator setup via the Web UI.
 
-**Security:** an existing non-ADMIN account with the configured email is **never** auto-promoted (this
-prevents an attacker who pre-registers the bootstrap email via open signup from being escalated to
-ADMIN). Only an account already `ADMIN` is reactivated.
+### 11.1 Workflow
 
-### 11.1 How the admin is set
-
-1. On API startup (`backend/cmd/api/main.go:285`), the bootstrap runs only if `ADMIN_EMAIL` is set.
-2. `db.EnsureAdminUser` (`backend/internal/db/db.go:1685`) is called:
-   - If the email does **not** exist → a new `ADMIN` is created with a system-generated random
-     24-char password (bcrypt cost 12). `must_change_password = TRUE`.
-   - If the email exists but is already `ADMIN` → it is only re-activated (idempotent, no new password).
-   - If the email exists but is **not** `ADMIN` → bootstrap refuses to auto-promote and logs a warning
-     (prevents signup-based privilege escalation).
-3. The generated password is returned to the caller and printed **once** to stdout at
-   `backend/cmd/api/main.go:291`:
-   ```
-   BOOTSTRAP ADMIN created — email=<email> password=<random> (rotate on first login)
-   ```
-
-### 11.2 Where the password is visible (and where it is NOT)
-
-- **Visible:** the API process / container **stdout logs**, exactly once, at first boot. After that the
-  plaintext password is gone — it is never persisted (only the bcrypt hash lives in `users.password_hash`).
-  Capture it from the startup log output, then log in and change it immediately.
-- **Not visible:** the password is not returned by any API endpoint, not written to a file, and is not
-  recoverable afterwards (only a password reset / forced change via `must_change_password` is possible).
-- Because `must_change_password = TRUE`, the admin is forced to set a new password on first login
-  (`AuthMiddlewareAllowMustChange` permits reaching the change-password endpoint before rotating).
-
-### 11.3 Checklist for operators
-
-- Set `ADMIN_EMAIL` (and optionally `ADMIN_DISPLAY_NAME`) before first boot.
-- Grab the one-time password from the API startup logs.
-- Log in as the admin and change the password immediately.
-- Do **not** pre-register `ADMIN_EMAIL` via open user signup, or bootstrap will refuse to claim it.
-- To skip bootstrap entirely, leave `ADMIN_EMAIL` empty and promote a user to ADMIN from an existing
-  admin session.
+1. The Web UI checks `/api/auth/setup-status` (or `/api/settings`), receiving `needs_setup: true`.
+2. The user enters their Display Name, Email, and Password directly in the Web UI.
+3. Submitting sends a `POST /api/auth/setup-admin` request.
+4. The API server verifies `IsSetupRequired(db) == true`, creates the account with role `ADMIN`, issues access/refresh tokens, and logs the administrator in immediately.
+5. Once created, any subsequent calls to `/api/auth/setup-admin` return `403 Forbidden` (`SETUP_ALREADY_COMPLETED`).
 
 ---
 

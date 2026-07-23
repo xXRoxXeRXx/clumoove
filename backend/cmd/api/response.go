@@ -101,6 +101,7 @@ const (
 	ErrWsTokenInsecure          APIErrorCode = "WS_TOKEN_INSECURE"
 	ErrWsTokenMissing           APIErrorCode = "WS_TOKEN_MISSING"
 	ErrWsTokenInvalid           APIErrorCode = "WS_TOKEN_INVALID"
+	ErrSetupAlreadyCompleted    APIErrorCode = "SETUP_ALREADY_COMPLETED"
 	ErrInternalError            APIErrorCode = "INTERNAL_ERROR"
 
 	ErrUserDisabled                       APIErrorCode = "USER_DISABLED"

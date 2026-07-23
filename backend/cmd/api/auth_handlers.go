@@ -1022,3 +1022,92 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 func errorsIsEmailTaken(err error) bool {
 	return err == db.ErrEmailTaken
 }
+
+type SetupAdminRequest struct {
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	DisplayName string `json:"display_name"`
+}
+
+func (s *APIServer) handleGetSetupStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	needsSetup, err := db.IsSetupRequired(s.db)
+	if err != nil {
+		log.Printf("handleGetSetupStatus: failed to check setup status: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"needs_setup": needsSetup})
+}
+
+func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), registerRateLimit, registerRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	needsSetup, err := db.IsSetupRequired(s.db)
+	if err != nil {
+		log.Printf("handleSetupAdmin: failed to check setup status: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !needsSetup {
+		writeError(w, http.StatusForbidden, ErrSetupAlreadyCompleted)
+		return
+	}
+
+	var req SetupAdminRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+
+	if req.Email == "" || req.Password == "" || req.DisplayName == "" {
+		writeError(w, http.StatusBadRequest, ErrMissingRequiredFields)
+		return
+	}
+
+	if _, err := mail.ParseAddress(req.Email); err != nil {
+		writeError(w, http.StatusBadRequest, ErrEmailInvalid)
+		return
+	}
+
+	if len(req.Password) < 8 {
+		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
+		return
+	}
+
+	passHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		log.Printf("handleSetupAdmin: password hashing error: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, "ADMIN", false)
+	if err != nil {
+		log.Printf("handleSetupAdmin: failed to create admin user: %v\n", err)
+		if db.IsUniqueViolation(err) {
+			stillNeedsSetup, checkErr := db.IsSetupRequired(s.db)
+			if checkErr == nil && !stillNeedsSetup {
+				writeError(w, http.StatusForbidden, ErrSetupAlreadyCompleted)
+				return
+			}
+			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditRegistration, req.Email, u.ID, map[string]interface{}{"role": "ADMIN", "setup": true})
+	s.issueTokens(w, r, u)
+}
