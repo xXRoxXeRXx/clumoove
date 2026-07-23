@@ -200,8 +200,8 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 								}
 							}
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
-							log.Printf("[VERIFIER] [ETAG_INFO] %s | Source (%s): %s | Target (%s): %s — ETags are server-instance-specific; size (%d bytes) verified\n",
-								targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget, task.FileSize)
+							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
+								targetPath, sourceAlgo, cleanSource, cleanTarget, task.FileSize)
 							_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 						} else {
 							log.Printf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — size (%d bytes) verified\n",
@@ -395,8 +395,8 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 								}
 							}
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
-							log.Printf("[VERIFIER] [ETAG_INFO] %s | Source (%s): %s | Target (%s): %s — ETags are server-instance-specific; size (%d bytes) verified\n",
-								targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget, task.FileSize)
+							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
+								targetPath, sourceAlgo, cleanSource, cleanTarget, task.FileSize)
 							_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 							_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 						} else {
