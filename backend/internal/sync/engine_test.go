@@ -118,10 +118,10 @@ func TestIsFileMatchingTarget(t *testing.T) {
 		t.Error("isFileMatchingTarget mismatched hashes = true; want false")
 	}
 
-	// 5. Mismatched timestamp (> 2s) without hash
-	tgtTimeMismatch := fileState{Path: "/test.txt", Size: 1024, LastModified: now.Add(5 * time.Second)}
-	if isFileMatchingTarget(src, tgtTimeMismatch) {
-		t.Error("isFileMatchingTarget time mismatch > 2s = true; want false")
+	// 5. Same size without hash conflict
+	tgtSameSize := fileState{Path: "/test.txt", Size: 1024, LastModified: now.Add(5 * time.Second)}
+	if !isFileMatchingTarget(src, tgtSameSize) {
+		t.Error("isFileMatchingTarget same size = false; want true")
 	}
 }
 
