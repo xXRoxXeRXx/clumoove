@@ -445,12 +445,17 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 			size = 0 // Google Workspace files do not have a pre-determined export size
 		}
 
+		hashVal := f.Md5Checksum
+		if hashVal != "" && !strings.HasPrefix(strings.ToUpper(hashVal), "MD5:") {
+			hashVal = "MD5:" + hashVal
+		}
+
 		return CloudResource{
 			Path:         path,
 			Name:         displayName,
 			Size:         size,
 			IsDir:        isDir,
-			Hash:         f.Md5Checksum,
+			Hash:         hashVal,
 			LastModified: modTime,
 			Metadata: FileMetadata{
 				Description: f.Description,
@@ -674,7 +679,13 @@ func (p *GoogleProvider) GetFileHash(ctx context.Context, resourceType, filePath
 		if err != nil {
 			return "", err
 		}
-		return res.Hash, nil
+		if res.Hash != "" {
+			if !strings.HasPrefix(strings.ToUpper(res.Hash), "MD5:") {
+				return "MD5:" + res.Hash, nil
+			}
+			return res.Hash, nil
+		}
+		return "", nil
 	}
 	return "", nil
 }
@@ -693,7 +704,7 @@ func (p *GoogleProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	return p.CreateDirectory(ctx, resourceType, dirPath)
 }
 
-var globalGoogleCreatedDirs sync.Map
+var globalGoogleCreatedDirs = newBoundedDirCache(5000)
 
 func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -703,7 +714,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 	}
 
 	globalDirKey := dirPath
-	if _, exists := globalGoogleCreatedDirs.Load(globalDirKey); exists {
+	if globalGoogleCreatedDirs.Contains(globalDirKey) {
 		return nil
 	}
 
@@ -733,7 +744,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 			currentID = res.Files[0].Id
 		}
 	}
-	globalGoogleCreatedDirs.Store(globalDirKey, true)
+	globalGoogleCreatedDirs.Add(globalDirKey)
 	return nil
 }
 
