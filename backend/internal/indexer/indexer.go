@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"strconv"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/queue"
+	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
 
@@ -417,24 +417,7 @@ func marshalString(s string) string {
 
 // credURLRe matches the userinfo portion of a URL (scheme://user:pass@host) so it
 // can be redacted. Embedded credentials in connection-error strings are stripped
-// before being persisted or returned to the client.
-var credURLRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s:@]+@`)
-
-// credQueryRe matches credential-bearing URL query values so they are redacted
-// before being persisted or returned to the client. This covers:
-//   - base_url=… : the short-lived, bearer-authenticated Google Photos Picker
-//     download URL that is embedded verbatim into task FilePath values;
-//   - access_token=… / token=… : OAuth tokens that may leak into error strings.
-// The value (everything up to the next & or end of string) is replaced with a
-// redaction marker so the host/path diagnostics remain useful.
-var credQueryRe = regexp.MustCompile(`(?i)((?:base_url|access_token|token)=)[^&\s]+`)
-
 // sanitizeError redacts credentials from any URLs embedded in an error message.
-// It strips user:pass userinfo (credURLRe) and credential-bearing query values
-// (credQueryRe, e.g. the Google Photos Picker base_url) before the message is
-// persisted or returned to the client. The rest of the message is left intact so
-// operators still get useful diagnostics (host/path and the failure type).
 func sanitizeError(msg string) string {
-	msg = credURLRe.ReplaceAllString(msg, "${1}***:***@")
-	return credQueryRe.ReplaceAllString(msg, "${1}***")
+	return sanitize.SanitizeError(msg)
 }

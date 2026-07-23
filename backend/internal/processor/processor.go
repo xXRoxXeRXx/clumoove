@@ -71,6 +71,10 @@ type Processor struct {
 	// providerCache caches storage.StorageProvider instances per migration role
 	// to eliminate TCP/TLS/SSH/SMB connection setup overhead on every file task.
 	providerCache sync.Map
+	// verifyingEntities tracks currently running checksum verification passes
+	// (keyed by "mig:<id>" or "sync:<id>") to prevent concurrent ticks from
+	// spawning duplicate verification passes for the same entity.
+	verifyingEntities sync.Map
 }
 
 type cachedProviderEntry struct {
@@ -1371,10 +1375,11 @@ func isNonRetryableHashError(err error) bool {
 	if err == nil {
 		return true
 	}
+	if errors.Is(err, storage.ErrHashNotSupported) || errors.Is(err, storage.ErrChecksumNotAvailable) {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "checksum not available") ||
 		strings.Contains(msg, "not supported") ||
-		strings.Contains(msg, "not implemented") ||
-		strings.Contains(msg, "file not found") ||
-		strings.Contains(msg, "not found")
+		strings.Contains(msg, "not implemented")
 }

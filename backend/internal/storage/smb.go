@@ -406,7 +406,7 @@ func (p *SMBProvider) SupportsAtomicRename() bool {
 }
 
 func (p *SMBProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
-	return "", fmt.Errorf("checksum not available")
+	return "", ErrChecksumNotAvailable
 }
 
 func (p *SMBProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
