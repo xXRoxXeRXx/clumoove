@@ -241,17 +241,6 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			sourceHashStr = cleanHash
 			sourceAlgo = algo
 		}
-	} else {
-		if srcProvider != "webdav" {
-			if fetchedHash, err := srcClient.GetFileHash(ctx, task.ResourceType, srcPath); err == nil {
-				algo, cleanHash := storage.ParseHashString(fetchedHash)
-				if algo != "ETAG" {
-					task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
-					sourceHashStr = cleanHash
-					sourceAlgo = algo
-				}
-			}
-		}
 	}
 
 	if srcProvider == "dropbox" {
@@ -379,29 +368,19 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		}
 	}
 
-	// Verify Target Hash
-	var finalTargetHash string
+	// Stream Hash Registration & Fast Task Completion
+	var finalTargetHashVal string
 	if targetHasher != nil {
-		finalTargetHash = fmt.Sprintf("%x", targetHasher.Sum(nil))
+		finalTargetHashVal = fmt.Sprintf("%x", targetHasher.Sum(nil))
 	} else if sourceHasher != nil {
-		finalTargetHash = fmt.Sprintf("%x", sourceHasher.Sum(nil))
+		finalTargetHashVal = fmt.Sprintf("%x", sourceHasher.Sum(nil))
 	}
-
-	if tgtProvider != "webdav" {
-		targetVerifyHash, terr := tgtClient.GetFileHash(ctx, task.ResourceType, tgtPath)
-		if terr == nil && targetVerifyHash != "" {
-			_, cleanTgtHash := storage.ParseHashString(targetVerifyHash)
-			_, cleanExpected := storage.ParseHashString(finalTargetHash)
-			if cleanTgtHash != cleanExpected {
-				return fmt.Errorf("hash verification failed on target: expected %s, got %s", cleanExpected, cleanTgtHash)
-			}
-		}
-	}
+	workerHash := fmt.Sprintf("%s:%s", sourceAlgo, finalTargetHashVal)
 
 	// Success
 	task.Status = "COMPLETED"
-	task.WorkerHash = sql.NullString{String: finalTargetHash, Valid: true}
-	task.TargetHash = sql.NullString{String: finalTargetHash, Valid: true}
+	task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
+	task.TargetHash = sql.NullString{String: workerHash, Valid: true}
 	_ = db.UpdateTaskStatus(p.db, task)
 	_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, task.FileSize) // filesDelta=1, changedDelta=1, bytesDelta=task.FileSize
 	return nil

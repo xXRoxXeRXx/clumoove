@@ -239,15 +239,15 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 									cfg.OnVerified(task, targetPath, targetHash)
 								}
 							} else {
-								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s\n",
+								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
 								task.Status = "FAILED"
+								task.NextRetryAt = sql.NullTime{Time: time.Now(), Valid: true}
 								task.ErrorMessage = sql.NullString{
 									String: fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget),
 									Valid:  true,
 								}
 								_ = db.UpdateTaskStatus(p.db, task)
-								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 							}
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
 							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",

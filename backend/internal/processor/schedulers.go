@@ -76,9 +76,9 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 		WHERE t.status = 'FAILED' 
 		  AND t.next_retry_at <= $1
 		  AND (
-		    (t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING'))
+		    (t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING', 'VERIFYING'))
 		    OR
-		    (t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING'))
+		    (t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING', 'VERIFYING'))
 		  )
 	`
 	rows, err := p.db.QueryContext(ctx, query, time.Now())
@@ -96,7 +96,7 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 
 		updateQuery := `
 			UPDATE tasks
-			SET status = 'PENDING', next_retry_at = NULL
+			SET status = 'PENDING', next_retry_at = NULL, checksum_verified = FALSE
 			WHERE id = $1
 		`
 		_, err := p.db.ExecContext(ctx, updateQuery, taskID)
