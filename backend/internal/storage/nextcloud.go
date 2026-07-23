@@ -851,6 +851,7 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 
 	// Try lightweight HEAD request first (Nextcloud returns OC-Checksum in HTTP header directly)
+	var fallbackETag string
 	headReq, err := p.newRequest("HEAD", u, nil)
 	if err == nil {
 		headReq = headReq.WithContext(ctx)
@@ -861,12 +862,11 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 					return chk, nil
 				}
 				if etag := headResp.Header.Get("OC-ETag"); etag != "" {
-					return "ETAG:" + strings.Trim(etag, `"`), nil
+					fallbackETag = "ETAG:" + strings.Trim(etag, `"`)
+				} else if etag := headResp.Header.Get("ETag"); etag != "" {
+					fallbackETag = "ETAG:" + strings.Trim(etag, `"`)
 				}
-				if etag := headResp.Header.Get("ETag"); etag != "" {
-					return "ETAG:" + strings.Trim(etag, `"`), nil
-				}
-				// 200 OK without OC-Checksum/ETag: fall through to PROPFIND for XML properties
+				// 200 OK without OC-Checksum: fall through to PROPFIND for XML <oc:checksums/>
 			} else if headResp.StatusCode == http.StatusNotFound {
 				return "", fmt.Errorf("file not found: %s", filePath)
 			} else if headResp.StatusCode == http.StatusUnauthorized {
@@ -888,6 +888,9 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 
 	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
 	if err != nil {
+		if fallbackETag != "" {
+			return fallbackETag, nil
+		}
 		return "", err
 	}
 	req.Header.Set("Depth", "0")
@@ -896,6 +899,9 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
+		if fallbackETag != "" {
+			return fallbackETag, nil
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -907,12 +913,18 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 		return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if fallbackETag != "" {
+			return fallbackETag, nil
+		}
 		return "", fmt.Errorf("PROPFIND for hash failed: status %d", resp.StatusCode)
 	}
 
 	var multistatus XMLMultistatus
 	decoder := xml.NewDecoder(resp.Body)
 	if err := decoder.Decode(&multistatus); err != nil {
+		if fallbackETag != "" {
+			return fallbackETag, nil
+		}
 		return "", err
 	}
 
@@ -922,7 +934,9 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 			if strings.Contains(pstat.Status, "200 OK") {
 				if pstat.Prop.Checksums != nil {
 					for _, checksum := range pstat.Prop.Checksums.Checksum {
-						return checksum, nil
+						if checksum != "" {
+							return checksum, nil
+						}
 					}
 				}
 				if pstat.Prop.GetContentHash != "" {
@@ -933,6 +947,10 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 				}
 			}
 		}
+	}
+
+	if fallbackETag != "" {
+		return fallbackETag, nil
 	}
 
 	return "", fmt.Errorf("checksum not available")
