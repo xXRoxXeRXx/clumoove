@@ -635,16 +635,20 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	if task.SourceHash.Valid && task.SourceHash.String != "" && mig.SourceProvider != "webdav" {
 		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
-		sourceHashStr = cleanHash
-		sourceAlgo = algo
+		if algo != "ETAG" {
+			sourceHashStr = cleanHash
+			sourceAlgo = algo
+		}
 	} else {
 		// Fallback to fetch hash directly
 		if mig.SourceProvider != "webdav" {
 			if fetchedHash, err := sourceClient.GetFileHash(ctx, task.ResourceType, task.FilePath); err == nil {
-				task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
 				algo, cleanHash := storage.ParseHashString(fetchedHash)
-				sourceHashStr = cleanHash
-				sourceAlgo = algo
+				if algo != "ETAG" {
+					task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
+					sourceHashStr = cleanHash
+					sourceAlgo = algo
+				}
 			}
 		}
 	}
