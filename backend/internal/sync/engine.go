@@ -427,6 +427,12 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 				}
 			}
 		}
+
+		if len(tasks) <= 5 && len(tasks) > 0 {
+			last := tasks[len(tasks)-1]
+			log.Printf("[SyncEngine] Delta task #%d: path=%s action=%s side=%s (hasSrc=%v, hasTgt=%v, srcSize=%d, tgtSize=%d, srcMtime=%v, tgtMtime=%v)\n",
+				len(tasks), last.filePath, last.action, last.side, hasSrc, hasTgt, srcFile.Size, tgtFile.Size, srcFile.LastModified, tgtFile.LastModified)
+		}
 	}
 
 	totalCreatedTasks := len(renameTasks) + len(tasks)
