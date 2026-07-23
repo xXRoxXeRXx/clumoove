@@ -856,6 +856,12 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 		headReq = headReq.WithContext(ctx)
 		if headResp, err := p.HTTPClient.Do(headReq); err == nil {
 			headResp.Body.Close()
+			if headResp.StatusCode == http.StatusNotFound {
+				return "", fmt.Errorf("file not found: %s", filePath)
+			}
+			if headResp.StatusCode == http.StatusUnauthorized {
+				return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)
+			}
 			if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
 				return chk, nil
 			}
@@ -884,8 +890,8 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 	}
 	defer resp.Body.Close()
 
-	if chk := resp.Header.Get("OC-Checksum"); chk != "" {
-		return chk, nil
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("file not found: %s", filePath)
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)

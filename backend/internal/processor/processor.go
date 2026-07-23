@@ -1367,5 +1367,7 @@ func isNonRetryableHashError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "checksum not available") ||
 		strings.Contains(msg, "not supported") ||
-		strings.Contains(msg, "not implemented")
+		strings.Contains(msg, "not implemented") ||
+		strings.Contains(msg, "file not found") ||
+		strings.Contains(msg, "not found")
 }
