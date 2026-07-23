@@ -345,10 +345,8 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 			srcDeleted := !hasSrc && hasPrevSrc
 			tgtDeleted := !hasTgt && hasPrevTgt
 
-			// On the very first pass, files that exist on both sides and match in content/size/hash
-			// require no action. If they exist on both sides but do NOT match, fall through to
-			// sync/conflict handling so they are brought in sync.
-			if isFirstPass && hasSrc && hasTgt && inSyncDirectMatch {
+			// If files exist on both sides and match in content/size/hash, no action is needed.
+			if hasSrc && hasTgt && inSyncDirectMatch {
 				// Both exist and match — record state only, no task needed.
 				continue
 			}
