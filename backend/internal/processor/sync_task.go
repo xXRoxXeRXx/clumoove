@@ -106,6 +106,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			if err != nil {
 				return fmt.Errorf("failed to delete source file: %w", err)
 			}
+			pruneEmptyParentDirectories(ctx, sourceClient, task.ResourceType, task.FilePath, "/")
 		} else {
 			targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
 			if err != nil {
@@ -120,6 +121,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			if err != nil {
 				return fmt.Errorf("failed to delete target file: %w", err)
 			}
+			pruneEmptyParentDirectories(ctx, targetClient, task.ResourceType, tgtPath, job.TargetDir)
 		}
 
 		// Success
@@ -565,5 +567,25 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		} else {
 			p.recoveryAttempts.Store(id, recoveryState{lastAttempt: time.Now(), attempts: ra.attempts + 1})
 		}
+	}
+}
+
+// pruneEmptyParentDirectories recursively checks parent directories of a deleted file and removes any that are empty.
+func pruneEmptyParentDirectories(ctx context.Context, client storage.StorageProvider, resourceType, filePath, stopDir string) {
+	stopDir = path.Clean(stopDir)
+	currDir := path.Clean(path.Dir(filePath))
+
+	for currDir != "/" && currDir != "." && currDir != stopDir {
+		items, err := client.GetDirectoryListing(ctx, resourceType, currDir)
+		if err != nil || len(items) > 0 {
+			// Stop pruning if directory still contains items or listing fails
+			break
+		}
+		// Directory is completely empty! Prune it.
+		if err := client.DeleteFile(ctx, resourceType, currDir); err != nil {
+			break
+		}
+		log.Printf("[SyncTask] Pruned empty parent directory %s\n", currDir)
+		currDir = path.Clean(path.Dir(currDir))
 	}
 }
