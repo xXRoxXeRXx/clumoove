@@ -38,6 +38,9 @@
     "select": "Select language"
   },
   "auth": {
+    "setupAdminTitle": "Administrator Initial Setup",
+    "setupAdminSubtitle": "Welcome to Clumoove! Create the initial administrator account to begin.",
+    "createAdminAccount": "Create Administrator",
     "welcomeBack": "Welcome back",
     "createAccount": "Create account",
     "portalLogin": "Clumoove Log In",
@@ -464,6 +467,7 @@
     "transfer": "TRANSFER"
   },
   "errors": {
+    "SETUP_ALREADY_COMPLETED": "Administrator initial setup has already been completed.",
     "UNKNOWN": "An unexpected error occurred.",
     "INVALID_BODY": "Invalid request.",
     "UNAUTHORIZED": "Access denied.",

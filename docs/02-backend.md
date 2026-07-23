@@ -15,7 +15,7 @@ Responsibilities (started in `main()`):
 - Initializes PostgreSQL (`db.InitDB`) and Redis (`queue.NewQueue`).
 - **Refuses to start** unless `ENCRYPTION_SECRET_KEY` and `JWT_SECRET_KEY` are set, are different, and
   the JWT key is ≥ 32 bytes.
-- Bootstraps an initial admin user from `ADMIN_EMAIL`/`ADMIN_DISPLAY_NAME` (idempotent, see
+- Supports initial administrator creation via Web UI when no users exist (`POST /api/auth/setup-admin`, see
   [Security](./07-security.md#admin-bootstrap)).
 - Registers all HTTP routes on `http.NewServeMux()` (Go 1.22 patterns, e.g. `POST /api/migration/start`,
   `GET /api/migration/{id}`).
@@ -85,7 +85,7 @@ Key query helpers include `CreateMigration`, `GetMigration`, `UpdateMigrationSta
 `CreateSyncJob`, `GetSyncJob`, `ListSyncJobs`, `CreateConnectionProfile`, `ListConnectionProfiles`,
 `CreateTask`, `GetTask`, `UpdateTaskStatus`, `ResetMigrationForReindex` (TOCTOU-safe),
 `RecordIndexingErrors`, `WriteAuditLog`, `GetDueSchedules`, `UpdateNextRunAt`, `DeactivateSchedule`,
-`VerifyMigrationOwnership`, `VerifySyncOwnership`, `EnsureAdminUser`, `ListUsers`, `GetGlobalStats`,
+`VerifyMigrationOwnership`, `VerifySyncOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
 `ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
 
 ### `StringArray` & JSONB

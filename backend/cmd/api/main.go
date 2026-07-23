@@ -110,16 +110,6 @@ func main() {
 	defer database.Close()
 	log.Println("Connected to PostgreSQL database.")
 
-	if adminEmail := os.Getenv("ADMIN_EMAIL"); adminEmail != "" {
-		adminName := os.Getenv("ADMIN_DISPLAY_NAME")
-		created, pw, err := db.EnsureAdminUser(database, adminEmail, adminName)
-		if err != nil {
-			log.Printf("WARNING: failed to bootstrap admin user %q: %v", adminEmail, err)
-		} else if created {
-			log.Printf("BOOTSTRAP ADMIN created — email=%s password=%s (rotate on first login)", adminEmail, pw)
-		}
-	}
-
 	// 2. Initialize Redis Queue
 	q, err := queue.NewQueue(redisURL)
 	if err != nil {
@@ -154,6 +144,8 @@ func main() {
 	mux := http.NewServeMux()
 
 	// Auth Routes (Public)
+	mux.HandleFunc("GET /api/auth/setup-status", server.handleGetSetupStatus)
+	mux.HandleFunc("POST /api/auth/setup-admin", server.handleSetupAdmin)
 	mux.HandleFunc("POST /api/auth/register", server.handleRegister)
 	mux.HandleFunc("POST /api/auth/login", server.handleLogin)
 	mux.HandleFunc("POST /api/auth/totp", server.handleTOTP)
