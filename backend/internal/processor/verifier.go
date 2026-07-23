@@ -173,23 +173,37 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 
 						if (sourceAlgo == targetAlgo || sourceAlgo == "UNKNOWN" || targetAlgo == "UNKNOWN") && cleanSource != "" && cleanTarget != "" {
 							if cleanSource == cleanTarget {
-								log.Printf("[VERIFIER] Checksum match confirmed for %s (hash=%s)\n", targetPath, targetHash)
+								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
 								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 							} else {
-								log.Printf("[VERIFIER] Checksum MISMATCH detected for %s: source=%s target=%s\n", targetPath, cleanSource, cleanTarget)
+								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s\n", targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
 								task.Status = "FAILED"
-								task.ErrorMessage = sql.NullString{String: "checksum mismatch during post-verification", Valid: true}
+								task.ErrorMessage = sql.NullString{String: fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget), Valid: true}
 								_ = db.UpdateTaskStatus(p.db, task)
 								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 							}
 						} else {
+							log.Printf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — using target hash registration\n", targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
 							_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 						}
 					} else {
+						log.Printf("[VERIFIER] [NO_SOURCE_HASH] %s | Target (%s): %s — registered target hash\n", targetPath, targetHash, targetHash)
 						_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 					}
 				} else {
-					log.Printf("[VERIFIER] Target checksum not available for %s — using size verification\n", targetPath)
+					reason := "checksum not available"
+					if errHash != nil {
+						reason = errHash.Error()
+					}
+					sourceStr := task.SourceHash.String
+					if sourceStr == "" {
+						sourceStr = task.WorkerHash.String
+					}
+					if sourceStr != "" {
+						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Expected: %s | Reason: %s — falling back to size verification\n", targetPath, sourceStr, reason)
+					} else {
+						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Reason: %s — falling back to size verification\n", targetPath, reason)
+					}
 					_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, "")
 				}
 
@@ -336,26 +350,40 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 
 						if (sourceAlgo == targetAlgo || sourceAlgo == "UNKNOWN" || targetAlgo == "UNKNOWN") && cleanSource != "" && cleanTarget != "" {
 							if cleanSource == cleanTarget {
-								log.Printf("[VERIFIER] Checksum match confirmed for sync file %s (hash=%s)\n", targetPath, targetHash)
+								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
 								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 								_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 							} else {
-								log.Printf("[VERIFIER] Checksum MISMATCH detected for sync file %s: source=%s target=%s\n", targetPath, cleanSource, cleanTarget)
+								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s\n", targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
 								task.Status = "FAILED"
-								task.ErrorMessage = sql.NullString{String: "checksum mismatch during post-verification", Valid: true}
+								task.ErrorMessage = sql.NullString{String: fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget), Valid: true}
 								_ = db.UpdateTaskStatus(p.db, task)
 								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 							}
 						} else {
+							log.Printf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — using target hash registration\n", targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
 							_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 							_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 						}
 					} else {
+						log.Printf("[VERIFIER] [NO_SOURCE_HASH] %s | Target (%s): %s — registered target hash\n", targetPath, targetHash, targetHash)
 						_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
 						_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
 					}
 				} else {
-					log.Printf("[VERIFIER] Target checksum not available for sync file %s — using size verification\n", targetPath)
+					reason := "checksum not available"
+					if errHash != nil {
+						reason = errHash.Error()
+					}
+					sourceStr := task.SourceHash.String
+					if sourceStr == "" {
+						sourceStr = task.WorkerHash.String
+					}
+					if sourceStr != "" {
+						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Expected: %s | Reason: %s — falling back to size verification\n", targetPath, sourceStr, reason)
+					} else {
+						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Reason: %s — falling back to size verification\n", targetPath, reason)
+					}
 					_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, "")
 				}
 
