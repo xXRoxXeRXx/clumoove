@@ -564,7 +564,7 @@ func (p *WebDAVProvider) GetFileHash(ctx context.Context, resourceType, filePath
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	return "", fmt.Errorf("checksum not available")
+	return "", ErrChecksumNotAvailable
 }
 
 // globalWebDAVCreatedDirs caches directory existence across WebDAV provider instances within the worker process.
