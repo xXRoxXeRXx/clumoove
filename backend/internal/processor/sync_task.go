@@ -237,13 +237,17 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if task.SourceHash.Valid && task.SourceHash.String != "" && srcProvider != "webdav" {
 		algo, _ := storage.ParseHashString(task.SourceHash.String)
-		sourceAlgo = algo
+		if algo != "ETAG" {
+			sourceAlgo = algo
+		}
 	} else {
 		if srcProvider != "webdav" {
 			if fetchedHash, err := srcClient.GetFileHash(ctx, task.ResourceType, srcPath); err == nil {
-				task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
 				algo, _ := storage.ParseHashString(fetchedHash)
-				sourceAlgo = algo
+				if algo != "ETAG" {
+					task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
+					sourceAlgo = algo
+				}
 			}
 		}
 	}

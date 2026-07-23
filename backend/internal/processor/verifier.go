@@ -171,8 +171,11 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 				}
 				if errHash == nil && targetHash != "" {
 					targetAlgo, cleanTarget := storage.ParseHashString(targetHash)
-					sourceHash := task.SourceHash.String
-					if sourceHash == "" {
+					sourceHash := task.WorkerHash.String
+					if sourceHash == "" || strings.HasPrefix(strings.ToUpper(sourceHash), "ETAG:") {
+						sourceHash = task.SourceHash.String
+					}
+					if strings.HasPrefix(strings.ToUpper(sourceHash), "ETAG:") && task.WorkerHash.Valid && task.WorkerHash.String != "" {
 						sourceHash = task.WorkerHash.String
 					}
 
@@ -361,8 +364,11 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 
 				if errHash == nil && targetHash != "" {
 					targetAlgo, cleanTarget := storage.ParseHashString(targetHash)
-					sourceHash := task.SourceHash.String
-					if sourceHash == "" {
+					sourceHash := task.WorkerHash.String
+					if sourceHash == "" || strings.HasPrefix(strings.ToUpper(sourceHash), "ETAG:") {
+						sourceHash = task.SourceHash.String
+					}
+					if strings.HasPrefix(strings.ToUpper(sourceHash), "ETAG:") && task.WorkerHash.Valid && task.WorkerHash.String != "" {
 						sourceHash = task.WorkerHash.String
 					}
 
