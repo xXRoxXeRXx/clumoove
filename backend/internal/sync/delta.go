@@ -230,9 +230,6 @@ func (e *Engine) listFiles(
 	numWorkers := 16
 	for i := 0; i < numWorkers; i++ {
 		go func() {
-			workerFiles := make(map[string]fileState)
-			workerDirETags := make(map[string]string)
-
 			for job := range jobsChan {
 				func() {
 					defer wg.Done()
@@ -250,32 +247,19 @@ func (e *Engine) listFiles(
 					for _, file := range files {
 						cpath := cleanRelPath(file.Path)
 						if file.IsDir {
-							if file.ETag != "" {
-								workerDirETags[cpath] = file.ETag
-							}
+							addDirETag(cpath, file.ETag)
 							enqueueDir(file.Path, file.ETag)
 						} else {
-							workerFiles[cpath] = fileState{
+							addFile(fileState{
 								Path:         cpath,
 								Size:         file.Size,
 								LastModified: file.LastModified,
 								Hash:         file.Hash,
 								ETag:         file.ETag,
-							}
+							})
 						}
 					}
 				}()
-			}
-
-			if len(workerFiles) > 0 || len(workerDirETags) > 0 {
-				mu.Lock()
-				for k, v := range workerFiles {
-					fileMap[cleanRelPath(k)] = v
-				}
-				for k, v := range workerDirETags {
-					dirETagMap[cleanRelPath(k)] = v
-				}
-				mu.Unlock()
 			}
 		}()
 	}
