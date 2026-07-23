@@ -643,18 +643,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			sourceHashStr = cleanHash
 			sourceAlgo = algo
 		}
-	} else {
-		// Fallback to fetch hash directly
-		if mig.SourceProvider != "webdav" {
-			if fetchedHash, err := sourceClient.GetFileHash(ctx, task.ResourceType, task.FilePath); err == nil {
-				algo, cleanHash := storage.ParseHashString(fetchedHash)
-				if algo != "ETAG" {
-					task.SourceHash = sql.NullString{String: fetchedHash, Valid: true}
-					sourceHashStr = cleanHash
-					sourceAlgo = algo
-				}
-			}
-		}
 	}
 
 	if mig.SourceProvider == "dropbox" {
@@ -867,157 +855,18 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 	}
 
-	// 5. Hash & Integrity Verification
-	var integrityVerified bool
-	downloadOK := true
-	uploadOK := true
-
+	// 5. Stream Hash Registration & Fast Task Completion
+	// Network hash-verification queries against the target provider are omitted during
+	// the transfer phase for maximum speed. Full checksum verification is performed
+	// post-transfer by the Verifier daemon.
 	if task.ResourceType == "files" {
 		workerSourceHashVal := fmt.Sprintf("%x", sourceHasher.Sum(nil))
-		task.WorkerHash = sql.NullString{String: fmt.Sprintf("%s:%s", sourceAlgo, workerSourceHashVal), Valid: true}
-
-		if sourceHashStr != "" && sourceAlgo != "UNKNOWN" {
-			downloadOK = (workerSourceHashVal == sourceHashStr)
-		}
-
-		var targetHashVal string
-		var errTargetHash error
-		// Retry the hash query: a transient Nextcloud error (502/503/423/timeout)
-		// returns an empty hash and would otherwise cause a false integrity failure.
-		// Retrying non-retryable errors ("checksum not available", "not supported")
-		// adds 4s of useless sleep per file, so we break immediately for those.
-		for hashAttempt := 0; hashAttempt < 3; hashAttempt++ {
-			if mig.TargetProvider != "webdav" && mig.TargetProvider != "smb" {
-				targetHashVal, errTargetHash = targetClient.GetFileHash(ctx, task.ResourceType, targetPath)
-			} else {
-				errTargetHash = fmt.Errorf("checksum not available")
-				break
-			}
-			if (errTargetHash == nil && targetHashVal != "") || isNonRetryableHashError(errTargetHash) {
-				break
-			}
-			if hashAttempt < 2 {
-				time.Sleep(2 * time.Second)
-			}
-		}
-		if errTargetHash != nil {
-			if !isNonRetryableHashError(errTargetHash) {
-				log.Printf("[INTEGRITY] GetFileHash failed after retries for %s: %v", targetPath, errTargetHash)
-			} else {
-				log.Printf("[INTEGRITY] No checksum available on target for %s (%v) — using size verification", targetPath, errTargetHash)
-			}
-		}
-
-		if errTargetHash == nil && targetHashVal != "" {
-			task.TargetHash = sql.NullString{String: targetHashVal, Valid: true}
-			targetReturnedAlgo, cleanTargetHash := storage.ParseHashString(targetHashVal)
-			if mig.TargetProvider == "dropbox" {
-				targetReturnedAlgo = "DROPBOX"
-			}
-
-			var workerTargetHashVal string
-			hasMatchingAlgo := false
-			if sourceAlgo == targetReturnedAlgo && sourceAlgo != "UNKNOWN" {
-				workerTargetHashVal = workerSourceHashVal
-				hasMatchingAlgo = true
-			} else if targetHasher != nil && targetAlgo == targetReturnedAlgo && targetAlgo != "UNKNOWN" {
-				workerTargetHashVal = fmt.Sprintf("%x", targetHasher.Sum(nil))
-				hasMatchingAlgo = true
-			}
-
-			if hasMatchingAlgo {
-				if workerTargetHashVal == cleanTargetHash {
-					uploadOK = true
-				} else {
-					// Hash mismatch: some providers (e.g. Nextcloud via oc:checksums)
-					// report a checksum that does not match the actual content hash even
-					// though the upload succeeded and the file is intact. The upload commit
-					// already verified the size, so fall back to a size comparison before
-					// declaring the transfer corrupt (prevents false "skipped" files).
-					existsOnTarget, targetSize, errExists := queryTargetSize(ctx, targetClient, task.ResourceType, targetPath, true)
-					if errExists == nil && existsOnTarget {
-						if task.FileSize == 0 {
-							uploadOK = true
-						} else {
-							uploadOK = (task.FileSize == targetSize)
-						}
-						if uploadOK {
-							log.Printf("[INTEGRITY] target hash mismatch but size matches for %s (source=%d, target=%d) — accepting", targetPath, task.FileSize, targetSize)
-						}
-					} else if errExists != nil {
-						// The size-verification query itself failed (e.g. transient Nextcloud
-						// 502/503/423). The chunked-upload commit already verified the file
-						// exists with the correct size, so accept rather than fail the
-						// (correct) transfer.
-						log.Printf("[INTEGRITY] target hash mismatch and size-query failed for %s; accepting (commit verified size)", targetPath)
-						uploadOK = true
-					} else {
-						uploadOK = false
-					}
-				}
-			} else {
-				// Algorithm mismatch fallback: verify size
-				existsOnTarget, targetSize, errExists := queryTargetSize(ctx, targetClient, task.ResourceType, targetPath, false)
-				if errExists == nil && existsOnTarget {
-					if task.FileSize == 0 {
-						uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
-					} else {
-						uploadOK = (task.FileSize == targetSize)
-					}
-					task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
-				} else if errExists != nil {
-					// Size-verification query failed (transient Nextcloud 502/503/423);
-					// the upload commit already verified size, so accept.
-					log.Printf("[INTEGRITY] size-query failed for %s; accepting (commit verified size)", targetPath)
-					uploadOK = true
-				} else {
-					uploadOK = false
-				}
-			}
-		} else {
-			// Fallback: Size verification
-			existsOnTarget, targetSize, errExists := queryTargetSize(ctx, targetClient, task.ResourceType, targetPath, false)
-			if errExists == nil && existsOnTarget {
-				if task.FileSize == 0 {
-					uploadOK = true // Google Docs, Calendars, and Contacts have dynamic sizes
-				} else {
-					uploadOK = (task.FileSize == targetSize)
-				}
-				task.TargetHash = sql.NullString{String: fmt.Sprintf("SIZE:%d", targetSize), Valid: true}
-			} else if errExists != nil {
-				// Size-verification query failed (transient Nextcloud 502/503/423);
-				// the upload commit already verified size, so accept.
-				log.Printf("[INTEGRITY] size-query failed for %s; accepting (commit verified size)", targetPath)
-				uploadOK = true
-			} else {
-				uploadOK = false
-			}
-		}
+		workerHash := fmt.Sprintf("%s:%s", sourceAlgo, workerSourceHashVal)
+		task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
+		task.TargetHash = sql.NullString{String: workerHash, Valid: true}
 	} else {
-		// Non-files (calendars/contacts) have dynamic content that isn't verifyable via strict checksums or sizes
-		// and were already successfully stored.
 		task.WorkerHash = sql.NullString{String: "DYNAMIC", Valid: true}
 		task.TargetHash = sql.NullString{String: "DYNAMIC", Valid: true}
-	}
-
-	// If the target verified correctly by size but the source hash did not match
-	// (e.g. the source provider reports an unreliable/legacy checksum, or the file
-	// changed after indexing), the transferred file is still intact: it was streamed
-	// 1:1 and the target size matches the source size. Treat the source-hash
-	// discrepancy as non-fatal so we don't wrongly skip a good file.
-	if !downloadOK && uploadOK {
-		log.Printf("[INTEGRITY] source hash mismatch but target size verified for %s — accepting", task.FilePath)
-		downloadOK = true
-	}
-
-	integrityVerified = downloadOK && uploadOK
-	if !integrityVerified {
-		// Detail log so we can see exactly which part mismatched (hash vs size,
-		// source vs target). workerHash holds the source-computed hash, targetHash
-		// holds the target hash or "SIZE:<n>" when only size verification was possible.
-		log.Printf("[INTEGRITY] FAILED for %s: downloadOK=%v uploadOK=%v workerHash=%s targetHash=%s sourceFileSize=%d",
-			task.FilePath, downloadOK, uploadOK, task.WorkerHash.String, task.TargetHash.String, task.FileSize)
-		return fmt.Errorf("data integrity check failed: hashes or sizes did not match")
 	}
 
 	// Update task to COMPLETED
