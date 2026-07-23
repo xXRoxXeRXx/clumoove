@@ -16,16 +16,26 @@ import (
 	"backend/internal/storage"
 )
 
+// cleanRelPath normalizes a relative path so that it always starts with a single leading slash
+// and has no trailing slash (unless it is the root "/").
+func cleanRelPath(p string) string {
+	cleaned := path.Clean("/" + p)
+	if cleaned == "." || cleaned == "" {
+		return "/"
+	}
+	return cleaned
+}
+
 // updateSyncStates aligns sync_state entries with current listings, preserving the old states of failed files.
 // Uses BulkUpsertSyncStates to batch all upserts and deletes into a single transaction instead of N individual
 // round-trips (one per file), which is dramatically faster for large directory trees.
 func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]fileState, sourceDirETags, targetDirETags map[string]string, taskOutcomes map[string]string) {
 	allKeys := make(map[string]bool)
 	for k := range sourceMap {
-		allKeys[k] = true
+		allKeys[cleanRelPath(k)] = true
 	}
 	for k := range targetMap {
-		allKeys[k] = true
+		allKeys[cleanRelPath(k)] = true
 	}
 
 	var upserts []*db.SyncState
@@ -41,12 +51,14 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 			continue
 		}
 
+		cleanKey := cleanRelPath(S)
+
 		// Source side
 		if hasSrc {
 			upserts = append(upserts, &db.SyncState{
 				SyncJobID:  jobID,
 				Side:       "source",
-				RelPath:    S,
+				RelPath:    cleanKey,
 				Size:       srcFile.Size,
 				Mtime:      sql.NullTime{Time: srcFile.LastModified, Valid: !srcFile.LastModified.IsZero()},
 				SourceHash: srcFile.Hash,
@@ -54,7 +66,7 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 				ETag:       srcFile.ETag,
 			})
 		} else {
-			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "source", S})
+			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "source", cleanKey})
 		}
 
 		// Target side
@@ -62,7 +74,7 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 			upserts = append(upserts, &db.SyncState{
 				SyncJobID:  jobID,
 				Side:       "target",
-				RelPath:    S,
+				RelPath:    cleanKey,
 				Size:       tgtFile.Size,
 				Mtime:      sql.NullTime{Time: tgtFile.LastModified, Valid: !tgtFile.LastModified.IsZero()},
 				SourceHash: tgtFile.Hash,
@@ -70,7 +82,7 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 				ETag:       tgtFile.ETag,
 			})
 		} else {
-			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "target", S})
+			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "target", cleanKey})
 		}
 	}
 
@@ -80,7 +92,7 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 			upserts = append(upserts, &db.SyncState{
 				SyncJobID: jobID,
 				Side:      "source",
-				RelPath:   dirPath,
+				RelPath:   cleanRelPath(dirPath),
 				Size:      -1,
 				ETag:      etag,
 			})
@@ -91,7 +103,7 @@ func (e *Engine) updateSyncStates(jobID string, sourceMap, targetMap map[string]
 			upserts = append(upserts, &db.SyncState{
 				SyncJobID: jobID,
 				Side:      "target",
-				RelPath:   dirPath,
+				RelPath:   cleanRelPath(dirPath),
 				Size:      -1,
 				ETag:      etag,
 			})
@@ -119,6 +131,7 @@ func (e *Engine) listFiles(
 	var errsMu sync.Mutex
 
 	addFile := func(fs fileState) {
+		fs.Path = cleanRelPath(fs.Path)
 		mu.Lock()
 		fileMap[fs.Path] = fs
 		mu.Unlock()
@@ -128,8 +141,9 @@ func (e *Engine) listFiles(
 		if etag == "" {
 			return
 		}
+		cdir := cleanRelPath(dirPath)
 		mu.Lock()
-		dirETagMap[dirPath] = etag
+		dirETagMap[cdir] = etag
 		mu.Unlock()
 	}
 
@@ -144,20 +158,23 @@ func (e *Engine) listFiles(
 	}
 
 	skipSubtree := func(dirPath string) {
-		prefix := dirPath
-		if !strings.HasSuffix(prefix, "/") {
+		cleanDir := cleanRelPath(dirPath)
+		prefix := cleanDir
+		if prefix != "/" && !strings.HasSuffix(prefix, "/") {
 			prefix += "/"
 		}
 		mu.Lock()
 		defer mu.Unlock()
 		for fp, fs := range prevFileStates {
-			if fp == dirPath || strings.HasPrefix(fp, prefix) {
-				fileMap[fp] = fs
+			cfp := cleanRelPath(fp)
+			if cfp == cleanDir || (prefix != "/" && strings.HasPrefix(cfp, prefix)) {
+				fileMap[cfp] = fs
 			}
 		}
 		for dp, etag := range prevDirETags {
-			if dp == dirPath || strings.HasPrefix(dp, prefix) {
-				dirETagMap[dp] = etag
+			cdp := cleanRelPath(dp)
+			if cdp == cleanDir || (prefix != "/" && strings.HasPrefix(cdp, prefix)) {
+				dirETagMap[cdp] = etag
 			}
 		}
 	}
@@ -173,17 +190,18 @@ func (e *Engine) listFiles(
 	var visitedMu sync.Mutex
 
 	enqueueDir := func(dirPath, etag string) {
+		cdir := cleanRelPath(dirPath)
 		visitedMu.Lock()
-		if visited[dirPath] {
+		if visited[cdir] {
 			visitedMu.Unlock()
 			return
 		}
-		visited[dirPath] = true
+		visited[cdir] = true
 		visitedMu.Unlock()
 
-		if etag != "" && prevDirETags[dirPath] != "" && etag == prevDirETags[dirPath] {
-			log.Printf("[SyncEngine] Hierarchical ETag match for directory %s: skipping subtree scan\n", dirPath)
-			skipSubtree(dirPath)
+		if etag != "" && prevDirETags[cdir] != "" && etag == prevDirETags[cdir] {
+			log.Printf("[SyncEngine] Hierarchical ETag match for directory %s: skipping subtree scan\n", cdir)
+			skipSubtree(cdir)
 			return
 		}
 
@@ -242,14 +260,15 @@ func (e *Engine) listFiles(
 					}
 
 					for _, file := range files {
+						cpath := cleanRelPath(file.Path)
 						if file.IsDir {
 							if file.ETag != "" {
-								workerDirETags[file.Path] = file.ETag
+								workerDirETags[cpath] = file.ETag
 							}
 							enqueueDir(file.Path, file.ETag)
 						} else {
-							workerFiles[file.Path] = fileState{
-								Path:         file.Path,
+							workerFiles[cpath] = fileState{
+								Path:         cpath,
 								Size:         file.Size,
 								LastModified: file.LastModified,
 								Hash:         file.Hash,
@@ -263,10 +282,10 @@ func (e *Engine) listFiles(
 			if len(workerFiles) > 0 || len(workerDirETags) > 0 {
 				mu.Lock()
 				for k, v := range workerFiles {
-					fileMap[k] = v
+					fileMap[cleanRelPath(k)] = v
 				}
 				for k, v := range workerDirETags {
-					dirETagMap[k] = v
+					dirETagMap[cleanRelPath(k)] = v
 				}
 				mu.Unlock()
 			}
@@ -362,8 +381,8 @@ func conflictNeedsRename(strategy string) bool {
 
 // getSourceRelPath maps a target path back to its source-side relative path by stripping the target dir prefix.
 func getSourceRelPath(targetPath, targetDir string) string {
-	targetPath = path.Clean("/" + targetPath)
-	targetDir = path.Clean("/" + targetDir)
+	targetPath = cleanRelPath(targetPath)
+	targetDir = cleanRelPath(targetDir)
 
 	if targetDir == "/" {
 		return targetPath
@@ -371,7 +390,7 @@ func getSourceRelPath(targetPath, targetDir string) string {
 
 	prefix := targetDir + "/"
 	if strings.HasPrefix(targetPath, prefix) {
-		return "/" + targetPath[len(prefix):]
+		return cleanRelPath(targetPath[len(prefix):])
 	}
 	if targetPath == targetDir {
 		return "/"
