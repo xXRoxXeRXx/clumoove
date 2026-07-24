@@ -101,6 +101,12 @@
     "secretKey": "Geheimer Schlüssel",
     "nextcloudUrl": "Nextcloud WebDAV-Adresse",
     "webdavUrl": "WebDAV-Adresse",
+    "usernamePlaceholder": "Benutzername eingeben",
+    "profileNamePlaceholder": "z. B. Meine Cloud",
+    "nextcloudUrlPlaceholder": "https://nextcloud.beispiel.de",
+    "webdavUrlPlaceholder": "https://webdav.beispiel.de/dav",
+    "s3EndpointPlaceholder": "https://s3.wasabisys.com oder http://localhost:9000",
+    "bucketPlaceholder": "mein-bucket",
     "magentacloudInfo": "Verbindung mit magentacloud.de (WebDAV). Verwenden Sie das separat festgelegte WebDAV-Passwort aus Ihren MagentaCLOUD-Kontoeinstellungen — NICHT Ihr normales Kontopasswort.",
     "localInfo": "Lokaler Speicher. Dateien werden aus dem server-seitig konfigurierten Verzeichnis LOCAL_STORAGE_ROOT gelesen und dorthin geschrieben. Geben Sie nur einen relativen Pfad innerhalb dieses Verzeichnisses an — keine URL, kein Benutzername und kein Passwort erforderlich.",
     "localInfo": "Liest und schreibt Dateien direkt auf dem Server innerhalb des konfigurierten LOCAL_STORAGE_ROOT-Verzeichnisses. Es werden keine Anmeldedaten benötigt — geben Sie nur einen relativen Pfad innerhalb dieses Sandboxes ein (keine absoluten Pfade oder \"..\"-Navigation).",
@@ -158,6 +164,8 @@
     "indexing": "Dateien werden erfasst...",
     "config": "Einstellungen",
     "targetDir": "Ziel-Ordner",
+    "mkdirIn": "Neuer Ordnername in {{path}}",
+    "mkdirPlaceholder": "z. B. Archiv",
     "selectFolder": "Ordner auswählen",
     "targetCopied": "Kopiert die Daten in den ausgewählten Ordner auf dem Zielsystem.",
     "conflictHandling": "Verhalten bei doppeltem Namen",
@@ -290,6 +298,7 @@
   "settings": {
     "back": "Zurück",
     "title": "Einstellungen",
+    "newEmailPlaceholder": "neue.adresse@beispiel.de",
     "tabs": {
       "account": "Konto",
       "connections": "Verbindungen",
@@ -319,6 +328,8 @@
       "useProfile": "Gespeichertes Profil verwenden",
       "usingProfile": "Es wird das gespeicherte Profil \"{{name}}\" verwendet. Die Verbindungsdaten werden automatisch vom Server geladen.",
       "saveProfile": "Als Profil speichern",
+      "saveAsProfile": "Als gespeichertes Profil ablegen",
+      "profileNamePlaceholder": "Profilname eingeben (z. B. Meine Cloud)",
       "saveProfileHint": "Die eingegebenen Zugangsdaten werden verschlüsselt für spätere Übertragungen gespeichert.",
       "oauthConnectedAs": "Verbunden als {{user}}",
       "tokenExpiresIn": "Token läuft in {{days}} Tagen ab"

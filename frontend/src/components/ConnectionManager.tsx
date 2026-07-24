@@ -434,7 +434,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-1.5">
             <label className={labelCls}>{t('settings.connections.nameLabel')}</label>
-            <input type="text" required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder="Mein Cloud" />
+            <input type="text" required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />
           </div>
 
           <div className="space-y-1.5">
@@ -480,12 +480,12 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
               {provider !== 'magentacloud' && (
                 <div className="space-y-1.5">
                   <label className={labelCls}>{t('connect.nextcloudUrl')}</label>
-                  <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} className={inputCls} placeholder="https://cloud.example.com" />
+                  <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} className={inputCls} placeholder={provider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')} />
                 </div>
               )}
               <div className="space-y-1.5">
                 <label className={labelCls}>{t('connect.username')}</label>
-                <input type="text" autoComplete="username" name="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder="benutzername" />
+                <input type="text" autoComplete="username" name="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
               </div>
               <div className="space-y-1.5">
                 <label className={labelCls}>{t('settings.connections.passwordLabel')}</label>

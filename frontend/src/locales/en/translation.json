@@ -101,6 +101,12 @@
     "secretKey": "Secret key",
     "nextcloudUrl": "Nextcloud WebDAV address",
     "webdavUrl": "WebDAV address",
+    "usernamePlaceholder": "Enter username",
+    "profileNamePlaceholder": "e.g. My Cloud",
+    "nextcloudUrlPlaceholder": "https://nextcloud.example.com",
+    "webdavUrlPlaceholder": "https://webdav.example.com/dav",
+    "s3EndpointPlaceholder": "https://s3.wasabisys.com or http://localhost:9000",
+    "bucketPlaceholder": "my-bucket",
     "magentacloudInfo": "Connects to magentacloud.de (WebDAV). Use the dedicated WebDAV password from your MagentaCLOUD account settings — NOT your regular account password.",
     "localInfo": "Local storage. Files are read from and written to the server-configured LOCAL_STORAGE_ROOT directory. Enter only a relative path inside that directory — no URL, username, or password is required.",
     "localInfo": "Reads and writes files directly on the server inside the configured LOCAL_STORAGE_ROOT directory. No credentials are required — only enter a relative path within that sandbox (no absolute paths or \"..\" traversal).",
@@ -158,6 +164,8 @@
     "indexing": "Scanning files...",
     "config": "Settings",
     "targetDir": "Target folder",
+    "mkdirIn": "New folder name in {{path}}",
+    "mkdirPlaceholder": "e.g. Archive",
     "selectFolder": "Select folder",
     "targetCopied": "Copies the data to the selected folder on the target system.",
     "conflictHandling": "If a name already exists",
@@ -290,6 +298,7 @@
   "settings": {
     "back": "Back",
     "title": "Settings",
+    "newEmailPlaceholder": "new.address@example.com",
     "tabs": {
       "account": "Account",
       "connections": "Connections",
@@ -319,6 +328,8 @@
       "useProfile": "Use saved profile",
       "usingProfile": "Using the saved profile \"{{name}}\". The connection details are loaded automatically from the server.",
       "saveProfile": "Save as profile",
+      "saveAsProfile": "Save as a connection profile",
+      "profileNamePlaceholder": "Enter profile name (e.g. My Cloud)",
       "saveProfileHint": "The entered credentials will be stored encrypted for future transfers.",
       "oauthConnectedAs": "Connected as {{user}}",
       "tokenExpiresIn": "Token expires in {{days}} days"
