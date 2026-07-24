@@ -1391,7 +1391,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                         targetDirectoryContents['/'].map((child) => renderTargetNode(child, 1))
                       ) : targetLoadingPaths['/'] ? null : (
                         <div className="text-[10px] text-[var(--color-text-muted)] italic py-2 pl-[42px] text-left">
-                          Keine Unterverzeichnisse
+                          {t('fileBrowser.noSubdirs')}
                         </div>
                       )}
                     </div>

@@ -576,7 +576,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 {user?.avatar ? (
                   <img
                     src={user.avatar}
-                    alt="User Avatar"
+                    alt={t('settings.avatarAlt')}
                     className="w-20 h-20 shrink-0 rounded-full object-cover border border-[var(--color-border)] shadow-xs"
                   />
                 ) : (
@@ -906,7 +906,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               <form onSubmit={handle2FAEnable} className="space-y-4">
                 <div className="flex flex-col items-center gap-3">
                   {setupData.qr_png.startsWith('data:image/') ? (
-                    <img src={setupData.qr_png} alt="2FA QR-Code" className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2" />
+                    <img src={setupData.qr_png} alt={t('settings.qrCodeAlt')} className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2" />
                   ) : (
                     <div className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2 flex items-center justify-center text-[10px] text-[var(--color-text-muted)] text-center font-mono">
                       {t('settings.messages.qrInvalid')}
@@ -1182,7 +1182,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 >
                   <option value="tls">TLS (Implicit)</option>
                   <option value="starttls">STARTTLS</option>
-                  <option value="none">Keine</option>
+                  <option value="none">{t('settings.smtpEncryptionNone')}</option>
                 </select>
               </div>
 

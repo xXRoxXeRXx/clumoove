@@ -164,7 +164,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--color-bg-inverse)]/60 backdrop-blur-sm p-4 animate-fade-in">
       <div className="glass-panel max-w-sm w-full rounded-3xl p-6 border border-[var(--color-glass-border)]/40 shadow-2xl flex flex-col items-center bg-[var(--color-bg-secondary)]/95">
         <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">{t('settings.profilePicture')}</h3>
-        <p className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">// CANVAS CROPPER TOOL</p>
+        <p className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">{t('settings.avatarCropperTitle')}</p>
 
         {/* Canvas Area */}
         <div className="relative border border-[var(--color-border)] rounded-2xl overflow-hidden bg-[var(--color-bg-inverse)] shadow-inner group">
