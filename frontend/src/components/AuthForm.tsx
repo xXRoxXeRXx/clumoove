@@ -538,7 +538,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 <input
                   type="text"
                   required
-                  placeholder="Admin Name"
+                  placeholder={t('auth.namePlaceholder')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -558,7 +558,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   type="email"
                   required
                   autoComplete="email"
-                  placeholder="admin@beispiel.de"
+                  placeholder={t('auth.emailPlaceholder')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -577,7 +577,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
-                  placeholder="••••••••"
+                  placeholder={t('auth.passwordPlaceholder')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -725,7 +725,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 <input
                   type="text"
                   required
-                  placeholder="Max Mustermann"
+                  placeholder={t('auth.namePlaceholder')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -747,7 +747,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 type="email"
                 required
                 autoComplete="email"
-                placeholder="name@beispiel.de"
+                placeholder={t('auth.emailPlaceholder')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -768,7 +768,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 type={showPassword ? 'text' : 'password'}
                 required
                 autoComplete={isLogin ? 'current-password' : 'new-password'}
-                placeholder="••••••••"
+                placeholder={t('auth.passwordPlaceholder')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
