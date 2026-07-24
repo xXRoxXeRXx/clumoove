@@ -35,6 +35,7 @@ var providerForbiddenChars = map[string][]rune{
 	"smb":      {'\\', '/', ':', '*', '?', '"', '<', '>', '|'},
 	"dropbox":  {'/'},
 	"google":   {'/'},
+	"hidrive":  {'?'},
 	"nextcloud": {'/'},
 	"magentacloud": {'/'},
 	"webdav":   {'/'},
@@ -42,16 +43,35 @@ var providerForbiddenChars = map[string][]rune{
 }
 
 var providerMaxLength = map[string]int{
-	"smb":       255,
-	"dropbox":   255,
-	"google":    255,
-	"nextcloud": 255,
+	"smb":          255,
+	"dropbox":      255,
+	"google":       255,
+	"hidrive":      251,
+	"nextcloud":    255,
 	"magentacloud": 255,
-	"webdav":    255,
-	"sftp":      255,
-	"s3":        1024,
+	"webdav":       255,
+	"sftp":         255,
+	"s3":           1024,
 }
 
+var providerMaxPathLength = map[string]int{
+	"hidrive": 1020,
+}
+
+func GetMaxPathLength(provider string) int {
+	if ml, ok := providerMaxPathLength[provider]; ok {
+		return ml
+	}
+	return 4096
+}
+
+// IsPathTooLong reports whether path exceeds targetProvider's maximum allowed path length.
+func IsPathTooLong(path string, targetProvider string) bool {
+	return len(path) > GetMaxPathLength(targetProvider)
+}
+
+// Case-insensitive providers. Note: HiDrive runs on ext4 (Linux) and is
+// case-sensitive, so it is intentionally omitted from caseInsensitiveProviders.
 var caseInsensitiveProviders = map[string]bool{
 	"dropbox": true,
 	"google":  true,
