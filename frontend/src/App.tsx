@@ -535,17 +535,17 @@ function App() {
             <div className="relative" ref={userMenuRef}>
               <div 
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2.5 pl-4 pr-2.5 py-1.5 rounded-full shadow-xs cursor-pointer select-none transition-colors"
+                className="flex items-center gap-2.5 cursor-pointer select-none transition-colors"
               >
                 <span className="font-bold text-[var(--color-text-primary)] leading-tight">{user.display_name}</span>
                 {user.avatar ? (
                   <img 
                     src={user.avatar} 
-                    className="w-7 h-7 rounded-full object-cover shadow-xs border border-[var(--color-border)]" 
+                    className="w-7 h-7 rounded-full object-cover" 
                     alt={user.display_name}
                   />
                 ) : (
-                  <div className="w-7 h-7 bg-portal-navy text-white rounded-full flex items-center justify-center shadow-xs">
+                  <div className="w-7 h-7 bg-portal-navy text-white rounded-full flex items-center justify-center">
                     <UserIcon className="w-4 h-4" />
                   </div>
                 )}
