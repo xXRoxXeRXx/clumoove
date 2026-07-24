@@ -694,21 +694,9 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--color-border)] py-8 mt-12 bg-[var(--color-glass-bg)] backdrop-blur-md">
-        <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-6 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-          <div>
-            <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">{t('footer.title')}</p>
-            <p className="text-[var(--color-text-muted)]">{t('footer.copyright')}</p>
-          </div>
-          <div className="flex flex-col gap-3">
-            <div>
-              <p className="font-bold text-[var(--color-portal-navy-themed)] font-display uppercase tracking-wider mb-1.5">{t('footer.bufferTitle')}</p>
-              <p className="text-[var(--color-text-muted)]">{t('footer.bufferText')}</p>
-            </div>
-            <div className="md:flex md:justify-end">
-              <LanguageSwitcher />
-            </div>
-          </div>
+      <footer className="border-t border-[var(--color-border)] py-4 mt-auto bg-[var(--color-glass-bg)] backdrop-blur-md">
+        <div className="max-w-6xl mx-auto px-6 flex justify-end items-center">
+          <LanguageSwitcher />
         </div>
       </footer>
     </div>
