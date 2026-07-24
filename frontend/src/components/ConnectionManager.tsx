@@ -11,7 +11,7 @@ interface ConnectionManagerProps {
   oauthProviders?: Record<string, boolean>;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp' | 'local';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local';
 
 interface ProfilePublic {
   id: string;
@@ -127,10 +127,11 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     { id: 'sftp', name: 'SFTP' },
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
     ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+    ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : []),
   ];
 
-  const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google';
+  const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google' || prov === 'hidrive';
 
   return (
     <div className="space-y-6">

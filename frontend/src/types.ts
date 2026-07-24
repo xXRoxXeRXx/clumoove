@@ -13,6 +13,7 @@ export type Provider =
   | 'webdav'
   | 'magentacloud'
   | 'google'
+  | 'hidrive'
   | 'smb'
   | 's3'
   | 'sftp'

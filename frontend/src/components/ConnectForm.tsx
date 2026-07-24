@@ -17,7 +17,7 @@ interface ConnectFormProps {
   oauthProviders?: Record<string, boolean>;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'smb' | 's3' | 'sftp' | 'local';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local';
 
 export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {} }) => {
   const [sourceUrl, setSourceUrl] = useState('');
@@ -134,7 +134,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
     : sourceProvider === 'magentacloud' || sourceProvider === 'local'
     ? ''
-    : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl));
+    : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive') ? `https://api.${sourceProvider}.com` : sourceUrl));
 
   // Build the final provider URL for the target side.
   const finalTargetUrlValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'smb'
@@ -145,14 +145,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${targetSftpHost}:${targetSftpPort}`
     : targetProvider === 'magentacloud' || targetProvider === 'local'
     ? ''
-    : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl));
+    : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? `https://api.${targetProvider}.com` : targetUrl));
 
   // Persist a connection as a reusable profile (called after a successful connect).
   const saveProfile = async (role: 'source' | 'target', name: string) => {
     if (!name.trim()) return false;
     const isOAuth = (role === 'source'
-      ? (sourceProvider === 'dropbox' || sourceProvider === 'google')
-      : (targetProvider === 'dropbox' || targetProvider === 'google'));
+      ? (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive')
+      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive'));
     const payload: Record<string, unknown> = {
       name: name.trim(),
       provider: role === 'source' ? sourceProvider : targetProvider,
@@ -276,10 +276,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
       : sourceProvider === 'magentacloud' || sourceProvider === 'local'
       ? ''
-      : ((sourceProvider === 'dropbox' || sourceProvider === 'google') ? `https://api.${sourceProvider}.com` : sourceUrl));
+      : (sourceProvider === 'dropbox' || sourceProvider === 'google' ? `https://api.${sourceProvider}.com` : sourceProvider === 'hidrive' ? 'https://api.hidrive.strato.com' : sourceUrl));
     const finalSourceUser = sourceProfileSelected ? '' : (sourceProvider === 'local'
       ? ''
-      : (sourceProvider === 'dropbox' || sourceProvider === 'google') ? (sourceOAuthUser || sourceProvider) : sourceUser);
+      : (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive') ? (sourceOAuthUser || sourceProvider) : sourceUser);
     const finalSourcePass = sourceProfileSelected ? '' : (sourceProvider === 'local'
       ? ''
       : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass);
@@ -291,10 +291,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       ? `sftp://${targetSftpHost}:${targetSftpPort}`
       : targetProvider === 'magentacloud' || targetProvider === 'local'
       ? ''
-      : ((targetProvider === 'dropbox' || targetProvider === 'google') ? `https://api.${targetProvider}.com` : targetUrl));
+      : (targetProvider === 'dropbox' || targetProvider === 'google' ? `https://api.${targetProvider}.com` : targetProvider === 'hidrive' ? 'https://api.hidrive.strato.com' : targetUrl));
     const finalTargetUser = targetProfileSelected ? '' : (targetProvider === 'local'
       ? ''
-      : (targetProvider === 'dropbox' || targetProvider === 'google') ? (targetOAuthUser || targetProvider) : targetUser);
+      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? (targetOAuthUser || targetProvider) : targetUser);
     const finalTargetPass = targetProfileSelected ? '' : (targetProvider === 'local'
       ? ''
       : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass);
@@ -436,7 +436,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   };
   const handleSourceProviderSelect = (val: ProviderId) => {
     setSourceProvider(val);
-    if (val === 'dropbox' || val === 'google') {
+    if (val === 'dropbox' || val === 'google' || val === 'hidrive') {
       setSourceUrl(`https://api.${val}.com`);
       setSourceUser(val);
       setSourcePass('');
@@ -478,7 +478,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleTargetProviderSelect = (val: ProviderId) => {
     setTargetProvider(val);
-    if (val === 'dropbox' || val === 'google') {
+    if (val === 'dropbox' || val === 'google' || val === 'hidrive') {
       setTargetUrl(`https://api.${val}.com`);
       setTargetUser(val);
       setTargetPass('');
@@ -527,6 +527,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 'sftp', name: 'SFTP' },
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
     ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+    ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
   ];
 
@@ -963,13 +964,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {sourceProvider === 'google' ? t('connect.googleConnect') : t('connect.dropboxConnect')}
+                    {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                    {sourcePass ? (
                     <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : t('connect.dropboxAccount'))}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : sourceProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                        <button
                         type="button"
@@ -988,7 +989,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => openOAuthPopup(sourceProvider, 'source')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : 'Dropbox' })}
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
                   )}
                 </div>
@@ -1412,13 +1413,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {targetProvider === 'google' ? t('connect.googleConnect') : t('connect.dropboxConnect')}
+                    {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                   {targetPass ? (
                     <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : t('connect.dropboxAccount'))}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : targetProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                       <button
                         type="button"
@@ -1437,7 +1438,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => openOAuthPopup(targetProvider, 'target')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : 'Dropbox' })}
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
                   )}
                 </div>

@@ -139,6 +139,29 @@ func TestSanitizeFilename_LengthTruncation(t *testing.T) {
 	}
 }
 
+func TestSanitizeFilename_HiDriveLengthTruncation(t *testing.T) {
+	longName := strings.Repeat("a", 250) + ".pdf" // 254 chars total
+	result := SanitizeFilename(longName, "hidrive")
+	if len(result.SanitizedName) > 251 {
+		t.Errorf("expected HiDrive filename length <= 251, got %d", len(result.SanitizedName))
+	}
+	if !strings.HasSuffix(result.SanitizedName, ".pdf") {
+		t.Error("expected extension .pdf to be preserved")
+	}
+	if !result.Changed {
+		t.Error("expected Changed=true")
+	}
+	if GetMaxPathLength("hidrive") != 1020 {
+		t.Errorf("expected HiDrive max path length to be 1020, got %d", GetMaxPathLength("hidrive"))
+	}
+	if !IsPathTooLong(strings.Repeat("a", 1021), "hidrive") {
+		t.Error("expected IsPathTooLong=true for 1021 chars on hidrive")
+	}
+	if IsPathTooLong(strings.Repeat("a", 1020), "hidrive") {
+		t.Error("expected IsPathTooLong=false for 1020 chars on hidrive")
+	}
+}
+
 func TestSanitizeFilename_S3LongName(t *testing.T) {
 	longName := strings.Repeat("b", 1020) + ".txt"
 	result := SanitizeFilename(longName, "s3")

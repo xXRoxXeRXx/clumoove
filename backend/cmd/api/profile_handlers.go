@@ -69,7 +69,7 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 		}
 	}
 
-	isOAuth := p.Provider == "dropbox" || p.Provider == "google"
+	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "hidrive"
 	if isOAuth && refreshToken != "" {
 		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
 			password = tok.AccessToken
@@ -407,7 +407,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		refreshToken = dec
 	}
-	isOAuth := p.Provider == "dropbox" || p.Provider == "google"
+	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "hidrive"
 	if isOAuth && refreshToken != "" {
 		password = refreshToken
 		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
