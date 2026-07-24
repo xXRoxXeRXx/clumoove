@@ -465,6 +465,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       return;
     }
 
+    if (password.length < 12) {
+      setError(translateApiError('PASSWORD_TOO_SHORT'));
+      setLoading(false);
+      return;
+    }
+
     try {
       const response = await fetch(`${apiUrl}/api/auth/setup-admin`, {
         method: 'POST',
