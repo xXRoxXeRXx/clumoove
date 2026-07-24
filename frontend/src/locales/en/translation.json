@@ -38,8 +38,8 @@
     "select": "Select language"
   },
   "auth": {
-    "setupAdminTitle": "Administrator Initial Setup",
-    "setupAdminSubtitle": "Welcome to Clumoove! Create the initial administrator account to begin.",
+    "setupAdminTitle": "Welcome to Clumoove",
+    "setupAdminSubtitle": "Administrator Initial Setup. Create the initial administrator account to begin.",
     "createAdminAccount": "Create Administrator",
     "welcomeBack": "Welcome back",
     "createAccount": "Create account",
@@ -404,7 +404,7 @@
       "avatarTooLarge": "The image file is too large. Please select an image under 2 MB.",
       "passwordChanged": "Password successfully changed!",
       "passwordMismatch": "The new passwords do not match.",
-      "passwordTooShort": "The new password must be at least 8 characters long.",
+      "passwordTooShort": "The new password must be at least 12 characters long.",
       "passwordError": "Error changing password.",
       "emailValid": "Please enter a valid email address.",
       "emailSame": "The new address is the same as your current email address.",

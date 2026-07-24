@@ -38,8 +38,8 @@
     "select": "Sprache auswählen"
   },
   "auth": {
-    "setupAdminTitle": "Administrator-Erstanlage",
-    "setupAdminSubtitle": "Willkommen bei Clumoove! Erstelle das erste Administrator-Konto, um zu beginnen.",
+    "setupAdminTitle": "Willkommen bei Clumoove",
+    "setupAdminSubtitle": "Administrator-Erstanmeldung. Erstelle das erste Administrator-Konto, um zu beginnen.",
     "createAdminAccount": "Administrator anlegen",
     "welcomeBack": "Willkommen zurück",
     "createAccount": "Konto erstellen",
@@ -404,7 +404,7 @@
       "avatarTooLarge": "Das Bild ist zu groß. Bitte wähle ein Bild kleiner als 2 MB.",
       "passwordChanged": "Passwort erfolgreich geändert!",
       "passwordMismatch": "Die neuen Passwörter stimmen nicht überein.",
-      "passwordTooShort": "Das neue Passwort muss mindestens 8 Zeichen lang sein.",
+      "passwordTooShort": "Das neue Passwort muss mindestens 12 Zeichen lang sein.",
       "passwordError": "Fehler beim Ändern des Passworts.",
       "emailValid": "Bitte gib eine gültige E-Mail-Adresse ein.",
       "emailSame": "Die neue Adresse entspricht deiner aktuellen E-Mail-Adresse.",

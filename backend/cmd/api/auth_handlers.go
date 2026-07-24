@@ -1080,7 +1080,7 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Password) < 8 {
+	if len(req.Password) < minPasswordLength {
 		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
 		return
 	}
