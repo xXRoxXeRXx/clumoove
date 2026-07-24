@@ -975,6 +975,7 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 	userID := auth.GetUserIDFromContext(r.Context())
 
 	if !s.rateLimiter.Allow(s.clientIP(r), streamRateLimit, streamRateWindow) {
+		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -982,6 +983,7 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 	s.streamMu.Lock()
 	if s.activeStreams[userID] >= maxStreamsPerUser {
 		s.streamMu.Unlock()
+		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}

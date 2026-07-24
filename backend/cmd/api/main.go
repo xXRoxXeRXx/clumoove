@@ -53,9 +53,9 @@ const (
 	connectRateWindow  = 1 * time.Minute
 	totpRateLimit      = 10
 	totpRateWindow     = 1 * time.Minute
-	streamRateLimit    = 10
+	streamRateLimit    = 60
 	streamRateWindow   = 1 * time.Minute
-	maxStreamsPerUser  = 5
+	maxStreamsPerUser  = 10
 
 	loginMaxAttempts  = 5
 	loginLockDuration = 15 * time.Minute

@@ -176,6 +176,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         });
+        if (response.status === 429) return;
         if (!response.ok || !response.body) return;
 
         const reader = response.body.getReader();
