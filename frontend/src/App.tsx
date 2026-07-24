@@ -694,7 +694,7 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--color-border)] py-4 mt-auto bg-[var(--color-glass-bg)] backdrop-blur-md">
+      <footer className="border-t border-[var(--color-border)] py-4 mt-auto bg-[var(--color-glass-bg)] backdrop-blur-md relative z-40">
         <div className="max-w-6xl mx-auto px-6 flex justify-end items-center">
           <LanguageSwitcher />
         </div>
