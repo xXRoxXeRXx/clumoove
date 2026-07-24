@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, AlertTriangle, Loader2, Search, Plus } from 'lucide-react';
+import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, AlertTriangle, Loader2, Search } from 'lucide-react';
 import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -95,6 +95,12 @@ export function MigrationsDashboard({
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         });
+        if (response.status === 429) {
+          const retryHeader = response.headers.get('Retry-After');
+          const secs = retryHeader ? parseInt(retryHeader, 10) : 15;
+          retryDelay = (isNaN(secs) ? 15 : secs) * 1000;
+          throw new Error('rate_limited');
+        }
         if (!response.ok || !response.body) {
           throw new Error('stream_unavailable');
         }
@@ -184,6 +190,12 @@ export function MigrationsDashboard({
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,
         });
+        if (res.status === 429) {
+          const retryHeader = res.headers.get('Retry-After');
+          const secs = retryHeader ? parseInt(retryHeader, 10) : 15;
+          retryDelay = (isNaN(secs) ? 15 : secs) * 1000;
+          return;
+        }
         if (!res.ok || !res.body) return;
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -381,20 +393,13 @@ export function MigrationsDashboard({
             </p>
           </div>
           
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="shrink-0 flex items-center justify-end md:self-center">
             <button
               onClick={onStartNewMigration}
               className="group flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-5 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
             >
               <Play className="w-4 h-4 fill-white group-hover:scale-110 transition-transform" />
               <span>{t('migrations.newMigration')}</span>
-            </button>
-            <button
-              onClick={onStartNewMigration}
-              className="group flex items-center gap-2 bg-white/10 hover:bg-white/20 text-white border border-white/20 px-4 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 backdrop-blur-md cursor-pointer shrink-0"
-            >
-              <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" />
-              <span>{t('migrations.newSync')}</span>
             </button>
           </div>
         </div>

@@ -509,6 +509,7 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 
 	// Rate-limit connection attempts (mirrors handleMigrationStream).
 	if !s.rateLimiter.Allow(s.clientIP(r), streamRateLimit, streamRateWindow) {
+		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -517,6 +518,7 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 	s.streamMu.Lock()
 	if s.activeStreams[userID] >= maxStreamsPerUser {
 		s.streamMu.Unlock()
+		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
