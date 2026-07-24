@@ -70,6 +70,7 @@ time, description, tags, etc.) after a successful upload.
 | `webdav` | `webdav.go` (+ `propfind.go`) | generic WebDAV | user/pass | files |
 | `dropbox` | `dropbox.go` | Dropbox API v2 | OAuth2 (access token in `password` field) | files |
 | `google` | `google.go` | Drive API v3 / Calendar / People | OAuth2 | files, calendars, contacts |
+| `hidrive` | `hidrive.go` | Strato HiDrive REST API v2.1 | OAuth2 | files only |
 | `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, …) | access key / secret key | files |
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
 | `sftp` | `sftp.go` | SSH SFTP (`pkg/sftp`) | user/pass (or key) | files |
@@ -99,8 +100,7 @@ contacted). `GetFileHash` returns a `SHA1:` hash, enabling the standard 3-way ha
    from the URL before use (prevents leakage in `url.Error`).
 2. For `nextcloud`/`webdav`/`smb`/`sftp`, runs `validateEgressURL` (SSRF guard).
 3. Switches on the whitelisted provider type and returns the concrete client. `magentacloud` ignores
-   the URL (uses its fixed endpoint). `google` takes the OAuth access token as `password`; `dropbox`
-   likewise. Unknown types return `unsupported provider type`.
+   the URL (uses its fixed endpoint). `google`, `dropbox`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
 
 Provider URL normalization: `normalizeProviderURL` substitutes the constant MagentaCLOUD URL when the
 provider is `magentacloud` (the frontend sends an empty URL).

@@ -78,8 +78,8 @@ File-scoped commands referenced in `AGENTS.md`:
 ### Storage providers
 - Every provider implements `StorageProvider` (`storage/provider.go`) and is registered in
   `factory.go`.
-- Valid provider values are whitelisted: `nextcloud`, `webdav`, `dropbox`, `google`, `smb`, `s3`,
-  `sftp`, `magentacloud`. Never pass unvalidated provider strings to `NewProvider`.
+- Valid provider values are whitelisted: `nextcloud`, `webdav`, `dropbox`, `google`, `hidrive`, `smb`, `s3`,
+  `sftp`, `magentacloud`, `local`. Never pass unvalidated provider strings to `NewProvider`.
 - Resource types: `files`, `calendars`, `contacts`. Calendars/contacts are always overwritten on
   conflict.
 - S3 `insecure=true` endpoints must check literal IPs / `*.local`/`localhost` without DNS resolution.

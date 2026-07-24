@@ -29,6 +29,7 @@ configuration, scaling, and routine operational tasks.
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for the Vite dev server. | – |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials. | – |
 | `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. | – |
+| `HIDRIVE_CLIENT_ID` / `HIDRIVE_CLIENT_SECRET` | Strato HiDrive OAuth2 credentials. | – |
 | `OAUTH_REDIRECT_URI` | Optional OAuth redirect override (auto-detected otherwise). | auto |
 | `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `60` |
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |

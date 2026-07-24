@@ -22,7 +22,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 
 ## Features
 
-- **Nine storage providers** as any source/target combination: Nextcloud, MagentaCLOUD, generic WebDAV, Dropbox, Google Drive, S3-compatible, SMB/CIFS, SFTP, and Local server sandbox.
+- **Ten storage providers** as any source/target combination: Nextcloud, MagentaCLOUD, generic WebDAV, Dropbox, Google Drive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, and Local server sandbox.
 - **Sync Engine & Migration Engine** — full support for one-shot/scheduled migrations as well as recurring one-way and two-way folder synchronizations.
 - **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations and sync jobs.
 - **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic worker-recovery, exponential backoff, and connection-loss auto-pause.
@@ -41,6 +41,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 | **Generic WebDAV** | WebDAV | User / password | Files |
 | **Dropbox** | Dropbox API v2 | OAuth2 | Files |
 | **Google Drive** | Google Drive API v3 | OAuth2 | Files, calendars, contacts |
+| **Strato HiDrive** | REST API v2.1 | OAuth2 | Files |
 | **S3-compatible** | S3 (Wasabi, MinIO, B2…) | Access / secret key | Files |
 | **SMB / CIFS** | SMB2/SMB3 | User / password | Files |
 | **SFTP** | SSH SFTP | User / password (or key) | Files |
@@ -116,6 +117,7 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | `DATABASE_URL` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials (Drive/Calendar/Contacts). |
 | `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. |
+| `HIDRIVE_CLIENT_ID` / `HIDRIVE_CLIENT_SECRET` | Strato HiDrive OAuth2 credentials. |
 | `MAX_THREADS` | Global max parallelism per worker process (default `16`). |
 
 ## Development
