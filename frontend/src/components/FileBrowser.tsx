@@ -1411,13 +1411,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               >
                 <div className="flex-grow space-y-1">
                   <label className="block text-[9px] font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-widest">
-                    Neuer Ordnername in {targetDir}
+                    {t('browser.mkdirIn', { path: targetDir })}
                   </label>
                   <input
                     type="text"
                     value={newFolderName}
                     onChange={(e) => setNewFolderName(e.target.value)}
-                    placeholder="z.B. Archiv"
+                    placeholder={t('browser.mkdirPlaceholder')}
                     className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl py-2 px-3 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-portal-navy-themed)]"
                     autoFocus
                   />
