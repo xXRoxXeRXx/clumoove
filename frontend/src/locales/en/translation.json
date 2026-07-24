@@ -28,12 +28,6 @@
     "admin": "Admin",
     "logout": "Log out"
   },
-  "footer": {
-    "title": "Clumoove Migration Platform",
-    "copyright": "© 2026 All rights reserved. Fast and secure transfers for cloud infrastructures.",
-    "bufferTitle": "Secure Temporary Storage",
-    "bufferText": "The data transfer is encrypted and temporarily processed directly in the server's memory. Your transferred data is never permanently stored."
-  },
   "language": {
     "select": "Select language"
   },
