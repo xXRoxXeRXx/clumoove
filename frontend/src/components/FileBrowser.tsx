@@ -590,7 +590,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </span>
 
           {/* Name & Size */}
-          <span className={`text-[12px] truncate flex-grow leading-none ${
+          <span className={`text-[12px] truncate flex-grow leading-normal py-0.5 ${
             isSelected ? 'text-[var(--color-portal-navy-themed)] font-bold' : 'text-[var(--color-text-primary)]'
           }`}>
             {file.name}
@@ -675,7 +675,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </span>
 
           {/* Name */}
-          <span className={`text-[11.5px] truncate flex-grow ${
+          <span className={`text-[11.5px] truncate flex-grow leading-normal py-0.5 ${
             isSelected ? 'text-[var(--color-portal-navy-themed)]' : 'text-[var(--color-text-secondary)]'
           }`}>
             {file.name}
@@ -1371,7 +1371,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                         <Folder className="w-4 h-4 text-[var(--color-portal-navy-themed)]/80" />
                       )}
                     </span>
-                    <span className={`text-[11.5px] truncate flex-grow text-left ${
+                    <span className={`text-[11.5px] truncate flex-grow text-left leading-normal py-0.5 ${
                       targetDir === '/' ? 'text-[var(--color-portal-navy-themed)]' : 'text-[var(--color-text-secondary)]'
                     }`}>
                       {t('fileBrowser.mainDir')}

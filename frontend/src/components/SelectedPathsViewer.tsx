@@ -147,7 +147,7 @@ const TreeItem: React.FC<{ node: TreeNode; depth: number }> = ({ node, depth }) 
           )}
         </span>
 
-        <span className="text-[11.5px] font-mono text-[var(--color-text-primary)] truncate flex-grow">
+        <span className="text-[11.5px] font-mono text-[var(--color-text-primary)] truncate flex-grow leading-normal py-0.5">
           {node.name}
         </span>
       </div>
