@@ -643,7 +643,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
                         type="text"
-                        placeholder="projekte"
+                        placeholder={t('connect.sharePlaceholder')}
                         value={sourceSmbShare}
                         onChange={(e) => setSourceSmbShare(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -668,7 +668,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
-                      placeholder="benutzername"
+                      placeholder={t('connect.usernamePlaceholder')}
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -794,7 +794,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input
                         type="text"
-                        placeholder="mein-bucket"
+                        placeholder={t('connect.bucketPlaceholder')}
                         value={sourceS3Bucket}
                         onChange={(e) => setSourceS3Bucket(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -818,7 +818,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
                     <input
                       type="url"
-                      placeholder="https://s3.wasabisys.com oder http://localhost:9000"
+                      placeholder={t('connect.s3EndpointPlaceholder')}
                       value={sourceS3Endpoint}
                       onChange={(e) => setSourceS3Endpoint(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -874,7 +874,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </label>
                     <input
                       type="url"
-                      placeholder={sourceProvider === 'nextcloud' ? 'https://nextcloud.source-domain.de' : 'https://webdav.domain.de/dav'}
+                      placeholder={sourceProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -888,7 +888,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
-                      placeholder="benutzername"
+                      placeholder={t('connect.usernamePlaceholder')}
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -939,7 +939,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
-                      placeholder="benutzername"
+                      placeholder={t('connect.usernamePlaceholder')}
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1092,7 +1092,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
                         type="text"
-                        placeholder="projekte"
+                        placeholder={t('connect.sharePlaceholder')}
                         value={targetSmbShare}
                         onChange={(e) => setTargetSmbShare(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1117,7 +1117,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
-                      placeholder="benutzername"
+                      placeholder={t('connect.usernamePlaceholder')}
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1243,7 +1243,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input
                         type="text"
-                        placeholder="mein-bucket"
+                        placeholder={t('connect.bucketPlaceholder')}
                         value={targetS3Bucket}
                         onChange={(e) => setTargetS3Bucket(e.target.value)}
                         className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1267,7 +1267,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
                     <input
                       type="url"
-                      placeholder="https://s3.wasabisys.com oder http://localhost:9000"
+                      placeholder={t('connect.s3EndpointPlaceholder')}
                       value={targetS3Endpoint}
                       onChange={(e) => setTargetS3Endpoint(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1323,7 +1323,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </label>
                     <input
                       type="url"
-                      placeholder={targetProvider === 'nextcloud' ? 'https://nextcloud.target-domain.de' : 'https://webdav.domain.de/dav'}
+                      placeholder={targetProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={targetUrl}
                       onChange={(e) => setTargetUrl(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1337,7 +1337,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
-                      placeholder="benutzername"
+                      placeholder={t('connect.usernamePlaceholder')}
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
@@ -1388,7 +1388,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
-                      placeholder="benutzername"
+                      placeholder={t('connect.usernamePlaceholder')}
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
                       className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
