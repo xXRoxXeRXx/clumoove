@@ -7,6 +7,9 @@ import {
   FileText, 
   Image as ImageIcon, 
   Film, 
+  Music,
+  FileCode,
+  Archive,
   Search, 
   Copy, 
   Check, 
@@ -24,7 +27,7 @@ interface SelectedPathsViewerProps {
   maxVisible?: number;
 }
 
-type PathType = 'folder' | 'image' | 'video' | 'document' | 'file';
+type PathType = 'folder' | 'image' | 'video' | 'audio' | 'document' | 'code' | 'archive' | 'file';
 
 interface TreeNode {
   name: string;
@@ -42,14 +45,23 @@ const getPathType = (path: string): PathType => {
 
   const ext = lastSegment.split('.').pop()?.toLowerCase() || '';
 
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'heic', 'raw', 'psd', 'ai'].includes(ext)) {
     return 'image';
   }
-  if (['mp4', 'mkv', 'avi', 'mov', 'webm', 'm4v'].includes(ext)) {
+  if (['mp4', 'mkv', 'avi', 'mov', 'webm', 'm4v', 'flv', 'wmv', 'mpeg', '3gp'].includes(ext)) {
     return 'video';
   }
-  if (['pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'csv', 'md', 'txt', 'odt', 'ods'].includes(ext)) {
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'alac'].includes(ext)) {
+    return 'audio';
+  }
+  if (['pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'csv', 'md', 'txt', 'odt', 'ods', 'odp', 'rtf'].includes(ext)) {
     return 'document';
+  }
+  if (['js', 'ts', 'jsx', 'tsx', 'json', 'xml', 'html', 'css', 'scss', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'sh', 'yaml', 'yml', 'sql', 'env'].includes(ext)) {
+    return 'code';
+  }
+  if (['zip', 'tar', 'gz', '7z', 'rar', 'bz2', 'xz', 'iso', 'dmg'].includes(ext)) {
+    return 'archive';
   }
   return 'file';
 };
@@ -62,8 +74,14 @@ const getPathIcon = (type: PathType, className = "w-3.5 h-3.5 shrink-0") => {
       return <ImageIcon className={`${className} text-purple-500`} />;
     case 'video':
       return <Film className={`${className} text-blue-500`} />;
+    case 'audio':
+      return <Music className={`${className} text-rose-500`} />;
     case 'document':
       return <FileText className={`${className} text-emerald-500`} />;
+    case 'code':
+      return <FileCode className={`${className} text-amber-500`} />;
+    case 'archive':
+      return <Archive className={`${className} text-orange-500`} />;
     default:
       return <File className={`${className} text-slate-400`} />;
   }
