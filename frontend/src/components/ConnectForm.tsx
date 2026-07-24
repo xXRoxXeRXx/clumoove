@@ -545,14 +545,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               {t('connect.sourceTitle')} & {t('connect.targetTitle')}
             </span>
             <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-              Schritt 1 & 2 von 3: Cloud-Verbindungen festlegen
+              {t('connect.wizardStep')}
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-portal-orange bg-portal-orange/10 px-3 py-1 rounded-full border border-portal-orange/20">
           <Server className="w-3.5 h-3.5" />
-          <span>Verbindungen</span>
+          <span>{t('connect.connectionsBadge')}</span>
         </div>
       </div>
 

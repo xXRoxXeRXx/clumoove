@@ -717,14 +717,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               {t('fileBrowser.title')}
             </span>
             <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-              Schritt 3 von 3: Daten auswählen & Einstellungen festlegen
+              {t('fileBrowser.wizardStep')}
             </span>
           </div>
         </div>
 
         <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-portal-orange bg-portal-orange/10 px-3 py-1 rounded-full border border-portal-orange/20">
           <Folder className="w-3.5 h-3.5" />
-          <span>Datenauswahl</span>
+          <span>{t('fileBrowser.selectionBadge')}</span>
         </div>
       </div>
 
@@ -766,7 +766,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               </h3>
             </div>
             <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-md bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
-              {pathsToMigrate.length} {pathsToMigrate.length === 1 ? 'Element' : 'Elemente'}
+              {t('fileBrowser.itemCount', { count: pathsToMigrate.length })}
             </span>
           </div>
           
@@ -1411,13 +1411,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               >
                 <div className="flex-grow space-y-1">
                   <label className="block text-[9px] font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-widest">
-                    {t('browser.mkdirIn', { path: targetDir })}
+                    {t('fileBrowser.mkdirIn', { path: targetDir })}
                   </label>
                   <input
                     type="text"
                     value={newFolderName}
                     onChange={(e) => setNewFolderName(e.target.value)}
-                    placeholder={t('browser.mkdirPlaceholder')}
+                    placeholder={t('fileBrowser.mkdirPlaceholder')}
                     className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl py-2 px-3 text-xs text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-portal-navy-themed)]"
                     autoFocus
                   />
@@ -1428,7 +1428,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     disabled={!newFolderName.trim()}
                     className="px-3.5 py-2 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] text-xs font-mono font-bold uppercase rounded-xl shadow-xs hover:shadow-sm active:scale-97 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                   >
-                    Erstellen
+                    {t('common.create')}
                   </button>
                   <button
                     type="button"
@@ -1447,7 +1447,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             {/* Modal Footer */}
             <div className="p-4 border-t border-[var(--color-border-light)] flex items-center justify-between bg-[var(--color-bg-tertiary)]/50">
               <div className="text-left max-w-[200px] md:max-w-[240px] space-y-0.5">
-                <p className="text-[9px] text-[var(--color-text-muted)] font-bold font-mono uppercase tracking-wider">Auswahl:</p>
+                <p className="text-[9px] text-[var(--color-text-muted)] font-bold font-mono uppercase tracking-wider">{t('fileBrowser.selectionLabel')}</p>
                 <p className="font-mono text-[11px] text-[var(--color-text-primary)] truncate font-semibold">{targetDir}</p>
               </div>
               <div className="flex items-center gap-2">
@@ -1455,10 +1455,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   type="button"
                   onClick={() => setIsCreatingFolder(true)}
                   className="px-3.5 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-[11px] font-mono font-bold uppercase rounded-xl shadow-xs hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all flex items-center gap-1.5 cursor-pointer"
-                  title="Neuen Ordner in diesem Verzeichnis erstellen"
+                  title={t('fileBrowser.newFolderHint')}
                 >
                   <FolderPlus className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                  <span>Neuer Ordner</span>
+                  <span>{t('fileBrowser.newFolder')}</span>
                 </button>
                 <button
                   type="button"
