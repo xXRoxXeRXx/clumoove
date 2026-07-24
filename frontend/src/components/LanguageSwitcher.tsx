@@ -1,14 +1,28 @@
+import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe } from 'lucide-react';
+import { Globe, Check, ChevronUp } from 'lucide-react';
 
 const LANGUAGES = [
-  { code: 'de', label: 'DE' },
-  { code: 'en', label: 'EN' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'en', label: 'English' },
 ];
 
 export function LanguageSwitcher() {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
   const current = i18n.language?.startsWith('de') ? 'de' : 'en';
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const select = (code: string) => {
     try {
@@ -17,28 +31,44 @@ export function LanguageSwitcher() {
       /* ignore storage error */
     }
     void i18n.changeLanguage(code);
+    setOpen(false);
   };
 
   return (
-    <div className="inline-flex items-center gap-1 p-1 bg-[var(--color-bg-secondary)]/80 border border-[var(--color-border)] rounded-xl shadow-xs">
-      <Globe className="w-3.5 h-3.5 text-[var(--color-text-muted)] ml-1.5 mr-0.5" />
-      {LANGUAGES.map((lang) => {
-        const isActive = current === lang.code;
-        return (
-          <button
-            key={lang.code}
-            type="button"
-            onClick={() => select(lang.code)}
-            className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer ${
-              isActive
-                ? 'bg-gradient-to-r from-portal-orange to-orange-500 text-white shadow-xs'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
-            }`}
-          >
-            {lang.label}
-          </button>
-        );
-      })}
+    <div className="relative inline-block" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-label={t('language.select')}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all text-xs font-mono font-bold uppercase tracking-wider cursor-pointer shadow-xs"
+      >
+        <Globe className="w-3.5 h-3.5 text-[var(--color-portal-orange-themed)]" />
+        <span>{current === 'de' ? 'Deutsch' : 'English'}</span>
+        <ChevronUp className={`w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full right-0 mb-2 w-40 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-2xl shadow-2xl py-1.5 z-50 animate-fade-in backdrop-blur-md">
+          {LANGUAGES.map((lang) => {
+            const isSelected = current === lang.code;
+            return (
+              <button
+                key={lang.code}
+                type="button"
+                onClick={() => select(lang.code)}
+                className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 text-xs font-semibold transition-colors cursor-pointer text-left font-sans ${
+                  isSelected
+                    ? 'text-[var(--color-portal-orange-themed)] bg-[var(--color-bg-tertiary)]'
+                    : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
+                }`}
+              >
+                <span>{lang.label}</span>
+                {isSelected && <Check className="w-3.5 h-3.5 text-[var(--color-portal-orange-themed)]" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
