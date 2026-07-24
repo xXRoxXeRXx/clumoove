@@ -350,7 +350,11 @@
     "profilePicture": "Profile picture",
     "avatarHint": "Upload a new profile picture. Supported formats: PNG, JPEG, WebP, and GIF up to 2 MB.",
     "avatarCropperHint": "Drag to move | Scroll to zoom",
-    "selectImage": "Select image",
+    "selectImage": "Select Image",
+    "avatarCropperTitle": "Adjust Profile Picture",
+    "avatarAlt": "User avatar",
+    "qrCodeAlt": "2FA QR Code",
+    "smtpEncryptionNone": "None",
     "delete": "Delete",
     "profileDetails": "Profile details",
     "currentEmail": "Current email address",
@@ -722,7 +726,10 @@
     "conflictSourceWins": "Source Wins (Overwrite)",
     "conflictKeepBoth": "Keep Both (Conflict Copy)",
     "conflictSkip": "Skip Conflict",
-    "oneWayConflictNote": "In one-way sync, source state always overwrites target."
+    "oneWayConflictNote": "In one-way sync, source state always overwrites target.",
+    "lastRunErrors": "{{count}} error(s) on last run",
+    "lastRunUpdated": "{{count}} file(s) updated",
+    "lastRunNoChanges": "No changes detected"
   },
   "paths": {
     "moreItems": "+{{count}} more",
@@ -736,7 +743,9 @@
     "close": "Close",
     "noResults": "No matching paths found",
     "folderType": "Folder",
-    "fileType": "File"
+    "fileType": "File",
+    "treeView": "Tree View",
+    "listView": "List View"
   }
 }
 

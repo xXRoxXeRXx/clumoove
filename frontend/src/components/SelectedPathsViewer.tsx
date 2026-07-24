@@ -329,7 +329,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                         ? 'bg-portal-navy text-white shadow-2xs'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                     }`}
-                    title="Baumansicht"
+                    title={t('paths.treeView')}
                   >
                     <FolderTree className="w-4 h-4" />
                   </button>
@@ -341,7 +341,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                         ? 'bg-portal-navy text-white shadow-2xs'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                     }`}
-                    title="Listenansicht"
+                    title={t('paths.listView')}
                   >
                     <List className="w-4 h-4" />
                   </button>

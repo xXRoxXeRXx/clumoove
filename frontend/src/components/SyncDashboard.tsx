@@ -646,10 +646,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                     {job.last_run_at && (
                       <span className="text-[10px] text-[var(--color-text-secondary)] mt-0.5 block">
                         {job.failed_files > 0
-                          ? `${job.failed_files} Fehler beim letzten Lauf`
+                          ? t('sync.lastRunErrors', { count: job.failed_files })
                           : job.changed_files > 0
-                          ? `${job.changed_files} Datei(en) aktualisiert`
-                          : 'Keine Änderungen festgestellt'}
+                          ? t('sync.lastRunUpdated', { count: job.changed_files })
+                          : t('sync.lastRunNoChanges')}
                       </span>
                     )}
                   </div>

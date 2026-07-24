@@ -351,6 +351,10 @@
     "avatarHint": "Lade ein neues Profilbild hoch. Unterstützt werden PNG, JPEG, WebP und GIF bis max. 2 MB.",
     "avatarCropperHint": "Ziehen zum Bewegen | Mausrad zum Zoomen",
     "selectImage": "Bild wählen",
+    "avatarCropperTitle": "Profilbild anpassen",
+    "avatarAlt": "Benutzerbild",
+    "qrCodeAlt": "2FA QR-Code",
+    "smtpEncryptionNone": "Keine",
     "delete": "Löschen",
     "profileDetails": "Profil-Details",
     "currentEmail": "Aktuelle E-Mail-Adresse",
@@ -722,7 +726,10 @@
     "conflictSourceWins": "Quelle gewinnt (Überschreiben)",
     "conflictKeepBoth": "Beide behalten (Konfliktkopie)",
     "conflictSkip": "Überspringen",
-    "oneWayConflictNote": "Bei One-Way-Synchronisation überschreibt der Quell-Stand stets das Ziel."
+    "oneWayConflictNote": "Bei One-Way-Synchronisation überschreibt der Quell-Stand stets das Ziel.",
+    "lastRunErrors": "{{count}} Fehler beim letzten Lauf",
+    "lastRunUpdated": "{{count}} Datei(en) aktualisiert",
+    "lastRunNoChanges": "Keine Änderungen festgestellt"
   },
   "paths": {
     "moreItems": "+{{count}} weitere",
@@ -736,7 +743,9 @@
     "close": "Schließen",
     "noResults": "Keine übereinstimmenden Pfade gefunden",
     "folderType": "Ordner",
-    "fileType": "Datei"
+    "fileType": "Datei",
+    "treeView": "Baumansicht",
+    "listView": "Listenansicht"
   }
 }
 
