@@ -1,5 +1,27 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { Folder, FolderOpen, File, ChevronRight, ChevronDown, Check, Play, ArrowLeft, RefreshCw, AlertTriangle, Calendar, BookOpen, FolderPlus, X, Info } from 'lucide-react';
+import { 
+  Folder, 
+  FolderOpen, 
+  File, 
+  FileText, 
+  Image as ImageIcon, 
+  Film, 
+  Music, 
+  FileCode, 
+  Archive,
+  ChevronRight, 
+  ChevronDown, 
+  Check, 
+  Play, 
+  ArrowLeft, 
+  RefreshCw, 
+  AlertTriangle, 
+  Calendar, 
+  BookOpen, 
+  FolderPlus, 
+  X, 
+  Info 
+} from 'lucide-react';
 import type { CloudFile, MigrationConfig } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -36,6 +58,37 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
     return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
   });
+};
+
+const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
+  if (!fileName) return <File className={`${className} text-slate-400`} />;
+  if (fileName.endsWith('/')) return <Folder className={`${className} text-amber-500`} />;
+
+  const lastSegment = fileName.split('/').pop() || '';
+  if (!lastSegment.includes('.')) return <File className={`${className} text-slate-400`} />;
+
+  const ext = lastSegment.split('.').pop()?.toLowerCase() || '';
+
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'heic', 'raw', 'psd', 'ai'].includes(ext)) {
+    return <ImageIcon className={`${className} text-purple-500`} />;
+  }
+  if (['mp4', 'mkv', 'avi', 'mov', 'webm', 'm4v', 'flv', 'wmv', 'mpeg', '3gp'].includes(ext)) {
+    return <Film className={`${className} text-blue-500`} />;
+  }
+  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'alac'].includes(ext)) {
+    return <Music className={`${className} text-rose-500`} />;
+  }
+  if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'rtf', 'txt', 'csv', 'md'].includes(ext)) {
+    return <FileText className={`${className} text-emerald-500`} />;
+  }
+  if (['js', 'ts', 'jsx', 'tsx', 'json', 'xml', 'html', 'css', 'scss', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'sh', 'yaml', 'yml', 'sql', 'env'].includes(ext)) {
+    return <FileCode className={`${className} text-amber-500`} />;
+  }
+  if (['zip', 'tar', 'gz', '7z', 'rar', 'bz2', 'xz', 'iso', 'dmg'].includes(ext)) {
+    return <Archive className={`${className} text-orange-500`} />;
+  }
+
+  return <File className={`${className} text-slate-400`} />;
 };
 
 export const FileBrowser: React.FC<FileBrowserProps> = ({
@@ -577,15 +630,15 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </button>
 
           {/* Outline-style Icon */}
-          <span className="text-[var(--color-portal-navy-themed)]">
+          <span className="shrink-0">
             {file.is_dir ? (
               isExpanded ? (
-                <FolderOpen className="w-5 h-5 text-[var(--color-portal-navy-themed)]/80" />
+                <FolderOpen className="w-5 h-5 text-amber-500" />
               ) : (
-                <Folder className="w-5 h-5 text-[var(--color-portal-navy-themed)]/80" />
+                <Folder className="w-5 h-5 text-amber-500" />
               )
             ) : (
-              <File className="w-5 h-5 text-[var(--color-text-muted)]" />
+              getFileIcon(file.name, "w-5 h-5")
             )}
           </span>
 
@@ -1365,11 +1418,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       )}
                     </span>
                     <span className="text-[var(--color-portal-navy-themed)]">
-                      {targetExpandedPaths['/'] ? (
-                        <FolderOpen className="w-4 h-4 text-[var(--color-portal-navy-themed)]/80" />
-                      ) : (
-                        <Folder className="w-4 h-4 text-[var(--color-portal-navy-themed)]/80" />
-                      )}
+                      {/* Icon */}
+                      <span className="shrink-0">
+                        {targetExpandedPaths['/'] ? (
+                          <FolderOpen className="w-4 h-4 text-amber-500" />
+                        ) : (
+                          <Folder className="w-4 h-4 text-amber-500" />
+                        )}
+                      </span>
                     </span>
                     <span className={`text-[11.5px] truncate flex-grow text-left leading-normal py-0.5 ${
                       targetDir === '/' ? 'text-[var(--color-portal-navy-themed)]' : 'text-[var(--color-text-secondary)]'
