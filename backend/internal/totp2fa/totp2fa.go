@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"math/big"
 
+	"github.com/boombuler/barcode"
 	"github.com/boombuler/barcode/qr"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
@@ -31,8 +32,13 @@ func GenerateProvisioning(userEmail string) (secretBase32, otpauthURI, qrPNGData
 		return "", "", "", err
 	}
 
+	scaledImg, err := barcode.Scale(img, 512, 512)
+	if err != nil {
+		return "", "", "", err
+	}
+
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
+	if err := png.Encode(&buf, scaledImg); err != nil {
 		return "", "", "", err
 	}
 

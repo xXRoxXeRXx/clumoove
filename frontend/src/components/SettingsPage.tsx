@@ -906,7 +906,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               <form onSubmit={handle2FAEnable} className="space-y-4">
                 <div className="flex flex-col items-center gap-3">
                   {setupData.qr_png.startsWith('data:image/') ? (
-                    <img src={setupData.qr_png} alt={t('settings.qrCodeAlt')} className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2" />
+                    <img src={setupData.qr_png} alt={t('settings.qrCodeAlt')} className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2 [image-rendering:pixelated]" />
                   ) : (
                     <div className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2 flex items-center justify-center text-[10px] text-[var(--color-text-muted)] text-center font-mono">
                       {t('settings.messages.qrInvalid')}
