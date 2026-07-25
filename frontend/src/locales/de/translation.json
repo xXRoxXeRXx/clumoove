@@ -226,6 +226,7 @@
     "transferred": "Übertragen",
     "remaining": "Verbleibende Zeit",
     "activeTransfers": "Aktive Übertragungen ({{count}} von {{threads}} gleichzeitig)",
+    "noActiveTransfers": "Keine aktiven Übertragungen",
     "running": "Läuft...",
     "status": "STATUS",
     "job": "Aufgabe",
