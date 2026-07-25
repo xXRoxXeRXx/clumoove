@@ -797,19 +797,19 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       </div>
 
       {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--color-border-light)] pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-border-light)] pb-5">
         <div>
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-portal-navy-themed)] tracking-tight">
-              {t('fileBrowser.title')}
-            </h1>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-portal-orange/10 text-portal-orange border border-portal-orange/30">
-              {jobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
-            </span>
-          </div>
+          <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-portal-navy-themed)] tracking-tight">
+            {t('fileBrowser.title')}
+          </h1>
           <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">
             {t('fileBrowser.subtitle')}
           </p>
+        </div>
+        <div className="flex items-center">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-portal-orange/10 text-portal-orange border border-portal-orange/30 shrink-0">
+            {jobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
+          </span>
         </div>
       </div>
 
