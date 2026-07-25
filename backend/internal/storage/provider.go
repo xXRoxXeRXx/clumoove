@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -95,5 +96,43 @@ func (pr *ProgressReader) Read(p []byte) (int, error) {
 		pr.ProgressChan <- int64(n)
 	}
 	return n, err
+}
+
+// IsSystemOrAppGeneratedCollection reports whether a calendar or contact collection name
+// corresponds to a Nextcloud/WebDAV system-generated or app-generated read-only collection
+// (such as Deck board calendars, Contact Birthdays, system addressbooks, inbox/outbox, etc.).
+func IsSystemOrAppGeneratedCollection(name string) bool {
+	nameLower := strings.ToLower(strings.TrimSpace(name))
+	if nameLower == "" {
+		return false
+	}
+	return strings.HasPrefix(nameLower, "app-generated--") ||
+		strings.HasPrefix(nameLower, "z-server-generated--") ||
+		nameLower == "contact_birthdays" ||
+		nameLower == "contact-birthdays" ||
+		nameLower == "contact_birthdays.ics" ||
+		nameLower == "birthdays" ||
+		nameLower == "inbox" ||
+		nameLower == "outbox" ||
+		nameLower == "notifications" ||
+		nameLower == "notification-inbox" ||
+		nameLower == "trashbin" ||
+		nameLower == "trash"
+}
+
+// IsSystemOrAppGeneratedPath checks if any component in the given path belongs to
+// a system-generated or app-generated collection.
+func IsSystemOrAppGeneratedPath(p string) bool {
+	clean := strings.Trim(p, "/")
+	if clean == "" {
+		return false
+	}
+	parts := strings.Split(clean, "/")
+	for _, part := range parts {
+		if IsSystemOrAppGeneratedCollection(part) {
+			return true
+		}
+	}
+	return false
 }
 

@@ -148,3 +148,85 @@ func TestNextcloudCalendarListingFiltering(t *testing.T) {
 	}
 }
 
+func TestIsSystemOrAppGeneratedCollection(t *testing.T) {
+	systemNames := []string{
+		"app-generated--deck--board-1",
+		"app-generated--circles--group-1",
+		"z-server-generated--system",
+		"contact_birthdays",
+		"contact-birthdays",
+		"contact_birthdays.ics",
+		"birthdays",
+		"inbox",
+		"outbox",
+	}
+
+	for _, name := range systemNames {
+		if !IsSystemOrAppGeneratedCollection(name) {
+			t.Errorf("Expected IsSystemOrAppGeneratedCollection(%q) = true, got false", name)
+		}
+	}
+
+	userNames := []string{"personal", "work", "contacts-default", "family"}
+	for _, name := range userNames {
+		if IsSystemOrAppGeneratedCollection(name) {
+			t.Errorf("Expected IsSystemOrAppGeneratedCollection(%q) = false, got true", name)
+		}
+	}
+
+	systemPaths := []string{
+		"/app-generated--deck--board-1/card-1.ics",
+		"/contact_birthdays/contacts-default.ics",
+		"/z-server-generated--system/Database:admin.vcf",
+	}
+	for _, p := range systemPaths {
+		if !IsSystemOrAppGeneratedPath(p) {
+			t.Errorf("Expected IsSystemOrAppGeneratedPath(%q) = true, got false", p)
+		}
+	}
+}
+
+func TestNextcloudFileExistsHEADFallback(t *testing.T) {
+	// Server returns 500 on HEAD (typical SabreDAV CardDAV behavior), but 207 MultiStatus on PROPFIND.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "HEAD" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if r.Method == "PROPFIND" {
+			w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+			w.WriteHeader(http.StatusMultiStatus)
+			w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+	<d:response>
+		<d:href>/remote.php/dav/contacts/user/contacts/c123.vcf</d:href>
+		<d:propstat>
+			<d:status>HTTP/1.1 200 OK</d:status>
+			<d:prop><d:getcontentlength>150</d:getcontentlength></d:prop>
+		</d:propstat>
+	</d:response>
+</d:multistatus>`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	if err != nil {
+		t.Fatalf("Failed to create provider: %v", err)
+	}
+
+	exists, size, err := p.FileExists(context.Background(), "contacts", "/contacts/c123.vcf")
+	if err != nil {
+		t.Fatalf("FileExists returned error despite PROPFIND fallback: %v", err)
+	}
+	if !exists {
+		t.Errorf("Expected exists=true, got false")
+	}
+	if size != 150 {
+		t.Errorf("Expected size=150, got %d", size)
+	}
+}
+
+

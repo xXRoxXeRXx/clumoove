@@ -505,6 +505,16 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	task.Status = "RUNNING"
 	_ = db.UpdateTaskStatus(p.db, task)
 
+	// Skip read-only system or app-generated calendar/contact collections
+	if task.ResourceType != "files" && storage.IsSystemOrAppGeneratedPath(task.FilePath) {
+		task.Status = "SKIPPED"
+		task.ErrorMessage = sql.NullString{String: "Skipped read-only system or app-generated collection (SKIP)", Valid: true}
+		_ = db.UpdateTaskStatus(p.db, task)
+		_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
+		_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+		return nil
+	}
+
 	// 3. Conflict Resolution
 	var deleteAfterUpload bool // set true by OVERWRITE: delete original only after upload succeeds
 	targetPath := task.FilePath
@@ -560,6 +570,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			if task.ResourceType != "files" {
 				err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 				if err != nil {
+					if isWebDAVSystemConflict(err) {
+						task.Status = "SKIPPED"
+						task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Skipped calendar/contact entry: %v", err), Valid: true}
+						_ = db.UpdateTaskStatus(p.db, task)
+						_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
+						_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+						return nil
+					}
 					return fmt.Errorf("failed to delete existing calendar/contact entry for overwrite: %w", err)
 				}
 			} else {
@@ -810,9 +828,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}
 
 	if err != nil {
-		if errors.Is(err, storage.ErrDuplicateUID) {
+		if errors.Is(err, storage.ErrDuplicateUID) || (task.ResourceType != "files" && isWebDAVSystemConflict(err)) {
 			task.Status = "SKIPPED"
-			task.ErrorMessage = sql.NullString{String: "Sabredav: Calendar event UID already exists (SKIP)", Valid: true}
+			task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Sabredav/WebDAV: calendar/contact entry skipped (%v)", err), Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
 			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
 			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
@@ -1235,4 +1253,20 @@ func isNonRetryableHashError(err error) bool {
 	return strings.Contains(msg, "checksum not available") ||
 		strings.Contains(msg, "not supported") ||
 		strings.Contains(msg, "not implemented")
+}
+
+func isWebDAVSystemConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "409") ||
+		strings.Contains(s, "403") ||
+		strings.Contains(s, "404") ||
+		strings.Contains(s, "sabredav\\exception\\conflict") ||
+		strings.Contains(s, "sabredav\\exception\\forbidden") ||
+		strings.Contains(s, "sabredav\\exception\\notfound") ||
+		strings.Contains(s, "conflict") ||
+		strings.Contains(s, "delete failed with status: 403") ||
+		strings.Contains(s, "could not be found")
 }

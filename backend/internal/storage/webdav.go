@@ -430,9 +430,7 @@ func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath 
 			if resp.StatusCode == http.StatusUnauthorized {
 				return false, 0, fmt.Errorf("webdav file-exists: %w", ErrAuth)
 			}
-			if resp.StatusCode >= 400 {
-				return false, 0, fmt.Errorf("HEAD check failed with status: %d", resp.StatusCode)
-			}
+			// For status >= 400 (e.g. 500 or 405 Method Not Allowed), fall through to PROPFIND below.
 		}
 	}
 
