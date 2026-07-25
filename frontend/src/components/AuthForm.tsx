@@ -20,7 +20,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   const [error, setError] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
-  const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
+  const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(false);
   const [passwordResetAvailable, setPasswordResetAvailable] = useState<boolean>(false);
   const [forgotMode, setForgotMode] = useState<boolean>(false);
   const [resetEmailSent, setResetEmailSent] = useState<boolean>(false);
@@ -42,9 +42,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       .then((data) => {
         if (cancelled) return;
         if (data) {
-          if (data.registrations_enabled === 'false') {
-            setRegistrationsEnabled(false);
-          }
+          setRegistrationsEnabled(data.registrations_enabled === 'true');
           if (data.needs_setup === true) {
             setNeedsSetup(true);
           }

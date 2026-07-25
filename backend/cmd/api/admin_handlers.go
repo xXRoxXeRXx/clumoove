@@ -233,7 +233,7 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if val == "" {
-		val = "true"
+		val = "false"
 	}
 
 	needsSetup, err := db.IsSetupRequired(s.db)

@@ -632,7 +632,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
   const { t } = useTranslation();
   const translateApiError = useApiError();
 
-  const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(true);
+  const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -641,7 +641,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
     fetch(`${apiUrl}/api/settings`)
       .then((res) => res.json())
       .then((data) => {
-        if (!cancelled) setRegistrationsEnabled(data.registrations_enabled !== 'false');
+        if (!cancelled) setRegistrationsEnabled(data.registrations_enabled === 'true');
       })
       .catch((err) => {
         console.error('Failed to fetch settings:', err);
