@@ -135,6 +135,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 
 		pingErr = db.Ping()
 		if pingErr == nil {
+			// Acquire PostgreSQL advisory lock to prevent concurrent DDL race conditions (e.g. api & worker starting simultaneously)
+			if _, lockErr := db.Exec(`SELECT pg_advisory_lock(84736291)`); lockErr == nil {
+				defer db.Exec(`SELECT pg_advisory_unlock(84736291)`)
+			}
+
 			// Apply inline schema DDL migrations on startup
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
