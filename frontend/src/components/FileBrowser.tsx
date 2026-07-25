@@ -760,6 +760,20 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   return (
     <div className="w-full max-w-5xl mx-auto py-2 animate-fade-in text-left space-y-6">
       
+      {/* Top Bar with Back Button */}
+      {onBack && (
+        <div className="flex items-center justify-between pb-1">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm shrink-0"
+          >
+            <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
+            <span>{t('common.back')}</span>
+          </button>
+        </div>
+      )}
+
       {/* Wizard Step Progress Banner */}
       <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-xs">
         <div className="flex items-center gap-3">
@@ -784,27 +798,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[var(--color-border-light)] pb-5">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onBack}
-            className="px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[11px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm shrink-0"
-          >
-            <ArrowLeft className="w-3.5 h-3.5 stroke-[2.5] inline-block mr-1.5 align-text-bottom" />
-            <span>{t('common.back')}</span>
-          </button>
-          <div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-portal-navy-themed)] tracking-tight">
-                {t('fileBrowser.title')}
-              </h1>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-portal-orange/10 text-portal-orange border border-portal-orange/30">
-                {jobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
-              </span>
-            </div>
-            <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">
-              {t('fileBrowser.subtitle')}
-            </p>
+        <div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-portal-navy-themed)] tracking-tight">
+              {t('fileBrowser.title')}
+            </h1>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-portal-orange/10 text-portal-orange border border-portal-orange/30">
+              {jobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
+            </span>
           </div>
+          <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">
+            {t('fileBrowser.subtitle')}
+          </p>
         </div>
       </div>
 
