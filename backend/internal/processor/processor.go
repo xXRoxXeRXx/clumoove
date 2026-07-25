@@ -521,12 +521,39 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// download/upload pipeline and just call CreateDirectory.
 	var taskMeta map[string]interface{}
 	if task.Metadata != nil {
-		_ = json.Unmarshal(task.Metadata, &taskMeta)
+		if err := json.Unmarshal(task.Metadata, &taskMeta); err != nil {
+			log.Printf("[Worker] Failed to parse task metadata for task %s: %v", task.ID, err)
+			return fmt.Errorf("failed to parse task metadata: %w", err)
+		}
 	}
 	if action, _ := taskMeta["action"].(string); action == "mkdir" {
 		targetPath := task.FilePath
 		if task.ResourceType == "files" {
 			targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
+			
+			// Sanitize directory name (same logic as files)
+			dirName := path.Base(targetPath)
+			sanitized := sanitize.SanitizeFilename(dirName, mig.TargetProvider)
+			if sanitized.Changed {
+				targetPath = path.Join(path.Dir(targetPath), sanitized.SanitizedName)
+				log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)", 
+					dirName, sanitized.SanitizedName, strings.Join(sanitized.Reasons, ", "))
+			}
+			
+			// Check for case collisions on case-insensitive providers
+			if sanitize.IsCaseInsensitive(mig.TargetProvider) {
+				dirPath := path.Dir(targetPath)
+				dirName := path.Base(targetPath)
+				if collision, _ := sanitize.CheckCaseCollision(ctx, targetClient, task.ResourceType, dirPath, dirName); collision != "" {
+					log.Printf("[Worker] Directory case collision detected: %s conflicts with %s", targetPath, collision)
+					// Skip this directory to avoid conflicts
+					task.Status = "SKIPPED"
+					task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Directory skipped due to case collision with %s", collision), Valid: true}
+					_ = db.UpdateTaskStatus(p.db, task)
+					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, 0, 0, 0)
+					return nil
+				}
+			}
 		}
 		if err := targetClient.CreateDirectory(ctx, task.ResourceType, targetPath); err != nil {
 			return fmt.Errorf("failed to create directory %s on target: %w", targetPath, err)

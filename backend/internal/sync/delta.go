@@ -35,6 +35,7 @@ func (e *Engine) updateSyncStates(
 	prevSource, prevTarget map[string]db.SyncState,
 	sourceDirETags, targetDirETags map[string]string,
 	sourceDirMap, targetDirMap map[string]bool,
+	prevSourceDirETags, prevTargetDirETags map[string]string,
 	taskOutcomes map[string]string,
 ) {
 	allKeys := make(map[string]bool)
@@ -145,6 +146,27 @@ func (e *Engine) updateSyncStates(
 				RelPath:   cdir,
 				Size:      -1,
 			})
+		}
+	}
+
+	// Clean up stale directory entries: directories that were in the previous
+	// sync_state but no longer appear in the current scan (neither in dirMap
+	// nor dirETags) must be deleted to prevent unbounded table growth and
+	// spurious delete-propagation for already-removed directories.
+	for dirPath := range prevSourceDirETags {
+		cdir := cleanRelPath(dirPath)
+		if !sourceDirMap[cdir] {
+			if _, hasETag := sourceDirETags[cdir]; !hasETag {
+				deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "source", cdir})
+			}
+		}
+	}
+	for dirPath := range prevTargetDirETags {
+		cdir := cleanRelPath(dirPath)
+		if !targetDirMap[cdir] {
+			if _, hasETag := targetDirETags[cdir]; !hasETag {
+				deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "target", cdir})
+			}
 		}
 	}
 
