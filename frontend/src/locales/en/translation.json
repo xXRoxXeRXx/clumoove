@@ -226,6 +226,7 @@
     "transferred": "Transferred",
     "remaining": "Time remaining",
     "activeTransfers": "Active transfers ({{count}} of {{threads}} running simultaneously)",
+    "noActiveTransfers": "No active transfers",
     "running": "Running...",
     "status": "STATUS",
     "job": "Task",

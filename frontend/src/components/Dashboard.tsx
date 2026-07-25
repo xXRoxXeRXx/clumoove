@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Pause, Play, XCircle, Loader2, ArrowLeft, ArrowRight, Folder, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Pause, Play, XCircle, Loader2, ArrowLeft, ArrowRight, Folder, CheckCircle2, Gauge } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatDuration, type TFunc } from '../utils/format';
 import { useApiError } from '../utils/apiError';
@@ -589,7 +589,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </button>
             )}
 
-            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED' || data.status === 'CANCELLED') && data.failed_files > 0 ? (
+            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED' || data.status === 'CANCELLED') && data.failed_files > 0 && (
               <button
                 onClick={handleRetryFailed}
                 disabled={controlLoading !== null}
@@ -598,17 +598,52 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 {controlLoading === 'retry' ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                 {t('dashboard.retryFailed')}
               </button>
-            ) : (
-              <button
-                onClick={onReset}
-                className="flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs cursor-pointer transition-all"
-              >
-                <RefreshCw className="w-4 h-4" />
-                {t('dashboard.newMigration')}
-              </button>
             )}
           </div>
         </div>
+
+        {/* Live Transfer Progress (ONLY rendered when RUNNING or INDEXING) */}
+        {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
+          <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+
+            <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
+              <div>
+                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
+                <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
+                  {byteProgressPercent}%
+                </h3>
+              </div>
+              <div className="text-right flex flex-col items-end">
+                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
+                <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
+                  {formatBytes(speed)}/s
+                </p>
+              </div>
+            </div>
+
+            {/* Glowing Rounded Progress Bar */}
+            <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
+              <div
+                className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
+                style={{ width: `${byteProgressPercent}%` }}
+              >
+                <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
+              <div className="flex items-center gap-2">
+                <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                <span>{t('dashboard.transferred')}: <strong className="text-[var(--color-text-primary)]">{formatBytes(effectiveBytesDisplay)}</strong> / {formatBytes(data.total_bytes)}</span>
+              </div>
+              <div className="flex items-center gap-2 justify-end">
+                <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+                <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Source & Target Connection Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -658,77 +693,37 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
         </div>
 
-        {/* Live Transfer Progress & Active Files (ONLY rendered when RUNNING or INDEXING) */}
-        {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-          <div className="space-y-4 pt-2">
-            <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
-
-              <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-                <div>
-                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
-                  <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
-                    {byteProgressPercent}%
-                  </h3>
-                </div>
-                <div className="text-right flex flex-col items-end">
-                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
-                  <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
-                    {formatBytes(speed)}/s
-                  </p>
-                </div>
-              </div>
-
-              {/* Glowing Rounded Progress Bar */}
-              <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
-                  style={{ width: `${byteProgressPercent}%` }}
-                >
-                  <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-                <div className="flex items-center gap-2">
-                  <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                  <span>{t('dashboard.transferred')}: <strong className="text-[var(--color-text-primary)]">{formatBytes(effectiveBytesDisplay)}</strong> / {formatBytes(data.total_bytes)}</span>
-                </div>
-                <div className="flex items-center gap-2 justify-end">
-                  <Clock className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                  <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
-                </div>
-              </div>
+        {/* Active Transfers & Status / Summary 2-Column Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+          {/* Column 1: Active Transfers */}
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 flex flex-col justify-between">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <RefreshCw className={`w-4 h-4 text-portal-orange ${data.status === 'RUNNING' || data.status === 'INDEXING' ? 'animate-spin' : ''}`} />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('dashboard.activeTransfers', { count: data.active_files?.length || 0, threads: threads })}
+              </h3>
             </div>
 
-            {/* Active Transfers List */}
-            {data.active_files && data.active_files.length > 0 && (
-              <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
-                  <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
-                  <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
-                    {t('dashboard.activeTransfers', { count: data.active_files.length, threads: threads })}
-                  </h4>
-                </div>
-                <div className="space-y-2">
-                  {data.active_files.map((file, i) => {
-                    const fileName = file.split('/').pop() || file;
-                    return (
-                      <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
-                        <span className="truncate pr-4" title={file}>{fileName}</span>
-                        <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
-                      </div>
-                    );
-                  })}
-                </div>
+            {data.active_files && data.active_files.length > 0 ? (
+              <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 scrollbar-portal">
+                {data.active_files.map((file, i) => {
+                  const fileName = file.split('/').pop() || file;
+                  return (
+                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
+                      <span className="truncate pr-4" title={file}>{fileName}</span>
+                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex-1 flex items-center justify-center py-6 text-xs text-[var(--color-text-muted)] font-mono">
+                {t('dashboard.noActiveTransfers')}
               </div>
             )}
           </div>
-        )}
 
-        {/* Configuration / Performance & Summary Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-          {/* Column 1: Progress & Status */}
+          {/* Column 2: Progress & Status */}
           <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
               <Clock className="w-4 h-4 text-portal-orange" />
@@ -768,44 +763,55 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               )}
             </div>
           </div>
+        </div>
 
-          {/* Column 2: Performance & Sliders */}
+        {/* Performance Controls Grid: Bandwidth Limit & Threads side by side */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+          {/* Bandwidth Limit Box */}
           <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 flex flex-col justify-between">
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-                <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
-                  {t('dashboard.bandwidthLimit')} & {t('dashboard.threads')}
-                </h3>
-              </div>
-
-              {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-                <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
-                      {t('dashboard.bandwidthLimit')}
-                    </label>
-                    <span className="text-[11px] font-bold text-portal-orange font-mono">
-                      {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1000}
-                    step={1}
-                    value={bandwidthLimit}
-                    disabled={bandwidthLoading}
-                    onChange={(e) => setBandwidthLimit(Number(e.target.value))}
-                    onPointerUp={(e) => commitBandwidthChange(Number((e.target as HTMLInputElement).value))}
-                    className="w-full"
-                  />
-                </div>
-              )}
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <Gauge className="w-4 h-4 text-portal-orange" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('dashboard.bandwidthLimit')}
+              </h3>
             </div>
 
-            {/* Integrated Threads Slider */}
-            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2 mt-auto">
+            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2 my-auto">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                  {t('dashboard.bandwidthLimit')}
+                </label>
+                <span className="text-[11px] font-bold text-portal-orange font-mono">
+                  {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1000}
+                step={1}
+                value={bandwidthLimit}
+                disabled={bandwidthLoading}
+                onChange={(e) => setBandwidthLimit(Number(e.target.value))}
+                onPointerUp={(e) => commitBandwidthChange(Number((e.target as HTMLInputElement).value))}
+                className="w-full"
+              />
+              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-mono">
+                {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
+              </p>
+            </div>
+          </div>
+
+          {/* Threads / Simultaneous Transfers Box */}
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 flex flex-col justify-between">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                {t('dashboard.threads')}
+              </h3>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2 my-auto">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.threads')}
@@ -832,7 +838,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 }}
                 className="w-full"
               />
-              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
+              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-mono">
                 {t('dashboard.threadsHint')}
               </p>
             </div>
