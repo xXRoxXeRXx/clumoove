@@ -600,18 +600,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               {sourceProfileId ? (
                 <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between animate-fade-in">
                   <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center">
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         {getProfile(sourceProfileId)?.provider.toUpperCase()}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => { setSourceProfileId(''); setSourceSaveProfile(false); setSourceProfileName(''); }}
-                        className="text-[11px] font-mono font-semibold text-[var(--color-text-muted)] hover:text-rose-500 transition-colors cursor-pointer"
-                      >
-                        {t('common.cancel')}
-                      </button>
                     </div>
                     <div>
                       <p className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
@@ -1068,18 +1061,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               {targetProfileId ? (
                 <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between animate-fade-in">
                   <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center">
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         {getProfile(targetProfileId)?.provider.toUpperCase()}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => { setTargetProfileId(''); setTargetSaveProfile(false); setTargetProfileName(''); }}
-                        className="text-[11px] font-mono font-semibold text-[var(--color-text-muted)] hover:text-rose-500 transition-colors cursor-pointer"
-                      >
-                        {t('common.cancel')}
-                      </button>
                     </div>
                     <div>
                       <p className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
