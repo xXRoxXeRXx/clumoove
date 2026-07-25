@@ -696,7 +696,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Active Transfers & Status / Summary 2-Column Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
           {/* Column 1: Active Transfers */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 flex flex-col justify-between">
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
               <RefreshCw className={`w-4 h-4 text-portal-orange ${data.status === 'RUNNING' || data.status === 'INDEXING' ? 'animate-spin' : ''}`} />
               <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
@@ -705,7 +705,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             </div>
 
             {data.active_files && data.active_files.length > 0 ? (
-              <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1 scrollbar-portal">
+              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1 scrollbar-portal">
                 {data.active_files.map((file, i) => {
                   const fileName = file.split('/').pop() || file;
                   return (
@@ -717,7 +717,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 })}
               </div>
             ) : (
-              <div className="flex-1 flex items-center justify-center py-6 text-xs text-[var(--color-text-muted)] font-mono">
+              <div className="py-4 text-xs text-[var(--color-text-muted)] font-mono">
                 {t('dashboard.noActiveTransfers')}
               </div>
             )}
@@ -768,7 +768,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Performance Controls Grid: Bandwidth Limit & Threads side by side */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
           {/* Bandwidth Limit Box */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 flex flex-col justify-between">
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
               <Gauge className="w-4 h-4 text-portal-orange" />
               <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
@@ -776,7 +776,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </h3>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2 my-auto">
+            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.bandwidthLimit')}
@@ -803,7 +803,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           {/* Threads / Simultaneous Transfers Box */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 flex flex-col justify-between">
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
               <HardDrive className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
               <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
@@ -811,7 +811,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </h3>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2 my-auto">
+            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.threads')}
