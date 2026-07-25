@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useFormat, formatDuration, type TFunc } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
+import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 
 interface DashboardProps {
   migrationId: string;
@@ -782,22 +783,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                   {t('dashboard.bandwidthLimit')}
                 </label>
                 <span className="text-[11px] font-bold text-portal-orange font-mono">
-                  {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
+                  {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
                 </span>
               </div>
               <input
                 type="range"
                 min={0}
-                max={1000}
+                max={BANDWIDTH_OPTIONS.length - 1}
                 step={1}
-                value={bandwidthLimit}
+                value={valueToBandwidthIndex(bandwidthLimit)}
                 disabled={bandwidthLoading}
-                onChange={(e) => setBandwidthLimit(Number(e.target.value))}
-                onPointerUp={(e) => commitBandwidthChange(Number((e.target as HTMLInputElement).value))}
-                className="w-full"
+                onChange={(e) => setBandwidthLimit(bandwidthIndexToValue(Number(e.target.value)))}
+                onPointerUp={(e) => {
+                  const idx = Number((e.target as HTMLInputElement).value);
+                  commitBandwidthChange(bandwidthIndexToValue(idx));
+                }}
+                className="w-full cursor-pointer"
               />
-              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-mono">
-                {bandwidthLimit === 0 ? t('dashboard.unlimited') : `${bandwidthLimit} Mbps`}
+              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-sans">
+                {bandwidthLimit === 0 ? (
+                  t('fileBrowser.bandwidthUnlimited')
+                ) : (
+                  t('fileBrowser.bandwidthHint', { limit: getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited')) })
+                )}
               </p>
             </div>
           </div>
