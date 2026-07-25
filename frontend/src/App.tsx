@@ -646,6 +646,7 @@ function App() {
               token={token}
               localStorageEnabled={localStorageEnabled}
               oauthProviders={oauthProviders}
+              onBack={() => goBack()}
             />
           )}
           
