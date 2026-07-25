@@ -705,7 +705,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             </div>
 
             {data.active_files && data.active_files.length > 0 ? (
-              <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1 scrollbar-portal">
+              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1 scrollbar-portal">
                 {data.active_files.map((file, i) => {
                   const fileName = file.split('/').pop() || file;
                   return (
