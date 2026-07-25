@@ -937,7 +937,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             </div>
           </div>
 
-          <div className="flex-grow overflow-y-auto scrollbar-portal">
+          <div className="flex-grow overflow-y-auto scrollbar-portal rounded-3xl">
             {activeTab === 'files' && (
               directoryContents['/']?.length > 0 ? (
                 directoryContents['/'].map((file) => renderNode(file, 0))
