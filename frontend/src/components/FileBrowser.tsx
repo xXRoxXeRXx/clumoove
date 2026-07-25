@@ -620,12 +620,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             }}
             className="focus:outline-none flex items-center justify-center"
           >
-            <div className={`w-5.5 h-5.5 border rounded flex items-center justify-center transition-all duration-200 ${
+            <div className={`w-4.5 h-4.5 border rounded flex items-center justify-center transition-all duration-200 ${
               isSelected 
-                ? 'bg-portal-orange text-[var(--color-text-inverse)] border-transparent scale-102 shadow-sm' 
+                ? 'bg-portal-orange text-[var(--color-text-inverse)] border-transparent shadow-xs' 
                 : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]'
             }`}>
-              {isSelected && <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5] animate-pulse" />}
+              {isSelected && <Check className="w-3 h-3 text-[var(--color-text-inverse)] stroke-[3.5]" />}
             </div>
           </button>
 
