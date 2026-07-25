@@ -95,6 +95,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 	defer sourceClient.Close()
 	var totalFiles int
+	var totalDirs int
 	var totalBytes int64
 	indexErrors := make([]db.IndexingErrorInput, 0)
 	indexedPaths := make(map[string]bool)
@@ -120,7 +121,30 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		}
 
 		if res.IsDir {
-			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, &totalFiles, &totalBytes, indexedPaths, &indexErrors)
+			// Emit a mkdir task for the root selected directory itself (unless it
+			// is the root "/", which every provider already has). This ensures
+			// the directory is created on the target even when it is empty.
+			if p != "/" {
+				dirKey := fmt.Sprintf("dir:files:%s", p)
+				if !indexedPaths[dirKey] {
+					indexedPaths[dirKey] = true
+					mkdirMeta, _ := json.Marshal(map[string]interface{}{"action": "mkdir"})
+					mkdirTask := &db.Task{
+						MigrationID:  migID,
+						ResourceType: "files",
+						FilePath:     p,
+						FileSize:     0,
+						Status:       "PENDING",
+						Metadata:     mkdirMeta,
+					}
+					if _, err := db.CreateTask(idx.db, mkdirTask); err != nil {
+						failMigration(idx.db, migID, fmt.Sprintf("Failed to create mkdir task for %s: %v", p, err))
+						return
+					}
+					totalDirs++
+				}
+			}
+			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
 				return
@@ -160,7 +184,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	// 2. Index calendars
 	for _, p := range calendars {
-		err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, &totalFiles, &totalBytes, indexedPaths, &indexErrors)
+		err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
 			return
@@ -169,7 +193,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	// 3. Index contacts
 	for _, p := range contacts {
-		err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, &totalFiles, &totalBytes, indexedPaths, &indexErrors)
+		err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
 			return
@@ -186,8 +210,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 
 	// Terminal decision: write totals, then decide the final outcome in one place.
-	// This avoids two separate totalFiles == 0 branches split by the totals write.
-	if err := db.UpdateMigrationTotals(idx.db, migID, totalFiles, totalBytes); err != nil {
+	// total_files includes both file tasks AND mkdir tasks so the progress bar
+	// correctly counts directory creation as work items.
+	totalItems := totalFiles + totalDirs
+	if err := db.UpdateMigrationTotals(idx.db, migID, totalItems, totalBytes); err != nil {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to update migration totals: %v", err))
 		return
 	}
@@ -198,14 +224,15 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 
 	switch {
-	case totalFiles == 0 && len(indexErrors) > 0:
+	case totalItems == 0 && len(indexErrors) > 0:
 		// Nothing was indexed but some folders/paths failed: mark FAILED so the
 		// user can re-index (orphaned PENDING tasks are not possible here since
 		// none were created; the worker dequeue also filters on migration status).
 		failMigration(idx.db, migID, fmt.Sprintf("Indexing failed: %d path(s) could not be read. First error: %s", len(indexErrors), indexErrors[0].ErrorMessage))
 		return
-	case totalFiles == 0:
-		// Every selected path was an empty folder / empty calendar / skipped file.
+	case totalItems == 0:
+		// Every selected path was an empty folder / empty calendar / skipped file
+		// AND no mkdir tasks were created (e.g. root "/" was the only selection).
 		if err := db.UpdateMigrationStatus(idx.db, migID, "COMPLETED", nil); err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration completed: %v", err))
 			return
@@ -234,7 +261,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		idx.queue.NotifyTaskAvailable(ctx, idx.db)
 	}
 
-	log.Printf("Finished indexing migration %s. Total files: %d, Total size: %d bytes.\n", migID, totalFiles, totalBytes)
+	log.Printf("Finished indexing migration %s. Total files: %d, Total dirs: %d, Total size: %d bytes.\n", migID, totalFiles, totalDirs, totalBytes)
 	if len(indexErrors) > 0 {
 		log.Printf("Indexing migration %s completed with %d skipped folder error(s) (see report).\n", migID, len(indexErrors))
 	}
@@ -284,7 +311,7 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 // and skipped, so the rest of the tree keeps being indexed instead of aborting
 // the whole migration. If the overall indexing context is cancelled (deadline or
 // shutdown) traversal stops gracefully after recording a single interrupted error.
-func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	queue := []string{startPath}
 	visited := make(map[string]bool)
 	visited[startPath] = true
@@ -340,6 +367,25 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 
 		for _, file := range files {
 			if file.IsDir {
+				// Emit a mkdir task for every sub-directory encountered so that
+				// empty directories (no files inside) are created on the target.
+				dirKey := fmt.Sprintf("dir:%s:%s", resourceType, file.Path)
+				if !indexedPaths[dirKey] {
+					indexedPaths[dirKey] = true
+					mkdirMeta, _ := json.Marshal(map[string]interface{}{"action": "mkdir"})
+					taskBatch = append(taskBatch, &db.Task{
+						MigrationID:  migID,
+						ResourceType: resourceType,
+						FilePath:     file.Path,
+						FileSize:     0,
+						Status:       "PENDING",
+						Metadata:     mkdirMeta,
+					})
+					*totalDirs++
+					if len(taskBatch) >= 500 {
+						flushBatch()
+					}
+				}
 				if !visited[file.Path] {
 					visited[file.Path] = true
 					queue = append(queue, file.Path)

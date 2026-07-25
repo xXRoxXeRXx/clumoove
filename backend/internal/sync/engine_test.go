@@ -165,7 +165,7 @@ func TestUpdateSyncStatesPrevKeys(t *testing.T) {
 	// Since engine.db is nil, updateSyncStates will attempt BulkUpsertSyncStates with nil db,
 	// which won't panic if upserts and deletes are collected and passed (BulkUpsertSyncStates will fail on tx.Begin).
 	// We call updateSyncStates to verify it executes without unexpected runtime errors before DB call.
-	engine.updateSyncStates("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil)
+	engine.updateSyncStates("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil)
 }
 
 

@@ -157,14 +157,18 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	prevTargetDirETags := make(map[string]string)
 	prevSourceFiles := make(map[string]fileState)
 	prevTargetFiles := make(map[string]fileState)
+	prevSourceDirs := make(map[string]bool) // directories seen in previous source pass (Size == -1)
+	prevTargetDirs := make(map[string]bool) // directories seen in previous target pass (Size == -1)
 
 	for _, state := range prevStates {
 		cPath := cleanRelPath(state.RelPath)
 		if state.Size == -1 {
 			if state.Side == "source" {
 				prevSourceDirETags[cPath] = state.ETag
+				prevSourceDirs[cPath] = true
 			} else {
 				prevTargetDirETags[cPath] = state.ETag
+				prevTargetDirs[cPath] = true
 			}
 		} else {
 			fs := fileState{
@@ -199,7 +203,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		sourceStartPaths = []string{"/"}
 	}
 
-	sourceMap, sourceDirETags, srcErrors, err := e.listFiles(ctx, sourceClient, sourceStartPaths, prevSourceDirETags, prevSourceFiles)
+	sourceMap, sourceDirMap, sourceDirETags, srcErrors, err := e.listFiles(ctx, sourceClient, sourceStartPaths, prevSourceDirETags, prevSourceFiles)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Source file listing failed: %v", err))
 		return
@@ -212,7 +216,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	cleanTargetDir := cleanRelPath(job.TargetDir)
 	targetScanPaths := []string{cleanTargetDir}
 
-	targetRawMap, targetDirETags, tgtErrors, err := e.listFiles(ctx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
+	targetRawMap, targetDirMap, targetDirETags, tgtErrors, err := e.listFiles(ctx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Target file listing failed: %v", err))
 		return
@@ -228,6 +232,14 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		relPath := cleanRelPath(getSourceRelPath(targetPath, job.TargetDir))
 		file.Path = relPath
 		targetMap[relPath] = file
+	}
+
+	// Remap targetDirMap from raw target paths to source-relative paths for consistent
+	// comparison against sourceDirMap during the directory delta step.
+	srcRelTargetDirMap := make(map[string]bool, len(targetDirMap))
+	for rawDir := range targetDirMap {
+		relDir := cleanRelPath(getSourceRelPath(rawDir, job.TargetDir))
+		srcRelTargetDirMap[relDir] = true
 	}
 
 	// isFirstPass is true when no sync state exists yet (initial run).
@@ -435,13 +447,95 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		}
 	}
 
+	// Directory delta: create missing directories on target (or source for two-way).
+	// We only emit mkdir tasks for directories discovered in the *current* scan that
+	// are absent on the other side. We skip root paths ("/") and the target root itself.
+	cleanTargetDirRel := cleanRelPath(job.TargetDir)
+	for dirPath := range sourceDirMap {
+		if dirPath == "/" {
+			continue
+		}
+		// Does this directory already exist on the target?
+		if srcRelTargetDirMap[dirPath] {
+			continue
+		}
+		// One-Way or Two-Way: source dir missing from target -> mkdir on target
+		tasks = append(tasks, taskToCreate{
+			filePath:     dirPath,
+			fileSize:     0,
+			resourceType: "files",
+			action:       "mkdir",
+			side:         "target",
+		})
+		// Also handle delete propagation: if dir existed before on source but now
+		// it's gone AND delete propagation is enabled, we delete it on target.
+		// (Handled in the file deletion loop for now; directories are pruned by
+		// pruneEmptyParentDirectories after all files are deleted.)
+	}
+
+	// Two-Way only: target dir missing from source -> mkdir on source
+	if job.Direction == "two_way" {
+		for dirPath := range srcRelTargetDirMap {
+			if dirPath == "/" || dirPath == cleanTargetDirRel {
+				continue
+			}
+			if sourceDirMap[dirPath] {
+				continue
+			}
+			// Target has the dir but source doesn't.
+			if !prevSourceDirs[dirPath] {
+				// Dir is new on target (not previously known on source): create on source.
+				tasks = append(tasks, taskToCreate{
+					filePath:     dirPath,
+					fileSize:     0,
+					resourceType: "files",
+					action:       "mkdir",
+					side:         "source",
+				})
+			} else if job.DeletePropagation {
+				// Dir was previously on source, now gone from source but still on target:
+				// propagate deletion to target (delete the directory on target).
+				// Only safe if dir is empty; pruneEmptyParentDirectories will handle cleanup.
+				tasks = append(tasks, taskToCreate{
+					filePath:     dirPath,
+					fileSize:     0,
+					resourceType: "files",
+					action:       "delete",
+					side:         "target",
+				})
+			}
+		}
+	}
+
+	// One-Way: delete propagation for source dirs no longer present
+	if job.Direction == "one_way" && job.DeletePropagation {
+		for dirPath := range prevSourceDirs {
+			if dirPath == "/" {
+				continue
+			}
+			if sourceDirMap[dirPath] {
+				continue // still present
+			}
+			if srcRelTargetDirMap[dirPath] {
+				// Was on source before, now gone, but exists on target: delete it.
+				tasks = append(tasks, taskToCreate{
+					filePath:     dirPath,
+					fileSize:     0,
+					resourceType: "files",
+					action:       "delete",
+					side:         "target",
+				})
+			}
+		}
+	}
+
 	totalCreatedTasks := len(renameTasks) + len(tasks)
 	log.Printf("[SyncEngine] Job %s: calculated %d tasks to run\n", syncJobID, totalCreatedTasks)
 
 	if totalCreatedTasks == 0 {
 		// No transfers needed: update stats immediately and complete run
 		_ = db.UpdateSyncJobRunStats(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
-		e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, nil)
+		e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, nil)
 		_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
 		return
 	}
@@ -585,7 +679,7 @@ SyncTasksDone:
 	}
 
 	// Update persistent states
-	e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, taskOutcomes)
+	e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, taskOutcomes)
 
 	// Determine final outcome status
 	finalRunStatus := "SUCCESS"
