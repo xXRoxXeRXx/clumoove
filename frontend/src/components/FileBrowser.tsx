@@ -27,6 +27,7 @@ import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
+import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 
 
 interface FileBrowserProps {
@@ -1325,21 +1326,24 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <input
                   type="range"
                   min="0"
-                  max="1000"
+                  max={BANDWIDTH_OPTIONS.length - 1}
                   step="1"
-                  value={bandwidthLimit}
-                  onChange={(e) => setBandwidthLimit(parseInt(e.target.value, 10))}
+                  value={valueToBandwidthIndex(bandwidthLimit)}
+                  onChange={(e) => {
+                    const idx = parseInt(e.target.value, 10);
+                    setBandwidthLimit(bandwidthIndexToValue(idx));
+                  }}
                   className="flex-grow accent-portal-navy cursor-pointer"
                 />
-                <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[48px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
-                  {bandwidthLimit === 0 ? '∞' : `${bandwidthLimit}`}
+                <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[70px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
+                  {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
                 </span>
               </div>
               <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
                 {bandwidthLimit === 0 ? (
                   t('fileBrowser.bandwidthUnlimited')
                 ) : (
-                  t('fileBrowser.bandwidthHint', { limit: bandwidthLimit })
+                  t('fileBrowser.bandwidthHint', { limit: getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited')) })
                 )}
               </p>
             </div>
