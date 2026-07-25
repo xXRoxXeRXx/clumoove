@@ -383,7 +383,7 @@
     "activating": "Wird aktiviert...",
     "deactivate": "Deaktivieren",
     "deactivating": "Wird deaktiviert...",
-    "disableHint": "Gib dein Passwort ein, um die zweistufige Überprüfung zu deaktivieren.",
+    "disableHint": "Gib einen 6-stelligen Code aus deiner Bestätigungs-App oder einen Notfall-Code ein, um die zweistufige Überprüfung zu deaktivieren.",
     "setupHint": "Schütze dein Konto zusätzlich mit einem Einmalcode aus einer Bestätigungs-App (z. B. Google Authenticator).",
     "setup": "Einrichten",
     "preparing": "Wird vorbereitet...",

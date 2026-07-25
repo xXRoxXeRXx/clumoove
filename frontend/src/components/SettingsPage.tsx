@@ -83,7 +83,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const [enableCode, setEnableCode] = useState<string>('');
   const [enableLoading, setEnableLoading] = useState<boolean>(false);
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
-  const [disablePassword, setDisablePassword] = useState<string>('');
+  const [disableCode, setDisableCode] = useState<string>('');
   const [disableLoading, setDisableLoading] = useState<boolean>(false);
   const [totpMessage, setTotpMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -165,8 +165,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const handle2FADisable = async (e: React.FormEvent) => {
     e.preventDefault();
     setTotpMessage(null);
-    if (!disablePassword) {
-      setTotpMessage({ text: t('settings.messages.totpNeedPassword'), type: 'error' });
+    if (!disableCode.trim()) {
+      setTotpMessage({ text: t('settings.messages.totpNeedCode'), type: 'error' });
       return;
     }
     setDisableLoading(true);
@@ -177,14 +177,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ password: disablePassword }),
+        body: JSON.stringify({ code: disableCode.trim() }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as ApiErrBody);
         throw new Error(translateApiError((data as ApiErrBody).error_code));
       }
       setTotpEnabled(false);
-      setDisablePassword('');
+      setDisableCode('');
       setSetupData(null);
       setBackupCodes([]);
       setTotpMessage({ text: t('settings.messages.totpDisabled'), type: 'success' });
@@ -954,22 +954,23 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 </p>
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    {t('settings.currentPassword')}
+                    {t('settings.confirmCode')}
                   </label>
                   <input
-                    type="password"
-                    autoComplete="current-password"
-                    name="disable_password"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    name="disable_code"
                     required
-                    value={disablePassword}
-                    onChange={(e) => setDisablePassword(e.target.value)}
-                    placeholder="••••••••"
+                    value={disableCode}
+                    onChange={(e) => setDisableCode(e.target.value)}
+                    placeholder="123456"
                     className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
                   />
                 </div>
                 <button
                   type="submit"
-                  disabled={disableLoading || !disablePassword}
+                  disabled={disableLoading || !disableCode.trim()}
                   className="w-full bg-[var(--color-error-bg)] text-[var(--color-error-text)] border border-[var(--color-error-border)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
                   {disableLoading ? t('settings.deactivating') : t('settings.deactivate')}
