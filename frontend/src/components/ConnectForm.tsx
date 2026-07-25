@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Server, ArrowRight, RefreshCw, AlertCircle, HelpCircle } from 'lucide-react';
+import { Server, ArrowRight, ArrowLeft, RefreshCw, AlertCircle, HelpCircle, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
 
@@ -15,11 +15,12 @@ interface ConnectFormProps {
   token: string;
   localStorageEnabled?: boolean;
   oauthProviders?: Record<string, boolean>;
+  onBack?: () => void;
 }
 
 type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local';
 
-export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {} }) => {
+export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {}, onBack }) => {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
   const [sourcePass, setSourcePass] = useState('');
@@ -82,7 +83,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const { t } = useTranslation();
   const translateApiError = useApiError();
 
-  const getProfileName = (id: string) => profiles.find((x) => x.id === id)?.name ?? '';
+  const getProfile = (id: string) => profiles.find((x) => x.id === id);
   // Load reusable connection profiles for the dropdowns.
   useEffect(() => {
     let cancelled = false;
@@ -534,6 +535,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   return (
     <div className="w-full max-w-4xl mx-auto py-2 space-y-6 animate-fade-in">
       
+      {/* Top Header / Back Button */}
+      {onBack && (
+        <div className="flex items-center justify-between pb-1">
+          <button
+            type="button"
+            onClick={onBack}
+            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm shrink-0"
+          >
+            <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
+            <span>{t('common.back')}</span>
+          </button>
+        </div>
+      )}
+
       {/* Wizard Step Progress Banner */}
       <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-xs">
         <div className="flex items-center gap-3">
@@ -560,7 +575,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         <div className="grid md:grid-cols-2 gap-8">
           
           {/* Source Host Card */}
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group m-0">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
             
@@ -574,7 +589,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               </div>
             </div>
 
-            <div className="space-y-5 text-xs text-left">
+            <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
               <ProfileSelect
                 profiles={profiles}
                 selectedId={sourceProfileId}
@@ -583,10 +598,29 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               />
 
               {sourceProfileId ? (
-                <div className="space-y-3 pt-2">
-                  <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
-                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('settings.connections.usingProfile', { name: getProfileName(sourceProfileId) })}</p>
+                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between animate-fade-in">
+                  <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {getProfile(sourceProfileId)?.provider.toUpperCase()}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setSourceProfileId(''); setSourceSaveProfile(false); setSourceProfileName(''); }}
+                        className="text-[11px] font-mono font-semibold text-[var(--color-text-muted)] hover:text-rose-500 transition-colors cursor-pointer"
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </div>
+                    <div>
+                      <p className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
+                        {getProfile(sourceProfileId)?.name}
+                      </p>
+                      <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
+                        {t('settings.connections.usingProfile', { name: getProfile(sourceProfileId)?.name })}
+                      </p>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -1009,12 +1043,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           </fieldset>
            
            {/* Target Host Card */}
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col group m-0">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-navy to-portal-navy-light" />
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-              <div className="p-2.5 bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)] rounded-xl group-hover:bg-portal-navy/10 group-hover:text-portal-navy-light transition-colors duration-300">
+              <div className="p-2.5 bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)] rounded-xl group-hover:bg-portal-orange/10 group-hover:text-portal-orange transition-colors duration-300">
                 <Server className="w-5 h-5" />
               </div>
               <div className="text-left">
@@ -1023,7 +1057,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               </div>
             </div>
 
-            <div className="space-y-5 text-xs text-left">
+            <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
               <ProfileSelect
                 profiles={profiles}
                 selectedId={targetProfileId}
@@ -1032,10 +1066,29 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               />
 
               {targetProfileId ? (
-                <div className="space-y-3 pt-2">
-                  <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center gap-2 shadow-xs">
-                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('settings.connections.usingProfile', { name: getProfileName(targetProfileId) })}</p>
+                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between animate-fade-in">
+                  <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        {getProfile(targetProfileId)?.provider.toUpperCase()}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => { setTargetProfileId(''); setTargetSaveProfile(false); setTargetProfileName(''); }}
+                        className="text-[11px] font-mono font-semibold text-[var(--color-text-muted)] hover:text-rose-500 transition-colors cursor-pointer"
+                      >
+                        {t('common.cancel')}
+                      </button>
+                    </div>
+                    <div>
+                      <p className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
+                        {getProfile(targetProfileId)?.name}
+                      </p>
+                      <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
+                        {t('settings.connections.usingProfile', { name: getProfile(targetProfileId)?.name })}
+                      </p>
+                    </div>
                   </div>
                 </div>
               ) : (

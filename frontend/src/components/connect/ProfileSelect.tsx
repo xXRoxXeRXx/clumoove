@@ -25,7 +25,11 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
       <div className="flex gap-2">
         <select
           value={selectedId}
-          onChange={(e) => onSelect(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            e.target.blur();
+            onSelect(val);
+          }}
           className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
         >
           <option value="">—</option>
