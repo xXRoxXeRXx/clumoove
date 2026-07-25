@@ -383,7 +383,7 @@
     "activating": "Activating...",
     "deactivate": "Deactivate",
     "deactivating": "Deactivating...",
-    "disableHint": "Enter your password to disable two-step verification.",
+    "disableHint": "Enter a 6-digit code from your authenticator app or a backup code to disable two-step verification.",
     "setupHint": "Add an extra layer of security to your account with a one-time code from a verification app (such as Google Authenticator).",
     "setup": "Set up",
     "preparing": "Preparing...",

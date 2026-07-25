@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"backend/internal/auth"
@@ -266,11 +265,10 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 
 // TOTPDisableRequest is the body for POST /api/auth/2fa/disable.
 type TOTPDisableRequest struct {
-	Password string `json:"password"`
+	Code string `json:"code"`
 }
 
-// handle2FADisable disables 2FA, requiring the current password to defend
-// against session theft.
+// handle2FADisable disables 2FA, requiring a valid 2FA TOTP code or backup code.
 func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
@@ -283,9 +281,9 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
-	req.Password = strings.TrimSpace(req.Password)
-	if req.Password == "" {
-		writeError(w, http.StatusBadRequest, ErrPasswordRequired)
+	req.Code = sanitizeCode(req.Code)
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, ErrTotpCodeRequired)
 		return
 	}
 
@@ -295,9 +293,56 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+	if !u.TotpEnabled {
+		writeError(w, http.StatusBadRequest, ErrTotpNotEnabled)
+		return
+	}
 
-	if !auth.CheckPasswordHash(req.Password, u.PasswordHash) {
-		writeError(w, http.StatusUnauthorized, ErrPasswordInvalid)
+	lockedUntil := u.TotpLockedUntil
+	if lockedUntil.Valid && time.Now().Before(lockedUntil.Time) {
+		retryAfter := int(time.Until(lockedUntil.Time).Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	secret, err := crypto.Decrypt(u.TotpSecretEnc, s.encryptionKey)
+	if err != nil {
+		log.Printf("handle2FADisable: failed to decrypt secret for user %s: %v\n", userID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	valid := totp2fa.Validate(secret, req.Code)
+	if !valid && len(u.TotpBackupCodes) > 0 {
+		idx := totp2fa.VerifyBackupCode([]string(u.TotpBackupCodes), req.Code)
+		if idx >= 0 {
+			valid = true
+		}
+	}
+
+	if !valid {
+		locked, lerr := db.IncrementTOTPFailed(s.db, u.ID, totpMaxAttempts, totpLockDuration)
+		if lerr != nil {
+			log.Printf("handle2FADisable: failed to increment attempts for user %s: %v\n", u.ID, lerr)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		if locked {
+			w.Header().Set("Retry-After", strconv.Itoa(int(totpLockDuration.Seconds())))
+			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+			return
+		}
+		writeError(w, http.StatusBadRequest, ErrTotpInvalidCode)
+		return
+	}
+
+	if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
+		log.Printf("handle2FADisable: failed to reset attempts for user %s: %v\n", u.ID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
