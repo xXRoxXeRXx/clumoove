@@ -419,6 +419,9 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 
 		// At top-level listing (dirPath == "/" or ""), filter out non-calendar/non-contact system items (e.g. inbox, outbox, notifications, trashbin)
 		if cleanDirPath == "/" {
+			if IsSystemOrAppGeneratedCollection(res.Name) {
+				continue
+			}
 			if resourceType == "calendars" {
 				isCal := false
 				for _, pstat := range r.Propstat {
@@ -1045,9 +1048,8 @@ func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath str
 			if resp.StatusCode == http.StatusUnauthorized {
 				return false, 0, fmt.Errorf("nextcloud file-exists: %w", ErrAuth)
 			}
-			if resp.StatusCode >= 400 {
-				return false, 0, fmt.Errorf("HEAD check failed with status: %d", resp.StatusCode)
-			}
+			// For status >= 400 (e.g. 500 Internal Server Error or 405 Method Not Allowed on CalDAV/CardDAV resources),
+			// do not return error immediately; fall through to PROPFIND below.
 		}
 	}
 

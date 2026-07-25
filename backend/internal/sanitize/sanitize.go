@@ -222,3 +222,4 @@ func truncatePreserveExt(name string, maxLen int) string {
 	}
 	return string(runes) + ext
 }
+
