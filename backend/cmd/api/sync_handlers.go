@@ -137,7 +137,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		req.IntervalMinutes = 15
 	}
 	if req.Threads <= 0 || req.Threads > 16 {
-		req.Threads = 4
+		req.Threads = 8
 	}
 	if req.TargetDir == "" {
 		req.TargetDir = "/"

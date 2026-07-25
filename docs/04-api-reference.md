@@ -178,7 +178,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
   "calendars": [],
   "contacts": [],
   "target_dir": "/",
-  "threads": 4,                       // 1–16
+  "threads": 8,                       // 1–16
   "bandwidth_limit_mbps": 0,          // 0–1000
   "scheduled_time": null              // RFC3339; if set → SCHEDULED + one-shot schedule
 }

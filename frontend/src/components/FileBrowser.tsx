@@ -126,7 +126,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   );
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
   const [conflictStrategy, setConflictStrategy] = useState('SKIP');
-  const [threads, setThreads] = useState<number>(4);
+  const [threads, setThreads] = useState<number>(8);
   const [targetDir, setTargetDir] = useState('/');
   const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
   const [targetExpandedPaths, setTargetExpandedPaths] = useState<Record<string, boolean>>({});
