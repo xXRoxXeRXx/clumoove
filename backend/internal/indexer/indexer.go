@@ -184,6 +184,29 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	// 2. Index calendars
 	for _, p := range calendars {
+		// Emit a mkdir task for the root calendar directory itself (unless it
+		// is the root "/", which every provider already has). This ensures
+		// the directory is created on the target even when it is empty.
+		if p != "/" {
+			dirKey := fmt.Sprintf("dir:calendars:%s", p)
+			if !indexedPaths[dirKey] {
+				indexedPaths[dirKey] = true
+				mkdirMeta, _ := json.Marshal(map[string]interface{}{"action": "mkdir"})
+				mkdirTask := &db.Task{
+					MigrationID:  migID,
+					ResourceType: "calendars",
+					FilePath:     p,
+					FileSize:     0,
+					Status:       "PENDING",
+					Metadata:     mkdirMeta,
+				}
+				if _, err := db.CreateTask(idx.db, mkdirTask); err != nil {
+					failMigration(idx.db, migID, fmt.Sprintf("Failed to create mkdir task for calendar %s: %v", p, err))
+					return
+				}
+				totalDirs++
+			}
+		}
 		err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
@@ -193,6 +216,29 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	// 3. Index contacts
 	for _, p := range contacts {
+		// Emit a mkdir task for the root contacts directory itself (unless it
+		// is the root "/", which every provider already has). This ensures
+		// the directory is created on the target even when it is empty.
+		if p != "/" {
+			dirKey := fmt.Sprintf("dir:contacts:%s", p)
+			if !indexedPaths[dirKey] {
+				indexedPaths[dirKey] = true
+				mkdirMeta, _ := json.Marshal(map[string]interface{}{"action": "mkdir"})
+				mkdirTask := &db.Task{
+					MigrationID:  migID,
+					ResourceType: "contacts",
+					FilePath:     p,
+					FileSize:     0,
+					Status:       "PENDING",
+					Metadata:     mkdirMeta,
+				}
+				if _, err := db.CreateTask(idx.db, mkdirTask); err != nil {
+					failMigration(idx.db, migID, fmt.Sprintf("Failed to create mkdir task for contacts %s: %v", p, err))
+					return
+				}
+				totalDirs++
+			}
+		}
 		err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))

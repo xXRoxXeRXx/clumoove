@@ -450,7 +450,6 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	// Directory delta: create missing directories on target (or source for two-way).
 	// We only emit mkdir tasks for directories discovered in the *current* scan that
 	// are absent on the other side. We skip root paths ("/") and the target root itself.
-	cleanTargetDirRel := cleanRelPath(job.TargetDir)
 	for dirPath := range sourceDirMap {
 		if dirPath == "/" {
 			continue
@@ -476,7 +475,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	// Two-Way only: target dir missing from source -> mkdir on source
 	if job.Direction == "two_way" {
 		for dirPath := range srcRelTargetDirMap {
-			if dirPath == "/" || dirPath == cleanTargetDirRel {
+			if dirPath == "/" {
 				continue
 			}
 			if sourceDirMap[dirPath] {
@@ -535,7 +534,7 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	if totalCreatedTasks == 0 {
 		// No transfers needed: update stats immediately and complete run
 		_ = db.UpdateSyncJobRunStats(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
-		e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, nil)
+		e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, nil)
 		_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
 		return
 	}
@@ -679,7 +678,7 @@ SyncTasksDone:
 	}
 
 	// Update persistent states
-	e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, taskOutcomes)
+	e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, taskOutcomes)
 
 	// Determine final outcome status
 	finalRunStatus := "SUCCESS"

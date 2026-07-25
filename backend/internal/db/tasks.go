@@ -53,13 +53,13 @@ type IndexingErrorInput struct {
 
 func CreateTask(db *sql.DB, t *Task) (string, error) {
 	query := `
-		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
-		t.MigrationID, t.ResourceType, t.FilePath, t.FileSize, t.Status,
+		t.MigrationID, t.ResourceType, t.FilePath, t.FileSize, t.Status, t.Metadata,
 	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 
 	if err != nil {

@@ -21,6 +21,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/queue"
+	"backend/internal/sanitize"
 	"backend/internal/storage"
 	"backend/internal/throttle"
 )
@@ -71,7 +72,10 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	// Parse action/metadata
 	var meta map[string]interface{}
-	_ = json.Unmarshal(task.Metadata, &meta)
+	if err := json.Unmarshal(task.Metadata, &meta); err != nil {
+		log.Printf("[Worker] Failed to parse task metadata for task %s: %v", task.ID, err)
+		return fmt.Errorf("failed to parse task metadata: %w", err)
+	}
 	action, _ := meta["action"].(string)
 	side, _ := meta["side"].(string)
 
@@ -101,6 +105,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		// side == "" or "target" means create on target (one-way or two-way source->target).
 		var mkClient storage.StorageProvider
 		var mkPath string
+		var mkProvider string
 		if side == "source" {
 			mkClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
 			if err != nil {
@@ -108,6 +113,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			}
 			defer mkClient.Close()
 			mkPath = task.FilePath
+			mkProvider = job.SourceProvider
 		} else {
 			mkClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
 			if err != nil {
@@ -115,7 +121,32 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			}
 			defer mkClient.Close()
 			mkPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
+			mkProvider = job.TargetProvider
 		}
+		
+		// Sanitize directory name
+		dirName := path.Base(mkPath)
+		sanitized := sanitize.SanitizeFilename(dirName, mkProvider)
+		if sanitized.Changed {
+			mkPath = path.Join(path.Dir(mkPath), sanitized.SanitizedName)
+			log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)", 
+				dirName, sanitized.SanitizedName, strings.Join(sanitized.Reasons, ", "))
+		}
+		
+		// Check for case collisions on case-insensitive providers
+		if sanitize.IsCaseInsensitive(mkProvider) {
+			dirPath := path.Dir(mkPath)
+			dirName := path.Base(mkPath)
+			if collision, _ := sanitize.CheckCaseCollision(ctx, mkClient, task.ResourceType, dirPath, dirName); collision != "" {
+				log.Printf("[Worker] Directory case collision detected: %s conflicts with %s", mkPath, collision)
+				task.Status = "SKIPPED"
+				task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Directory skipped due to case collision with %s", collision), Valid: true}
+				_ = db.UpdateTaskStatus(p.db, task)
+				_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, 0)
+				return nil
+			}
+		}
+		
 		if err := mkClient.CreateDirectory(ctx, task.ResourceType, mkPath); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", mkPath, err)
 		}
