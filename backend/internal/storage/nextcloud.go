@@ -141,7 +141,7 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 				Transport: newLoggingTransport(newDAVTransport(host)),
 				Timeout:   0,
 			},
-			Threads:   4,
+			Threads:   8,
 			UserAgent: "Nextcloud-Migration-Worker/1.0",
 			pb:        nextcloudPaths{},
 			supportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
@@ -625,7 +625,7 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 	// Dynamically calculate chunk size so total memory limit is 256MB across all threads
 	threads := p.Threads
 	if threads < 1 {
-		threads = 4
+		threads = 8
 	}
 	megabytes := 256 / threads
 	if megabytes < 5 {

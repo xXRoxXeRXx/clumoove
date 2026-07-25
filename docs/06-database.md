@@ -65,7 +65,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `total_files` / `processed_files` / `skipped_files` / `failed_files` | INTEGER | |
 | `total_bytes` / `processed_bytes` | BIGINT | |
 | `error_message` | TEXT | sanitized, credential-redacted |
-| `threads` | INT NOT NULL DEFAULT 4 | 1–16 |
+| `threads` | INT NOT NULL DEFAULT 8 | 1–16 |
 | `bandwidth_limit_mbps` | INT NOT NULL DEFAULT 0 | 0–1000 |
 | `email_sent` | BOOLEAN NOT NULL DEFAULT FALSE | completion email flag |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
@@ -115,7 +115,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `conflict_strategy` | TEXT NOT NULL DEFAULT `OVERWRITE` | `OVERWRITE`, `SKIP`, `RENAME` |
 | `delete_propagation` | BOOLEAN NOT NULL DEFAULT FALSE | |
 | `interval_minutes` | INT NOT NULL DEFAULT 15 | |
-| `threads` | INT NOT NULL DEFAULT 4 | |
+| `threads` | INT NOT NULL DEFAULT 8 | |
 | `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `RUNNING`, `PAUSED`, `FAILED` |
 | `target_dir` | TEXT NOT NULL DEFAULT `/` | |
 | `selected_paths` | JSONB | |

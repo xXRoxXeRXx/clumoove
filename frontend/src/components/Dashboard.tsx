@@ -94,7 +94,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [reconnectNonce, setReconnectNonce] = useState<number>(0);
   const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
   const [bandwidthLoading, setBandwidthLoading] = useState<boolean>(false);
-  const [threads, setThreads] = useState<number>(4);
+  const [threads, setThreads] = useState<number>(8);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
 
   const handleDownloadReport = async (e: React.MouseEvent) => {

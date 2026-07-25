@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     skipped_files INT NOT NULL DEFAULT 0,
     failed_files INT NOT NULL DEFAULT 0,
     error_message TEXT,
-    threads INT NOT NULL DEFAULT 4,
+    threads INT NOT NULL DEFAULT 8,
     bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -275,7 +275,7 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
         CHECK (conflict_strategy IN ('OVERWRITE','SKIP','RENAME')),
     delete_propagation BOOLEAN NOT NULL DEFAULT FALSE,
     interval_minutes INT NOT NULL DEFAULT 15,
-    threads INT NOT NULL DEFAULT 4,
+    threads INT NOT NULL DEFAULT 8,
     status TEXT NOT NULL DEFAULT 'IDLE',
     target_dir TEXT NOT NULL DEFAULT '/',
     selected_paths JSONB,

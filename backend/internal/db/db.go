@@ -305,7 +305,7 @@ func InitDB(connStr string) (*sql.DB, error) {
 				live_bytes BIGINT NOT NULL DEFAULT 0,
 				skipped_files INT NOT NULL DEFAULT 0,
 				failed_files INT NOT NULL DEFAULT 0,
-				threads INT NOT NULL DEFAULT 4,
+				threads INT NOT NULL DEFAULT 8,
 				bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
 				email_sent BOOLEAN NOT NULL DEFAULT FALSE,
 				error_message TEXT,

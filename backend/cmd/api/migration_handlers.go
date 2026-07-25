@@ -858,7 +858,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	threads := req.Threads
 	if threads < 1 {
-		threads = 4
+		threads = 8
 	} else if threads > 16 {
 		threads = 16
 	}

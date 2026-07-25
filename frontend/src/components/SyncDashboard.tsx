@@ -18,7 +18,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [actionLoading, setActionLoading] = useState<boolean>(false);
-  const [threads, setThreads] = useState<number>(4);
+  const [threads, setThreads] = useState<number>(8);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
   const [speed, setSpeed] = useState<number>(0);
   const [eta, setEta] = useState<string>('');
@@ -578,7 +578,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
                   <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
                   <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
-                    {t('sync.activeTransfersTitle', { count: job.active_files.length, threads: job.threads || 4 })}
+                    {t('sync.activeTransfersTitle', { count: job.active_files.length, threads: job.threads || 8 })}
                   </h4>
                 </div>
                 <div className="space-y-2">
