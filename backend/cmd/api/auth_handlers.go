@@ -318,7 +318,7 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if regEnabled == "false" {
+	if regEnabled != "true" {
 		writeError(w, http.StatusForbidden, ErrRegistrationDisabled)
 		return
 	}
