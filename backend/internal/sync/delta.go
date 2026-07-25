@@ -34,6 +34,7 @@ func (e *Engine) updateSyncStates(
 	sourceMap, targetMap map[string]fileState,
 	prevSource, prevTarget map[string]db.SyncState,
 	sourceDirETags, targetDirETags map[string]string,
+	sourceDirMap, targetDirMap map[string]bool,
 	taskOutcomes map[string]string,
 ) {
 	allKeys := make(map[string]bool)
@@ -122,6 +123,31 @@ func (e *Engine) updateSyncStates(
 		}
 	}
 
+	// Persist directory presence with Size: -1 (no ETag) for dirs that have no
+	// ETag, so we can detect new/deleted directories across sync passes.
+	for dirPath := range sourceDirMap {
+		cdir := cleanRelPath(dirPath)
+		if _, hasETag := sourceDirETags[cdir]; !hasETag {
+			upserts = append(upserts, &db.SyncState{
+				SyncJobID: jobID,
+				Side:      "source",
+				RelPath:   cdir,
+				Size:      -1,
+			})
+		}
+	}
+	for dirPath := range targetDirMap {
+		cdir := cleanRelPath(dirPath)
+		if _, hasETag := targetDirETags[cdir]; !hasETag {
+			upserts = append(upserts, &db.SyncState{
+				SyncJobID: jobID,
+				Side:      "target",
+				RelPath:   cdir,
+				Size:      -1,
+			})
+		}
+	}
+
 	if e.db == nil {
 		return
 	}
@@ -138,8 +164,9 @@ func (e *Engine) listFiles(
 	startPaths []string,
 	prevDirETags map[string]string,
 	prevFileStates map[string]fileState,
-) (map[string]fileState, map[string]string, []db.IndexingErrorInput, error) {
+) (map[string]fileState, map[string]bool, map[string]string, []db.IndexingErrorInput, error) {
 	fileMap := make(map[string]fileState)
+	dirMap := make(map[string]bool) // all directory relative paths seen
 	dirETagMap := make(map[string]string)
 	var indexErrors []db.IndexingErrorInput
 
@@ -160,6 +187,13 @@ func (e *Engine) listFiles(
 		cdir := cleanRelPath(dirPath)
 		mu.Lock()
 		dirETagMap[cdir] = etag
+		mu.Unlock()
+	}
+
+	addDir := func(dirPath string) {
+		cdir := cleanRelPath(dirPath)
+		mu.Lock()
+		dirMap[cdir] = true
 		mu.Unlock()
 	}
 
@@ -219,6 +253,7 @@ func (e *Engine) listFiles(
 		}
 
 		addDirETag(startPath, res.ETag)
+		addDir(startPath)
 		enqueueDir(startPath, res.ETag)
 	}
 
@@ -248,6 +283,7 @@ func (e *Engine) listFiles(
 						cpath := cleanRelPath(file.Path)
 						if file.IsDir {
 							addDirETag(cpath, file.ETag)
+							addDir(cpath)
 							enqueueDir(file.Path, file.ETag)
 						} else {
 							addFile(fileState{
@@ -267,7 +303,7 @@ func (e *Engine) listFiles(
 	wg.Wait()
 	close(jobsChan)
 
-	return fileMap, dirETagMap, indexErrors, nil
+	return fileMap, dirMap, dirETagMap, indexErrors, nil
 }
 
 // isFileModified determines whether a file has changed compared to its stored SyncState.

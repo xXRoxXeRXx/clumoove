@@ -515,6 +515,32 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return nil
 	}
 
+	// Handle directory creation tasks (action == "mkdir").
+	// These are emitted by the indexer for every directory encountered so that
+	// empty directories are created on the target. We skip the full
+	// download/upload pipeline and just call CreateDirectory.
+	var taskMeta map[string]interface{}
+	if task.Metadata != nil {
+		_ = json.Unmarshal(task.Metadata, &taskMeta)
+	}
+	if action, _ := taskMeta["action"].(string); action == "mkdir" {
+		targetPath := task.FilePath
+		if task.ResourceType == "files" {
+			targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
+		}
+		if err := targetClient.CreateDirectory(ctx, task.ResourceType, targetPath); err != nil {
+			return fmt.Errorf("failed to create directory %s on target: %w", targetPath, err)
+		}
+		task.Status = "COMPLETED"
+		task.ErrorMessage = sql.NullString{}
+		_ = db.UpdateTaskStatus(p.db, task)
+		p.clearConnLoss(mig.ID)
+		p.clearConnLossTask(task.ID)
+		// Count the directory creation as 1 processed item with 0 bytes.
+		_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, 0, 0, 0)
+		return nil
+	}
+
 	// 3. Conflict Resolution
 	var deleteAfterUpload bool // set true by OVERWRITE: delete original only after upload succeeds
 	targetPath := task.FilePath

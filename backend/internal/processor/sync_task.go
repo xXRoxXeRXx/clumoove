@@ -91,6 +91,40 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 	defer crypto.ZeroString(&targetPass)
 
+	// Handle directory creation tasks (action == "mkdir").
+	// Enqueued by the sync engine for directories present on one side but
+	// missing on the other. We create the directory on the appropriate client
+	// and skip the full file-transfer pipeline.
+	if action == "mkdir" {
+		// Determine which client and path to create the directory on.
+		// side == "source" means create on source (two-way: target has the dir, source doesn't).
+		// side == "" or "target" means create on target (one-way or two-way source->target).
+		var mkClient storage.StorageProvider
+		var mkPath string
+		if side == "source" {
+			mkClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+			if err != nil {
+				return fmt.Errorf("failed to create source client for mkdir: %w", err)
+			}
+			defer mkClient.Close()
+			mkPath = task.FilePath
+		} else {
+			mkClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+			if err != nil {
+				return fmt.Errorf("failed to create target client for mkdir: %w", err)
+			}
+			defer mkClient.Close()
+			mkPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
+		}
+		if err := mkClient.CreateDirectory(ctx, task.ResourceType, mkPath); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", mkPath, err)
+		}
+		task.Status = "COMPLETED"
+		_ = db.UpdateTaskStatus(p.db, task)
+		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, 0) // count as 1 changed item, 0 bytes
+		return nil
+	}
+
 	// Setup clients depending on action
 	if action == "delete" {
 		sourceClient, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
