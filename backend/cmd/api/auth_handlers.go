@@ -307,7 +307,7 @@ type RegisterRequest struct {
 }
 
 func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), registerRateLimit, registerRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "register", s.clientIP(r), registerRateLimit, registerRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -383,7 +383,7 @@ type LoginRequest struct {
 }
 
 func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), loginRateLimit, loginRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "login", s.clientIP(r), loginRateLimit, loginRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -403,6 +403,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	u, err := db.GetUserByEmail(s.db, req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			_ = auth.CheckPasswordHash(req.Password, s.dummyPasswordHash)
 			s.writeAudit(r, db.AuditLoginFailed, req.Email, "", map[string]interface{}{"reason": "no_such_user"})
 			writeError(w, http.StatusUnauthorized, ErrCredentialsInvalid)
 		} else {
@@ -410,6 +411,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	passwordValid := auth.CheckPasswordHash(req.Password, u.PasswordHash)
 
 	if !u.Active {
 		s.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "disabled"})
@@ -427,7 +429,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !auth.CheckPasswordHash(req.Password, u.PasswordHash) {
+	if !passwordValid {
 		s.writeAudit(r, db.AuditLoginFailed, req.Email, u.ID, map[string]interface{}{"reason": "bad_password"})
 		locked, lerr := db.IncrementLoginFailed(s.db, u.ID, loginMaxAttempts, loginLockDuration)
 		if lerr != nil {
@@ -726,7 +728,7 @@ func (s *APIServer) handlePasswordResetAvailable(w http.ResponseWriter, r *http.
 
 func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
-	if !s.rateLimiter.Allow(ip, 3, 1*time.Minute) {
+	if !s.rateLimiter.Allow(r.Context(), "forgot-password", ip, 3, 1*time.Minute) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -820,7 +822,7 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 
 func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
-	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
+	if !s.rateLimiter.Allow(r.Context(), "reset-password", ip, 10, 5*time.Minute) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -879,7 +881,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 
 	ip := s.clientIP(r)
-	if !s.rateLimiter.Allow(ip, 3, 1*time.Minute) {
+	if !s.rateLimiter.Allow(r.Context(), "change-email", ip, 3, 1*time.Minute) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -984,7 +986,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
-	if !s.rateLimiter.Allow(ip, 10, 5*time.Minute) {
+	if !s.rateLimiter.Allow(r.Context(), "confirm-email-change", ip, 10, 5*time.Minute) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -1065,7 +1067,7 @@ type SetupAdminRequest struct {
 }
 
 func (s *APIServer) handleGetSetupStatus(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "setup-status", s.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -1080,7 +1082,7 @@ func (s *APIServer) handleGetSetupStatus(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), registerRateLimit, registerRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "setup-admin", s.clientIP(r), registerRateLimit, registerRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}

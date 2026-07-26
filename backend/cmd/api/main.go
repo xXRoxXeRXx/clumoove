@@ -23,14 +23,15 @@ import (
 )
 
 type APIServer struct {
-	db            *sql.DB
-	queue         *queue.Queue
-	indexer       *indexer.Indexer
-	syncEngine    *appSync.Engine
-	encryptionKey string // AES key for credential encryption
-	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
-	ctx           context.Context
-	rateLimiter   ipRateLimiter
+	db                *sql.DB
+	queue             *queue.Queue
+	indexer           *indexer.Indexer
+	syncEngine        *appSync.Engine
+	encryptionKey     string // AES key for credential encryption
+	jwtSecret         string // HMAC key for JWT signing (separate from encryptionKey)
+	ctx               context.Context
+	rateLimiter       *distributedRateLimiter
+	dummyPasswordHash string
 	// activeStreams tracks the number of open SSE migration-stream connections
 	// per user so we can cap concurrent streams (each polls the DB on an
 	// interval) and prevent resource exhaustion via connection flooding.
@@ -45,19 +46,19 @@ type APIServer struct {
 
 // Rate-limit and quota configuration for the public / sensitive endpoints.
 const (
-	loginRateLimit     = 10
-	loginRateWindow    = 1 * time.Minute
-	registerRateLimit  = 5
-	registerRateWindow = 5 * time.Minute
-	connectRateLimit   = 30
-	connectRateWindow  = 1 * time.Minute
-	connectTestRateLimit   = 30
-	connectTestRateWindow  = 1 * time.Minute
-	totpRateLimit      = 10
-	totpRateWindow     = 1 * time.Minute
-	streamRateLimit    = 60
-	streamRateWindow   = 1 * time.Minute
-	maxStreamsPerUser  = 10
+	loginRateLimit        = 10
+	loginRateWindow       = 1 * time.Minute
+	registerRateLimit     = 5
+	registerRateWindow    = 5 * time.Minute
+	connectRateLimit      = 30
+	connectRateWindow     = 1 * time.Minute
+	connectTestRateLimit  = 30
+	connectTestRateWindow = 1 * time.Minute
+	totpRateLimit         = 10
+	totpRateWindow        = 1 * time.Minute
+	streamRateLimit       = 60
+	streamRateWindow      = 1 * time.Minute
+	maxStreamsPerUser     = 10
 
 	loginMaxAttempts  = 5
 	loginLockDuration = 15 * time.Minute
@@ -99,6 +100,13 @@ func main() {
 		log.Fatalf("JWT_SECRET_KEY must be at least 32 bytes long (got %d). Refusing to start with an insecure signing key.", len(jwtSecret))
 	}
 
+	// Unknown accounts are checked against this bcrypt hash so their login path
+	// takes the same password-verification work as an existing account.
+	dummyPasswordHash, err := auth.HashPassword("clumoove-login-timing-placeholder")
+	if err != nil {
+		log.Fatalf("Failed to initialize login timing protection: %v", err)
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8000"
@@ -131,16 +139,17 @@ func main() {
 
 	syncEng := appSync.NewEngine(database, q, encryptionKey)
 	server := &APIServer{
-		db:            database,
-		queue:         q,
-		indexer:       indexer.NewIndexer(database, encryptionKey, q),
-		syncEngine:    syncEng,
-		encryptionKey: encryptionKey,
-		jwtSecret:     jwtSecret,
-		ctx:           ctx,
-		rateLimiter:   ipRateLimiter{visitors: make(map[string]*rateVisitor)},
-		activeStreams: make(map[string]int),
-		trustedProxy:  trustedProxy,
+		db:                database,
+		queue:             q,
+		indexer:           indexer.NewIndexer(database, encryptionKey, q),
+		syncEngine:        syncEng,
+		encryptionKey:     encryptionKey,
+		jwtSecret:         jwtSecret,
+		ctx:               ctx,
+		rateLimiter:       &distributedRateLimiter{client: q.RedisClient()},
+		dummyPasswordHash: dummyPasswordHash,
+		activeStreams:     make(map[string]int),
+		trustedProxy:      trustedProxy,
 	}
 
 	mux := http.NewServeMux()
@@ -253,7 +262,6 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
-	go server.rateLimiter.evictExpired(ctx, 1*time.Minute)
 	go server.RunOAuthRotationDaemon(ctx)
 
 	sched := scheduler.NewScheduler(database, q, server.indexer)

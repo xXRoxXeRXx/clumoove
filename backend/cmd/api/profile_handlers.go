@@ -121,7 +121,7 @@ func (s *APIServer) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), profileRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "profile-create", s.clientIP(r), profileRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -185,10 +185,10 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 		Provider:              req.Provider,
 		URL:                   urlStr,
 		Username:              req.Username,
-		PasswordEncrypted:    passEnc,
+		PasswordEncrypted:     passEnc,
 		RefreshTokenEncrypted: refreshEnc.String,
-		TokenExpiresAt:       tokenExpiresAt,
-		OAuthUser:            req.OAuthUser,
+		TokenExpiresAt:        tokenExpiresAt,
+		OAuthUser:             req.OAuthUser,
 	}
 	if !refreshEnc.Valid {
 		p.RefreshTokenEncrypted = ""
@@ -237,7 +237,7 @@ func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), profileRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "profile-update", s.clientIP(r), profileRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -364,7 +364,7 @@ func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), profileRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "profile-test", s.clientIP(r), profileRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
