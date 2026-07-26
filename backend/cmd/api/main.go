@@ -249,7 +249,7 @@ func main() {
 	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
 	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
 
-	handler := securityHeadersMiddleware(corsMiddleware(mux))
+	handler := server.securityHeadersMiddleware(corsMiddleware(mux))
 
 	srv := &http.Server{
 		Addr:         ":" + port,

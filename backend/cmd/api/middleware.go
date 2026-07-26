@@ -80,7 +80,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 // response. The OAuth callback route serves HTML, so it sets its own CSP with a
 // nonce via renderOAuthResultHTML; all other (JSON) responses get a strict
 // default-src 'none' policy which is safe for non-document bodies.
-func securityHeadersMiddleware(next http.Handler) http.Handler {
+func (s *APIServer) securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -91,8 +91,9 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 		if r.URL.Path != "/api/oauth/callback" {
 			h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 		}
-		// HSTS only makes sense over a real TLS connection.
-		if r.TLS != nil {
+		// Trust X-Forwarded-Proto only when the server is explicitly configured
+		// behind a proxy that strips client-supplied forwarding headers.
+		if s.isSecure(r) {
 			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 
