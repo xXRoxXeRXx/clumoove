@@ -5,8 +5,12 @@ Clumoove persists all metadata in **PostgreSQL 15**. There are two sources of tr
 1. `db/schema.sql` — the canonical DDL, loaded on first `docker compose` up.
 2. `backend/internal/db/db.go` `InitDB()` — **inline** `CREATE TABLE IF NOT EXISTS` /
    `ALTER TABLE … ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` statements that run on every
-   startup, so the schema self-heals (new columns/tables are added automatically without a manual
-   migration step).
+startup, so the schema self-heals (new columns/tables are added automatically without a manual
+migration step).
+
+`InitDB()` also performs idempotent data cleanups needed by schema semantics. For example, it clears
+legacy `cron_expression` values from `sync` schedules because sync cadence is stored in the linked
+job's `interval_minutes`.
 
 > **Rule:** Any schema change must be added to `db/schema.sql` **and** as an inline statement inside
 > `InitDB()` for automatic migration on startup.
@@ -143,7 +147,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `user_id` | UUID → `users` ON DELETE CASCADE | |
 | `task_type` | TEXT | `migration` / `sync` / `backup` |
 | `task_id` | UUID | linked job id |
-| `cron_expression` | TEXT | NULL for one-shot |
+| `cron_expression` | TEXT | NULL for one-shot and duration-based sync schedules |
 | `run_at` | TIMESTAMPTZ | one-shot time |
 | `next_run_at` | TIMESTAMPTZ | next due time |
 | `is_active` | BOOLEAN NOT NULL DEFAULT TRUE | |

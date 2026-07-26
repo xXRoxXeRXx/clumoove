@@ -113,6 +113,24 @@ func TestNextRunIsStrictlyInTheFuture(t *testing.T) {
 	}
 }
 
+func TestNextSyncRunAtSupportsNinetyMinutes(t *testing.T) {
+	from := time.Date(2026, 7, 11, 10, 5, 0, 0, time.UTC)
+	next, err := nextSyncRunAt(90, from)
+	if err != nil {
+		t.Fatalf("nextSyncRunAt returned error: %v", err)
+	}
+	want := time.Date(2026, 7, 11, 11, 35, 0, 0, time.UTC)
+	if !next.Equal(want) {
+		t.Errorf("nextSyncRunAt(90, %s) = %s, want %s", from.Format(time.RFC3339), next.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+}
+
+func TestNextSyncRunAtRejectsInvalidInterval(t *testing.T) {
+	if _, err := nextSyncRunAt(0, time.Now()); err == nil {
+		t.Fatal("nextSyncRunAt accepted a zero-minute interval")
+	}
+}
+
 func TestIsJobActiveStatus(t *testing.T) {
 	active := []string{"RUNNING", "INDEXING"}
 	for _, s := range active {

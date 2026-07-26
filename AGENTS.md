@@ -71,10 +71,10 @@
 - `sanitizeError` redacts `user:pass@` from any URL embedded in error strings before persisting to `migrations.error_message` / `indexing_errors` (see Security -> Error messages).
 
 ### Scheduler Engine
-- **Schedule table**: `schedules` (id, user_id, task_type, task_id, cron_expression, run_at, next_run_at, is_active). One-shot jobs leave `cron_expression` NULL and set `run_at`/`next_run_at`; recurring jobs set `cron_expression` and compute `next_run_at` via `cron.ParseStandard`.
+- **Schedule table**: `schedules` (id, user_id, task_type, task_id, cron_expression, run_at, next_run_at, is_active). One-shot jobs leave `cron_expression` NULL and set `run_at`/`next_run_at`; cron recurring jobs compute `next_run_at` via `cron.ParseStandard`. Sync jobs also leave `cron_expression` NULL and advance `next_run_at` by their persisted `interval_minutes`, so intervals such as 90 minutes are valid.
 - **Trigger loop**: `scheduler.Run` ticks every 1 min, calls `GetDueSchedules` (`is_active = TRUE AND next_run_at <= NOW()`), claims each via Redis `SET NX` (`schedule:lock:{id}`, 2-min TTL), then `processSchedule`.
 - **Overlap protection**: Before triggering, `isJobActive` checks the linked job's status. For migrations, `RUNNING`/`INDEXING` ⇒ skip (log + advance `next_run_at` for recurring). This satisfies the "90-min sync skipped at 60 min" acceptance criterion.
-- **Lifecycle**: One-shot ⇒ `DeactivateSchedule` after trigger. Recurring ⇒ recompute `next_run_at` via `NextRun(cron_expression)`.
+- **Lifecycle**: One-shot ⇒ `DeactivateSchedule` after trigger. Cron recurring jobs ⇒ recompute `next_run_at` via `NextRun(cron_expression)`; sync jobs ⇒ add `interval_minutes` to the current time.
 - **Failure handling**: If `triggerJob` errors (e.g. linked task deleted, migration not in `SCHEDULED` state), the schedule is **deactivated** to prevent an infinite retry loop. The user re-creates it via the API if needed.
 - **Deferred migrations**: `handleStart` with `scheduled_time` creates the migration in `SCHEDULED` status + a one-shot schedule. The scheduler's `triggerMigration` calls `indexer.Start`, which reads persisted `selected_paths`/`calendars`/`contacts` and creates PENDING tasks — scheduled migrations actually execute (no silent stall in `SCHEDULED`/`INDEXING`).
 - **Cron validation**: Validate user-supplied cron expressions with `scheduler.ValidateCronExpression` (wraps `cron.ParseStandard`) before persisting.

@@ -112,8 +112,9 @@ File-scoped commands referenced in `AGENTS.md`:
 ### Scheduler
 - Validate user cron via `scheduler.ValidateCronExpression` (wraps `cron.ParseStandard`) before
   persisting.
-- One-shot jobs leave `cron_expression` NULL and set `run_at`/`next_run_at`; recurring jobs compute
-  `next_run_at` via `NextRun(cron_expression)`.
+- One-shot jobs leave `cron_expression` NULL and set `run_at`/`next_run_at`; cron recurring jobs compute
+  `next_run_at` via `NextRun(cron_expression)`. Sync jobs leave it NULL and advance by their persisted
+  `interval_minutes`, which supports intervals greater than 59 minutes.
 - Multi-instance safety: claim each schedule with a Redis `SET NX` lock (`schedule:lock:{id}`, 2-min TTL).
 
 ### API responses

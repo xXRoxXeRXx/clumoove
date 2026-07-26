@@ -104,8 +104,8 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 		log.Printf("[Scheduler] Skipping schedule %s: job %s/%s is still running (overlap protection)",
 			schedule.ID, schedule.TaskType, schedule.TaskID)
 		// For recurring jobs, still update next_run_at even if skipped
-		if schedule.CronExpression.Valid {
-			nextRun, err := NextRun(schedule.CronExpression.String)
+		if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
+			nextRun, err := s.nextRunForSchedule(schedule)
 			if err == nil {
 				_ = db.UpdateNextRunAt(s.db, schedule.ID, nextRun)
 			}
@@ -125,10 +125,10 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 			}
 			return
 		}
-		// For recurring cron jobs, DO NOT deactivate on transient trigger failure!
+		// For recurring jobs, DO NOT deactivate on transient trigger failure!
 		// Advance next_run_at so it retries automatically on the next interval.
-		if schedule.CronExpression.Valid {
-			nextRun, nErr := NextRun(schedule.CronExpression.String)
+		if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
+			nextRun, nErr := s.nextRunForSchedule(schedule)
 			if nErr == nil {
 				_ = db.UpdateNextRunAt(s.db, schedule.ID, nextRun)
 				log.Printf("[Scheduler] Recurring schedule %s trigger failed; next retry scheduled at %s",
@@ -148,9 +148,9 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 	log.Printf("[Scheduler] Successfully triggered job for schedule %s", schedule.ID)
 
 	// 3. Update schedule lifecycle
-	if schedule.CronExpression.Valid {
+	if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
 		// Recurring: calculate next run time
-		nextRun, err := NextRun(schedule.CronExpression.String)
+		nextRun, err := s.nextRunForSchedule(schedule)
 		if err != nil {
 			log.Printf("[Scheduler] Error calculating next run for schedule %s: %v",
 				schedule.ID, err)
@@ -174,6 +174,32 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 			log.Printf("[Scheduler] Deactivated one-shot schedule %s", schedule.ID)
 		}
 	}
+}
+
+// nextRunForSchedule calculates the next occurrence for a recurring schedule.
+// Sync schedules use their persisted interval_minutes rather than cron because
+// intervals above 59 minutes (for example 90 minutes) are not representable in
+// cron's minute field. Checking task type first also repairs existing sync
+// schedules that may still contain an old invalid cron expression.
+func (s *Scheduler) nextRunForSchedule(schedule *db.Schedule) (time.Time, error) {
+	if schedule.TaskType == "sync" {
+		job, err := db.GetSyncJob(s.db, schedule.TaskID)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("get sync job interval: %w", err)
+		}
+		return nextSyncRunAt(job.IntervalMinutes, time.Now())
+	}
+	if !schedule.CronExpression.Valid {
+		return time.Time{}, fmt.Errorf("schedule %s has no recurrence", schedule.ID)
+	}
+	return NextRun(schedule.CronExpression.String)
+}
+
+func nextSyncRunAt(intervalMinutes int, from time.Time) (time.Time, error) {
+	if intervalMinutes <= 0 {
+		return time.Time{}, fmt.Errorf("invalid sync interval: %d minutes", intervalMinutes)
+	}
+	return from.Add(time.Duration(intervalMinutes) * time.Minute), nil
 }
 
 // isJobActiveStatus reports whether a job with the given status is considered
