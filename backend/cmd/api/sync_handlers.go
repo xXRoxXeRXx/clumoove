@@ -312,19 +312,25 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := db.GetSyncJob(s.db, id)
+	claimed, err := s.syncEngine.StartSyncPass(s.ctx, id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		log.Printf("[Sync] Failed to claim sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-
-	if job.Status == "INDEXING" || job.Status == "RUNNING" {
-		writeError(w, http.StatusConflict, ErrSyncAlreadyRunning)
+	if !claimed {
+		job, getErr := db.GetSyncJob(s.db, id)
+		if getErr != nil {
+			writeError(w, http.StatusNotFound, ErrSyncNotFound)
+			return
+		}
+		if job.Status == "RUNNING" || job.Status == "INDEXING" || job.Status == "VERIFYING" {
+			writeError(w, http.StatusConflict, ErrSyncAlreadyRunning)
+			return
+		}
+		writeError(w, http.StatusConflict, ErrSyncInvalidState)
 		return
 	}
-
-	// Asynchronously run pass
-	go s.syncEngine.RunSyncPass(s.ctx, id)
 
 	s.writeAudit(r, db.AuditSyncStarted, id, userID, nil)
 
@@ -425,7 +431,7 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel any in-flight RunSyncPass goroutine before deleting the DB rows so
+	// Cancel any in-flight sync-pass goroutine before deleting the DB rows so
 	// the goroutine does not keep operating against a deleted job.
 	s.syncEngine.CancelPass(id)
 

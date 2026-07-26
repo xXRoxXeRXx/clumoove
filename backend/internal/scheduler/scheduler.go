@@ -304,9 +304,8 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 		return nil
 	}
 
-	// RUNNING/INDEXING mean a pass is already in flight. Skip (don't error) to
-	// avoid permanently deactivating the schedule — overlap protection is handled
-	// by the engine, and the schedule advances next_run_at so the next tick retries.
+	// Skip an already active pass without deactivating the recurring schedule.
+	// The conditional UPDATE below closes the race after this status read.
 	if job.Status == "RUNNING" || job.Status == "INDEXING" {
 		log.Printf("[Scheduler] Skipping sync job %s trigger: job is already %s (overlap protection)", syncJobID, job.Status)
 		return nil
@@ -316,7 +315,17 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 		return fmt.Errorf("sync job %s is in a non-runnable state (current: %s)", syncJobID, job.Status)
 	}
 
-	go s.syncEngine.RunSyncPass(ctx, syncJobID)
+	claimed, err := s.syncEngine.StartSyncPass(ctx, syncJobID)
+	if err != nil {
+		return fmt.Errorf("failed to claim sync job %s: %w", syncJobID, err)
+	}
+	if !claimed {
+		// A competing API/scheduler trigger claimed it between the status read
+		// above and this atomic update. Skip without deactivating the schedule.
+		log.Printf("[Scheduler] Skipping sync job %s trigger: pass was claimed by another starter", syncJobID)
+		return nil
+	}
+
 	log.Printf("[Scheduler] Sync job %s pass started", syncJobID)
 	return nil
 }

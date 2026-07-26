@@ -123,16 +123,16 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			mkPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
 			mkProvider = job.TargetProvider
 		}
-		
+
 		// Sanitize directory name
 		dirName := path.Base(mkPath)
 		sanitized := sanitize.SanitizeFilename(dirName, mkProvider)
 		if sanitized.Changed {
 			mkPath = path.Join(path.Dir(mkPath), sanitized.SanitizedName)
-			log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)", 
+			log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)",
 				dirName, sanitized.SanitizedName, strings.Join(sanitized.Reasons, ", "))
 		}
-		
+
 		// Check for case collisions on case-insensitive providers
 		if sanitize.IsCaseInsensitive(mkProvider) {
 			dirPath := path.Dir(mkPath)
@@ -146,7 +146,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 				return nil
 			}
 		}
-		
+
 		if err := mkClient.CreateDirectory(ctx, task.ResourceType, mkPath); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", mkPath, err)
 		}
@@ -273,9 +273,6 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		srcProvider = job.SourceProvider
 		tgtProvider = job.TargetProvider
 	}
-
-
-
 	// Create directories if needed
 	if err := tgtClient.CreateParentDirectories(ctx, task.ResourceType, tgtPath); err != nil {
 		return fmt.Errorf("failed to create target directories: %w", err)
@@ -623,14 +620,17 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 
 		if sOK && tOK {
 			log.Printf("[RecoveryScheduler] Connection restored for sync job %s! Resuming...\n", id)
-			// Restore to IDLE (not RUNNING) so the engine's completion notifier
-			// can track the pass. Then launch a fresh RunSyncPass which handles
-			// the INDEXING→RUNNING→IDLE lifecycle.
-			_, err = p.db.ExecContext(ctx, `UPDATE sync_jobs SET status = 'IDLE' WHERE id = $1`, id)
-			if err != nil {
-				log.Printf("[RecoveryScheduler] Error resuming sync job %s: %v\n", id, err)
-			} else if p.syncEngine != nil {
-				go p.syncEngine.RunSyncPass(ctx, id)
+			if p.syncEngine == nil {
+				log.Printf("[RecoveryScheduler] Sync engine unavailable; cannot resume sync job %s\n", id)
+				continue
+			}
+			// Claim directly from PAUSED_CONNECTION_LOSS; an intermediate IDLE
+			// state would let another starter launch a duplicate pass.
+			claimed, claimErr := p.syncEngine.ResumePausedSyncPass(ctx, id)
+			if claimErr != nil {
+				log.Printf("[RecoveryScheduler] Error claiming resumed sync job %s: %v\n", id, claimErr)
+			} else if !claimed {
+				log.Printf("[RecoveryScheduler] Sync job %s was claimed before recovery could resume it\n", id)
 			}
 			p.recoveryAttempts.Delete(id)
 		} else {
