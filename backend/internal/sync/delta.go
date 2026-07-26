@@ -325,6 +325,9 @@ func (e *Engine) listFiles(
 	wg.Wait()
 	close(jobsChan)
 
+	if err := ctx.Err(); err != nil {
+		return fileMap, dirMap, dirETagMap, indexErrors, err
+	}
 	return fileMap, dirMap, dirETagMap, indexErrors, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -72,6 +73,14 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		e.cancelMu.Unlock()
 	}()
 
+	// Bound the indexing/listing/delta phase so a stalled provider call cannot
+	// wedge the job in INDEXING forever (which the scheduler's overlap
+	// protection would then skip indefinitely). Transfers run on the worker;
+	// once the pass transitions to RUNNING the original ctx (without this
+	// timeout) takes over, so legitimately long syncs are not cut short.
+	indexCtx, indexCancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer indexCancel()
+
 	// 1. Transition to INDEXING
 	err := db.UpdateSyncJobStatus(e.db, syncJobID, "INDEXING", nil)
 	if err != nil {
@@ -118,14 +127,14 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	}
 
 	// 4. Create storage provider clients
-	sourceClient, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+	sourceClient, err := storage.NewProvider(indexCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Failed to connect to source: %v", err))
 		return
 	}
 	defer sourceClient.Close()
 
-	targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+	targetClient, err := storage.NewProvider(indexCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
 	if err != nil {
 		e.failSync(syncJobID, fmt.Sprintf("Failed to connect to target: %v", err))
 		return
@@ -203,8 +212,17 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 		sourceStartPaths = []string{"/"}
 	}
 
-	sourceMap, sourceDirMap, sourceDirETags, srcErrors, err := e.listFiles(ctx, sourceClient, sourceStartPaths, prevSourceDirETags, prevSourceFiles)
+	sourceMap, sourceDirMap, sourceDirETags, srcErrors, err := e.listFiles(indexCtx, sourceClient, sourceStartPaths, prevSourceDirETags, prevSourceFiles)
 	if err != nil {
+		// Parent cancel (pause/delete/shutdown) shares indexCtx; only hard-fail on the 30m deadline.
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
+			e.failSync(syncJobID, fmt.Sprintf("Source file listing timed out: %v", err))
+			return
+		}
+		if ctx.Err() != nil {
+			log.Printf("[SyncEngine] Source listing interrupted for job %s: %v\n", syncJobID, ctx.Err())
+			return
+		}
 		e.failSync(syncJobID, fmt.Sprintf("Source file listing failed: %v", err))
 		return
 	}
@@ -216,8 +234,16 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	cleanTargetDir := cleanRelPath(job.TargetDir)
 	targetScanPaths := []string{cleanTargetDir}
 
-	targetRawMap, targetDirMap, targetDirETags, tgtErrors, err := e.listFiles(ctx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
+	targetRawMap, targetDirMap, targetDirETags, tgtErrors, err := e.listFiles(indexCtx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
+			e.failSync(syncJobID, fmt.Sprintf("Target file listing timed out: %v", err))
+			return
+		}
+		if ctx.Err() != nil {
+			log.Printf("[SyncEngine] Target listing interrupted for job %s: %v\n", syncJobID, ctx.Err())
+			return
+		}
 		e.failSync(syncJobID, fmt.Sprintf("Target file listing failed: %v", err))
 		return
 	}
@@ -248,7 +274,11 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	// Wait for any tasks that may still be RUNNING from a previous pass before
 	// clearing them. This prevents a race where we delete task rows that a worker
 	// thread currently holds, causing silent counter drift.
-	if err := e.drainRemainingTasks(ctx, job.ID); err != nil {
+	if err := e.drainRemainingTasks(indexCtx, job.ID); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
+			e.failSync(syncJobID, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
+			return
+		}
 		log.Printf("[SyncEngine] Drain interrupted for job %s: %v\n", syncJobID, err)
 		return
 	}

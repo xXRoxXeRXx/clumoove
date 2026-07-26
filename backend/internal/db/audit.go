@@ -37,6 +37,7 @@ const (
 	AuditSyncPaused         AuditAction = "SYNC_PAUSED"
 	AuditSyncResumed        AuditAction = "SYNC_RESUMED"
 	AuditSyncDeleted        AuditAction = "SYNC_DELETED"
+	AuditSyncRecovered      AuditAction = "SYNC_RECOVERED"
 )
 
 type AuditEntry struct {
