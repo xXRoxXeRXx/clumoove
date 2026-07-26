@@ -4,6 +4,9 @@ import { ArrowLeft, Users as UsersIcon, Activity, BarChart3, ScrollText, UserPlu
 import { useApiError } from '../utils/apiError';
 import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
+import { useConfirm } from '../contexts/useConfirm';
+import { MessageBanner } from './MessageBanner';
+import { apiFetch } from '../utils/apiClient';
 import { Toggle } from './Toggle';
 
 type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
@@ -16,17 +19,6 @@ interface AdminPanelProps {
 }
 
 const LIMIT = 20;
-
-function MessageBanner({ message }: { message: { text: string; type: 'success' | 'error' } | null }) {
-  if (!message) return null;
-  return (
-    <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-      message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-    }`}>
-      {message.text}
-    </div>
-  );
-}
 
 function SectionCard({ icon: Icon, title, children }: {
   icon: React.ComponentType<{ className?: string }>;
@@ -129,16 +121,27 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
   onError: (errorCode: string) => void;
 }) {
   const { t } = useTranslation();
+  const confirm = useConfirm();
+  const { formatDateTime } = useFormat();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [roleFilter, setRoleFilter] = useState('');
   const [activeFilter, setActiveFilter] = useState('');
   const [q, setQ] = useState('');
+  const [qInput, setQInput] = useState('');
   const [loading, setLoading] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ email: '', display_name: '', password: '', role: 'USER', must_change_password: true });
+
+  useEffect(() => {
+    const tmr = setTimeout(() => {
+      setQ(qInput);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(tmr);
+  }, [qInput]);
 
   const load = async () => {
     setLoading(true);
@@ -208,8 +211,8 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
     <SectionCard icon={UsersIcon} title={t('admin.tabs.users')}>
       <div className="flex flex-wrap items-center gap-2">
         <input
-          value={q}
-          onChange={(e) => { setQ(e.target.value); setPage(1); }}
+          value={qInput}
+          onChange={(e) => setQInput(e.target.value)}
           placeholder={t('common.search')}
           className={inputCls}
         />
@@ -282,7 +285,7 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
                     ? <span className="text-emerald-600 font-semibold">{t('common.active')}</span>
                     : <span className="text-rose-600 font-semibold">{t('admin.users.suspended')}</span>}
                 </td>
-                <td className="px-3 py-2 text-[var(--color-text-muted)]">{u.created_at ? new Date(u.created_at).toLocaleDateString() : ''}</td>
+                <td className="px-3 py-2 text-[var(--color-text-muted)]">{u.created_at ? formatDateTime(u.created_at) : ''}</td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1.5">
                     {u.active ? (
@@ -297,7 +300,7 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
                       {u.role === 'ADMIN' ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
                     </button>
                     {u.id !== currentUserID && (
-                      <button title={t('admin.users.delete')} onClick={() => { if (confirm(t('admin.users.deleteConfirm'))) act(() => adminApi.deleteUser(apiUrl, token, u.id!), 'admin.users.deletedOk'); }}
+                      <button title={t('admin.users.delete')} onClick={() => { void (async () => { if (await confirm({ message: t('admin.users.deleteConfirm') })) act(() => adminApi.deleteUser(apiUrl, token, u.id!), 'admin.users.deletedOk'); })(); }}
                         className="p-1.5 rounded-xl border border-[var(--color-border)] text-rose-600 hover:bg-rose-50/50 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
                     )}
                   </div>
@@ -638,7 +641,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${apiUrl}/api/settings`)
+    apiFetch(`${apiUrl}/api/settings`)
       .then((res) => res.json())
       .then((data) => {
         if (!cancelled) setRegistrationsEnabled(data.registrations_enabled === 'true');
@@ -653,7 +656,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
     setMessage(null);
     setLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/settings`, {
+      const res = await apiFetch(`${apiUrl}/api/settings`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

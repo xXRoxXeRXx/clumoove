@@ -1,11 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Pause, Play, XCircle, Loader2, ArrowLeft, ArrowRight, Folder, CheckCircle2, Gauge } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Pause, Play, Loader2, ArrowLeft, ArrowRight, Folder, Gauge } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useFormat, formatDuration, type TFunc } from '../utils/format';
+import { useFormat, type TFunc } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
+import { useToast } from '../contexts/ToastContext';
+import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
+import { StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
+import { apiFetch } from '../utils/apiClient';
 
 interface DashboardProps {
   migrationId: string;
@@ -87,11 +91,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const { formatBytes } = useFormat();
   const translateApiError = useApiError();
   const confirm = useConfirm();
+  const toast = useToast();
+  const { speed, eta, updateMetrics, reset: resetMetrics, prevStatusRef } = useTransferMetrics();
 
   const [data, setData] = useState<ProgressData | null>(null);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
-  const [speed, setSpeed] = useState<number>(0); // Bytes per second
-  const [eta, setEta] = useState<string>(t('dashboard.eta.computing'));
   const [serverUnreachable, setServerUnreachable] = useState<boolean>(false);
   const [reconnectNonce, setReconnectNonce] = useState<number>(0);
   const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
@@ -102,7 +106,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const handleDownloadReport = async (e: React.MouseEvent) => {
     e.preventDefault();
     try {
-      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/report`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/report`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -121,7 +125,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
-      alert(t('dashboard.downloadFailed'));
+      toast(t('dashboard.downloadFailed'));
     }
   };
 
@@ -133,7 +137,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
     setControlLoading(action);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/${action}`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/${action}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -146,7 +150,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       // Status will automatically update via WebSocket
     } catch (err) {
       console.error(err);
-      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setControlLoading(null);
     }
@@ -155,7 +159,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const commitBandwidthChange = async (value: number) => {
     setBandwidthLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/bandwidth`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/bandwidth`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -169,7 +173,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
     } catch (err) {
       console.error(err);
-      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setBandwidthLoading(false);
     }
@@ -178,7 +182,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const commitThreadsChange = async (value: number) => {
     setThreadsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/threads`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/threads`, {
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -192,13 +196,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
     } catch (err) {
       console.error(err);
-      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setThreadsLoading(false);
     }
   };
-
-  const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
 
   const handleRetryFailed = async () => {
     const ok = await confirm({ message: t('dashboard.retryConfirm') });
@@ -206,7 +208,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
     setControlLoading('retry');
     try {
-      const response = await fetch(`${apiUrl}/api/migration/${migrationId}/retry-failed`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/retry-failed`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -220,28 +222,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       if (resData.success && resData.retried > 0) {
         setReconnectNonce((n) => n + 1);
       } else {
-        alert(t('dashboard.noFailed'));
+        toast(t('dashboard.noFailed'), 'info');
       }
     } catch (err) {
       console.error(err);
-      alert(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setControlLoading(null);
     }
   };
 
-  const lastActiveSpeed = useRef<number>(0);
-  const lastActiveTime = useRef<number>(0);
-
-  const prevStatusRef = useRef<string>('');
   const threadsDraggingRef = useRef<boolean>(false);
 
 
   useEffect(() => {
-    progressHistory.current = [];
-    lastActiveSpeed.current = 0;
-    lastActiveTime.current = 0;
-    prevStatusRef.current = '';
+    resetMetrics();
 
     // Construct WebSocket URL. The backend authenticates the socket by accepting
     // the JWT either as a query parameter (HTTP only) or as a WebSocket
@@ -264,7 +259,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
     };
 
     // Fetch initial migration details immediately to avoid waiting for initial WS tick
-    fetch(`${apiUrl}/api/migration/${migrationId}`, {
+    apiFetch(`${apiUrl}/api/migration/${migrationId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : null))
@@ -301,87 +296,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         setThreads(payload.threads);
       }
 
-      // Reset progress history if status changes to avoid calculations across states
-      if (payload.status !== prevStatusRef.current) {
-        progressHistory.current = [];
-        lastActiveSpeed.current = 0;
-        lastActiveTime.current = 0;
-      }
-
-      prevStatusRef.current = payload.status;
-
-      // Speed and ETA calculation
-      if (payload.status === 'COMPLETED' || payload.status === 'COMPLETED_WITH_ERRORS') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.done'));
-      } else if (payload.status === 'FAILED') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.failed'));
-      } else if (payload.status === 'INDEXING') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.indexing'));
-      } else if (payload.status === 'PENDING') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.pending'));
-      } else if (payload.status === 'PAUSED_CONNECTION_LOSS') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.waitingConn'));
-      } else {
-        // RUNNING or other states.
-        // Speed/ETA use the frequent live_bytes counter (driven by the
-        // streaming progress channel); the "transferred X / Y" byte display
-        // uses processed_bytes, which can never exceed total_bytes.
-        const liveBytes = typeof payload.live_bytes === 'number' ? payload.live_bytes : payload.processed_bytes;
-        const now = Date.now();
-        progressHistory.current.push({ timestamp: now, bytes: liveBytes });
-
-        // Keep last 15 seconds of history to smooth speed
-        const windowLimit = now - 15000;
-        progressHistory.current = progressHistory.current.filter(item => item.timestamp >= windowLimit);
-
-        if (progressHistory.current.length >= 2) {
-          const oldest = progressHistory.current[0];
-          const newest = progressHistory.current[progressHistory.current.length - 1];
-          const timeDiffSec = (newest.timestamp - oldest.timestamp) / 1000;
-
-          if (timeDiffSec > 0.5) {
-            const bytesDiff = newest.bytes - oldest.bytes;
-
-            let calculatedSpeed: number;
-
-            if (bytesDiff > 0) {
-              calculatedSpeed = bytesDiff / timeDiffSec;
-              lastActiveSpeed.current = calculatedSpeed;
-              lastActiveTime.current = now;
-            } else {
-              // No progress in this window. Check if we are in the grace period
-              const timeSinceLastActive = now - lastActiveTime.current;
-              if (lastActiveSpeed.current > 0 && timeSinceLastActive < 15000) {
-                calculatedSpeed = lastActiveSpeed.current;
-              } else {
-                calculatedSpeed = 0;
-              }
-            }
-
-            setSpeed(calculatedSpeed);
-
-            // ETA calculation using effective bytes (in-flight live bytes reduce remaining bytes)
-            const effectiveBytes = Math.min(payload.total_bytes, Math.max(payload.processed_bytes, liveBytes));
-            const remainingBytes = Math.max(0, payload.total_bytes - effectiveBytes);
-            if (remainingBytes <= 0) {
-              setEta(t('dashboard.eta.done'));
-            } else if (calculatedSpeed > 0) {
-              const etaSec = remainingBytes / calculatedSpeed;
-              setEta(formatDuration(etaSec, t));
-            } else {
-              setEta(t('dashboard.eta.computing'));
-            }
-          }
-        } else {
-          setSpeed(0);
-          setEta(t('dashboard.eta.computing'));
-        }
-      }
+      updateMetrics(payload);
     };
 
     ws.onerror = (err) => {
@@ -401,7 +316,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
 
       // Ping API to trigger token refresh if it expired during WebSocket connection (I4 WS fix)
-      fetch(`${apiUrl}/api/auth/me`, {
+      apiFetch(`${apiUrl}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       }).catch(err => console.error("WS connection loss auth check failed:", err));
 
@@ -428,7 +343,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       clearTimeout(reconnectTimeout);
       ws.close();
     };
-  }, [migrationId, apiUrl, token, reconnectNonce, t]);
+  }, [migrationId, apiUrl, token, reconnectNonce, resetMetrics, updateMetrics, prevStatusRef]);
 
   if (serverUnreachable) {
     return (
@@ -439,10 +354,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           {t('dashboard.serverUnreachableText')}
         </p>
         <button
-          onClick={() => window.location.reload()}
+          type="button"
+          onClick={() => {
+            setServerUnreachable(false);
+            setReconnectNonce((n) => n + 1);
+          }}
           className="mt-2 px-4 py-2 bg-portal-orange text-white text-xs font-bold rounded-lg hover:bg-portal-orange-hover transition-colors cursor-pointer"
         >
-          {t('dashboard.reload')}
+          {t('common.retry')}
         </button>
       </div>
     );
@@ -468,61 +387,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
   const successFiles = Math.max(0, data.processed_files - data.failed_files - data.skipped_files);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'COMPLETED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            {t('status.completed')}
-          </span>
-        );
-      case 'FAILED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
-            <XCircle className="w-3.5 h-3.5" />
-            {t('status.failed')}
-          </span>
-        );
-      case 'COMPLETED_WITH_ERRORS':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            {t('status.completedWithErrors')}
-          </span>
-        );
-      case 'VERIFYING':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 animate-pulse">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            {t('status.verifying')}
-          </span>
-        );
-      case 'PAUSED':
-      case 'PAUSED_CONNECTION_LOSS':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-750 border border-amber-250 animate-pulse">
-            <Pause className="w-3.5 h-3.5" />
-            {t('status.paused')}
-          </span>
-        );
-      case 'CANCELLED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200">
-            <XCircle className="w-3.5 h-3.5" />
-            {t('status.cancelled')}
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            {t('status.transfer')}
-          </span>
-        );
-    }
-  };
-
   return (
     <div className="w-full space-y-6 animate-fade-in">
       {/* Back Button Header */}
@@ -541,7 +405,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Top Badges Row (Above Title & Action Buttons) */}
         <div className="flex items-center justify-end gap-2.5 pb-2">
           {/* Status Info Badge */}
-          {getStatusBadge(data.status)}
+          <StatusBadge status={data.status} />
 
           {/* Direction Info Badge (rechtsbündig) */}
           <span className="inline-flex items-center gap-1.5 text-xs font-bold text-orange-700 px-3 py-1 rounded-full bg-orange-50 border border-orange-200">

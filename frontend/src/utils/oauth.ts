@@ -39,6 +39,8 @@ export function listenForOAuthMessage(
     onSuccess: (msg: OAuthSuccessMessage) => void;
     onError: (msg: OAuthErrorMessage) => void;
     expectedPurpose?: string;
+    /** When set, only messages posted from this window (the popup) are accepted. */
+    expectedSource?: MessageEventSource | null;
   }
 ): () => void {
   const listener = (event: MessageEvent) => {
@@ -48,6 +50,10 @@ export function listenForOAuthMessage(
     }
     // 2. Reject messages without a source (cannot be the popup window).
     if (!event.source) {
+      return;
+    }
+    // 2b. Optional popup identity check (I7) — ignore other windows on the same origin.
+    if (handlers.expectedSource != null && event.source !== handlers.expectedSource) {
       return;
     }
     const data = event.data as OAuthMessage | undefined;

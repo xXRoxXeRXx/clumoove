@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
+import { apiFetch } from '../utils/apiClient';
 interface ConfirmEmailChangeFormProps {
   apiUrl: string;
   token: string;
@@ -20,7 +21,7 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
       setLoading(true);
       setError('');
       try {
-        const response = await fetch(`${apiUrl}/api/auth/confirm-email-change`, {
+        const response = await apiFetch(`${apiUrl}/api/auth/confirm-email-change`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

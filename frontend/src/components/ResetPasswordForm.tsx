@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CloudSync, Lock, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
+import { apiFetch } from '../utils/apiClient';
 
 interface ResetPasswordFormProps {
   apiUrl: string;
@@ -53,7 +54,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
     setLoading(true);
 
     try {
-      const response = await fetch(`${apiUrl}/api/auth/reset-password`, {
+      const response = await apiFetch(`${apiUrl}/api/auth/reset-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

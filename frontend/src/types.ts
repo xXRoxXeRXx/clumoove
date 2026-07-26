@@ -36,11 +36,27 @@ export interface MigrationConfig {
   target_profile_id?: string;
 }
 
+export type UserRole = 'USER' | 'ADMIN';
+
+export type JobStatus =
+  | 'PENDING'
+  | 'SCHEDULED'
+  | 'INDEXING'
+  | 'RUNNING'
+  | 'VERIFYING'
+  | 'PAUSED'
+  | 'PAUSED_CONNECTION_LOSS'
+  | 'COMPLETED'
+  | 'COMPLETED_WITH_ERRORS'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'IDLE';
+
 export interface User {
   id?: string;
   email?: string;
   display_name?: string;
-  role?: string;
+  role?: UserRole | string;
   avatar?: string;
   totp_enabled?: boolean;
 }

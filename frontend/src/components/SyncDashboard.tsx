@@ -1,10 +1,15 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Play, Pause, ArrowLeft, RefreshCw, Download, CheckCircle2, XCircle, AlertTriangle, Loader2, HardDrive, Clock, Folder, ArrowRight, ArrowLeftRight } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Play, Pause, ArrowLeft, RefreshCw, Download, AlertTriangle, Loader2, HardDrive, Clock, Folder, ArrowRight, ArrowLeftRight } from 'lucide-react';
 import type { SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatBytes, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
+import { useToast } from '../contexts/ToastContext';
+import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
+import { StatusBadge } from './StatusBadge';
+import { apiFetch } from '../utils/apiClient';
+import { connectSseLoop } from '../utils/sse';
 
 interface SyncDashboardProps {
   syncId: string;
@@ -20,17 +25,14 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [threads, setThreads] = useState<number>(8);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
-  const [speed, setSpeed] = useState<number>(0);
-  const [eta, setEta] = useState<string>('');
   const [now, setNow] = useState<number>(() => Date.now());
   const threadsDraggingRef = useRef<boolean>(false);
-  const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
-  const lastActiveSpeed = useRef<number>(0);
-  const lastActiveTime = useRef<number>(0);
 
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
   const translateApiError = useApiError();
+  const toast = useToast();
+  const { speed, eta, updateMetrics } = useTransferMetrics();
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -45,73 +47,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     }
   }, [job?.threads]);
 
-  // Live speed and ETA calculation helper (called on fetch/SSE updates)
-  const updateMetrics = useCallback((data: SyncJob) => {
-    if (data.status === 'COMPLETED') {
-      setSpeed(0);
-      setEta(t('dashboard.eta.done'));
-    } else if (data.status === 'PAUSED' || data.status === 'IDLE') {
-      setSpeed(0);
-      setEta('-');
-    } else if (data.status === 'PAUSED_CONNECTION_LOSS') {
-      setSpeed(0);
-      setEta(t('dashboard.eta.waitingConn'));
-    } else {
-      const processedBytes = data.processed_bytes || 0;
-      const liveBytes = typeof data.live_bytes === 'number' ? data.live_bytes : processedBytes;
-      const totalBytes = data.total_bytes || 0;
-      const now = Date.now();
-
-      progressHistory.current.push({ timestamp: now, bytes: liveBytes });
-      const windowLimit = now - 15000;
-      progressHistory.current = progressHistory.current.filter((item) => item.timestamp >= windowLimit);
-
-      if (progressHistory.current.length >= 2) {
-        const oldest = progressHistory.current[0];
-        const newest = progressHistory.current[progressHistory.current.length - 1];
-        const timeDiffSec = (newest.timestamp - oldest.timestamp) / 1000;
-
-        if (timeDiffSec > 0.5) {
-          const bytesDiff = newest.bytes - oldest.bytes;
-          let calculatedSpeed: number;
-
-          if (bytesDiff > 0) {
-            calculatedSpeed = bytesDiff / timeDiffSec;
-            lastActiveSpeed.current = calculatedSpeed;
-            lastActiveTime.current = now;
-          } else {
-            const timeSinceLastActive = now - lastActiveTime.current;
-            if (lastActiveSpeed.current > 0 && timeSinceLastActive < 15000) {
-              calculatedSpeed = lastActiveSpeed.current;
-            } else {
-              calculatedSpeed = 0;
-            }
-          }
-
-          setSpeed(calculatedSpeed);
-
-          const effectiveBytes = Math.min(totalBytes, Math.max(processedBytes, liveBytes));
-          const remainingBytes = Math.max(0, totalBytes - effectiveBytes);
-          if (remainingBytes <= 0 && totalBytes > 0) {
-            setEta(t('dashboard.eta.done'));
-          } else if (calculatedSpeed > 0 && totalBytes > 0) {
-            const etaSec = remainingBytes / calculatedSpeed;
-            setEta(formatDuration(etaSec, t));
-          } else {
-            setEta(t('dashboard.eta.computing'));
-          }
-        }
-      } else {
-        setSpeed(0);
-        setEta(t('dashboard.eta.computing'));
-      }
-    }
-  }, [t]);
-
   const commitThreadsChange = async (value: number) => {
     setThreadsLoading(true);
     try {
-      const response = await fetch(`${apiUrl}/api/sync/${syncId}/threads`, {
+      const response = await apiFetch(`${apiUrl}/api/sync/${syncId}/threads`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -125,12 +64,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           const body = await response.json();
           if (body?.error_code) msg = translateApiError(body.error_code);
         } catch { /* ignore */ }
-        alert(msg);
+        toast(msg);
         if (job?.threads) setThreads(job.threads);
       }
     } catch (err) {
       console.error(err);
-      alert(t('dashboard.threadsFailed'));
+      toast(t('dashboard.threadsFailed'));
       if (job?.threads) setThreads(job.threads);
     } finally {
       setThreadsLoading(false);
@@ -141,7 +80,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     let cancelled = false;
     const fetchJob = async () => {
       try {
-        const res = await fetch(`${apiUrl}/api/sync/${syncId}`, {
+        const res = await apiFetch(`${apiUrl}/api/sync/${syncId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) {
@@ -168,54 +107,26 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
     fetchJob();
 
-    // SSE Stream for live updates
     const controller = new AbortController();
-    const connectSSE = async () => {
-      try {
-        const response = await fetch(`${apiUrl}/api/sync/stream`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        if (response.status === 429) return;
-        if (!response.ok || !response.body) return;
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (!cancelled) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          let idx: number;
-          while ((idx = buffer.indexOf('\n\n')) !== -1) {
-            const frame = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-
-            let event = 'message';
-            let data = '';
-            for (const line of frame.split('\n')) {
-              if (line.startsWith('event:')) event = line.slice(6).trim();
-              else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+    void connectSseLoop({
+      url: `${apiUrl}/api/sync/stream`,
+      token,
+      signal: controller.signal,
+      fetchImpl: apiFetch,
+      handlers: {
+        onEvent: (event, data) => {
+          if (event !== 'sync_jobs' || !data || cancelled) return;
+          try {
+            const jobs: SyncJob[] = JSON.parse(data);
+            const updated = jobs.find((j) => j.id === syncId);
+            if (updated) {
+              setJob(updated);
+              updateMetrics(updated);
             }
-
-            if (event === 'sync_jobs' && data) {
-              try {
-                const jobs: SyncJob[] = JSON.parse(data);
-                const updated = jobs.find((j) => j.id === syncId);
-                if (updated && !cancelled) {
-                  setJob(updated);
-                  updateMetrics(updated);
-                }
-              } catch { /* ignore */ }
-            }
-          }
-        }
-      } catch { /* ignore */ }
-    };
-
-    connectSSE();
+          } catch { /* ignore */ }
+        },
+      },
+    });
 
     return () => {
       cancelled = true;
@@ -226,7 +137,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handleTriggerStart = async () => {
     setActionLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/sync/${syncId}/start`, {
+      const res = await apiFetch(`${apiUrl}/api/sync/${syncId}/start`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -239,7 +150,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         throw new Error(msg);
       }
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : t('sync.startFailed'));
+      toast(err instanceof Error ? err.message : t('sync.startFailed'));
     } finally {
       setActionLoading(false);
     }
@@ -248,7 +159,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handlePause = async () => {
     setActionLoading(true);
     try {
-      await fetch(`${apiUrl}/api/sync/${syncId}/pause`, {
+      await apiFetch(`${apiUrl}/api/sync/${syncId}/pause`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -259,7 +170,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handleResume = async () => {
     setActionLoading(true);
     try {
-      await fetch(`${apiUrl}/api/sync/${syncId}/resume`, {
+      await apiFetch(`${apiUrl}/api/sync/${syncId}/resume`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -270,7 +181,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handleDownloadReport = async (e?: React.MouseEvent) => {
     if (e) e.preventDefault();
     try {
-      const response = await fetch(`${apiUrl}/api/sync/${syncId}/report`, {
+      const response = await apiFetch(`${apiUrl}/api/sync/${syncId}/report`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -289,67 +200,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       window.URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
-      alert(t('dashboard.downloadFailed'));
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'IDLE':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <CheckCircle2 className="w-4 h-4" />
-            {t('sync.statusIdle')}
-          </span>
-        );
-      case 'RUNNING':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-info-bg)] text-blue-700 border border-[var(--color-info-border)] animate-pulse">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            {t('status.active')}
-          </span>
-        );
-      case 'INDEXING':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            {t('status.indexing')}
-          </span>
-        );
-      case 'VERIFYING':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 animate-pulse">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            {t('status.verifying')}
-          </span>
-        );
-      case 'PAUSED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-            <Pause className="w-4 h-4" />
-            {t('status.paused')}
-          </span>
-        );
-      case 'PAUSED_CONNECTION_LOSS':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 animate-pulse">
-            <AlertTriangle className="w-4 h-4" />
-            {t('dashboard.eta.waitingConn')}
-          </span>
-        );
-      case 'FAILED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
-            <XCircle className="w-4 h-4" />
-            {t('status.failed')}
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]">
-            {status}
-          </span>
-        );
+      toast(t('dashboard.downloadFailed'));
     }
   };
 
@@ -406,7 +257,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         {/* Top Badges Row (Above Title & Action Buttons) */}
         <div className="flex items-center justify-end gap-2.5 pb-2">
           {/* Status Info Badge */}
-          {getStatusBadge(job.status)}
+          <StatusBadge status={job.status} context="sync" />
 
           {/* Direction Info Badge (rechtsbündig) */}
           {job.direction === 'two_way' ? (

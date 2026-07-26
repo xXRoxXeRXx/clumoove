@@ -6,6 +6,8 @@ import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
 import { useConfirm } from '../contexts/useConfirm';
 import { useApiError } from '../utils/apiError';
+import { apiFetch } from '../utils/apiClient';
+import { MessageBanner, type MessageState } from './MessageBanner';
 
 export type ApiErrBody = { error_code?: string };
 
@@ -27,19 +29,6 @@ interface SettingsPageProps {
   oauthProviders?: Record<string, boolean>;
 }
 
-type MessageState = { text: string; type: 'success' | 'error' } | null;
-
-function MessageBanner({ message }: { message: MessageState }) {
-  if (!message) return null;
-  return (
-    <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-      message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-    }`}>
-      {message.text}
-    </div>
-  );
-}
-
 export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localStorageEnabled = false, oauthProviders = {} }: SettingsPageProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
@@ -53,13 +42,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   // Display name state
   const [displayName, setDisplayName] = useState<string>(user?.display_name || '');
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
-  const [profileMessage, setProfileMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [profileMessage, setProfileMessage] = useState<MessageState>(null);
 
   // Avatar crop/upload state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showCropper, setShowCropper] = useState<boolean>(false);
   const [avatarLoading, setAvatarLoading] = useState<boolean>(false);
-  const [avatarMessage, setAvatarMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [avatarMessage, setAvatarMessage] = useState<MessageState>(null);
 
   // Password state
   const [currentPassword, setCurrentPassword] = useState<string>('');
@@ -69,13 +58,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const [showNewPassword, setShowNewPassword] = useState<boolean>(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [passwordLoading, setPasswordLoading] = useState<boolean>(false);
-  const [passwordMessage, setPasswordMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [passwordMessage, setPasswordMessage] = useState<MessageState>(null);
 
   // Email change state
   const [emailChangeAvailable, setEmailChangeAvailable] = useState<boolean | null>(null);
   const [newEmail, setNewEmail] = useState<string>('');
   const [emailChangeLoading, setEmailChangeLoading] = useState<boolean>(false);
-  const [emailChangeMessage, setEmailChangeMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [emailChangeMessage, setEmailChangeMessage] = useState<MessageState>(null);
 
   // 2FA state
   const [totpEnabled, setTotpEnabled] = useState<boolean>(false);
@@ -87,12 +76,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [disableCode, setDisableCode] = useState<string>('');
   const [disableLoading, setDisableLoading] = useState<boolean>(false);
-  const [totpMessage, setTotpMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [totpMessage, setTotpMessage] = useState<MessageState>(null);
 
   // Fetch 2FA status on mount
   useEffect(() => {
     let cancelled = false;
-    fetch(`${apiUrl}/api/auth/2fa/status`, {
+    apiFetch(`${apiUrl}/api/auth/2fa/status`, {
       headers: { 'Authorization': `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : Promise.reject()))
@@ -112,7 +101,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     setTotpMessage(null);
     setSetupLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/auth/2fa/setup`, {
+      const res = await apiFetch(`${apiUrl}/api/auth/2fa/setup`, {
         method: 'GET',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -140,7 +129,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     }
     setEnableLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/auth/2fa/enable`, {
+      const res = await apiFetch(`${apiUrl}/api/auth/2fa/enable`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -173,7 +162,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     }
     setDisableLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/auth/2fa/disable`, {
+      const res = await apiFetch(`${apiUrl}/api/auth/2fa/disable`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -200,7 +189,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   // Fetch whether the system mail service allows email changes
   useEffect(() => {
     let cancelled = false;
-    fetch(`${apiUrl}/api/auth/email-change-available`)
+    apiFetch(`${apiUrl}/api/auth/email-change-available`)
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((data) => {
         if (!cancelled) setEmailChangeAvailable(Boolean(data.available));
@@ -222,12 +211,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const [smtpNotify, setSmtpNotify] = useState<boolean>(true);
   const [smtpHasConfig, setSmtpHasConfig] = useState<boolean>(false);
   const [smtpLoading, setSmtpLoading] = useState<boolean>(false);
-  const [smtpMessage, setSmtpMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [smtpMessage, setSmtpMessage] = useState<MessageState>(null);
 
   // Fetch SMTP settings
   useEffect(() => {
     let cancelled = false;
-    fetch(`${apiUrl}/api/settings/smtp`, {
+    apiFetch(`${apiUrl}/api/settings/smtp`, {
       headers: { 'Authorization': `Bearer ${token}` },
     })
       .then((res) => {
@@ -278,7 +267,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     }
 
     try {
-      const res = await fetch(`${apiUrl}/api/settings/smtp`, {
+      const res = await apiFetch(`${apiUrl}/api/settings/smtp`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -306,7 +295,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     setSmtpMessage(null);
     setSmtpLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/api/settings/smtp/test`, {
+      const res = await apiFetch(`${apiUrl}/api/settings/smtp/test`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -328,7 +317,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     setProfileLoading(true);
 
     try {
-      const res = await fetch(`${apiUrl}/api/auth/me`, {
+      const res = await apiFetch(`${apiUrl}/api/auth/me`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -378,7 +367,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     }
 
     try {
-      const res = await fetch(`${apiUrl}/api/user/avatar`, {
+      const res = await apiFetch(`${apiUrl}/api/user/avatar`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -409,7 +398,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     setAvatarLoading(true);
 
     try {
-      const res = await fetch(`${apiUrl}/api/user/avatar`, {
+      const res = await apiFetch(`${apiUrl}/api/user/avatar`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -450,7 +439,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     setPasswordLoading(true);
 
     try {
-      const res = await fetch(`${apiUrl}/api/auth/change-password`, {
+      const res = await apiFetch(`${apiUrl}/api/auth/change-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -650,7 +639,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   }
                   setEmailChangeLoading(true);
                   try {
-                    const res = await fetch(`${apiUrl}/api/auth/change-email`, {
+                    const res = await apiFetch(`${apiUrl}/api/auth/change-email`, {
                       method: 'POST',
                       headers: {
                         'Content-Type': 'application/json',

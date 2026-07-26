@@ -10,7 +10,7 @@ export const BANDWIDTH_OPTIONS: BandwidthOption[] = [
   { value: 24, label: '3 MB/s' },
   { value: 40, label: '5 MB/s' },
   { value: 80, label: '10 MB/s' },
-  { value: 0, label: 'Unbegrenzt', isUnlimited: true },
+  { value: 0, label: '', isUnlimited: true },
 ];
 
 /**
@@ -18,7 +18,7 @@ export const BANDWIDTH_OPTIONS: BandwidthOption[] = [
  */
 export function valueToBandwidthIndex(value: number): number {
   if (value <= 0) {
-    return 5; // Unbegrenzt
+    return BANDWIDTH_OPTIONS.length - 1; // unlimited
   }
   let bestIndex = 0;
   let minDiff = Math.abs(BANDWIDTH_OPTIONS[0].value - value);
@@ -44,10 +44,11 @@ export function bandwidthIndexToValue(index: number): number {
 
 /**
  * Gets the display text for a given bandwidth limit Mbps value.
+ * Callers must pass a localized string for the unlimited option.
  */
-export function getBandwidthLabel(value: number, unlimitedFallback = 'Unbegrenzt'): string {
+export function getBandwidthLabel(value: number, unlimitedLabel: string): string {
   if (value <= 0) {
-    return unlimitedFallback;
+    return unlimitedLabel;
   }
   const exact = BANDWIDTH_OPTIONS.find((o) => o.value === value && !o.isUnlimited);
   if (exact) {
@@ -55,5 +56,5 @@ export function getBandwidthLabel(value: number, unlimitedFallback = 'Unbegrenzt
   }
   const idx = valueToBandwidthIndex(value);
   const opt = BANDWIDTH_OPTIONS[idx];
-  return opt.isUnlimited ? unlimitedFallback : opt.label;
+  return opt.isUnlimited ? unlimitedLabel : opt.label;
 }
