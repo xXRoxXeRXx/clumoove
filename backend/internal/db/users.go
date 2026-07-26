@@ -213,6 +213,12 @@ func UpdateUserActive(database *sql.DB, id string, active bool) error {
 	}
 
 	if !active {
+		// Suspending an account must terminate every renewable session while this
+		// transaction still holds the user row lock. This also prevents a refresh
+		// request from surviving the suspension by rotating its token concurrently.
+		if _, err := tx.Exec(`DELETE FROM refresh_tokens WHERE user_id = $1`, id); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(
 			`UPDATE migrations SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND status IN ('RUNNING', 'INDEXING')`,
 			id,
