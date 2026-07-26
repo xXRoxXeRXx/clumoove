@@ -156,10 +156,10 @@ func main() {
 	mux.HandleFunc("GET /api/settings", server.handleGetSettings)
 
 	// Protected Auth Routes
-	jwtMiddleware := auth.AuthMiddleware(server.jwtSecret)
+	jwtMiddleware := auth.AuthMiddleware(server.db, server.jwtSecret)
 	mux.Handle("GET /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleMe)))
 	mux.Handle("PUT /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleUpdateProfile)))
-	mux.Handle("POST /api/auth/change-password", auth.AuthMiddlewareAllowMustChange(server.jwtSecret)(http.HandlerFunc(server.handleChangePassword)))
+	mux.Handle("POST /api/auth/change-password", auth.AuthMiddlewareAllowMustChange(server.db, server.jwtSecret)(http.HandlerFunc(server.handleChangePassword)))
 	mux.Handle("GET /api/auth/2fa/setup", jwtMiddleware(http.HandlerFunc(server.handle2FASetup)))
 	mux.Handle("POST /api/auth/2fa/enable", jwtMiddleware(http.HandlerFunc(server.handle2FAEnable)))
 	mux.Handle("POST /api/auth/2fa/disable", jwtMiddleware(http.HandlerFunc(server.handle2FADisable)))

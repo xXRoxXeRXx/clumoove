@@ -62,8 +62,11 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 ## 5. WebSocket Authentication
 
 `GET /api/migration/{id}/ws` is **not** behind `AuthMiddleware`. It authenticates via the `?token=<jwt>`
-query parameter (or `Sec-WebSocket-Protocol`), validates ownership (`mig.UserID == claims.sub`), and
-**blocks 2FA temp tokens** (a `2fa_pending` claim cannot open the migration socket).
+query parameter (or `Sec-WebSocket-Protocol`), re-checks the account is active and current in the
+database at connection time, validates ownership (`mig.UserID == claims.sub`), and **blocks 2FA temp
+tokens** (a `2fa_pending` claim cannot open the migration socket). This prevents a valid access JWT
+from opening a new socket after account suspension or a role change. Established sockets are not
+asynchronously terminated on suspension.
 
 ---
 

@@ -70,7 +70,8 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `GET` | `/migration/{id}/ws` | token/query | WebSocket live progress. |
 
 > **Ownership:** endpoints operating on a specific migration compare the JWT `sub` against
-> `mig.UserID` and return `403 Forbidden` on mismatch. The WebSocket performs the same check manually.
+> `mig.UserID` and return `403 Forbidden` on mismatch. The WebSocket re-checks current active account
+> state and performs the same ownership check manually.
 
 ---
 
