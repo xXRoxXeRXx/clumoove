@@ -136,17 +136,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		accessToken, terr := auth.GenerateAccessToken(rotated, s.jwtSecret)
-		if terr != nil {
-			log.Printf("handleChangePassword: failed to issue rotated token: %v\n", terr)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"success":      true,
-			"access_token": accessToken,
-			"user":         userResponse(rotated),
-		})
+		s.issueTokens(w, r, rotated)
 		return
 	}
 

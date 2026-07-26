@@ -170,12 +170,15 @@ func TestHandleChangePassword_MustChange_No2FA_ReturnsAccessToken(t *testing.T) 
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if resp["success"] != true {
-		t.Errorf("expected success=true, got %v", resp["success"])
+	if _, ok := resp["success"]; ok {
+		t.Errorf("expected no success field, got %v", resp["success"])
 	}
 	token, _ := resp["access_token"].(string)
 	if token == "" {
 		t.Errorf("expected non-empty access_token")
+	}
+	if _, ok := resp["user"]; !ok {
+		t.Errorf("expected user in response")
 	}
 	if _, ok := resp["totp_required"]; ok {
 		t.Errorf("did not expect totp_required for a non-2FA account")
