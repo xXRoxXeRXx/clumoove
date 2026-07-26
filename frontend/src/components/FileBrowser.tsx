@@ -138,15 +138,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sync Job options
+  // Job type: a third mode (e.g. 'backup') can be added later as a third
+  // segmented-control column without restructuring the settings strip.
   const [jobType, setJobType] = useState<'migration' | 'sync'>('migration');
   const [direction, setDirection] = useState<'one_way' | 'two_way'>('one_way');
   const [intervalMinutes, setIntervalMinutes] = useState<number>(15);
   const [deletePropagation, setDeletePropagation] = useState<boolean>(false);
 
-
-
-  
   // Scheduling state
   const [enableScheduling, setEnableScheduling] = useState(false);
   const [scheduledTime, setScheduledTime] = useState('');
@@ -876,173 +874,43 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-8 items-stretch">
-        
-        {/* Ledger Browser Tree Card */}
-        <div className="md:col-span-2 glass-panel border border-[var(--color-glass-border)] shadow-portal rounded-3xl flex flex-col p-5 h-full">
-          {/* Tab Switcher */}
-          <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4 mb-4 gap-4">
-            <div className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-2xl flex-grow max-w-md">
+      {/* Settings Strip — full width, backup-ready 3-mode layout */}
+      <div className="glass-panel border border-[var(--color-glass-border)] shadow-portal rounded-3xl">
+        {/* Sticky header: mode selector (left) + start button (right) */}
+        <div className="sticky top-18 z-20 -mx-px px-5 sm:px-6 py-3 bg-[var(--color-bg-secondary)]/95 backdrop-blur border-b border-[var(--color-border-light)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-t-3xl shadow-sm">
+          {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
+          <div className="text-xs w-full sm:w-auto">
+            <div className="grid grid-cols-2 gap-2 p-1 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-2xl">
               <button
-                onClick={() => handleTabChange('files')}
-                className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
-                  activeTab === 'files'
-                    ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
+                type="button"
+                onClick={() => setJobType('migration')}
+                className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
+                  jobType === 'migration'
+                    ? 'bg-portal-navy text-white shadow-xs'
                     : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                 }`}
               >
-                {t('fileBrowser.files')} ({pathsToMigrate.length})
+                {t('sync.modeMigration')}
               </button>
-              {(credentials.source_provider === 'nextcloud' || credentials.source_provider === 'google') && (
-                <>
-                  <button
-                    onClick={() => handleTabChange('calendars')}
-                    className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
-                      activeTab === 'calendars'
-                        ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
-                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-                    }`}
-                  >
-                    {t('fileBrowser.calendars')} ({Object.values(selectedCalendars).filter(Boolean).length})
-                  </button>
-                  <button
-                    onClick={() => handleTabChange('contacts')}
-                    className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
-                      activeTab === 'contacts'
-                        ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
-                        : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-                    }`}
-                  >
-                    {t('fileBrowser.contacts')} ({Object.values(selectedContacts).filter(Boolean).length})
-                  </button>
-                </>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
               <button
-                onClick={deselectAll}
-                className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-orange-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] flex items-center gap-1.5"
-                title={t('common.deselectAll')}
+                type="button"
+                onClick={() => setJobType('sync')}
+                className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
+                  jobType === 'sync'
+                    ? 'bg-portal-navy text-white shadow-xs'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                }`}
               >
-                <X className="w-4 h-4" />
-                <span className="text-[11px] font-mono font-bold uppercase tracking-wider">{t('common.deselectAll')}</span>
+                {t('sync.modeSync')}
               </button>
-
-              {activeTab !== 'files' && (
-                <button
-                  onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
-                  disabled={loadingCalendars || loadingContacts}
-                  className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] disabled:opacity-50"
-                  title={t('common.refresh')}
-                >
-                  <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
-                </button>
-              )}
             </div>
           </div>
 
-          <div className="flex-grow overflow-y-auto scrollbar-portal rounded-3xl">
-            {activeTab === 'files' && (
-              directoryContents['/']?.length > 0 ? (
-                directoryContents['/'].map((file) => renderNode(file, 0))
-              ) : (
-                <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
-                  <Folder className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
-                  <p className="font-mono text-[10px] italic text-[var(--color-text-muted)]">{t('fileBrowser.noFiles')}</p>
-                </div>
-              )
-            )}
-
-            {activeTab === 'calendars' && (
-              loadingCalendars ? (
-                <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
-                  <RefreshCw className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
-                   <p className="font-mono text-[10px] italic">{t('fileBrowser.loadingCalendars')}</p>
-                </div>
-              ) : calendars.length > 0 ? (
-                <div className="space-y-2">
-                  {calendars.map((cal) => (
-                    <div
-                      key={cal.path}
-                      className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
-                        selectedCalendars[cal.path] 
-                          ? 'bg-[var(--color-bg-tertiary)] border-portal-navy shadow-xs font-semibold' 
-                          : 'bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]'
-                      }`}
-                      onClick={() => setSelectedCalendars(prev => ({ ...prev, [cal.path]: !prev[cal.path] }))}
-                    >
-                      <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
-                        <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
-                          selectedCalendars[cal.path] 
-                            ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-[var(--color-text-inverse)] border-transparent' 
-                            : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)]'
-                        }`}>
-                          {selectedCalendars[cal.path] && <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />}
-                        </div>
-                      </button>
-                      <Calendar className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
-                      <span className="text-[12px] text-[var(--color-text-secondary)] flex-grow text-left">{cal.name}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
-                  <Calendar className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
-                   <p className="font-mono text-[10px] italic">{t('fileBrowser.noCalendars')}</p>
-                </div>
-              )
-            )}
-
-            {activeTab === 'contacts' && (
-              loadingContacts ? (
-                <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
-                  <RefreshCw className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
-                   <p className="font-mono text-[10px] italic">{t('fileBrowser.loadingContacts')}</p>
-                </div>
-              ) : contacts.length > 0 ? (
-                <div className="space-y-2">
-                  {contacts.map((addr) => (
-                    <div
-                      key={addr.path}
-                      className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
-                        selectedContacts[addr.path] 
-                          ? 'bg-[var(--color-bg-tertiary)] border-portal-navy shadow-xs font-semibold' 
-                          : 'bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]'
-                      }`}
-                      onClick={() => setSelectedContacts(prev => ({ ...prev, [addr.path]: !prev[addr.path] }))}
-                    >
-                      <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
-                        <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
-                          selectedContacts[addr.path] 
-                            ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-[var(--color-text-inverse)] border-transparent' 
-                            : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)]'
-                        }`}>
-                          {selectedContacts[addr.path] && <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />}
-                        </div>
-                      </button>
-                      <BookOpen className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
-                      <span className="text-[12px] text-[var(--color-text-secondary)] flex-grow text-left">{addr.name}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
-                  <BookOpen className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
-                   <p className="font-mono text-[10px] italic">{t('fileBrowser.noContacts')}</p>
-                </div>
-              )
-            )}
-          </div>
-        </div>
-
-        {/* Configurations Sidebar */}
-        <div className="space-y-6 flex flex-col">
-          {/* Action submit button - moved to top */}
+          {/* Sticky start button */}
           <button
             onClick={handleStartMigration}
             disabled={starting}
-            className="w-full flex items-center justify-center gap-2.5 py-4 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3 px-6 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           >
             {starting ? (
               <>
@@ -1056,44 +924,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               </>
             )}
           </button>
+        </div>
 
-          <div className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6 shadow-portal space-y-6 flex-grow text-left">
-            
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-3 mb-1">
-              <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] tracking-tight">{t('fileBrowser.config')}</h3>
-            </div>
-
-            {/* Job Mode Selector: Migration vs Sync */}
-            <div className="space-y-2 text-xs">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('sync.mode')}</label>
-              <div className="grid grid-cols-2 gap-2 p-1 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-2xl">
-                <button
-                  type="button"
-                  onClick={() => setJobType('migration')}
-                  className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
-                    jobType === 'migration'
-                      ? 'bg-portal-navy text-white shadow-xs'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-                  }`}
-                >
-                  {t('sync.modeMigration')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setJobType('sync')}
-                  className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
-                    jobType === 'sync'
-                      ? 'bg-portal-navy text-white shadow-xs'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-                  }`}
-                >
-                  {t('sync.modeSync')}
-                </button>
-              </div>
-            </div>
-
-            {jobType === 'sync' && (
-              <div className="space-y-4 p-4 rounded-2xl bg-amber-50/60 border border-amber-200 text-xs animate-fade-in">
+        {/* Settings body */}
+        <div className="p-5 sm:p-6 space-y-6">
+          {/* Sync-only options */}
+          {jobType === 'sync' && (
+            <div className="space-y-4 p-4 rounded-2xl bg-amber-50/60 border border-amber-200 text-xs animate-fade-in">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Direction */}
                 <div className="space-y-2">
                   <label className="block text-[10px] font-bold text-amber-900 uppercase tracking-widest font-mono">{t('sync.direction')}</label>
@@ -1159,40 +997,43 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   </div>
                 </div>
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Target Path */}
-            <div className="space-y-2 text-xs">
+          {/* Common + mode-specific settings grid (full width) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start">
+            {/* Target folder (readonly mirror of the Target card primary action) */}
+            <div className="space-y-2 text-xs md:col-span-2 xl:col-span-1">
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.targetDir')}</label>
-              <input
-                type="text"
-                value={targetDir}
-                className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl py-2.5 px-3.5 text-[var(--color-text-secondary)] font-mono text-[11px] cursor-default focus:outline-none"
-                readOnly
-              />
-              <button
-                type="button"
-                onClick={openTargetBrowser}
-                className="w-full py-2.5 bg-portal-navy hover:bg-portal-navy-light text-[var(--color-text-inverse)] text-[11px] font-bold font-mono uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <FolderOpen className="w-4 h-4" />
-                <span>{t('fileBrowser.selectFolder')}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="flex-grow flex items-center gap-2 px-3 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[11px] text-[var(--color-text-secondary)] truncate">
+                  <Folder className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span className="truncate">{targetDir || '/'}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={openTargetBrowser}
+                  className="shrink-0 px-3 py-2.5 bg-portal-navy hover:bg-portal-navy-light text-[var(--color-text-inverse)] text-[11px] font-bold font-mono uppercase tracking-wider rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  <span>{t('common.edit')}</span>
+                </button>
+              </div>
               <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed font-sans">
                 {t('fileBrowser.targetCopied')}
               </p>
             </div>
 
-            {/* Conflict Strategy block selector */}
+            {/* Conflict Strategy */}
             {jobType === 'sync' && direction === 'one_way' ? (
-              <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 text-amber-900 text-xs font-mono flex items-center gap-2">
+              <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 text-amber-900 text-xs font-mono flex items-center gap-2 xl:col-span-2">
                 <Info className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>{t('sync.oneWayConflictNote')}</span>
               </div>
             ) : (
-              <div className="space-y-3 text-xs">
+              <div className="space-y-3 text-xs xl:col-span-2">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.conflictHandling')}</label>
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {/* OVERWRITE card */}
                   <button
                     type="button"
@@ -1260,7 +1101,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             )}
 
             {/* Thread count selector */}
-            <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">
+            <div className="space-y-3 text-xs">
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.threads')}</label>
               <div className="flex items-center gap-4">
                 <input
@@ -1286,8 +1127,43 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               </p>
             </div>
 
-            {/* Scheduling Option */}
-            <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">
+            {/* Bandwidth Limit (migration only — Sync API does not accept it) */}
+            {jobType === 'migration' && (
+              <div className="space-y-3 text-xs">
+                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
+                  {t('fileBrowser.bandwidth')}
+                </label>
+                <div className="flex items-center gap-4">
+                  <input
+                    type="range"
+                    min="0"
+                    max={BANDWIDTH_OPTIONS.length - 1}
+                    step="1"
+                    value={valueToBandwidthIndex(bandwidthLimit)}
+                    onChange={(e) => {
+                      const idx = parseInt(e.target.value, 10);
+                      setBandwidthLimit(bandwidthIndexToValue(idx));
+                    }}
+                    className="flex-grow accent-portal-navy cursor-pointer"
+                  />
+                  <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[70px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
+                    {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
+                  </span>
+                </div>
+                <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
+                  {bandwidthLimit === 0 ? (
+                    t('fileBrowser.bandwidthUnlimited')
+                  ) : (
+                    t('fileBrowser.bandwidthHint', { limit: getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited')) })
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Migration-only scheduling */}
+          {jobType === 'migration' && (
+            <div className="space-y-3 text-xs pt-5 border-t border-[var(--color-border-light)]">
               <label className="flex items-center gap-3 cursor-pointer group">
                 <input
                   type="checkbox"
@@ -1302,12 +1178,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   </span>
                 </div>
               </label>
-              
+
               {enableScheduling && (
-                <div className="mt-3 pl-7">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                      {t('fileBrowser.scheduleTime')}
-                    </label>
+                <div className="mt-3 sm:max-w-sm">
+                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
+                    {t('fileBrowser.scheduleTime')}
+                  </label>
                   <input
                     type="datetime-local"
                     value={scheduledTime}
@@ -1321,44 +1197,171 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </div>
               )}
             </div>
-
-            {/* Bandwidth Limit */}
-            <div className="space-y-3 text-xs pt-4 border-t border-[var(--color-border-light)]">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
-                {t('fileBrowser.bandwidth')}
-              </label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="range"
-                  min="0"
-                  max={BANDWIDTH_OPTIONS.length - 1}
-                  step="1"
-                  value={valueToBandwidthIndex(bandwidthLimit)}
-                  onChange={(e) => {
-                    const idx = parseInt(e.target.value, 10);
-                    setBandwidthLimit(bandwidthIndexToValue(idx));
-                  }}
-                  className="flex-grow accent-portal-navy cursor-pointer"
-                />
-                <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[70px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
-                  {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
-                </span>
-              </div>
-              <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
-                {bandwidthLimit === 0 ? (
-                  t('fileBrowser.bandwidthUnlimited')
-                ) : (
-                  t('fileBrowser.bandwidthHint', { limit: getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited')) })
-                )}
-              </p>
-            </div>
-          </div>
+          )}
 
           {error && (
-            <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-[11px] font-semibold text-[var(--color-error-text)] leading-normal flex gap-2 text-left mt-4">
+            <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-[11px] font-semibold text-[var(--color-error-text)] leading-normal flex gap-2 text-left">
               <AlertTriangle className="w-4 h-4 shrink-0 text-[var(--color-error-text)] mt-0.5" />
               <span>{error}</span>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Ledger Browser Tree Card — full width */}
+      <div className="glass-panel border border-[var(--color-glass-border)] shadow-portal rounded-3xl flex flex-col p-5">
+        {/* Tab Switcher */}
+        <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4 mb-4 gap-4">
+          <div className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-2xl flex-grow max-w-md">
+            <button
+              onClick={() => handleTabChange('files')}
+              className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
+                activeTab === 'files'
+                  ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
+                  : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              {t('fileBrowser.files')} ({pathsToMigrate.length})
+            </button>
+            {(credentials.source_provider === 'nextcloud' || credentials.source_provider === 'google') && (
+              <>
+                <button
+                  onClick={() => handleTabChange('calendars')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
+                    activeTab === 'calendars'
+                      ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                >
+                  {t('fileBrowser.calendars')} ({Object.values(selectedCalendars).filter(Boolean).length})
+                </button>
+                <button
+                  onClick={() => handleTabChange('contacts')}
+                  className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
+                    activeTab === 'contacts'
+                      ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                  }`}
+                >
+                  {t('fileBrowser.contacts')} ({Object.values(selectedContacts).filter(Boolean).length})
+                </button>
+              </>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={deselectAll}
+              className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-orange-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] flex items-center gap-1.5"
+              title={t('common.deselectAll')}
+            >
+              <X className="w-4 h-4" />
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider">{t('common.deselectAll')}</span>
+            </button>
+
+            {activeTab !== 'files' && (
+              <button
+                onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
+                disabled={loadingCalendars || loadingContacts}
+                className="p-2.5 text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] rounded-xl transition-all cursor-pointer border border-[var(--color-border)] disabled:opacity-50"
+                title={t('common.refresh')}
+              >
+                <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-grow overflow-y-auto scrollbar-portal rounded-3xl">
+          {activeTab === 'files' && (
+            directoryContents['/']?.length > 0 ? (
+              directoryContents['/'].map((file) => renderNode(file, 0))
+            ) : (
+              <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
+                <Folder className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
+                <p className="font-mono text-[10px] italic text-[var(--color-text-muted)]">{t('fileBrowser.noFiles')}</p>
+              </div>
+            )
+          )}
+
+          {activeTab === 'calendars' && (
+            loadingCalendars ? (
+              <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
+                <RefreshCw className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+                 <p className="font-mono text-[10px] italic">{t('fileBrowser.loadingCalendars')}</p>
+              </div>
+            ) : calendars.length > 0 ? (
+              <div className="space-y-2">
+                {calendars.map((cal) => (
+                  <div
+                    key={cal.path}
+                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
+                      selectedCalendars[cal.path] 
+                        ? 'bg-[var(--color-bg-tertiary)] border-portal-navy shadow-xs font-semibold' 
+                        : 'bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]'
+                    }`}
+                    onClick={() => setSelectedCalendars(prev => ({ ...prev, [cal.path]: !prev[cal.path] }))}
+                  >
+                    <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
+                      <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
+                        selectedCalendars[cal.path] 
+                          ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-[var(--color-text-inverse)] border-transparent' 
+                          : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)]'
+                      }`}>
+                        {selectedCalendars[cal.path] && <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />}
+                      </div>
+                    </button>
+                    <Calendar className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
+                    <span className="text-[12px] text-[var(--color-text-secondary)] flex-grow text-left">{cal.name}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
+                <Calendar className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
+                 <p className="font-mono text-[10px] italic">{t('fileBrowser.noCalendars')}</p>
+              </div>
+            )
+          )}
+
+          {activeTab === 'contacts' && (
+            loadingContacts ? (
+              <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
+                <RefreshCw className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+                 <p className="font-mono text-[10px] italic">{t('fileBrowser.loadingContacts')}</p>
+              </div>
+            ) : contacts.length > 0 ? (
+              <div className="space-y-2">
+                {contacts.map((addr) => (
+                  <div
+                    key={addr.path}
+                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
+                      selectedContacts[addr.path] 
+                        ? 'bg-[var(--color-bg-tertiary)] border-portal-navy shadow-xs font-semibold' 
+                        : 'bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]'
+                    }`}
+                    onClick={() => setSelectedContacts(prev => ({ ...prev, [addr.path]: !prev[addr.path] }))}
+                  >
+                    <button type="button" className="focus:outline-none flex items-center justify-center cursor-pointer">
+                      <div className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
+                        selectedContacts[addr.path] 
+                          ? 'bg-gradient-to-tr from-portal-orange to-orange-500 text-[var(--color-text-inverse)] border-transparent' 
+                          : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)]'
+                      }`}>
+                        {selectedContacts[addr.path] && <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />}
+                      </div>
+                    </button>
+                    <BookOpen className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
+                    <span className="text-[12px] text-[var(--color-text-secondary)] flex-grow text-left">{addr.name}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
+                <BookOpen className="w-10 h-10 text-[var(--color-text-muted)] animate-float" />
+                 <p className="font-mono text-[10px] italic">{t('fileBrowser.noContacts')}</p>
+              </div>
+            )
           )}
         </div>
       </div>
