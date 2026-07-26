@@ -317,10 +317,16 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	valid := totp2fa.Validate(secret, req.Code)
+	usedBackupCode := false
+	var remainingBackupCodes db.StringArray
 	if !valid && len(u.TotpBackupCodes) > 0 {
 		idx := totp2fa.VerifyBackupCode([]string(u.TotpBackupCodes), req.Code)
 		if idx >= 0 {
 			valid = true
+			usedBackupCode = true
+			remainingBackupCodes = make(db.StringArray, 0, len(u.TotpBackupCodes)-1)
+			remainingBackupCodes = append(remainingBackupCodes, u.TotpBackupCodes[:idx]...)
+			remainingBackupCodes = append(remainingBackupCodes, u.TotpBackupCodes[idx+1:]...)
 		}
 	}
 
@@ -338,6 +344,16 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusBadRequest, ErrTotpInvalidCode)
 		return
+	}
+
+	// Spend a recovery code before making any further state changes. This keeps
+	// it single-use even if disabling 2FA fails after successful verification.
+	if usedBackupCode {
+		if err := db.ReplaceUsedBackupCode(s.db, u.ID, remainingBackupCodes); err != nil {
+			log.Printf("handle2FADisable: failed to consume backup code for user %s: %v\n", u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
 	}
 
 	if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {

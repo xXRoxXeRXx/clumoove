@@ -104,8 +104,12 @@ endpoint group from consuming another group's request budget. Limits:
 | TOTP | 10 / 1 min |
 | Migration stream (SSE) | 60 / 1 min, max 10 concurrent streams per user |
 
+The API's normal HTTP timeouts are read 30 seconds, write 60 seconds, and idle 120 seconds. Migration and sync SSE handlers explicitly clear their per-response write deadline through `http.ResponseController`, so the normal write timeout does not terminate healthy long-lived streams; 15-second SSE comment heartbeats keep intermediary proxies from treating them as idle.
+
 **Account lockouts** (mirror the TOTP lockout): 5 failed logins → 15-minute lockout; 5 failed TOTP
 attempts → 15-minute lockout. Both are enforced in `db` with single-statement atomic increments.
+
+TOTP setup returns recovery backup codes only once and stores bcrypt hashes. They are single-use: a code presented to disable TOTP is removed before the disable flow continues.
 
 ---
 
