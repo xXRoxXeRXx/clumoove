@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Plug, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
+import { apiFetch } from '../utils/apiClient';
+import { MessageBanner, type MessageState } from './MessageBanner';
 import type { ApiErrBody } from './SettingsPage';
 
 interface ConnectionManagerProps {
@@ -27,23 +29,10 @@ interface ProfilePublic {
   updated_at: string;
 }
 
-type MessageState = { text: string; type: 'success' | 'error' } | null;
-
 const inputCls = 'w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
 const primaryBtnCls = 'bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
 const secondaryBtnCls = 'px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all cursor-pointer';
-
-function MessageBanner({ message }: { message: MessageState }) {
-  if (!message) return null;
-  return (
-    <div className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${
-      message.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]'
-    }`}>
-      {message.text}
-    </div>
-  );
-}
 
 function formatExpiry(expiresAt?: string | null): string | null {
   if (!expiresAt) return null;
@@ -66,7 +55,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   const [creating, setCreating] = useState<boolean>(false);
 
   const loadProfiles = useCallback(() => {
-    fetch(`${apiUrl}/api/profiles`, {
+    apiFetch(`${apiUrl}/api/profiles`, {
       headers: { 'Authorization': `Bearer ${token}` },
     })
       .then((res) => (res.ok ? res.json() : Promise.reject()))
@@ -89,7 +78,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     if (!ok) return;
     setMessage(null);
     try {
-      const res = await fetch(`${apiUrl}/api/profiles/${p.id}`, {
+      const res = await apiFetch(`${apiUrl}/api/profiles/${p.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -107,7 +96,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   const handleTest = async (p: ProfilePublic) => {
     setMessage(null);
     try {
-      const res = await fetch(`${apiUrl}/api/profiles/${p.id}/test`, {
+      const res = await apiFetch(`${apiUrl}/api/profiles/${p.id}/test`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
       });
@@ -283,7 +272,7 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
           return;
         }
         // Persist the new refresh token onto the existing profile.
-        fetch(`${apiUrl}/api/profiles/${profile.id}`, {
+        apiFetch(`${apiUrl}/api/profiles/${profile.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({
@@ -405,7 +394,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
     try {
       const method = editing ? 'PUT' : 'POST';
       const urlStr = editing ? `${apiUrl}/api/profiles/${editing.id}` : `${apiUrl}/api/profiles`;
-      const res = await fetch(urlStr, {
+      const res = await apiFetch(urlStr, {
         method,
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload),

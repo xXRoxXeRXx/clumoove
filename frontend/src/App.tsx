@@ -13,10 +13,11 @@ import { AdminPanel } from './components/AdminPanel';
 import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon, Shield } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConfirmationProvider } from './contexts/ConfirmationContext';
+import { ToastProvider } from './contexts/ToastContext';
 import { useDismissConfirm } from './contexts/useConfirm';
 import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
-import { listenForOAuthMessage } from './utils/oauth';
+import { configureApiClient, apiFetch } from './utils/apiClient';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'reset-password' | 'confirm-email' | 'syncdetail';
 
@@ -47,8 +48,6 @@ if (API_URL.startsWith('http://') && !/(localhost|127\.0\.0\.1)/.test(new URL(AP
   console.warn('[security] API communication is over plaintext HTTP. Use HTTPS to protect tokens and credentials.');
 }
 
-let refreshPromise: Promise<string> | null = null;
-
 function App() {
   const { t } = useTranslation();
   const dismissConfirm = useDismissConfirm();
@@ -63,6 +62,7 @@ function App() {
   const initialStep: Step = emailChangeTokenFromUrl ? 'confirm-email' : resetTokenFromUrl ? 'reset-password' : 'login';
   const [step, setStep] = useState<Step>(initialStep);
   const [token, setToken] = useState<string>('');
+  const tokenRef = useRef<string>('');
   const [user, setUser] = useState<User | null>(null);
   const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
   const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
@@ -186,18 +186,41 @@ function App() {
     replaceNav('login', '');
   }, [replaceNav]);
 
-  // Click outside to close user menu
   useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
+  // Scoped API client: single-flight 401 refresh without patching window.fetch.
+  useEffect(() => {
+    configureApiClient({
+      apiUrl: API_URL,
+      getAccessToken: () => tokenRef.current,
+      setAccessToken: (tkn) => {
+        tokenRef.current = tkn;
+        setToken(tkn);
+      },
+      onAuthFailure: () => {
+        void handleLogout();
+      },
+    });
+  }, [handleLogout]);
+
+  // Click outside / Escape to close user menu
+  useEffect(() => {
+    if (!showUserMenu) return;
     const handleOutsideClick = (e: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setShowUserMenu(false);
       }
     };
-    if (showUserMenu) {
-      document.addEventListener('mousedown', handleOutsideClick);
-    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowUserMenu(false);
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleKey);
     return () => {
       document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKey);
     };
   }, [showUserMenu]);
 
@@ -278,7 +301,7 @@ function App() {
           setToken(data.access_token);
           
           // Fetch user profile
-          const meRes = await fetch(`${API_URL}/api/auth/me`, {
+          const meRes = await apiFetch(`${API_URL}/api/auth/me`, {
             headers: { 'Authorization': `Bearer ${data.access_token}` },
           });
 
@@ -292,7 +315,7 @@ function App() {
             const urlSyncId = params.get('sync');
             if (urlMigId) {
               // Verify active migration status
-              const migRes = await fetch(`${API_URL}/api/migration/${urlMigId}`, {
+              const migRes = await apiFetch(`${API_URL}/api/migration/${urlMigId}`, {
                 headers: { 'Authorization': `Bearer ${data.access_token}` },
               });
               if (migRes.ok) {
@@ -302,7 +325,7 @@ function App() {
               }
             } else if (urlSyncId) {
               // Verify active sync status
-              const syncRes = await fetch(`${API_URL}/api/sync/${urlSyncId}`, {
+              const syncRes = await apiFetch(`${API_URL}/api/sync/${urlSyncId}`, {
                 headers: { 'Authorization': `Bearer ${data.access_token}` },
               });
               if (syncRes.ok) {
@@ -343,7 +366,6 @@ function App() {
         if (res.ok) {
           const data = await res.json();
           setToken(data.access_token);
-          console.log('Access Token refreshed');
         } else {
           handleLogout();
         }
@@ -361,97 +383,6 @@ function App() {
     setUser(loggedUser);
     replaceNav('history', '');
   };
-
-  // OAuth callback page posts tokens to window.opener via postMessage. The
-  // receiver validates event.origin against the API origin (M-3) before
-  // trusting the token. Tokens are held in memory only, like the password flow.
-  useEffect(() => {
-    const expectedOrigin = new URL(API_URL).origin;
-    return listenForOAuthMessage(expectedOrigin, {
-      expectedPurpose: 'login',
-      onSuccess: async (msg) => {
-        setToken(msg.token);
-        try {
-          const meRes = await fetch(`${API_URL}/api/auth/me`, {
-            headers: { 'Authorization': `Bearer ${msg.token}` },
-            credentials: 'include',
-          });
-          if (meRes.ok) {
-            const me = await meRes.json();
-            localStorage.setItem('has_session', 'true');
-            setUser(me);
-            replaceNav('history', '');
-            return;
-          }
-        } catch (e) {
-          console.error('OAuth login: failed to fetch user:', e);
-        }
-        handleLogout();
-      },
-      onError: (msg) => {
-        console.error('OAuth login failed:', msg.error);
-        replaceNav('login', '');
-      },
-    });
-    // handleLogout / replaceNav are stable in intent; intentionally not deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Patch global fetch to handle 401 token refresh automatically (I4 frontend fix)
-  useEffect(() => {
-    const originalFetch = window.fetch;
-    window.fetch = async (input, init) => {
-      const response = await originalFetch(input, init);
-
-      const url = typeof input === 'string' ? input : (input as Request).url;
-      const isAuthRequest = url.includes('/api/auth/login') || url.includes('/api/auth/register') || url.includes('/api/auth/refresh') || url.includes('/api/auth/totp');
-
-      if (response.status === 401 && !isAuthRequest) {
-        console.log('401 Unauthorized detected on URL:', url, 'Attempting silent token refresh...');
-        try {
-          if (!refreshPromise) {
-            refreshPromise = (async () => {
-              try {
-                const refreshRes = await originalFetch(`${API_URL}/api/auth/refresh`, {
-                  method: 'POST',
-                  credentials: 'include',
-                });
-                if (refreshRes.ok) {
-                  const data = await refreshRes.json();
-                  return data.access_token;
-                }
-                throw new Error('Silent refresh failed');
-              } finally {
-                setTimeout(() => {
-                  refreshPromise = null;
-                }, 1000);
-              }
-            })();
-          }
-
-          const newAccessToken = await refreshPromise;
-          setToken(newAccessToken);
-
-          // Replay the original request with the refreshed token. Preserve the
-          // original init (method + body) — building a fresh init would drop
-          // them for non-GET requests. Only inject/override the auth header.
-          const replayInit: RequestInit = init ? { ...init } : {};
-          const headers = replayInit.headers ? new Headers(replayInit.headers) : new Headers();
-          headers.set('Authorization', `Bearer ${newAccessToken}`);
-          replayInit.headers = headers;
-          return originalFetch(input, replayInit);
-        } catch (refreshErr) {
-          console.error('Error during automatic token refresh:', refreshErr);
-          handleLogout();
-        }
-      }
-      return response;
-    };
-
-    return () => {
-      window.fetch = originalFetch;
-    };
-  }, [token, handleLogout]);
 
   const handleConnectSuccess = (config: MigrationConfig, files: CloudFile[]) => {
     setCredentials(config);
@@ -541,9 +472,12 @@ function App() {
           {/* User Section in Header */}
           {user && (
             <div className="relative" ref={userMenuRef}>
-              <div 
+              <button
+                type="button"
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2.5 cursor-pointer select-none transition-colors"
+                aria-haspopup="menu"
+                aria-expanded={showUserMenu}
+                className="flex items-center gap-2.5 cursor-pointer select-none transition-colors bg-transparent border-0 p-0"
               >
                 <span className="font-bold text-[var(--color-text-primary)] leading-tight">{user.display_name}</span>
                 {user.avatar ? (
@@ -557,12 +491,17 @@ function App() {
                     <UserIcon className="w-4 h-4" />
                   </div>
                 )}
-              </div>
+              </button>
 
               {showUserMenu && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-[var(--color-bg-elevated)] backdrop-blur-md border border-[var(--color-border)] rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in">
+                <div
+                  role="menu"
+                  className="absolute right-0 top-full mt-2 w-48 bg-[var(--color-bg-elevated)] backdrop-blur-md border border-[var(--color-border)] rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in"
+                >
                   {user?.role === 'ADMIN' && (
                     <button
+                      type="button"
+                      role="menuitem"
                       onClick={() => {
                         navigate('admin');
                         setShowUserMenu(false);
@@ -573,17 +512,21 @@ function App() {
                       {t('nav.admin')}
                     </button>
                   )}
-                    <button
-                      onClick={() => {
-                        navigate('settings');
-                        setShowUserMenu(false);
-                      }}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      navigate('settings');
+                      setShowUserMenu(false);
+                    }}
                     className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
                   >
                     <SettingsIcon className="w-4 h-4 text-[var(--color-text-muted)]" />
                     {t('nav.settings')}
                   </button>
                   <button
+                    type="button"
+                    role="menuitem"
                     onClick={() => {
                       handleLogout();
                       setShowUserMenu(false);
@@ -712,12 +655,14 @@ function App() {
   );
 }
 
-// Wrap App with ThemeProvider and ConfirmationProvider
+// Wrap App with ThemeProvider, ConfirmationProvider, ToastProvider
 function AppWithTheme() {
   return (
     <ThemeProvider>
       <ConfirmationProvider>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </ConfirmationProvider>
     </ThemeProvider>
   );

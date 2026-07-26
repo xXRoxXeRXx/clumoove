@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { CloudSync, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
 import type { User as UserType } from '../types';
 import { useApiError } from '../utils/apiError';
+import { apiFetch } from '../utils/apiClient';
 
 interface AuthFormProps {
   apiUrl: string;
@@ -37,7 +38,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${apiUrl}/api/settings`)
+    apiFetch(`${apiUrl}/api/settings`)
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
@@ -56,7 +57,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${apiUrl}/api/auth/password-reset-available`)
+    apiFetch(`${apiUrl}/api/auth/password-reset-available`)
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
@@ -91,7 +92,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
     }
 
     try {
-      const response = await fetch(`${apiUrl}/api/auth/forgot-password`, {
+      const response = await apiFetch(`${apiUrl}/api/auth/forgot-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -125,7 +126,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
     }
 
     try {
-      const response = await fetch(`${apiUrl}/api/auth/totp`, {
+      const response = await apiFetch(`${apiUrl}/api/auth/totp`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -171,7 +172,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       return;
     }
     try {
-      const response = await fetch(`${apiUrl}/api/auth/change-password`, {
+      const response = await apiFetch(`${apiUrl}/api/auth/change-password`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -476,7 +477,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
     }
 
     try {
-      const response = await fetch(`${apiUrl}/api/auth/setup-admin`, {
+      const response = await apiFetch(`${apiUrl}/api/auth/setup-admin`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -494,7 +495,10 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         throw new Error(translateApiError(data.error_code));
       }
 
-      const data = await response.json();
+      const data = await response.json() as { access_token?: string; user?: UserType };
+      if (!data.access_token || !data.user) {
+        throw new Error(translateApiError('UNKNOWN'));
+      }
       onAuthSuccess(data.access_token, data.user);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t('reset.networkError'));
@@ -634,7 +638,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       : { email: trimmedEmail, password, display_name: displayName.trim() };
 
     try {
-      const response = await fetch(`${apiUrl}${endpoint}`, {
+      const response = await apiFetch(`${apiUrl}${endpoint}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -774,13 +778,14 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
             </div>
           </div>
 

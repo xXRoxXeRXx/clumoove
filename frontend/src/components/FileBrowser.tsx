@@ -26,6 +26,7 @@ import type { CloudFile, MigrationConfig } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
+import { apiFetch } from '../utils/apiClient';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 
@@ -57,7 +58,7 @@ const toLocalInputValue = (date: Date): string => {
 const sortEntries = (entries: CloudFile[]): CloudFile[] => {
   return [...entries].sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
   });
 };
 
@@ -171,7 +172,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     setTargetError(null);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/target/browse`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/target/browse`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -235,7 +236,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: true }));
     setTargetError(null);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/target/mkdir`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/target/mkdir`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -291,7 +292,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     if (!force && (calendars.length > 0 || loadingCalendars)) return;
     setLoadingCalendars(true);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/browse`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -333,7 +334,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     if (!force && (contacts.length > 0 || loadingContacts)) return;
     setLoadingContacts(true);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/browse`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -392,7 +393,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
     setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     try {
-      const response = await fetch(`${apiUrl}/api/migration/browse`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -487,7 +488,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
     try {
       if (jobType === 'sync') {
-        const response = await fetch(`${apiUrl}/api/sync`, {
+        const response = await apiFetch(`${apiUrl}/api/sync`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -524,7 +525,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         const data = await response.json();
         if (data.id) {
           // Trigger first pass immediately
-          await fetch(`${apiUrl}/api/sync/${data.id}/start`, {
+          await apiFetch(`${apiUrl}/api/sync/${data.id}/start`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` },
           });
@@ -549,7 +550,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           requestBody.scheduled_time = new Date(scheduledTime).toISOString();
         }
 
-        const response = await fetch(`${apiUrl}/api/migration/start`, {
+        const response = await apiFetch(`${apiUrl}/api/migration/start`, {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',

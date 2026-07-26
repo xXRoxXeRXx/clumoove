@@ -1,10 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, XCircle, AlertTriangle, Loader2, Search } from 'lucide-react';
+import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, Loader2, Search } from 'lucide-react';
 import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
+import { useToast } from '../contexts/ToastContext';
+import { StatusBadge } from './StatusBadge';
+import { apiFetch } from '../utils/apiClient';
+import { connectSseLoop } from '../utils/sse';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -40,10 +44,11 @@ export function MigrationsDashboard({
   const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
   const confirm = useConfirm();
+  const toast = useToast();
 
   const fetchSyncJobs = useCallback(async () => {
     try {
-      const res = await fetch(`${apiUrl}/api/sync`, {
+      const res = await apiFetch(`${apiUrl}/api/sync`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error(t('sync.loadFailed'));
@@ -58,7 +63,7 @@ export function MigrationsDashboard({
 
   const fetchMigrations = useCallback(async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/migration`, {
+      const response = await apiFetch(`${apiUrl}/api/migration`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -85,170 +90,63 @@ export function MigrationsDashboard({
   }, [apiUrl, token, t, translateApiError]);
 
   useEffect(() => {
-    let cancelled = false;
-    let retryDelay = 2000;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
-
-    const connect = async () => {
-      if (cancelled) return;
-      try {
-        const response = await fetch(`${apiUrl}/api/migration/stream`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        if (response.status === 429) {
-          const retryHeader = response.headers.get('Retry-After');
-          const secs = retryHeader ? parseInt(retryHeader, 10) : 15;
-          retryDelay = (isNaN(secs) ? 15 : secs) * 1000;
-          throw new Error('rate_limited');
-        }
-        if (!response.ok || !response.body) {
-          throw new Error('stream_unavailable');
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let received = false;
-
-        const read = async () => {
-          while (!cancelled) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-
-            let idx: number;
-            while ((idx = buffer.indexOf('\n\n')) !== -1) {
-              const frame = buffer.slice(0, idx);
-              buffer = buffer.slice(idx + 2);
-
-              let event = 'message';
-              let data = '';
-              for (const line of frame.split('\n')) {
-                if (line.startsWith('event:')) {
-                  event = line.slice(6).trim();
-                } else if (line.startsWith('data:')) {
-                  data += (data ? '\n' : '') + line.slice(5).trim();
-                }
-              }
-
-              if (event === 'migrations' && data) {
-                try {
-                  setMigrations(JSON.parse(data) || []);
-                  setError('');
-                  setLoading(false);
-                  received = true;
-                } catch {
-                  /* ignore malformed frame */
-                }
-              } else if (event === 'error') {
-                setError(t('migrations.connectionError'));
-                setLoading(false);
-              }
+    void connectSseLoop({
+      url: `${apiUrl}/api/migration/stream`,
+      token,
+      signal: controller.signal,
+      fetchImpl: apiFetch,
+      handlers: {
+        onEvent: (event, data) => {
+          if (event === 'migrations' && data) {
+            try {
+              setMigrations(JSON.parse(data) || []);
+              setError('');
+              setLoading(false);
+            } catch {
+              /* ignore malformed frame */
             }
+          } else if (event === 'error') {
+            setError(t('migrations.connectionError'));
+            setLoading(false);
           }
-        };
-
-        await read();
-        reader.releaseLock();
-
-        if (received) {
-          retryDelay = 2000;
-          setError('');
-        }
-      } catch {
-        if (cancelled || controller.signal.aborted) return;
-        setError(t('migrations.connectionError'));
-        setLoading(false);
-      }
-
-      if (!cancelled) {
-        retryTimer = setTimeout(connect, retryDelay);
-        retryDelay = Math.min(retryDelay * 2, 30000);
-      }
-    };
-
-    connect();
-
-    return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      controller.abort();
-    };
+        },
+        onError: () => {
+          setError(t('migrations.connectionError'));
+          setLoading(false);
+        },
+      },
+    });
+    return () => controller.abort();
   }, [apiUrl, token, t]);
 
   useEffect(() => {
-    let cancelled = false;
-    let retryDelay = 2000;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const controller = new AbortController();
-
-    const connectSync = async () => {
-      if (cancelled) return;
-      void fetchSyncJobs();
-      try {
-        const res = await fetch(`${apiUrl}/api/sync/stream`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        if (res.status === 429) {
-          const retryHeader = res.headers.get('Retry-After');
-          const secs = retryHeader ? parseInt(retryHeader, 10) : 15;
-          retryDelay = (isNaN(secs) ? 15 : secs) * 1000;
-          return;
-        }
-        if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (!cancelled) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          let idx: number;
-          while ((idx = buffer.indexOf('\n\n')) !== -1) {
-            const frame = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-
-            let event = 'message';
-            let data = '';
-            for (const line of frame.split('\n')) {
-              if (line.startsWith('event:')) event = line.slice(6).trim();
-              else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
-            }
-
-            if (event === 'sync_jobs' && data) {
-              try {
-                setSyncJobs(JSON.parse(data) || []);
-                setSyncError('');
-                setSyncLoading(false);
-              } catch {
-                /* ignore */
-              }
+    void connectSseLoop({
+      url: `${apiUrl}/api/sync/stream`,
+      token,
+      signal: controller.signal,
+      fetchImpl: apiFetch,
+      handlers: {
+        onEvent: (event, data) => {
+          if (event === 'sync_jobs' && data) {
+            try {
+              setSyncJobs(JSON.parse(data) || []);
+              setSyncError('');
+              setSyncLoading(false);
+            } catch {
+              /* ignore */
             }
           }
-        }
-      } catch {
-        if (cancelled || controller.signal.aborted) return;
-      }
-
-      if (!cancelled) {
-        retryTimer = setTimeout(connectSync, retryDelay);
-        retryDelay = Math.min(retryDelay * 2, 30000);
-      }
-    };
-
-    connectSync();
-
-    return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      controller.abort();
-    };
-  }, [apiUrl, token, fetchSyncJobs]);
+        },
+        onError: () => {
+          setSyncError(t('sync.loadFailed'));
+          setSyncLoading(false);
+        },
+      },
+    });
+    return () => controller.abort();
+  }, [apiUrl, token, t]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -258,7 +156,7 @@ export function MigrationsDashboard({
 
     setDeleteLoading(id);
     try {
-      const response = await fetch(`${apiUrl}/api/migration/${id}`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -278,76 +176,9 @@ export function MigrationsDashboard({
       }
       setMigrations((prev) => prev.filter((m) => m.id !== id));
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : t('migrations.deleteError'));
+      toast(err instanceof Error ? err.message : t('migrations.deleteError'));
     } finally {
       setDeleteLoading(null);
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'COMPLETED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            {t('status.completed')}
-          </span>
-        );
-      case 'FAILED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
-            <XCircle className="w-3.5 h-3.5" />
-            {t('status.failed')}
-          </span>
-        );
-      case 'COMPLETED_WITH_ERRORS':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            {t('status.completedWithErrors')}
-          </span>
-        );
-      case 'CANCELLED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-error-bg)] text-rose-700 border border-[var(--color-error-border)]">
-            <XCircle className="w-3.5 h-3.5" />
-            {t('status.cancelled')}
-          </span>
-        );
-      case 'RUNNING':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-info-bg)] text-blue-700 border border-[var(--color-info-border)] animate-pulse">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            {t('status.active')}
-          </span>
-        );
-      case 'INDEXING':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            {t('status.indexing')}
-          </span>
-        );
-      case 'VERIFYING':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-cyan-50 text-cyan-700 border border-cyan-200 animate-pulse">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            {t('status.verifying')}
-          </span>
-        );
-      case 'PAUSED_CONNECTION_LOSS':
-      case 'PAUSED':
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-            {t('status.paused')}
-          </span>
-        );
-      default:
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-            {status}
-          </span>
-        );
     }
   };
 
@@ -661,7 +492,7 @@ export function MigrationsDashboard({
 
                       {/* Status */}
                       <td className="py-4 px-4 whitespace-nowrap">
-                        {getStatusBadge(mig.status)}
+                        <StatusBadge status={mig.status} size="sm" />
                       </td>
 
                       {/* Progress */}
@@ -769,6 +600,7 @@ function SyncList({
   const { formatDateTime } = useFormat();
   const translateApiError = useApiError();
   const confirm = useConfirm();
+  const toast = useToast();
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -777,7 +609,7 @@ function SyncList({
 
     setDeleteLoading(id);
     try {
-      const res = await fetch(`${apiUrl}/api/sync/${id}`, {
+      const res = await apiFetch(`${apiUrl}/api/sync/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -788,7 +620,7 @@ function SyncList({
       }
       setSyncJobs((prev) => prev.filter((j) => j.id !== id));
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : t('sync.deleteFailed'));
+      toast(err instanceof Error ? err.message : t('sync.deleteFailed'));
     } finally {
       setDeleteLoading(null);
     }
@@ -893,23 +725,7 @@ function SyncList({
                 {job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')}
               </td>
               <td className="py-4 px-4 whitespace-nowrap">
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold border ${
-                  job.status === 'RUNNING' || job.status === 'INDEXING'
-                    ? 'bg-blue-50 text-blue-700 border-blue-200 animate-pulse'
-                    : job.status === 'PAUSED' || job.status === 'PAUSED_CONNECTION_LOSS'
-                    ? 'bg-slate-100 text-slate-700 border-slate-200'
-                    : job.status === 'FAILED'
-                    ? 'bg-rose-50 text-rose-700 border-rose-200'
-                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                }`}>
-                  {job.status === 'RUNNING' || job.status === 'INDEXING' ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
-                  {job.status === 'IDLE' ? t('sync.statusIdle') :
-                   job.status === 'RUNNING' ? t('status.active') :
-                   job.status === 'INDEXING' ? t('status.indexing') :
-                   job.status === 'PAUSED' ? t('status.paused') :
-                   job.status === 'PAUSED_CONNECTION_LOSS' ? t('dashboard.eta.waitingConn') :
-                   job.status === 'FAILED' ? t('status.failed') : job.status}
-                </span>
+                <StatusBadge status={job.status} size="sm" context="sync" />
               </td>
               <td className="py-4 px-4 whitespace-nowrap text-xs font-mono text-[var(--color-text-secondary)]">
                 {job.last_run_at ? formatDateTime(job.last_run_at) : '-'}

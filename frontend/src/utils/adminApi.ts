@@ -1,4 +1,5 @@
 import type { User } from '../types';
+import { apiFetch } from './apiClient';
 
 export interface AdminUser extends User {
   active?: boolean;
@@ -112,7 +113,7 @@ async function call<T = Record<string, unknown>>(
   path: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  const res = await fetch(`${apiUrl}${path}`, {
+  const res = await apiFetch(`${apiUrl}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',

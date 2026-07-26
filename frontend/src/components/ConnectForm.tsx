@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
 
 import { useApiError } from '../utils/apiError';
+import { useOAuthPopup } from '../hooks/useOAuthPopup';
+import { apiFetch } from '../utils/apiClient';
 import { ProfileSelect } from './connect/ProfileSelect';
 import { SaveProfileRow } from './connect/SaveProfileRow';
 
@@ -86,6 +88,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const { t } = useTranslation();
   const translateApiError = useApiError();
+  const { openOAuthPopup } = useOAuthPopup(apiUrl);
 
   const getProfile = (id: string) => profiles.find((x) => x.id === id);
   // Load reusable connection profiles for the dropdowns.
@@ -93,7 +96,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch(`${apiUrl}/api/profiles`, {
+        const res = await apiFetch(`${apiUrl}/api/profiles`, {
           headers: { 'Authorization': `Bearer ${token}` },
         });
         const data = await res.json().catch(() => ({ profiles: [] })) as { profiles?: { id: string; name: string; provider: string }[] };
@@ -189,7 +192,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       payload.oauth_user = targetOAuthUser || targetProvider;
     }
     try {
-      const res = await fetch(`${apiUrl}/api/profiles`, {
+      const res = await apiFetch(`${apiUrl}/api/profiles`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload),
@@ -202,7 +205,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   // Reload the saved profiles so the dropdowns reflect a freshly created one.
   const refreshProfiles = () => {
-    fetch(`${apiUrl}/api/profiles`, { headers: { 'Authorization': `Bearer ${token}` } })
+    apiFetch(`${apiUrl}/api/profiles`, { headers: { 'Authorization': `Bearer ${token}` } })
       .then((res) => res.json())
       .then((data: { profiles?: { id: string; name: string; provider: string }[] }) => {
         if (data.profiles) setProfiles(data.profiles);
@@ -210,72 +213,29 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       .catch(() => { /* non-fatal */ });
   };
 
-  const openOAuthPopup = (provider: string, type: 'source' | 'target') => {
-    const width = 600;
-    const height = 700;
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
-
-    const targetOrigin = new URL(apiUrl, window.location.origin).origin;
-
-    const popup = window.open(
-      `${apiUrl}/api/oauth/auth?provider=${provider}&purpose=connect&origin=${encodeURIComponent(window.location.origin)}`,
-      'OAuth',
-      `width=${width},height=${height},left=${left},top=${top}`
-    );
-
-    const cleanup = () => {
-      window.removeEventListener('message', handleMessage);
-      clearInterval(checkClosedInterval);
-    };
-
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== targetOrigin) {
-        return;
-      }
-      if (event.source !== popup) {
-        return; // Ensure the event was posted from our specific popup window (I7 fix)
-      }
-      if (event.data && event.data.type === 'oauth-success' && event.data.provider === provider && event.data.purpose === 'connect') {
+  const startOAuth = (provider: string, type: 'source' | 'target') => {
+    openOAuthPopup(provider, 'connect', {
+      onSuccess: (msg) => {
         if (type === 'source') {
-          setSourceOAuthUser(event.data.username || provider);
+          setSourceOAuthUser(msg.username || provider);
           setSourceUrl(`https://api.${provider}.com`);
-          setSourceUser(event.data.username || provider);
-          setSourcePass(event.data.token);
-          setSourceRefreshToken(event.data.refreshToken || '');
-          setSourceTokenExpiresIn(event.data.expiresIn || 3600);
+          setSourceUser(msg.username || provider);
+          setSourcePass(msg.token);
+          setSourceRefreshToken(msg.refreshToken || '');
+          setSourceTokenExpiresIn(msg.expiresIn || 3600);
         } else {
-          setTargetOAuthUser(event.data.username || provider);
+          setTargetOAuthUser(msg.username || provider);
           setTargetUrl(`https://api.${provider}.com`);
-          setTargetUser(event.data.username || provider);
-          setTargetPass(event.data.token);
-          setTargetRefreshToken(event.data.refreshToken || '');
-          setTargetTokenExpiresIn(event.data.expiresIn || 3600);
+          setTargetUser(msg.username || provider);
+          setTargetPass(msg.token);
+          setTargetRefreshToken(msg.refreshToken || '');
+          setTargetTokenExpiresIn(msg.expiresIn || 3600);
         }
-        cleanup();
-      } else if (event.data && event.data.type === 'oauth-error') {
-        setError(t('connect.errors.oauthError', { error: event.data.error }));
-        cleanup();
-      }
-    };
-
-    // Periodically check if user closed the popup manually to clean up listener leaks (I7 fix).
-    // Accessing popup.closed can throw / log a console warning when the SPA document is served
-    // with Cross-Origin-Opener-Policy: same-origin (the cross-origin popup becomes inaccessible),
-    // so guard the read. The postMessage path above remains the primary completion signal.
-    const checkClosedInterval = setInterval(() => {
-      let closed = false;
-      try {
-        closed = !popup || popup.closed;
-      } catch {
-        // popup.closed is blocked by COOP; treat as not-yet-closed and rely on postMessage.
-      }
-      if (closed) {
-        cleanup();
-      }
-    }, 1000);
-
-    window.addEventListener('message', handleMessage);
+      },
+      onError: (err) => {
+        setError(t('connect.errors.oauthError', { error: err }));
+      },
+    });
   };
 
 
@@ -358,7 +318,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     setError(null);
 
     try {
-      const response = await fetch(`${apiUrl}/api/migration/connect`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/connect`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -474,7 +434,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     setError(null);
 
     try {
-      const response = await fetch(`${apiUrl}/api/migration/connect/test`, {
+      const response = await apiFetch(`${apiUrl}/api/migration/connect/test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1085,7 +1045,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   ) : (
                     <button
                       type="button"
-                      onClick={() => openOAuthPopup(sourceProvider, 'source')}
+                      onClick={() => startOAuth(sourceProvider, 'source')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
                       <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
@@ -1548,7 +1508,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   ) : (
                     <button
                       type="button"
-                      onClick={() => openOAuthPopup(targetProvider, 'target')}
+                      onClick={() => startOAuth(targetProvider, 'target')}
                       className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
                     >
                       <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
