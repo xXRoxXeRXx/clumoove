@@ -471,8 +471,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
         {/* Live Transfer Progress (ONLY rendered when RUNNING or INDEXING) */}
         {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-          <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+          <div className="border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 rounded-2xl relative overflow-hidden flex flex-col">
 
             <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div>
