@@ -326,60 +326,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
         </div>
 
-        {/* Source & Target Connection Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Source Card */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <Folder className="w-4 h-4 text-portal-orange" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
-                {t('migrations.source')}
-              </h3>
-            </div>
-            
-            <div className="space-y-2">
-              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
-                {job.source_provider}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
-                {job.source_url || t('migrations.oauth')}
-              </div>
-              <SelectedPathsViewer paths={job.selected_paths} />
-            </div>
-          </div>
-
-          {/* Target Card */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <Folder className="w-4 h-4 text-emerald-600" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
-                {t('migrations.target')}
-              </h3>
-            </div>
-
-            <div className="space-y-2">
-              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
-                {job.target_provider}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
-                {job.target_url || t('migrations.oauth')}
-              </div>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
-                  <Folder className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                  <span>{job.target_dir || '/'}</span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Live Transfer Progress & Active Files (ONLY rendered when RUNNING or INDEXING) */}
+        {/* Live Transfer Progress (only shown while a run is active) */}
         {(job.status === 'RUNNING' || job.status === 'INDEXING') && (
-          <div className="space-y-4 pt-2">
-            <div className="glass-panel border border-[var(--color-glass-border)] p-6 shadow-portal rounded-3xl relative overflow-hidden flex flex-col group">
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
-
+          <div className="border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 rounded-2xl relative overflow-hidden flex flex-col">
               <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
                 <div>
                   <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
@@ -421,32 +370,77 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                   <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
                 </div>
               </div>
-            </div>
+          </div>
+        )}
 
-            {/* Active Files List */}
-            {job.active_files && job.active_files.length > 0 && (
-              <div className="glass-panel border border-[var(--color-glass-border)] p-5 shadow-portal rounded-3xl flex flex-col">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--color-border-light)]">
-                  <RefreshCw className="w-4 h-4 text-portal-orange animate-spin" />
-                  <h4 className="font-mono font-bold text-[var(--color-text-muted)] text-[10px] uppercase tracking-widest text-left">
-                    {t('sync.activeTransfersTitle', { count: job.active_files.length, threads: job.threads || 8 })}
-                  </h4>
-                </div>
-                <div className="space-y-2">
-                  {job.active_files.map((file, i) => {
-                    const fileName = file.split('/').pop() || file;
-                    return (
-                      <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
-                        <span className="truncate pr-4" title={file}>{fileName}</span>
-                        <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
-                      </div>
-                    );
-                  })}
-                </div>
+        {/* Source & Target Connection Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <Folder className="w-4 h-4 text-portal-orange" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('migrations.source')}</h3>
+            </div>
+            <div className="space-y-2">
+              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">{job.source_provider}</div>
+              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">{job.source_url || t('migrations.oauth')}</div>
+              <SelectedPathsViewer paths={job.selected_paths} />
+            </div>
+          </div>
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <Folder className="w-4 h-4 text-emerald-600" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('migrations.target')}</h3>
+            </div>
+            <div className="space-y-2">
+              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">{job.target_provider}</div>
+              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">{job.target_url || t('migrations.oauth')}</div>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                  <Folder className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                  <span>{job.target_dir || '/'}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Active transfers and run status follow the migration-detail layout. */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <RefreshCw className={`w-4 h-4 text-portal-orange ${job.status === 'RUNNING' || job.status === 'INDEXING' ? 'animate-spin' : ''}`} />
+              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('sync.activeTransfersTitle', { count: job.active_files?.length || 0, threads })}</h3>
+            </div>
+            {job.active_files?.length ? (
+              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1 scrollbar-portal">
+                {job.active_files.map((file, i) => {
+                  const fileName = file.split('/').pop() || file;
+                  return (
+                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
+                      <span className="truncate pr-4" title={file}>{fileName}</span>
+                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                        {t('dashboard.running')}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="py-4 text-xs text-[var(--color-text-muted)] font-mono">
+                {t('dashboard.noActiveTransfers')}
               </div>
             )}
           </div>
-        )}
+          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5"><Clock className="w-4 h-4 text-portal-orange" /><h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('migrations.status')} & {t('dashboard.progress')}</h3></div>
+            <div className="space-y-2 font-sans text-xs text-[var(--color-text-muted)]">
+              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('dashboard.filesTotal')}</span><span className="font-bold text-[var(--color-text-primary)] font-mono">{job.total_files}</span></div>
+              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.changedFiles')}</span><span className="font-bold text-emerald-600 font-mono">{job.changed_files}</span></div>
+              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.deletedFiles')}</span><span className="font-bold text-[var(--color-text-primary)] font-mono">{job.deleted_files}</span></div>
+              <div className="flex justify-between items-center py-1.5"><span>{t('dashboard.failed')}</span><span className={`font-bold font-mono ${job.failed_files > 0 ? 'text-rose-600' : 'text-[var(--color-text-muted)]'}`}>{job.failed_files}</span></div>
+            </div>
+          </div>
+        </div>
 
         {/* Timing, Schedule & Configuration Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
