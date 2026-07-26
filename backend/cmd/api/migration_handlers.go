@@ -50,7 +50,7 @@ func normalizeProviderURL(provider, urlStr string) string {
 }
 
 func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "browse", s.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -141,7 +141,7 @@ type TargetBrowseRequest struct {
 }
 
 func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "target-browse", s.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -221,7 +221,7 @@ type TargetMkdirRequest struct {
 }
 
 func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "target-mkdir", s.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -578,13 +578,12 @@ type ConnectRequest struct {
 	Role                  string `json:"role"`
 }
 
-
 // handleConnectTest verifies a single-side connection (source or target).
 // It reuses ConnectRequest but ignores Path, ResourceType,
 // TargetProfileID, TargetProvider, and target credential fields
 // when role="source" (and vice-versa for role="target").
 func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectTestRateLimit, connectTestRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "connect-test", s.clientIP(r), connectTestRateLimit, connectTestRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -674,7 +673,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
-	if !s.rateLimiter.Allow(s.clientIP(r), connectRateLimit, connectRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "connect", s.clientIP(r), connectRateLimit, connectRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -1070,7 +1069,7 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 
-	if !s.rateLimiter.Allow(s.clientIP(r), streamRateLimit, streamRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-stream", s.clientIP(r), streamRateLimit, streamRateWindow) {
 		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return

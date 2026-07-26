@@ -92,8 +92,9 @@ asynchronously terminated on suspension.
 
 ## 8. Rate Limiting & Lockouts
 
-In-memory fixed-window limiter (`ipRateLimiter`) keyed by client IP (honoring `X-Forwarded-For` only
-behind a trusted proxy — see below). Limits:
+Redis-backed fixed-window limiter keyed by endpoint group and client IP (honoring `X-Forwarded-For` only
+behind a trusted proxy — see below). This keeps limits consistent across API instances and prevents one
+endpoint group from consuming another group's request budget. Limits:
 
 | Endpoint group | Max / window |
 | :------------- | :----------- |
@@ -101,7 +102,7 @@ behind a trusted proxy — see below). Limits:
 | Register | 5 / 5 min |
 | Connect/browse/mkdir | 30 / 1 min |
 | TOTP | 10 / 1 min |
-| Migration stream (SSE) | 10 / 1 min, max 5 concurrent streams per user |
+| Migration stream (SSE) | 60 / 1 min, max 10 concurrent streams per user |
 
 **Account lockouts** (mirror the TOTP lockout): 5 failed logins → 15-minute lockout; 5 failed TOTP
 attempts → 15-minute lockout. Both are enforced in `db` with single-statement atomic increments.

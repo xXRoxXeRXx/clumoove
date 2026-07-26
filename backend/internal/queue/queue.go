@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
-	_ "github.com/lib/pq" // needed for pq.NewListener
 	"github.com/lib/pq"
+	_ "github.com/lib/pq" // needed for pq.NewListener
 	"github.com/redis/go-redis/v9"
 )
 
@@ -21,12 +21,19 @@ type Payload struct {
 }
 
 type BandwidthEvent struct {
-	MigrationID      string `json:"migration_id"`
-	BandwidthLimitMbps int  `json:"bandwidth_limit_mbps"`
+	MigrationID        string `json:"migration_id"`
+	BandwidthLimitMbps int    `json:"bandwidth_limit_mbps"`
 }
 
 type Queue struct {
 	client *redis.Client
+}
+
+// RedisClient returns the authenticated Redis client shared by API components.
+// Redis remains an internal service; callers must not expose this client to
+// untrusted input.
+func (q *Queue) RedisClient() *redis.Client {
+	return q.client
 }
 
 func NewQueue(redisAddr string) (*Queue, error) {
@@ -76,7 +83,6 @@ func NewQueue(redisAddr string) (*Queue, error) {
 
 	return nil, fmt.Errorf("failed to ping redis after 10 attempts: %w", pingErr)
 }
-
 
 // DequeueSQL pops a task from the database queue natively respecting migration/sync thread limits.
 func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) (*Payload, error) {

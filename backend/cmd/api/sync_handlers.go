@@ -508,7 +508,7 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rate-limit connection attempts (mirrors handleMigrationStream).
-	if !s.rateLimiter.Allow(s.clientIP(r), streamRateLimit, streamRateWindow) {
+	if !s.rateLimiter.Allow(r.Context(), "sync-stream", s.clientIP(r), streamRateLimit, streamRateWindow) {
 		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
@@ -667,4 +667,3 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
-

@@ -2,61 +2,38 @@ package main
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"os"
-	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
-type ipRateLimiter struct {
-	mu       sync.Mutex
-	visitors map[string]*rateVisitor
+type distributedRateLimiter struct {
+	client *redis.Client
 }
 
-type rateVisitor struct {
-	count   int
-	resetAt time.Time
-}
+var rateLimitScript = redis.NewScript(`
+local count = redis.call("INCR", KEYS[1])
+if count == 1 then
+  redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return count <= tonumber(ARGV[1])
+`)
 
-// Allow reports whether a request from key is permitted given a max request
-// count per window. Counters reset when the window expires. The limiter is a
-// simple fixed-window limiter; callers should use a stable per-client key.
-func (rl *ipRateLimiter) Allow(key string, maxRequests int, window time.Duration) bool {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	now := time.Now()
-	v, ok := rl.visitors[key]
-	if !ok || now.After(v.resetAt) {
-		rl.visitors[key] = &rateVisitor{count: 1, resetAt: now.Add(window)}
-		return true
-	}
-	if v.count >= maxRequests {
+// Allow uses Redis so every API instance applies the same fixed-window limit.
+// Scope is part of the key, keeping independent endpoint groups from consuming
+// one another's request budget.
+func (rl *distributedRateLimiter) Allow(ctx context.Context, scope, clientKey string, maxRequests int, window time.Duration) bool {
+	result, err := rateLimitScript.Run(ctx, rl.client, []string{"rate-limit:" + scope + ":" + clientKey}, maxRequests, window.Milliseconds()).Bool()
+	if err != nil {
+		// Redis is required at startup; fail closed if it becomes unavailable so a
+		// transient outage cannot silently disable abuse protection.
+		log.Printf("rate limiter unavailable for scope %q: %v", scope, err)
 		return false
 	}
-	v.count++
-	return true
-}
-
-// evictExpired periodically drops rate-limit visitors whose window has passed so
-// the in-memory map cannot grow without bound.
-func (rl *ipRateLimiter) evictExpired(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			rl.mu.Lock()
-			now := time.Now()
-			for k, v := range rl.visitors {
-				if now.After(v.resetAt) {
-					delete(rl.visitors, k)
-				}
-			}
-			rl.mu.Unlock()
-		}
-	}
+	return result
 }
 
 // allowedOrigins defines the exact origins that may send credentialed cross-site requests.
