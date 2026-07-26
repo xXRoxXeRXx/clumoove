@@ -880,14 +880,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         <div className="sticky top-18 z-20 -mx-px px-5 sm:px-6 py-3 bg-[var(--color-bg-secondary)]/95 backdrop-blur border-b border-[var(--color-border-light)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-t-3xl shadow-sm">
           {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
           <div className="text-xs w-full sm:w-auto">
-            <div className="grid grid-cols-2 gap-2 p-1 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-2xl">
+            <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] p-1 rounded-full border border-[var(--color-border)]">
               <button
                 type="button"
                 onClick={() => setJobType('migration')}
-                className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
+                className={`flex items-center px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
                   jobType === 'migration'
-                    ? 'bg-portal-navy text-white shadow-xs'
-                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                    ? 'bg-portal-orange text-white shadow-xs'
+                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
                 }`}
               >
                 {t('sync.modeMigration')}
@@ -895,10 +895,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               <button
                 type="button"
                 onClick={() => setJobType('sync')}
-                className={`py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold transition-all cursor-pointer ${
+                className={`flex items-center px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
                   jobType === 'sync'
-                    ? 'bg-portal-navy text-white shadow-xs'
-                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                    ? 'bg-portal-orange text-white shadow-xs'
+                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
                 }`}
               >
                 {t('sync.modeSync')}
