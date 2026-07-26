@@ -159,7 +159,8 @@ On a fresh installation where no users exist in the database (`COUNT(*) == 0`), 
 - `Referrer-Policy: no-referrer`
 - `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'` (all JSON responses; the OAuth
   callback sets its own nonce-based CSP)
-- `Strict-Transport-Security` (only over real TLS)
+- `Strict-Transport-Security` (over TLS, or over `X-Forwarded-Proto: https` when
+  `TRUSTED_PROXY` is enabled for a proxy that strips client-supplied forwarding headers)
 
 API server timeouts: read 30s, write 60s, idle 120s.
 
