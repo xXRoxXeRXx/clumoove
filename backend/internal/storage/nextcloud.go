@@ -1218,8 +1218,8 @@ type nextcloudPaths struct{}
 
 func (nextcloudPaths) resourceURL(baseURL, username, resourceType, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
-	escapedPath := (&url.URL{Path: cleanPath}).String()
-	escapedUser := url.PathEscape(username)
+	escapedPath := escapeDAVPath(cleanPath)
+	escapedUser := escapeDAVPath(username)
 
 	switch resourceType {
 	case "calendars":
@@ -1233,8 +1233,8 @@ func (nextcloudPaths) resourceURL(baseURL, username, resourceType, endpointPath 
 
 func (nextcloudPaths) uploadsURL(baseURL, username, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
-	escapedPath := (&url.URL{Path: cleanPath}).String()
-	escapedUser := url.PathEscape(username)
+	escapedPath := escapeDAVPath(cleanPath)
+	escapedUser := escapeDAVPath(username)
 	return fmt.Sprintf("%s/uploads/%s/%s", baseURL, escapedUser, escapedPath)
 }
 
