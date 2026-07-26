@@ -577,7 +577,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           {/* Source Host Card */}
           <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div className="p-2.5 bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)] rounded-xl group-hover:bg-portal-orange/10 group-hover:text-portal-orange transition-colors duration-300">
@@ -1038,7 +1038,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
            {/* Target Host Card */}
           <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
-            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-portal-orange to-orange-500" />
+
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div className="p-2.5 bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)] rounded-xl group-hover:bg-portal-orange/10 group-hover:text-portal-orange transition-colors duration-300">
