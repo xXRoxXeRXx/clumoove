@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -215,6 +216,45 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	`
 	_, err := db.Exec(query, status, errVal, id)
 	return err
+}
+
+// ClaimSyncJobPass atomically reserves a manually runnable sync job for a new
+// pass. A successful claim moves the job to INDEXING before its pass starts.
+func ClaimSyncJobPass(database *sql.DB, id string) (bool, error) {
+	var claimedID string
+	err := database.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status IN ('IDLE', 'FAILED', 'PAUSED')
+		RETURNING id
+	`, id).Scan(&claimedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ClaimPausedSyncJobPass atomically resumes a connection-loss-paused sync job.
+// It is intentionally separate from ClaimSyncJobPass so an explicitly paused
+// job cannot be started by the recovery scheduler.
+func ClaimPausedSyncJobPass(database *sql.DB, id string) (bool, error) {
+	var claimedID string
+	err := database.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'PAUSED_CONNECTION_LOSS'
+		RETURNING id
+	`, id).Scan(&claimedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // UpdateSyncJobTotals updates the total_files and total_bytes count calculated at index time and resets pass counters
@@ -792,4 +832,3 @@ func UpdateSyncStateTargetHash(db *sql.DB, ctx context.Context, syncJobID, relPa
 	_, err := db.ExecContext(ctx, query, syncJobID, relPath, targetHash)
 	return err
 }
-

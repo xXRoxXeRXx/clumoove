@@ -22,7 +22,7 @@ type Engine struct {
 	encryptionKey string
 
 	// cancelMu guards the activePassCancels map which tracks in-progress
-	// RunSyncPass goroutines. Entries are added just before the goroutine body
+	// sync-pass goroutines. Entries are added just before the goroutine body
 	// runs and removed when it returns, allowing CancelPass to interrupt them.
 	cancelMu          sync.Mutex
 	activePassCancels map[string]context.CancelFunc
@@ -37,7 +37,7 @@ func NewEngine(database *sql.DB, q *queue.Queue, encryptionKey string) *Engine {
 	}
 }
 
-// CancelPass cancels any in-progress RunSyncPass for the given sync job.
+// CancelPass cancels any in-progress sync pass for the given sync job.
 // It is a no-op if no pass is running for the job.
 func (e *Engine) CancelPass(syncJobID string) {
 	e.cancelMu.Lock()
@@ -56,8 +56,31 @@ type fileState struct {
 	ETag         string
 }
 
-// RunSyncPass performs a single sync pass: scans, computes delta, enqueues tasks, waits, and updates state.
-func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
+// StartSyncPass claims a manually runnable sync job and, if successful, starts
+// exactly one asynchronous pass. The boolean is false when another pass owns
+// the job or its status is not runnable.
+func (e *Engine) StartSyncPass(serverCtx context.Context, syncJobID string) (bool, error) {
+	claimed, err := db.ClaimSyncJobPass(e.db, syncJobID)
+	if err != nil || !claimed {
+		return claimed, err
+	}
+	go e.runSyncPass(serverCtx, syncJobID)
+	return true, nil
+}
+
+// ResumePausedSyncPass claims a connection-loss-paused job and starts its pass.
+func (e *Engine) ResumePausedSyncPass(serverCtx context.Context, syncJobID string) (bool, error) {
+	claimed, err := db.ClaimPausedSyncJobPass(e.db, syncJobID)
+	if err != nil || !claimed {
+		return claimed, err
+	}
+	go e.runSyncPass(serverCtx, syncJobID)
+	return true, nil
+}
+
+// runSyncPass performs a previously claimed sync pass: scans, computes delta,
+// enqueues tasks, waits, and updates state.
+func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	log.Printf("[SyncEngine] Starting sync pass for job %s\n", syncJobID)
 
 	// Register a cancellable child context so handleDeleteSync / handlePauseSync
@@ -81,19 +104,20 @@ func (e *Engine) RunSyncPass(serverCtx context.Context, syncJobID string) {
 	indexCtx, indexCancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer indexCancel()
 
-	// 1. Transition to INDEXING
-	err := db.UpdateSyncJobStatus(e.db, syncJobID, "INDEXING", nil)
+	// Refuse to run if the claim was superseded (for example by deletion or an
+	// administrative status transition) before this goroutine was scheduled.
+	// Only the engine's Start* methods can reach this private method.
+	job, err := db.GetSyncJob(e.db, syncJobID)
 	if err != nil {
-		log.Printf("[SyncEngine] Failed to set INDEXING status for job %s: %v\n", syncJobID, err)
+		log.Printf("[SyncEngine] Refusing pass for %s: failed to load claimed job: %v\n", syncJobID, err)
+		return
+	}
+	if job.Status != "INDEXING" {
+		log.Printf("[SyncEngine] Refusing pass for %s: expected INDEXING, got %s\n", syncJobID, job.Status)
 		return
 	}
 
-	// 2. Fetch Job configuration
-	job, err := db.GetSyncJob(e.db, syncJobID)
-	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to fetch sync job: %v", err))
-		return
-	}
+	// 1. Fetch the claimed job configuration.
 
 	// 3. Decrypt credentials
 	sourcePass, err := crypto.Decrypt(job.SourcePasswordEncrypted, e.encryptionKey)

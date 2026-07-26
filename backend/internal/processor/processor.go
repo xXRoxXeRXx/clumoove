@@ -38,11 +38,11 @@ type activeTaskInfo struct {
 }
 
 type Processor struct {
-	db           *sql.DB
-	queue        *queue.Queue
-	workerID     string
-	secretKey    string
-	maxThreads   int
+	db         *sql.DB
+	queue      *queue.Queue
+	workerID   string
+	secretKey  string
+	maxThreads int
 	// dbConnStr is the raw PostgreSQL DSN used to open a dedicated LISTEN
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
 	// Set via SetDBConnStr before calling Start. If empty, the worker falls back
@@ -114,11 +114,11 @@ func (p *Processor) getOrCreateProvider(ctx context.Context, key, providerType, 
 // syncEngineInterface is a minimal interface so the processor package does not
 // import the concrete sync package (avoiding an import cycle).
 type syncEngineInterface interface {
-	RunSyncPass(ctx context.Context, syncJobID string)
+	ResumePausedSyncPass(ctx context.Context, syncJobID string) (bool, error)
 }
 
 // SetSyncEngine wires the sync engine into the processor so that
-// recoverPausedSyncJobs can trigger a new RunSyncPass after restoring
+// recoverPausedSyncJobs can trigger a new sync pass after restoring
 // a lost connection.
 func (p *Processor) SetSyncEngine(e syncEngineInterface) {
 	p.syncEngine = e
@@ -530,16 +530,16 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		targetPath := task.FilePath
 		if task.ResourceType == "files" {
 			targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
-			
+
 			// Sanitize directory name (same logic as files)
 			dirName := path.Base(targetPath)
 			sanitized := sanitize.SanitizeFilename(dirName, mig.TargetProvider)
 			if sanitized.Changed {
 				targetPath = path.Join(path.Dir(targetPath), sanitized.SanitizedName)
-				log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)", 
+				log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)",
 					dirName, sanitized.SanitizedName, strings.Join(sanitized.Reasons, ", "))
 			}
-			
+
 			// Check for case collisions on case-insensitive providers
 			if sanitize.IsCaseInsensitive(mig.TargetProvider) {
 				dirPath := path.Dir(targetPath)
