@@ -4,7 +4,7 @@ import type { SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatBytes, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
-import { useToast } from '../contexts/ToastContext';
+import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { StatusBadge } from './StatusBadge';
