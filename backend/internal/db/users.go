@@ -27,6 +27,15 @@ type User struct {
 	LoginLockedUntil    sql.NullTime `json:"-"`
 }
 
+// UserAuthState contains only the mutable account attributes required to
+// authorize an already-authenticated request. Keep this separate from User so
+// request authentication never loads credential material into memory.
+type UserAuthState struct {
+	Role               string
+	Active             bool
+	MustChangePassword bool
+}
+
 type UserListParams struct {
 	Page   int
 	Limit  int
@@ -128,6 +137,19 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 		u.TotpSecretEnc = totpSecret.String
 	}
 	return &u, nil
+}
+
+// GetUserAuthState fetches the current authorization state for an account.
+func GetUserAuthState(database *sql.DB, id string) (*UserAuthState, error) {
+	var state UserAuthState
+	err := database.QueryRow(`
+		SELECT role, active, must_change_password
+		FROM users WHERE id = $1
+	`, id).Scan(&state.Role, &state.Active, &state.MustChangePassword)
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
 }
 
 func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {

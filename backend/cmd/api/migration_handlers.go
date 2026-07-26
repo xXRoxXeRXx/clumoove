@@ -1363,8 +1363,20 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, ErrWsTokenInvalid)
 		return
 	}
+	// WebSockets bypass AuthMiddleware, so enforce the same authoritative
+	// account check here. A valid JWT must not survive a suspension or role
+	// change until its expiry.
+	state, err := db.GetUserAuthState(s.db, claims.UserID)
+	if err != nil || auth.RefreshClaimsFromAuthState(claims, state) != nil {
+		writeError(w, http.StatusUnauthorized, ErrWsTokenInvalid)
+		return
+	}
 	if err := auth.RequireAuthenticated(claims); err != nil {
-		writeError(w, http.StatusUnauthorized, ErrTotpRequired)
+		if claims.MustChangePassword {
+			writeError(w, http.StatusUnauthorized, ErrPasswordChangeRequired)
+		} else {
+			writeError(w, http.StatusUnauthorized, ErrTotpRequired)
+		}
 		return
 	}
 	userID := claims.UserID

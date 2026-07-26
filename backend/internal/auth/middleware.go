@@ -2,9 +2,13 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+
+	"backend/internal/db"
 )
 
 type ContextKey string
@@ -24,8 +28,48 @@ func writeUnauthorized(w http.ResponseWriter) {
 	})
 }
 
-// AuthMiddleware intercepts requests to validate the JWT bearer token and inject userID into context
-func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
+// AuthStateLookup retrieves the authoritative, current account state for an
+// authenticated user. It keeps middleware testable while production middleware
+// always queries the database on every protected request.
+type AuthStateLookup func(id string) (*db.UserAuthState, error)
+
+func databaseAuthStateLookup(database *sql.DB) AuthStateLookup {
+	return func(id string) (*db.UserAuthState, error) {
+		return db.GetUserAuthState(database, id)
+	}
+}
+
+// RefreshClaimsFromAuthState fails closed when an account is missing or
+// suspended, and copies mutable authorization claims from the database.
+// WebSocket authentication uses this too because it bypasses HTTP middleware.
+func RefreshClaimsFromAuthState(claims *Claims, state *db.UserAuthState) error {
+	if claims == nil || state == nil || !state.Active {
+		return errors.New("inactive or missing user")
+	}
+	claims.Role = state.Role
+	claims.MustChangePassword = state.MustChangePassword
+	return nil
+}
+
+func refreshClaims(claims *Claims, lookup AuthStateLookup) error {
+	if lookup == nil {
+		return errors.New("missing auth state lookup")
+	}
+	state, err := lookup(claims.UserID)
+	if err != nil {
+		return err
+	}
+	return RefreshClaimsFromAuthState(claims, state)
+}
+
+// AuthMiddleware intercepts requests to validate the JWT bearer token and
+// checks the user's active status and role against the database.
+func AuthMiddleware(database *sql.DB, secretKey string) func(http.Handler) http.Handler {
+	return AuthMiddlewareWithAuthStateLookup(secretKey, databaseAuthStateLookup(database))
+}
+
+// AuthMiddlewareWithAuthStateLookup is the testable form of AuthMiddleware.
+func AuthMiddlewareWithAuthStateLookup(secretKey string, lookup AuthStateLookup) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -49,6 +93,10 @@ func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
 
 			// Reject 2FA temp tokens: they authenticate the password step only and
 			// must never grant access to protected routes before the second factor.
+			if claims.TwoFAPending || refreshClaims(claims, lookup) != nil {
+				writeUnauthorized(w)
+				return
+			}
 			if err := RequireAuthenticated(claims); err != nil {
 				writeUnauthorized(w)
 				return
@@ -65,7 +113,13 @@ func AuthMiddleware(secretKey string) func(http.Handler) http.Handler {
 // temp tokens (used by the forced password-rotation flow) through to the
 // change-password route. It still rejects 2FA temp tokens, which are a distinct,
 // incomplete auth state that must never reach a protected route.
-func AuthMiddlewareAllowMustChange(secretKey string) func(http.Handler) http.Handler {
+func AuthMiddlewareAllowMustChange(database *sql.DB, secretKey string) func(http.Handler) http.Handler {
+	return AuthMiddlewareAllowMustChangeWithAuthStateLookup(secretKey, databaseAuthStateLookup(database))
+}
+
+// AuthMiddlewareAllowMustChangeWithAuthStateLookup is the testable form of
+// AuthMiddlewareAllowMustChange.
+func AuthMiddlewareAllowMustChangeWithAuthStateLookup(secretKey string, lookup AuthStateLookup) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -88,6 +142,11 @@ func AuthMiddlewareAllowMustChange(secretKey string) func(http.Handler) http.Han
 
 			// 2FA temp tokens are still rejected; only MustChangePassword is permitted.
 			if claims.TwoFAPending {
+				writeUnauthorized(w)
+				return
+			}
+			tokenMustChange := claims.MustChangePassword
+			if refreshClaims(claims, lookup) != nil || tokenMustChange != claims.MustChangePassword {
 				writeUnauthorized(w)
 				return
 			}
