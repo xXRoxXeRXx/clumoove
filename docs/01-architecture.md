@@ -154,7 +154,9 @@ and triggers the linked job. Schedules live in the `schedules` table.
   `triggerMigration` calls `indexer.Start`, which reads the persisted `selected_paths`/`calendars`/
   `contacts` and creates `PENDING` tasks.
 - **Recurring (cron):** Schedules with `cron_expression` (validated via `cron.ParseStandard`) recompute
-  `next_run_at` after each run.
+  `next_run_at` after each run. Sync schedules instead use the linked job's persisted
+  `interval_minutes` and advance relative to the current time; they leave `cron_expression` NULL so
+  intervals such as 90 minutes are supported without an invalid cron minute field.
 - **Overlap protection:** Before triggering, `isJobActive` checks the linked job's status. For
   migrations, `RUNNING`/`INDEXING` ⇒ skip (log + advance `next_run_at` for recurring).
 - **Multi-instance safety:** Each schedule is claimed via a Redis `SET NX` lock (`schedule:lock:{id}`,

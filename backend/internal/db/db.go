@@ -370,6 +370,14 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (schedules): %v\n", err)
 			}
 
+			// Sync schedules are duration-based. Clear legacy cron expressions so
+			// consumers can reliably distinguish them from cron-based schedules.
+			_, err = db.Exec(`UPDATE schedules SET cron_expression = NULL
+				WHERE task_type = 'sync' AND cron_expression IS NOT NULL`)
+			if err != nil {
+				log.Printf("Failed data migration (clear sync cron expressions): %v\n", err)
+			}
+
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_schedules_next_run ON schedules(next_run_at) WHERE is_active = TRUE`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_schedules_next_run): %v\n", err)

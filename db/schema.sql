@@ -138,6 +138,12 @@ CREATE TABLE IF NOT EXISTS schedules (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Sync schedules use interval_minutes from their linked sync job, never cron.
+-- Also cleans databases initialized from an older schema revision.
+UPDATE schedules
+SET cron_expression = NULL
+WHERE task_type = 'sync' AND cron_expression IS NOT NULL;
+
 -- Index for efficient daemon queries (only active schedules)
 CREATE INDEX IF NOT EXISTS idx_schedules_next_run 
     ON schedules(next_run_at) 

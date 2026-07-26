@@ -224,26 +224,17 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create linked Schedule in schedules table for cron trigger.
-	// For intervals that divide evenly into hours, use an hour-based expression
-	// so the schedule fires at predictable wall-clock times (e.g. every 2 h at :00).
-	// For all other values, use a minute-based */N expression which is correct for
-	// any N ≤ 59 and also works for multi-hour non-divisible values (e.g. 90 min
-	// fires every 90 minutes regardless of the hour boundary).
-	var cronExpr string
-	if req.IntervalMinutes >= 60 && req.IntervalMinutes%60 == 0 {
-		hours := req.IntervalMinutes / 60
-		cronExpr = fmt.Sprintf("0 */%d * * *", hours)
-	} else {
-		cronExpr = fmt.Sprintf("*/%d * * * *", req.IntervalMinutes)
-	}
+	// Create a duration-based linked schedule. Cron's minute field is limited to
+	// 0-59, so values such as a 90-minute interval cannot be represented by a
+	// cron expression. The scheduler reads interval_minutes from this sync job
+	// and advances next_run_at relative to the current time.
 	nextRun := time.Now().Add(time.Duration(req.IntervalMinutes) * time.Minute)
 
 	sched := &db.Schedule{
 		UserID:         userID,
 		TaskType:       "sync",
 		TaskID:         jobID,
-		CronExpression: sql.NullString{String: cronExpr, Valid: true},
+		CronExpression: sql.NullString{},
 		NextRunAt:      sql.NullTime{Time: nextRun, Valid: true},
 		IsActive:       true,
 	}
