@@ -12,6 +12,8 @@ import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { AdminPanel } from './components/AdminPanel';
 import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon, Shield } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { ConfirmationProvider } from './contexts/ConfirmationContext';
+import { useDismissConfirm } from './contexts/useConfirm';
 import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
 import { listenForOAuthMessage } from './utils/oauth';
@@ -49,6 +51,7 @@ let refreshPromise: Promise<string> | null = null;
 
 function App() {
   const { t } = useTranslation();
+  const dismissConfirm = useDismissConfirm();
   const resetTokenFromUrl = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('reset-token')
     : null;
@@ -73,6 +76,11 @@ function App() {
   const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
   const [localStorageEnabled, setLocalStorageEnabled] = useState<boolean>(false);
   const [oauthProviders, setOauthProviders] = useState<Record<string, boolean>>({});
+
+  // Cancel any open confirm when the user leaves the view that opened it.
+  useEffect(() => {
+    dismissConfirm();
+  }, [step, dismissConfirm]);
 
   useEffect(() => {
     fetch(`${API_URL}/api/settings`)
@@ -704,11 +712,13 @@ function App() {
   );
 }
 
-// Wrap App with ThemeProvider
+// Wrap App with ThemeProvider and ConfirmationProvider
 function AppWithTheme() {
   return (
     <ThemeProvider>
-      <App />
+      <ConfirmationProvider>
+        <App />
+      </ConfirmationProvider>
     </ThemeProvider>
   );
 }

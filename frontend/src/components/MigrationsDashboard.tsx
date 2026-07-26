@@ -4,6 +4,7 @@ import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
+import { useConfirm } from '../contexts/useConfirm';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -38,6 +39,7 @@ export function MigrationsDashboard({
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
+  const confirm = useConfirm();
 
   const fetchSyncJobs = useCallback(async () => {
     try {
@@ -250,10 +252,9 @@ export function MigrationsDashboard({
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    
-    if (!window.confirm(t('migrations.deleteConfirm'))) {
-      return;
-    }
+
+    const ok = await confirm({ message: t('migrations.deleteConfirm') });
+    if (!ok) return;
 
     setDeleteLoading(id);
     try {
@@ -767,10 +768,12 @@ function SyncList({
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
   const translateApiError = useApiError();
+  const confirm = useConfirm();
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm(t('sync.deleteConfirm'))) return;
+    const ok = await confirm({ message: t('sync.deleteConfirm') });
+    if (!ok) return;
 
     setDeleteLoading(id);
     try {
