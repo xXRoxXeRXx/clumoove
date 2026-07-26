@@ -605,14 +605,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   ];
 
   return (
-    <div className="w-full max-w-3xl mx-auto py-2 space-y-6 animate-fade-in">
+    <div className="w-full max-w-5xl mx-auto py-2 space-y-6 animate-fade-in">
       
       {/* Top Header / Back Button */}
       {onBack && (
         <div className="flex items-center justify-between pb-1">
           <button
             type="button"
-            onClick={onBack}
+            onClick={subStep === 1 ? onBack : () => { setSourceVerified(false); setSubStep(1); }}
             className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm shrink-0"
           >
             <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
@@ -644,11 +644,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid md:grid-cols-2 gap-8">
-          
+
           {/* Source Host Card */}
           {subStep === 1 && (
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             
@@ -1111,7 +1110,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
            {/* Target Host Card */}
            {subStep === 2 && (
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             
@@ -1571,7 +1570,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             </div>
           </fieldset>
           )}
-        </div>
 
         {/* Helpful Info Guide Box */}
         {showHelp && (
@@ -1621,19 +1619,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 )}
             </button>
           ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => { setSourceVerified(false); setSubStep(1); }}
-                disabled={loading}
-                className="flex items-center gap-2.5 px-8 py-3.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl font-mono text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
-                <span>{t('common.back')}</span>
-              </button>
-              <button
-                type="submit"
-                disabled={loading}
+            <button
+              type="submit"
+              disabled={loading}
                 className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
@@ -1648,7 +1636,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </>
                 )}
               </button>
-            </>
           )}
         </div>
       </form>
