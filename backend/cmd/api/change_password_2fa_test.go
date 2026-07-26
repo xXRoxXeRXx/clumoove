@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"backend/internal/auth"
 	"backend/internal/db"
@@ -71,6 +72,18 @@ func setupChangePassword2FATestDB(t *testing.T) *sql.DB {
 			ip TEXT,
 			details JSONB,
 			created_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS migrations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			status TEXT NOT NULL,
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS schedules (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
 	}
 	for _, s := range schema {
@@ -150,6 +163,70 @@ func TestHandleChangePassword_MustChange_With2FA_RequiresTOTP(t *testing.T) {
 	}
 	if claims.MustChangePassword {
 		t.Errorf("2FA temp token must not carry a stale must_change_password flag")
+	}
+}
+
+func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
+	database := setupChangePassword2FATestDB(t)
+	defer database.Close()
+
+	s := &APIServer{db: database, jwtSecret: "test-jwt-secret-at-least-32-bytes-long!!"}
+	user := createChangePasswordTestUser(t, database, false)
+	refreshToken := "refresh-token-that-must-be-revoked"
+	if err := db.StoreRefreshToken(database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("store refresh token: %v", err)
+	}
+
+	if err := db.UpdateUserActive(database, user.ID, false); err != nil {
+		t.Fatalf("suspend user: %v", err)
+	}
+
+	var tokens int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1`, user.ID).Scan(&tokens); err != nil {
+		t.Fatalf("count refresh tokens: %v", err)
+	}
+	if tokens != 0 {
+		t.Fatalf("suspension left %d refresh tokens", tokens)
+	}
+
+	// Simulate a stale token that was read before the suspension transaction
+	// committed. Refresh must still refuse it after checking users.active.
+	if err := db.StoreRefreshToken(database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("store stale refresh token: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/refresh", nil)
+	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: refreshToken})
+	rec := httptest.NewRecorder()
+	s.handleRefresh(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected suspended user refresh to return 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		ErrorCode string `json:"error_code"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body.ErrorCode != string(ErrUserDisabled) {
+		t.Fatalf("error_code = %q, want %q", body.ErrorCode, ErrUserDisabled)
+	}
+
+	var clearedCookie *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "refresh_token" {
+			clearedCookie = cookie
+			break
+		}
+	}
+	if clearedCookie == nil || clearedCookie.Value != "" || clearedCookie.MaxAge >= 0 {
+		t.Fatalf("refresh cookie was not cleared: %#v", clearedCookie)
+	}
+	if err := database.QueryRow(`SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1`, user.ID).Scan(&tokens); err != nil {
+		t.Fatalf("count residual refresh tokens: %v", err)
+	}
+	if tokens != 0 {
+		t.Fatalf("inactive refresh cleanup left %d refresh tokens", tokens)
 	}
 }
 

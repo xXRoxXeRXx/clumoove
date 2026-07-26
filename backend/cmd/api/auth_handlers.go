@@ -491,6 +491,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	oldTokenHash := hashToken(cookie.Value)
 	userID, err := db.GetUserIDByRefreshToken(s.db, oldTokenHash)
 	if err != nil {
+		auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
 		writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 		return
 	}
@@ -507,6 +508,40 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// Re-check the account state while holding a row lock. If suspension wins
+	// the race, its transaction removes all refresh tokens before this request
+	// can rotate one; if this request wins, suspension removes the new token.
+	var active bool
+	if err := tx.QueryRowContext(r.Context(), `SELECT active FROM users WHERE id = $1 FOR UPDATE`, u.ID).Scan(&active); err != nil {
+		if err == sql.ErrNoRows {
+			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
+			return
+		}
+		log.Printf("Error locking refresh-token user: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !active {
+		// Normally suspension has already deleted these rows. Removing them here
+		// also cleans up a residual token if an earlier operation was interrupted.
+		if _, err := tx.ExecContext(r.Context(), `DELETE FROM refresh_tokens WHERE user_id = $1`, u.ID); err != nil {
+			log.Printf("Error deleting suspended user's refresh tokens: %v\n", err)
+			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			log.Printf("Error committing suspended-user refresh-token cleanup: %v\n", err)
+			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+		writeError(w, http.StatusForbidden, ErrUserDisabled)
+		return
+	}
 
 	deleteQuery := `DELETE FROM refresh_tokens WHERE token_hash = $1`
 	if _, err := tx.ExecContext(r.Context(), deleteQuery, oldTokenHash); err != nil {
