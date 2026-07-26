@@ -575,6 +575,102 @@ type ConnectRequest struct {
 	ResourceType          string `json:"resource_type"`
 	SourceProfileID       string `json:"source_profile_id"`
 	TargetProfileID       string `json:"target_profile_id"`
+	Role                  string `json:"role"`
+}
+
+
+// handleConnectTest verifies a single-side connection (source or target).
+// It reuses ConnectRequest but ignores Path, ResourceType,
+// TargetProfileID, TargetProvider, and target credential fields
+// when role="source" (and vice-versa for role="target").
+func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(s.clientIP(r), connectTestRateLimit, connectTestRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	var req ConnectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	role := req.Role
+	if role != "source" && role != "target" {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+
+	var provider, url, username, password, refreshToken, profileID string
+	if role == "source" {
+		provider = req.SourceProvider
+		url = req.SourceURL
+		username = req.SourceUsername
+		password = req.SourcePassword
+		refreshToken = req.SourceRefreshToken
+		profileID = req.SourceProfileID
+	} else {
+		provider = req.TargetProvider
+		url = req.TargetURL
+		username = req.TargetUsername
+		password = req.TargetPassword
+		refreshToken = req.TargetRefreshToken
+		profileID = req.TargetProfileID
+	}
+
+	creds, err := s.loadProfile(r, profileID, profileCreds{
+		Provider:     provider,
+		URL:          url,
+		Username:     username,
+		Password:     password,
+		RefreshToken: refreshToken,
+	})
+	if err != nil {
+		log.Printf("handleConnectTest: failed to load %s profile: %v", role, err)
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	provider = creds.Provider
+	url = creds.URL
+	username = creds.Username
+	if password == "" {
+		password = creds.Password
+	}
+
+	if provider == "" {
+		provider = "nextcloud"
+	}
+	url = normalizeProviderURL(provider, url)
+
+	if !storage.IsValidProvider(provider) {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
+		return
+	}
+
+	client, err := storage.NewProvider(r.Context(), provider, url, username, password)
+	if err != nil {
+		code := ErrSourceUrlInvalid
+		if role == "target" {
+			code = ErrTargetUrlInvalid
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": code})
+		return
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	ok, err := client.Connect(ctx)
+	if !ok {
+		log.Printf("handleConnectTest: %s connection failed for provider %s: %v", role, provider, err)
+		code := ErrSourceConnectionFailed
+		if role == "target" {
+			code = ErrTargetConnectionFailed
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": code})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {

@@ -90,7 +90,8 @@
     "username": "Username",
     "password": "Password",
     "helpGuide": "Help guide",
-    "wizardStep": "Step 1 & 2 of 3: Set cloud connections",
+    "wizardStepSource": "Step 1 of 3: Set source",
+    "wizardStepTarget": "Step 2 of 3: Set target",
     "connectionsBadge": "Connections",
     "oauthConnect": "Connect with {{provider}}",
     "connectedAs": "Connected as",
@@ -126,6 +127,7 @@
     "sshKeyPem": "Security key (Key file)",
     "testing": "Checking connection...",
     "connectInstances": "Connect systems",
+    "checkAndContinue": "Test connection & continue",
     "appPasswordLabel": "Application password",
     "appPassword": {
       "title": "Instructions for creating an application password (Nextcloud / WebDAV)",

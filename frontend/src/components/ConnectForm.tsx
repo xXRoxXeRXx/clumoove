@@ -71,6 +71,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [error, setError] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(false);
 
+  // Two-step wizard: step 1 captures the source, step 2 captures the target.
+  const [subStep, setSubStep] = useState<1 | 2>(1);
+  const [sourceVerified, setSourceVerified] = useState(false);
+
   // Reusable connection profiles (role-agnostic; usable as source or target)
   const [profiles, setProfiles] = useState<{ id: string; name: string; provider: string }[]>([]);
   const [sourceProfileId, setSourceProfileId] = useState('');
@@ -147,7 +151,21 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     : targetProvider === 'magentacloud' || targetProvider === 'local'
     ? ''
     : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? `https://api.${targetProvider}.com` : targetUrl));
+  // Build the final credentials for the source side (reuses shared URL/user/pass logic).
+  const finalSourceUserValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'local'
+    ? ''
+    : (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive') ? (sourceOAuthUser || sourceProvider) : sourceUser);
+  const finalSourcePassValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'local'
+    ? ''
+    : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass);
 
+  // Build the final credentials for the target side.
+  const finalTargetUserValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'local'
+    ? ''
+    : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? (targetOAuthUser || targetProvider) : targetUser);
+  const finalTargetPassValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'local'
+    ? ''
+    : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass);
   // Persist a connection as a reusable profile (called after a successful connect).
   const saveProfile = async (role: 'source' | 'target', name: string) => {
     if (!name.trim()) return false;
@@ -269,36 +287,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     const sourceProfileSelected = sourceProfileId !== '';
     const targetProfileSelected = targetProfileId !== '';
 
-    const finalSourceUrl = sourceProfileSelected ? '' : (sourceProvider === 'smb'
-      ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
-      : sourceProvider === 's3'
-      ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
-      : sourceProvider === 'sftp'
-      ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
-      : sourceProvider === 'magentacloud' || sourceProvider === 'local'
-      ? ''
-      : (sourceProvider === 'dropbox' || sourceProvider === 'google' ? `https://api.${sourceProvider}.com` : sourceProvider === 'hidrive' ? 'https://api.hidrive.strato.com' : sourceUrl));
-    const finalSourceUser = sourceProfileSelected ? '' : (sourceProvider === 'local'
-      ? ''
-      : (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive') ? (sourceOAuthUser || sourceProvider) : sourceUser);
-    const finalSourcePass = sourceProfileSelected ? '' : (sourceProvider === 'local'
-      ? ''
-      : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass);
-    const finalTargetUrl = targetProfileSelected ? '' : (targetProvider === 'smb'
-      ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
-      : targetProvider === 's3'
-      ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
-      : targetProvider === 'sftp'
-      ? `sftp://${targetSftpHost}:${targetSftpPort}`
-      : targetProvider === 'magentacloud' || targetProvider === 'local'
-      ? ''
-      : (targetProvider === 'dropbox' || targetProvider === 'google' ? `https://api.${targetProvider}.com` : targetProvider === 'hidrive' ? 'https://api.hidrive.strato.com' : targetUrl));
-    const finalTargetUser = targetProfileSelected ? '' : (targetProvider === 'local'
-      ? ''
-      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? (targetOAuthUser || targetProvider) : targetUser);
-    const finalTargetPass = targetProfileSelected ? '' : (targetProvider === 'local'
-      ? ''
-      : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass);
+    const finalSourceUrl = finalSourceUrlValue();
+    const finalSourceUser = finalSourceUserValue();
+    const finalSourcePass = finalSourcePassValue();
+    const finalTargetUrl = finalTargetUrlValue();
+    const finalTargetUser = finalTargetUserValue();
+    const finalTargetPass = finalTargetPassValue();
 
     if (sourceProvider === 'sftp' && !sourceProfileSelected) {
       if (!sourceSftpHost.trim()) {
@@ -435,6 +429,84 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setLoading(false);
     }
   };
+  const verifyAndAdvance = async () => {
+
+    const sourceProfileSelected = sourceProfileId !== '';
+
+    const finalSourceUrl = finalSourceUrlValue();
+    const finalSourceUser = finalSourceUserValue();
+    const finalSourcePass = finalSourcePassValue();
+
+    if (sourceProvider === 'sftp' && !sourceProfileSelected) {
+      if (!sourceSftpHost.trim()) {
+        setError(t('connect.errors.sourceSftpHost'));
+        return;
+      }
+      if (sourceSftpAuthMode === 'key' && !sourceSftpPrivateKey.trim()) {
+        setError(t('connect.errors.sourceSftpKey'));
+        return;
+      }
+    }
+    if (sourceProvider === 'smb' && !sourceProfileSelected) {
+      if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
+        setError(t('connect.errors.sourceSmb'));
+        return;
+      }
+    }
+    if (sourceProvider === 's3' && !sourceProfileSelected) {
+      if (!sourceS3Bucket.trim() || !sourceS3Region.trim()) {
+        setError(t('connect.errors.sourceS3'));
+        return;
+      }
+    }
+
+    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local';
+    if (
+      (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
+      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourceUser) ||
+      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourcePass)
+    ) {
+      setError(t('connect.errors.missingFields'));
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${apiUrl}/api/migration/connect/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          source_url: finalSourceUrl,
+          source_username: finalSourceUser,
+          source_password: finalSourcePass,
+          source_refresh_token: sourceRefreshToken,
+          source_token_expires_in: sourceTokenExpiresIn,
+          source_provider: sourceProvider,
+          source_profile_id: sourceProfileId,
+          role: 'source',
+        }),
+      });
+
+      const body = await response.json().catch(() => ({} as { success?: boolean; error_code?: string }));
+      if (!response.ok || !body.success) {
+        setError(translateApiError(body.error_code));
+        return;
+      }
+
+      setSourceVerified(true);
+      setSubStep(2);
+    } catch {
+      setError(t('connect.errors.networkError'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSourceProviderSelect = (val: ProviderId) => {
     setSourceProvider(val);
     if (val === 'dropbox' || val === 'google' || val === 'hidrive') {
@@ -533,7 +605,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   ];
 
   return (
-    <div className="w-full max-w-4xl mx-auto py-2 space-y-6 animate-fade-in">
+    <div className="w-full max-w-3xl mx-auto py-2 space-y-6 animate-fade-in">
       
       {/* Top Header / Back Button */}
       {onBack && (
@@ -553,15 +625,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-xs">
         <div className="flex items-center gap-3">
           <span className="flex items-center justify-center w-8 h-8 rounded-full bg-portal-orange text-white font-mono font-bold text-xs shadow-xs">
-            1
-          </span>
-          <div className="flex flex-col text-left">
-            <span className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)]">
-              {t('connect.sourceTitle')} & {t('connect.targetTitle')}
+              {subStep}
             </span>
-            <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-              {t('connect.wizardStep')}
-            </span>
+            <div className="flex flex-col text-left">
+              <span className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)]">
+                {subStep === 1 ? t('connect.sourceTitle') : t('connect.targetTitle')}
+              </span>
+              <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                {subStep === 1 ? t('connect.wizardStepSource') : t('connect.wizardStepTarget')}
+              </span>
           </div>
         </div>
 
@@ -575,6 +647,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         <div className="grid md:grid-cols-2 gap-8">
           
           {/* Source Host Card */}
+          {subStep === 1 && (
           <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
@@ -1034,8 +1107,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               )}
             </div>
           </fieldset>
-           
+          )}
+
            {/* Target Host Card */}
+           {subStep === 2 && (
           <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px]">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
@@ -1495,6 +1570,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               )}
             </div>
           </fieldset>
+          )}
         </div>
 
         {/* Helpful Info Guide Box */}
@@ -1523,24 +1599,57 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         )}
 
         {/* Action Button */}
-        <div className="flex justify-center pt-4">
+        <div className="flex justify-center pt-4 gap-3">
+          {subStep === 1 ? (
             <button
-              type="submit"
+              type="button"
+              onClick={() => verifyAndAdvance()}
               disabled={loading}
-            className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>{t('connect.testing')}</span>
-              </>
-            ) : (
-              <>
-                <span>{t('connect.connectInstances')}</span>
-                <ArrowRight className="w-4 h-4 stroke-[2.5]" />
-              </>
-            )}
-          </button>
+              className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>{t('connect.testing')}</span>
+                </>
+                ) : (
+                  <>
+                    {sourceVerified && <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />}
+                    <span>{t('connect.checkAndContinue')}</span>
+                    <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+                  </>
+                )}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => { setSourceVerified(false); setSubStep(1); }}
+                disabled={loading}
+                className="flex items-center gap-2.5 px-8 py-3.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl font-mono text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
+                <span>{t('common.back')}</span>
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>{t('connect.testing')}</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{t('connect.connectInstances')}</span>
+                    <ArrowRight className="w-4 h-4 stroke-[2.5]" />
+                  </>
+                )}
+              </button>
+            </>
+          )}
         </div>
       </form>
     </div>

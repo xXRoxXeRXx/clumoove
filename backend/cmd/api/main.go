@@ -51,6 +51,8 @@ const (
 	registerRateWindow = 5 * time.Minute
 	connectRateLimit   = 30
 	connectRateWindow  = 1 * time.Minute
+	connectTestRateLimit   = 30
+	connectTestRateWindow  = 1 * time.Minute
 	totpRateLimit      = 10
 	totpRateWindow     = 1 * time.Minute
 	streamRateLimit    = 60
@@ -180,6 +182,7 @@ func main() {
 	mux.Handle("GET /api/migration", jwtMiddleware(http.HandlerFunc(server.handleListMigrations)))
 	mux.Handle("GET /api/migration/stream", jwtMiddleware(http.HandlerFunc(server.handleMigrationStream)))
 	mux.Handle("POST /api/migration/connect", jwtMiddleware(http.HandlerFunc(server.handleConnect)))
+	mux.Handle("POST /api/migration/connect/test", jwtMiddleware(http.HandlerFunc(server.handleConnectTest)))
 	mux.Handle("POST /api/migration/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowse)))
 	mux.Handle("POST /api/migration/target/browse", jwtMiddleware(http.HandlerFunc(server.handleTargetBrowse)))
 	mux.Handle("POST /api/migration/target/mkdir", jwtMiddleware(http.HandlerFunc(server.handleTargetMkdir)))
