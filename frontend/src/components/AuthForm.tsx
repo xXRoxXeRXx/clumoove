@@ -488,7 +488,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       }
 
       const data = await response.json();
-      onAuthSuccess(data.token, data.user);
+      onAuthSuccess(data.access_token, data.user);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t('reset.networkError'));
     } finally {
