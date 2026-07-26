@@ -682,7 +682,6 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
       {/* Container Card with Premium Glassmorphism */}
       <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
         
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
