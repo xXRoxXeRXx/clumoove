@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 )
 
@@ -20,7 +19,7 @@ type magentaPaths struct{}
 
 func (magentaPaths) resourceURL(baseURL, username, resourceType, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
-	escapedPath := (&url.URL{Path: cleanPath}).String()
+	escapedPath := escapeDAVPath(cleanPath)
 	if baseURL == "" {
 		return escapedPath
 	}
@@ -29,7 +28,7 @@ func (magentaPaths) resourceURL(baseURL, username, resourceType, endpointPath st
 
 func (magentaPaths) uploadsURL(baseURL, username, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
-	escapedPath := (&url.URL{Path: cleanPath}).String()
+	escapedPath := escapeDAVPath(cleanPath)
 	if baseURL == "" {
 		return "/uploads/" + escapedPath
 	}

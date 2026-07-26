@@ -80,7 +80,7 @@ func (p *WebDAVProvider) buildResourceURL(endpointPath string) string {
 	if cleanPath == "" {
 		return p.BaseURL
 	}
-	escapedPath := (&url.URL{Path: cleanPath}).String()
+	escapedPath := escapeDAVPath(cleanPath)
 	return fmt.Sprintf("%s/%s", p.BaseURL, escapedPath)
 }
 

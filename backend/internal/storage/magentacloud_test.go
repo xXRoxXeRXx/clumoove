@@ -77,4 +77,10 @@ func TestMagentaPaths(t *testing.T) {
 	if urlStr != expected {
 		t.Errorf("resourceURL = %s, want %s", urlStr, expected)
 	}
+
+	withAmp := mp.resourceURL("https://magentacloud.de/remote.php/webdav", "user", "files", "/Kinder & Jugend/a+b.txt")
+	wantAmp := "https://magentacloud.de/remote.php/webdav/Kinder%20%26%20Jugend/a%2Bb.txt"
+	if withAmp != wantAmp {
+		t.Errorf("resourceURL = %s, want %s", withAmp, wantAmp)
+	}
 }
