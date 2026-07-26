@@ -12,7 +12,9 @@ import (
 	"time"
 
 	"backend/internal/auth"
+	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/totp2fa"
 
 	_ "github.com/lib/pq"
 )
@@ -163,6 +165,45 @@ func TestHandleChangePassword_MustChange_With2FA_RequiresTOTP(t *testing.T) {
 	}
 	if claims.MustChangePassword {
 		t.Errorf("2FA temp token must not carry a stale must_change_password flag")
+	}
+}
+
+func TestHandle2FADisable_WithBackupCode(t *testing.T) {
+	database := setupChangePassword2FATestDB(t)
+	defer database.Close()
+
+	const encryptionKey = "test-encryption-key"
+	s := &APIServer{db: database, encryptionKey: encryptionKey}
+	user := createChangePasswordTestUser(t, database, false)
+	secret, err := crypto.Encrypt("JBSWY3DPEHPK3PXP", encryptionKey)
+	if err != nil {
+		t.Fatalf("encrypt TOTP secret: %v", err)
+	}
+	backupCodes, hashes, err := totp2fa.GenerateBackupCodes()
+	if err != nil {
+		t.Fatalf("generate backup codes: %v", err)
+	}
+	if err := db.SetUserTOTPSecret(database, user.ID, secret); err != nil {
+		t.Fatalf("store TOTP secret: %v", err)
+	}
+	if err := db.EnableUserTOTP(database, user.ID, db.StringArray(hashes)); err != nil {
+		t.Fatalf("enable TOTP: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/2fa/disable", strings.NewReader(`{"code":"`+backupCodes[0]+`"}`))
+	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: user.ID}))
+	rec := httptest.NewRecorder()
+	s.handle2FADisable(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	updated, err := db.GetUserByID(database, user.ID)
+	if err != nil {
+		t.Fatalf("load updated user: %v", err)
+	}
+	if updated.TotpEnabled || len(updated.TotpBackupCodes) != 0 {
+		t.Fatalf("expected 2FA and all backup-code hashes to be cleared, got enabled=%v codes=%d", updated.TotpEnabled, len(updated.TotpBackupCodes))
 	}
 }
 
