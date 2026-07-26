@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plug, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
+import { useConfirm } from '../contexts/useConfirm';
 import type { ApiErrBody } from './SettingsPage';
 
 interface ConnectionManagerProps {
@@ -56,6 +57,7 @@ function formatExpiry(expiresAt?: string | null): string | null {
 export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, oauthProviders = {} }: ConnectionManagerProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
+  const confirm = useConfirm();
 
   const [profiles, setProfiles] = useState<ProfilePublic[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -83,7 +85,8 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   }, [loadProfiles]);
 
   const handleDelete = async (p: ProfilePublic) => {
-    if (!window.confirm(t('settings.connections.deleteConfirm'))) return;
+    const ok = await confirm({ message: t('settings.connections.deleteConfirm') });
+    if (!ok) return;
     setMessage(null);
     try {
       const res = await fetch(`${apiUrl}/api/profiles/${p.id}`, {

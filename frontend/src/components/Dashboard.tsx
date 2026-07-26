@@ -3,6 +3,7 @@ import { RefreshCw, AlertTriangle, Download, Clock, HardDrive, Pause, Play, XCir
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatDuration, type TFunc } from '../utils/format';
 import { useApiError } from '../utils/apiError';
+import { useConfirm } from '../contexts/useConfirm';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 
@@ -85,6 +86,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
   const translateApiError = useApiError();
+  const confirm = useConfirm();
 
   const [data, setData] = useState<ProgressData | null>(null);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
@@ -124,8 +126,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   };
 
   const handleMigrationControl = async (action: 'pause' | 'resume' | 'cancel') => {
-    if (action === 'cancel' && !window.confirm(t('dashboard.cancelConfirm'))) {
-      return;
+    if (action === 'cancel') {
+      const ok = await confirm({ message: t('dashboard.cancelConfirm') });
+      if (!ok) return;
     }
 
     setControlLoading(action);
@@ -198,9 +201,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const progressHistory = useRef<{ timestamp: number; bytes: number }[]>([]);
 
   const handleRetryFailed = async () => {
-    if (!window.confirm(t('dashboard.retryConfirm'))) {
-      return;
-    }
+    const ok = await confirm({ message: t('dashboard.retryConfirm') });
+    if (!ok) return;
 
     setControlLoading('retry');
     try {

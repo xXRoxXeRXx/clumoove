@@ -4,6 +4,7 @@ import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, Ey
 import { AvatarCropper } from './AvatarCropper';
 import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
+import { useConfirm } from '../contexts/useConfirm';
 import { useApiError } from '../utils/apiError';
 
 export type ApiErrBody = { error_code?: string };
@@ -42,6 +43,7 @@ function MessageBanner({ message }: { message: MessageState }) {
 export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localStorageEnabled = false, oauthProviders = {} }: SettingsPageProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
+  const confirm = useConfirm();
 
   const [tab, setTab] = useState<'account' | 'connections' | 'appearance' | 'notifications' | 'about'>('account');
 
@@ -401,7 +403,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   };
 
   const handleDeleteAvatar = async () => {
-    if (!window.confirm(t('settings.deleteAvatarConfirm'))) return;
+    const ok = await confirm({ message: t('settings.deleteAvatarConfirm') });
+    if (!ok) return;
     setAvatarMessage(null);
     setAvatarLoading(true);
 
