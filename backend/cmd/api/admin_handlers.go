@@ -121,6 +121,21 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		rotated.MustChangePassword = false
+
+		if rotated.TotpEnabled {
+			tempToken, terr := auth.Generate2FATempToken(rotated, s.jwtSecret)
+			if terr != nil {
+				log.Printf("handleChangePassword: failed to issue 2FA temp token: %v\n", terr)
+				writeError(w, http.StatusInternalServerError, ErrInternalError)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"totp_required": true,
+				"temp_session":  tempToken,
+			})
+			return
+		}
+
 		accessToken, terr := auth.GenerateAccessToken(rotated, s.jwtSecret)
 		if terr != nil {
 			log.Printf("handleChangePassword: failed to issue rotated token: %v\n", terr)

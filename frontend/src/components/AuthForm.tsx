@@ -185,6 +185,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         throw new Error(translateApiError(data.error_code));
       }
       const data = await response.json();
+      if (data.totp_required && data.temp_session) {
+        setMustChangeSession('');
+        setTotpSession(data.temp_session);
+        setOtpCode('');
+        setOtpError('');
+        return;
+      }
       onAuthSuccess(data.access_token, data.user);
     } catch (err: unknown) {
       setMustChangeError(err instanceof Error ? err.message : t('reset.networkError'));
