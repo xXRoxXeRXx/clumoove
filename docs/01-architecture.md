@@ -159,6 +159,12 @@ and triggers the linked job. Schedules live in the `schedules` table.
   migrations, `RUNNING`/`INDEXING` ⇒ skip (log + advance `next_run_at` for recurring).
 - **Multi-instance safety:** Each schedule is claimed via a Redis `SET NX` lock (`schedule:lock:{id}`,
   2-min TTL), so in a multi-instance deployment only one API instance triggers a given schedule.
+- **Orphaned sync-job recovery:** `scheduler.RunOrphanedSyncJobRecovery` frees sync jobs left in
+  `INDEXING`/`RUNNING` after the API coordinator goroutine dies (restart/crash). Eligibility:
+  `INDEXING` with `updated_at` older than 30 minutes, or `RUNNING` with stale `updated_at` **and** no
+  non-terminal task updated in the last 10 minutes (avoids killing a live transfer). Resets to `IDLE`,
+  sets a recovery `error_message`, advances the active schedule, and claims
+  `sync:orphaned-recovery-lock` (`SET NX`) so only one API replica runs recovery per tick.
 - **Failure handling:** If `triggerJob` errors (e.g. linked task deleted, migration not in `SCHEDULED`
   state), the schedule is **deactivated** to prevent an infinite retry loop.
 

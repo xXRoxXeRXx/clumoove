@@ -301,3 +301,125 @@ func (s *Scheduler) triggerBackup(ctx context.Context, backupJobID string) error
 	log.Printf("[Scheduler] Backup job triggering not yet implemented (job_id=%s)", backupJobID)
 	return nil
 }
+
+// RunOrphanedSyncJobRecovery periodically frees sync jobs whose API-side
+// coordinator goroutine died (deploy, crash, OOM) while status remained
+// INDEXING/RUNNING. Overlap protection then skips every future trigger and the
+// job wedges permanently — workers cannot rescue a stuck parent status.
+//
+// Recovery resets eligible jobs to IDLE, records a recovery error_message, and
+// advances the linked active schedule so the next scheduler tick re-triggers.
+func (s *Scheduler) RunOrphanedSyncJobRecovery(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	// Run once shortly after startup so jobs orphaned by a restart that happened
+	// while passes were in flight are freed without waiting for the first tick.
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+		s.recoverOrphanedSyncJobs(ctx)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.recoverOrphanedSyncJobs(ctx)
+		}
+	}
+}
+
+// recoverOrphanedSyncJobs resets sync jobs that look truly orphaned.
+//
+// Safety rules (avoid killing a healthy live pass):
+//   - INDEXING: job.updated_at stale > 30m (listing should finish well under that;
+//     indexCtx also hard-caps listing at 30m and fails cleanly).
+//   - RUNNING: job.updated_at stale > 30m AND no non-terminal task with
+//     task.updated_at within the last 10m (worker progress refreshes both task
+//     and job updated_at; a live transfer must not be reset).
+//   - Multi-instance: Redis SET NX lock so only one API replica runs recovery.
+func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
+	if s.queue != nil {
+		claimed, err := s.queue.TryClaimOrphanedSyncRecoveryLock(ctx, 4*time.Minute)
+		if err != nil {
+			log.Printf("[OrphanedSyncJobRecovery] Error claiming recovery lock: %v", err)
+			return
+		}
+		if !claimed {
+			return
+		}
+	}
+
+	const recoveryMsg = "Recovered from stale INDEXING/RUNNING (coordinator lost)"
+
+	// (INDEXING AND stale) OR (RUNNING AND stale AND no fresh open work).
+	// Open work matches the engine poll predicate: PENDING/RUNNING, or FAILED
+	// awaiting retry (next_retry_at set).
+	query := `
+		UPDATE sync_jobs sj
+		SET status = 'IDLE',
+		    error_message = $1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE (
+		        sj.status = 'INDEXING'
+		    AND sj.updated_at < NOW() - INTERVAL '30 minutes'
+		  )
+		   OR (
+		        sj.status = 'RUNNING'
+		    AND sj.updated_at < NOW() - INTERVAL '30 minutes'
+		    AND NOT EXISTS (
+		        SELECT 1 FROM tasks t
+		        WHERE t.sync_job_id = sj.id
+		          AND (
+		                t.status IN ('PENDING', 'RUNNING')
+		             OR (t.status = 'FAILED' AND t.next_retry_at IS NOT NULL)
+		          )
+		          AND t.updated_at > NOW() - INTERVAL '10 minutes'
+		    )
+		  )
+		RETURNING sj.id, sj.user_id
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, recoveryMsg)
+	if err != nil {
+		log.Printf("[OrphanedSyncJobRecovery] DB query error: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	type recoveredJob struct {
+		id     string
+		userID string
+	}
+	var recovered []recoveredJob
+	for rows.Next() {
+		var id string
+		var userID sql.NullString
+		if err := rows.Scan(&id, &userID); err != nil {
+			log.Printf("[OrphanedSyncJobRecovery] Scan error: %v", err)
+			continue
+		}
+		recovered = append(recovered, recoveredJob{id: id, userID: userID.String})
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[OrphanedSyncJobRecovery] rows error: %v", err)
+		return
+	}
+
+	for _, job := range recovered {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE schedules SET next_run_at = NOW() WHERE task_type = 'sync' AND task_id = $1 AND is_active = TRUE`,
+			job.id); err != nil {
+			log.Printf("[OrphanedSyncJobRecovery] Error advancing schedule for job %s: %v", job.id, err)
+		}
+		db.WriteAuditLog(s.db, db.AuditEntry{
+			UserID: sql.NullString{String: job.userID, Valid: job.userID != ""},
+			Action: db.AuditSyncRecovered,
+			Target: job.id,
+		})
+		log.Printf("[OrphanedSyncJobRecovery] Recovered orphaned sync job %s (was stuck in INDEXING/RUNNING)", job.id)
+	}
+}

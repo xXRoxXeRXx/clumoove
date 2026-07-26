@@ -161,6 +161,12 @@ func (q *Queue) TryClaimScheduleLock(ctx context.Context, scheduleID string, ttl
 	return q.client.SetNX(ctx, key, "1", ttl).Result()
 }
 
+// TryClaimOrphanedSyncRecoveryLock claims a single-writer lock for orphaned sync-job recovery.
+// In a multi-instance API deployment only one gateway should reset stale jobs per tick.
+func (q *Queue) TryClaimOrphanedSyncRecoveryLock(ctx context.Context, ttl time.Duration) (bool, error) {
+	return q.client.SetNX(ctx, "sync:orphaned-recovery-lock", "1", ttl).Result()
+}
+
 // RegisterActiveWorker registers/refreshes the worker's active status in Redis
 func (q *Queue) RegisterActiveWorker(ctx context.Context, workerID string, ttl time.Duration) error {
 	key := fmt.Sprintf("worker:active:%s", workerID)

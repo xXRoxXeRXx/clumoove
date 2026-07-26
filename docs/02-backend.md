@@ -124,6 +124,7 @@ Redis is used for:
 - `RegisterActiveWorker` / `GetAbandonedWorkerQueues` — liveness heartbeats (TTL 120s).
 - `TryClaimWorkerRecoveryLock` — distributed recovery lock (`worker:recovery-lock:{id}`, `SET NX`).
 - `TryClaimScheduleLock` — schedule trigger lock (`schedule:lock:{id}`, `SET NX`, 2-min TTL).
+- `TryClaimOrphanedSyncRecoveryLock` — orphaned sync-job recovery lock (`sync:orphaned-recovery-lock`, `SET NX`).
 - `PublishCancelEvent` / `SubscribeToCancelEvents` — cancel Pub/Sub with auto-reconnect backoff.
 - `PublishBandwidthChange` / `SubscribeToBandwidthChanges` — bandwidth Pub/Sub with auto-reconnect.
 

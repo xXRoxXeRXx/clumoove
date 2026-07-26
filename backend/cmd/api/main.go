@@ -259,6 +259,7 @@ func main() {
 	sched := scheduler.NewScheduler(database, q, server.indexer)
 	sched.SetSyncEngine(syncEng)
 	go sched.Run(ctx)
+	go sched.RunOrphanedSyncJobRecovery(ctx)
 
 	go func() {
 		log.Printf("API Server listening on port %s\n", port)
