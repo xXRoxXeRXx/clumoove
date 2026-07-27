@@ -623,7 +623,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				if err != nil {
 					if isWebDAVSystemConflict(err) {
 						task.Status = "SKIPPED"
-						task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Skipped calendar/contact entry: %v", err), Valid: true}
+						task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(fmt.Sprintf("Skipped calendar/contact entry: %v", err)), Valid: true}
 						_ = db.UpdateTaskStatus(p.db, task)
 						_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
 						_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
@@ -881,7 +881,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if err != nil {
 		if errors.Is(err, storage.ErrDuplicateUID) || (task.ResourceType != "files" && isWebDAVSystemConflict(err)) {
 			task.Status = "SKIPPED"
-			task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Sabredav/WebDAV: calendar/contact entry skipped (%v)", err), Valid: true}
+			task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(fmt.Sprintf("Sabredav/WebDAV: calendar/contact entry skipped (%v)", err)), Valid: true}
 			_ = db.UpdateTaskStatus(p.db, task)
 			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
 			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
@@ -987,7 +987,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	}
 
 	task.Attempts++
-	task.ErrorMessage = sql.NullString{String: procErr.Error(), Valid: true}
+	task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(procErr.Error()), Valid: true}
 
 	// Check if this error is a network connection loss
 	isConnLoss := isNetworkError(procErr)

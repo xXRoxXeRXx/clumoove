@@ -13,6 +13,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/queue"
+	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
 
@@ -930,6 +931,7 @@ func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 }
 
 func (e *Engine) failSync(id string, errMsg string) {
+	errMsg = sanitize.SanitizeError(errMsg)
 	log.Printf("[SyncEngine] Job %s failed pass: %s\n", id, errMsg)
 	failed, err := db.FailSyncJobPass(e.db, id, errMsg)
 	if err != nil {

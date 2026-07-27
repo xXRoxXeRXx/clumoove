@@ -13,7 +13,6 @@ import (
 	"io"
 	"log"
 	"path"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -25,13 +24,6 @@ import (
 	"backend/internal/storage"
 	"backend/internal/throttle"
 )
-
-// syncErrorRe redacts user:pass@ from error strings before they are persisted.
-var syncErrorRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s:@]+@`)
-
-func sanitizeSyncError(msg string) string {
-	return syncErrorRe.ReplaceAllString(msg, "${1}***:***@")
-}
 
 // processSyncTask handles execution of a single task belonging to a sync job.
 func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload, threadID int) (err error) {
@@ -488,7 +480,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 	}
 
 	task.Attempts++
-	task.ErrorMessage = sql.NullString{String: sanitizeSyncError(procErr.Error()), Valid: true}
+	task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(procErr.Error()), Valid: true}
 
 	isConnLoss := isNetworkError(procErr)
 	if isConnLoss {
