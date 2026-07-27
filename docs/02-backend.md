@@ -146,6 +146,9 @@ Redis is used for:
 1. Recovers any abandoned tasks on startup.
 2. Spawns background schedulers: `RunWorkerLiveness`, `RunRetryScheduler`, `RunConnectionRecoveryScheduler`,
    `RunOrphanedRunningTasksRecovery`, `RunCompletionNotifier`.
+   On recovered sync connectivity, the worker atomically moves the job from
+   `PAUSED_CONNECTION_LOSS` to `IDLE` and sets its active schedule's `next_run_at` to `NOW()`;
+   it never starts a sync-pass coordinator itself.
 3. Subscribes to cancel & bandwidth events (cancel invokes `activeTaskInfo.cancel()`; bandwidth updates
    the per-migration throttler).
 4. Spawns `maxThreads` worker goroutines (default 16, overridden by `MAX_THREADS`) that loop over
@@ -208,7 +211,12 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 - `processSchedule` applies overlap protection (`isJobActive`: `RUNNING`/`INDEXING`), triggers the job,
   then advances `next_run_at` (recurring) or deactivates (one-shot / trigger failure).
 - `triggerMigration` verifies `SCHEDULED` state and delegates to the shared `indexer.Start` in a
-  goroutine (indexing can take up to 20 min). Sync/backup triggers are placeholders for future work.
+  goroutine (indexing can take up to 20 min). `triggerSync` atomically claims an `IDLE`/`FAILED`
+  job and starts the sync-pass coordinator; it is the exclusive starter, including after worker
+  connection recovery. Backup triggers remain placeholders for future work.
+- **Operations note:** connection recovery is detected by workers every 60 seconds; the API scheduler
+  polls due schedules every minute. A recovered sync pass can therefore begin up to roughly one API
+  scheduler interval after detection, plus normal claiming/indexing time.
 
 ---
 

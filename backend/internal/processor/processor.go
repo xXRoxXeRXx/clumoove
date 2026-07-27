@@ -51,9 +51,6 @@ type Processor struct {
 	activeTasks  sync.Map
 	refreshLocks sync.Map
 	throttlers   sync.Map
-	// syncEngine is used by recoverPausedSyncJobs to trigger a new sync pass
-	// after connection is restored. Set via SetSyncEngine after construction.
-	syncEngine syncEngineInterface
 	// connLossCounts tracks consecutive connection-loss events per migration so
 	// a single flaky task does not immediately pause the whole migration (P1-4).
 	connLossCounts sync.Map
@@ -109,19 +106,6 @@ func (p *Processor) getOrCreateProvider(ctx context.Context, key, providerType, 
 	}
 
 	return client, func() {}, nil
-}
-
-// syncEngineInterface is a minimal interface so the processor package does not
-// import the concrete sync package (avoiding an import cycle).
-type syncEngineInterface interface {
-	ResumePausedSyncPass(ctx context.Context, syncJobID string) (bool, error)
-}
-
-// SetSyncEngine wires the sync engine into the processor so that
-// recoverPausedSyncJobs can trigger a new sync pass after restoring
-// a lost connection.
-func (p *Processor) SetSyncEngine(e syncEngineInterface) {
-	p.syncEngine = e
 }
 
 // SetDBConnStr sets the PostgreSQL DSN used to open a dedicated LISTEN

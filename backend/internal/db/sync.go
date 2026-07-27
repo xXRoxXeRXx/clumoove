@@ -385,21 +385,39 @@ func ReleaseUnstartedSyncPass(database *sql.DB, id string) (bool, error) {
 	return true, nil
 }
 
-// ClaimPausedSyncJobPass atomically resumes a connection-loss-paused sync job.
-// It is intentionally separate from ClaimSyncJobPass so an explicitly paused
-// job cannot be started by the recovery scheduler.
-func ClaimPausedSyncJobPass(database *sql.DB, id string) (bool, error) {
-	var claimedID string
-	err := database.QueryRow(`
+// RecoverConnectionLostSyncJob atomically releases a connection-loss-paused
+// sync job and makes its active schedule due now. Workers intentionally do
+// not start a pass: the API scheduler is the sole sync-pass coordinator.
+func RecoverConnectionLostSyncJob(database *sql.DB, ctx context.Context, id string) (bool, error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
 		UPDATE sync_jobs
-		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
+		SET status = 'IDLE', updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status = 'PAUSED_CONNECTION_LOSS'
-		RETURNING id
-	`, id).Scan(&claimedID)
-	if errors.Is(err, sql.ErrNoRows) {
+	`, id)
+	if err != nil {
+		return false, err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if updated == 0 {
 		return false, nil
 	}
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE schedules
+		SET next_run_at = NOW()
+		WHERE task_type = 'sync' AND task_id = $1 AND is_active = TRUE
+	`, id); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
 		return false, err
 	}
 	return true, nil

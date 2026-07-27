@@ -116,6 +116,9 @@ File-scoped commands referenced in `AGENTS.md`:
   `next_run_at` via `NextRun(cron_expression)`. Sync jobs leave it NULL and advance by their persisted
   `interval_minutes`, which supports intervals greater than 59 minutes.
 - Multi-instance safety: claim each schedule with a Redis `SET NX` lock (`schedule:lock:{id}`, 2-min TTL).
+- Workers recovering a connection-loss-paused sync job only set it to `IDLE` and make its active schedule
+  due; the API scheduler is the sole sync-pass starter. Recovery detection runs every 60 seconds and the
+  API scheduler polls every minute, so a recovered pass may wait up to one scheduler interval to start.
 
 ### API responses
 - Use `writeJSON(w, status, data)` for all JSON responses.

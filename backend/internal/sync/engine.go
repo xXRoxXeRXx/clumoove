@@ -74,16 +74,6 @@ func (e *Engine) StartSyncPass(serverCtx context.Context, syncJobID string) (boo
 	return true, nil
 }
 
-// ResumePausedSyncPass claims a connection-loss-paused job and starts its pass.
-func (e *Engine) ResumePausedSyncPass(serverCtx context.Context, syncJobID string) (bool, error) {
-	claimed, err := db.ClaimPausedSyncJobPass(e.db, syncJobID)
-	if err != nil || !claimed {
-		return claimed, err
-	}
-	go e.runSyncPass(serverCtx, syncJobID)
-	return true, nil
-}
-
 // WaitForPassDrain serializes a manual resume with a cancelled predecessor on
 // every API instance. A PostgreSQL advisory lock is used rather than a local
 // mutex because the predecessor may be running in another process.

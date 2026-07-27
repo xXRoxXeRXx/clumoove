@@ -12,7 +12,6 @@ import (
 	"backend/internal/oauth"
 	"backend/internal/processor"
 	"backend/internal/queue"
-	appSync "backend/internal/sync"
 )
 
 func main() {
@@ -63,18 +62,14 @@ func main() {
 	}
 	workerID := fmt.Sprintf("worker-%s-%d", hostname, os.Getpid())
 
-	// Create processor and sync engine, then wire them together so the
-	// connection-recovery scheduler can trigger a new sync pass.
+	// The worker only processes queued tasks. Sync-pass coordinators are owned
+	// by API instances and started exclusively by the API scheduler.
 	proc := processor.NewProcessor(database, q, workerID, encryptionKey)
 	proc.SetDBConnStr(dbURL) // Enable pg_notify-based wake-up for idle worker threads
-	syncEng := appSync.NewEngine(database, q, encryptionKey)
-	proc.SetSyncEngine(syncEng)
 
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go syncEng.SubscribeToCancelEvents(ctx)
-
 	// Wait for termination signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
