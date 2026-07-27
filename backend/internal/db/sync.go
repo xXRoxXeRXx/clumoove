@@ -218,6 +218,45 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	return err
 }
 
+// TransitionSyncJobToRunning atomically starts task processing for an indexed
+// pass. It prevents a superseded INDEXING pass from reviving another status.
+func TransitionSyncJobToRunning(db *sql.DB, id string) (bool, error) {
+	var transitionedID string
+	err := db.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'INDEXING'
+		RETURNING id
+	`, id).Scan(&transitionedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// TransitionSyncJobToVerifying atomically hands an active pass to checksum
+// verification. It must only transition from RUNNING so a task-worker failure
+// cannot be revived as VERIFYING.
+func TransitionSyncJobToVerifying(db *sql.DB, id string) (bool, error) {
+	var transitionedID string
+	err := db.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'VERIFYING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'RUNNING'
+		RETURNING id
+	`, id).Scan(&transitionedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ClaimSyncJobPass atomically reserves a manually runnable sync job for a new
 // pass. A successful claim moves the job to INDEXING before its pass starts.
 func ClaimSyncJobPass(database *sql.DB, id string) (bool, error) {
@@ -299,6 +338,72 @@ func UpdateSyncJobRunStats(db *sql.DB, id string, lastRunStatus string, errMsg *
 	`
 	_, err := db.Exec(query, lastRunStatus, errVal, total, processed, changed, deleted, failed, id)
 	return err
+}
+
+// FinalizeSyncJobPass records a completed pass and returns the job to IDLE only
+// when the engine still owns an active pass. INDEXING is included for an empty
+// pass, which has no task-processing transition to RUNNING. A task worker can concurrently set
+// a job to FAILED or PAUSED_* (for example, after an authentication failure);
+// this conditional update must not overwrite that terminal/interrupted state.
+// The returned bool is false when the job was not in a completable state.
+func FinalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
+	var errVal sql.NullString
+	if errMsg != nil {
+		errVal = sql.NullString{String: *errMsg, Valid: true}
+	}
+
+	var finalizedID string
+	err := db.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'IDLE',
+		    last_run_status = $1,
+		    error_message = $2,
+		    last_run_at = CURRENT_TIMESTAMP,
+		    total_files = $3,
+		    processed_files = $4,
+		    changed_files = $5,
+		    deleted_files = $6,
+		    failed_files = $7,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $8 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING')
+		RETURNING id
+	`, lastRunStatus, errVal, total, processed, changed, deleted, failed, id).Scan(&finalizedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// FailSyncJobPass records an engine failure without overwriting a concurrent
+// FAILED or PAUSED_* decision made elsewhere. Engine indexing failures remain
+// FAILED so the UI exposes the hard failure until a later pass claims the job.
+func FailSyncJobPass(db *sql.DB, id string, errMsg string) (bool, error) {
+	var failedID string
+	err := db.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'FAILED',
+		    last_run_status = 'FAILED',
+		    error_message = $1,
+		    last_run_at = CURRENT_TIMESTAMP,
+		    total_files = 0,
+		    processed_files = 0,
+		    changed_files = 0,
+		    deleted_files = 0,
+		    failed_files = 0,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING')
+		RETURNING id
+	`, errMsg, id).Scan(&failedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ListActiveSyncJobs lists sync jobs that are active (running or indexing) or enabled (idle)

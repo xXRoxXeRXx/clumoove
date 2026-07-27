@@ -373,11 +373,14 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		MarkAllVerified: func(ctx context.Context) error {
 			return db.MarkAllSyncTasksVerified(p.db, ctx, syncJobID)
 		},
-		OnVerified: func(task *db.Task, targetPath string, targetHash string) {
-			_ = db.UpdateSyncStateTargetHash(p.db, ctx, syncJobID, targetPath, targetHash)
-		},
+		// The engine applies all durable sync-state changes after it owns the
+		// successful finalization, so verification itself only changes tasks.
+		OnVerified: nil,
 		ReconcileProgress: func() error {
-			return db.UpdateSyncJobStatus(p.db, syncJobID, "IDLE", nil)
+			// The sync engine owns the pass lifecycle and writes the final stats.
+			// The verifier only marks task checksums; changing status here can race
+			// the engine and leave an IDLE job without a completed-run record.
+			return nil
 		},
 	}
 

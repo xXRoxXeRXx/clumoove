@@ -587,9 +587,16 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 
 	if totalCreatedTasks == 0 {
 		// No transfers needed: update stats immediately and complete run
-		_ = db.UpdateSyncJobRunStats(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
+		finalized, err := db.FinalizeSyncJobPass(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
+		if err != nil {
+			log.Printf("[SyncEngine] Failed to finalize empty sync pass for job %s: %v\n", syncJobID, err)
+			return
+		}
+		if !finalized {
+			log.Printf("[SyncEngine] Not finalizing empty sync pass for job %s; status changed during execution\n", syncJobID)
+			return
+		}
 		e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, nil)
-		_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
 		return
 	}
 
@@ -626,9 +633,13 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	_ = db.UpdateSyncJobTotals(e.db, job.ID, totalCreatedTasks, totalBytes)
 
 	// Transition to RUNNING
-	err = db.UpdateSyncJobStatus(e.db, job.ID, "RUNNING", nil)
+	running, err := db.TransitionSyncJobToRunning(e.db, job.ID)
 	if err != nil {
 		log.Printf("[SyncEngine] Failed to set RUNNING status for job %s: %v\n", syncJobID, err)
+		return
+	}
+	if !running {
+		log.Printf("[SyncEngine] Not starting task processing for job %s; status changed during indexing\n", syncJobID)
 		return
 	}
 	// Wake idle worker threads only after the queue predicate permits them to
@@ -674,7 +685,15 @@ SyncTasksDone:
 	_ = e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID).Scan(&unverifiedCount)
 	if unverifiedCount > 0 {
 		log.Printf("[SyncEngine] Transitioning job %s to VERIFYING status (%d unverified tasks)...\n", syncJobID, unverifiedCount)
-		_ = db.UpdateSyncJobStatus(e.db, job.ID, "VERIFYING", nil)
+		verifying, err := db.TransitionSyncJobToVerifying(e.db, job.ID)
+		if err != nil {
+			log.Printf("[SyncEngine] Failed to set VERIFYING status for job %s: %v\n", syncJobID, err)
+			return
+		}
+		if !verifying {
+			log.Printf("[SyncEngine] Not verifying job %s; status changed during task completion\n", syncJobID)
+			return
+		}
 
 		verifyTimeout := time.After(2 * time.Minute)
 		verifyTicker := time.NewTicker(1 * time.Second)
@@ -696,6 +715,19 @@ SyncTasksDone:
 			}
 		}
 		verifyTicker.Stop()
+	}
+
+	// A task worker may have stopped this pass while the engine was polling or
+	// verifying (for example after an authentication failure). Do not derive
+	// outcomes or update sync state for an interrupted pass.
+	currentJob, err := db.GetSyncJob(e.db, job.ID)
+	if err != nil {
+		log.Printf("[SyncEngine] Failed to read final status for job %s: %v\n", syncJobID, err)
+		return
+	}
+	if currentJob.Status != "RUNNING" && currentJob.Status != "VERIFYING" {
+		log.Printf("[SyncEngine] Stopping completion for job %s; current status is %s\n", syncJobID, currentJob.Status)
+		return
 	}
 
 	log.Printf("[SyncEngine] Writing outcomes for job %s...\n", syncJobID)
@@ -729,9 +761,6 @@ SyncTasksDone:
 			}
 		}
 	}
-
-	// Update persistent states
-	e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, taskOutcomes)
 
 	// Determine final outcome status
 	finalRunStatus := "SUCCESS"
@@ -769,9 +798,23 @@ SyncTasksDone:
 		}
 	}
 
-	// Persist run stats and set overall status to IDLE (waiting for next run)
-	_ = db.UpdateSyncJobRunStats(e.db, job.ID, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed)
-	_ = db.UpdateSyncJobStatus(e.db, job.ID, "IDLE", nil)
+	// Persist the run outcome and return to IDLE only if this engine still owns
+	// an active pass. In particular, do not overwrite a FAILED/PAUSED_* state
+	// written by a task worker after an auth or connection failure.
+	finalized, err := db.FinalizeSyncJobPass(e.db, job.ID, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed)
+	if err != nil {
+		log.Printf("[SyncEngine] Failed to finalize job %s: %v\n", syncJobID, err)
+		return
+	}
+	if !finalized {
+		log.Printf("[SyncEngine] Not finalizing job %s; status changed during execution\n", syncJobID)
+		return
+	}
+
+	// Apply durable sync state only after the lifecycle CAS succeeds. A late
+	// task-worker failure must leave both the job status and its delta state
+	// untouched so the next pass can retry correctly.
+	e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, taskOutcomes)
 
 	auditAction := db.AuditSyncCompleted
 	if finalRunStatus == "FAILED" {
@@ -817,8 +860,15 @@ func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 
 func (e *Engine) failSync(id string, errMsg string) {
 	log.Printf("[SyncEngine] Job %s failed pass: %s\n", id, errMsg)
-	_ = db.UpdateSyncJobRunStats(e.db, id, "FAILED", &errMsg, 0, 0, 0, 0, 0)
-	_ = db.UpdateSyncJobStatus(e.db, id, "IDLE", &errMsg)
+	failed, err := db.FailSyncJobPass(e.db, id, errMsg)
+	if err != nil {
+		log.Printf("[SyncEngine] Failed to record failed pass for job %s: %v\n", id, err)
+		return
+	}
+	if !failed {
+		log.Printf("[SyncEngine] Not recording failed pass for job %s; status changed during execution\n", id)
+		return
+	}
 	if ownerID, err := db.GetSyncJobOwnerID(e.db, id); err == nil {
 		db.WriteAuditLog(e.db, db.AuditEntry{
 			UserID: sql.NullString{String: ownerID, Valid: ownerID != ""},
