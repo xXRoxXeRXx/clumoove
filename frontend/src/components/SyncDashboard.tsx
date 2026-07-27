@@ -260,7 +260,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         {/* Top Badges Row (Above Title & Action Buttons) */}
         <div className="flex items-center justify-end gap-2.5 pb-2">
           {/* Status Info Badge */}
-          <StatusBadge status={job.status} context="sync" />
+          <StatusBadge status={job.status} />
 
           {/* Direction Info Badge (rechtsbündig) */}
           {job.direction === 'two_way' ? (

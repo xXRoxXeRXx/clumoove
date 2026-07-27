@@ -291,8 +291,8 @@
   },
   "migrations": {
     "tagline": "So einfach war Datenumzug noch nie.",
-    "welcome": "Hallo, {{name}}",
-    "welcomeSub": "Verwalte und überwache deine Datenübertragungen zwischen verschiedenen Cloud-Systemen live an einem Ort.",
+      "welcome": "Hallo {{name}},",
+      "welcomeSub": "verwalte und überwache deine Datenübertragungen zwischen verschiedenen Cloud-Systemen live an einem Ort.",
     "newMigration": "Neue Übertragung",
     "dataTransferred": "Daten übertragen",
     "migrations": "Übertragungen",

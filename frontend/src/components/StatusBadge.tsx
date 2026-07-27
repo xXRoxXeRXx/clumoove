@@ -45,11 +45,9 @@ function Badge({
 export function StatusBadge({
   status,
   size = 'md',
-  context = 'migration',
 }: {
   status: string;
   size?: 'sm' | 'md';
-  context?: 'migration' | 'sync';
 }) {
   const { t } = useTranslation();
   const iconCls = size === 'sm' ? 'w-3.5 h-3.5' : 'w-3.5 h-3.5';
@@ -108,16 +106,8 @@ export function StatusBadge({
           size={size}
           variant="warning"
           pulse
-          icon={
-            context === 'sync' ? (
-              <AlertTriangle className={iconMd} />
-            ) : (
-              <Pause className={iconMd} />
-            )
-          }
-          label={
-            context === 'sync' ? t('dashboard.eta.waitingConn') : t('status.paused')
-          }
+          icon={<Pause className={iconMd} />}
+          label={t('status.paused')}
         />
       );
     case 'CANCELLED':
@@ -136,7 +126,7 @@ export function StatusBadge({
           variant="info"
           pulse
           icon={<Loader2 className={`${iconCls} animate-spin`} />}
-          label={context === 'sync' ? t('status.active') : t('status.transfer')}
+          label={t('status.transfer')}
         />
       );
     case 'INDEXING':
