@@ -136,8 +136,8 @@ func (p *ImmichProvider) search(ctx context.Context, albumID string) ([]immichAs
 		}
 		var out struct {
 			Assets struct {
-				Items    []immichAsset `json:"items"`
-				NextPage *int          `json:"nextPage"`
+				Items    []immichAsset   `json:"items"`
+				NextPage json.RawMessage `json:"nextPage"`
 			} `json:"assets"`
 		}
 		err = json.NewDecoder(r.Body).Decode(&out)
@@ -150,7 +150,7 @@ func (p *ImmichProvider) search(ctx context.Context, albumID string) ([]immichAs
 				all = append(all, a)
 			}
 		}
-		if out.Assets.NextPage == nil || len(out.Assets.Items) == 0 {
+		if len(out.Assets.NextPage) == 0 || string(out.Assets.NextPage) == "null" || string(out.Assets.NextPage) == `""` || len(out.Assets.Items) == 0 {
 			return all, nil
 		}
 	}
@@ -218,7 +218,7 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 	}
 	var albumID string
 	all := dir == "/All Assets"
-	if !all && strings.HasPrefix(dir, "/Albums/") {
+	if !all && strings.HasPrefix(dir, "/Albums/") && len(strings.Split(strings.Trim(dir, "/"), "/")) == 2 {
 		albumID = path.Base(dir)
 	} else {
 		return nil, fmt.Errorf("invalid Immich virtual path")

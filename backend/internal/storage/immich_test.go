@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -74,5 +75,49 @@ func TestImmichJSONRequestsAndAlbumCache(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&albumLists); got != 1 {
 		t.Errorf("album list requests = %d, want 1", got)
+	}
+}
+
+func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
+	var pages int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/search/metadata" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			return
+		}
+		atomic.AddInt32(&pages, 1)
+		var request struct {
+			Page int `json:"page"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Page == 1 {
+			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-1","originalFileName":"one.jpg"}],"nextPage":"2"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-2","originalFileName":"two.jpg"}],"nextPage":null}}`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
+	assets, err := p.search(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) != 2 {
+		t.Errorf("assets = %d, want 2", len(assets))
+	}
+	if got := atomic.LoadInt32(&pages); got != 2 {
+		t.Errorf("search requests = %d, want 2", got)
+	}
+}
+
+func TestImmichAssetVirtualPathIsNotDirectory(t *testing.T) {
+	p := &ImmichProvider{albums: map[string]string{}, albumIDs: map[string]string{}}
+	if _, err := p.GetDirectoryListing(context.Background(), "files", "/All Assets/asset-1"); err == nil {
+		t.Error("GetDirectoryListing() unexpectedly accepted an All Assets asset path")
+	}
+	if _, err := p.GetDirectoryListing(context.Background(), "files", "/Albums/album-1/asset-1"); err == nil {
+		t.Error("GetDirectoryListing() unexpectedly accepted an album asset path")
 	}
 }
