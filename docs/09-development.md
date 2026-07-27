@@ -69,6 +69,18 @@ File-scoped commands referenced in `AGENTS.md`:
 
 ## 3. Conventions
 
+### Commit messages
+- Use Conventional Commits: `<type>(<optional scope>): <description>`.
+- Allowed types: `feat` (user-visible feature), `fix` (bug fix), `refactor` (restructure without
+  behaviour change), `perf` (performance-focused refactor), `style` (formatting only), `test`, `docs`,
+  `build`, `ops` (infrastructure/deployment/CI), and `chore` (maintenance).
+- Descriptions are mandatory, concise, lowercase, and imperative present tense; do not end them with a
+  period. Example: `fix(api): validate migration ownership`.
+- Scopes are optional contextual information; do not use issue identifiers as scopes. Put issue
+  references in the optional footer instead.
+- Mark breaking changes with `!` before the colon and document them with a `BREAKING CHANGE:` footer.
+- Keep Git's default messages for merge and revert commits.
+
 ### Database
 - All schema changes go into `db/schema.sql` **and** as an inline `CREATE/ALTER` statement in
   `InitDB()` for automatic startup migration.

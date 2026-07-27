@@ -11,6 +11,13 @@
 | TS Typecheck | `(cd frontend && npx tsc --noEmit --project tsconfig.app.json)` |
 | JS/TS Lint | `(cd frontend && npx eslint src)` |
 
+## Commit Messages
+- Use Conventional Commits: `<type>(<optional scope>): <description>`.
+- Allowed types: `feat`, `fix`, `refactor`, `perf`, `style`, `test`, `docs`, `build`, `ops`, `chore`.
+- Write the description in lowercase imperative present tense, without a trailing period (for example, `fix(api): validate migration ownership`).
+- Use `!` before `:` for breaking changes and include a `BREAKING CHANGE:` footer. Use scopes for context, never issue IDs.
+- Use the default Git messages for merge and revert commits.
+
 ## Architecture Overview
 - **Two Go entrypoints**: `cmd/api` (HTTP API gateway) and `cmd/worker` (migration engine). Both share the same module `backend/`.
 - **Queue**: PostgreSQL-native via `SELECT … FOR UPDATE SKIP LOCKED` in `queue.DequeueSQL()`: migrations dequeue in `RUNNING`/`INDEXING`; sync jobs dequeue only in `RUNNING` (their `INDEXING` phase builds a fresh delta). Redis is used **only** for worker-liveness heartbeats and distributed recovery locks (`SET NX`).
