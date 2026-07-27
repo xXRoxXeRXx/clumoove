@@ -11,7 +11,7 @@ import (
 // request-time whitelist checks (e.g. main.go handleConnect), so adding a
 // provider only requires updating the switch — not every call site.
 var ValidProviders = []string{
-	"nextcloud", "webdav", "dropbox", "google", "hidrive", "smb", "s3", "sftp", "magentacloud", "local",
+	"nextcloud", "webdav", "dropbox", "google", "hidrive", "smb", "s3", "sftp", "magentacloud", "local", "immich",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
@@ -33,6 +33,7 @@ var hostBasedProviders = map[string]bool{
 	"smb":       true,
 	"sftp":      true,
 	"s3":        true,
+	"immich":    true,
 }
 
 // ValidateProviderURL verifies that a provider which needs a host actually has a
@@ -73,7 +74,7 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	// when MIGRATION_BLOCK_PRIVATE is set) for providers that connect to a
 	// user-supplied host.
 	if providerType == "nextcloud" || providerType == "webdav" ||
-		providerType == "smb" || providerType == "sftp" {
+		providerType == "smb" || providerType == "sftp" || providerType == "immich" {
 		if err := validateEgressURL(urlStr); err != nil {
 			return nil, err
 		}
@@ -104,8 +105,9 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 		return NewLocalProvider()
 	case "sftp":
 		return NewSFTPProvider(urlStr, username, password)
+	case "immich":
+		return NewImmichProvider(urlStr, password)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", providerType)
 	}
 }
-

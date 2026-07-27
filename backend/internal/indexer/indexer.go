@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"backend/internal/crypto"
@@ -124,7 +126,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			// Emit a mkdir task for the root selected directory itself (unless it
 			// is the root "/", which every provider already has). This ensures
 			// the directory is created on the target even when it is empty.
-			if p != "/" {
+			if p != "/" && mig.TargetProvider != "immich" {
 				dirKey := fmt.Sprintf("dir:files:%s", p)
 				if !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
@@ -144,23 +146,28 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 					totalDirs++
 				}
 			}
-			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
+			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
 				return
 			}
 		} else {
 			// Single file
-			key := fmt.Sprintf("files:%s", p)
+			if mig.TargetProvider == "immich" && !isImmichMedia(res.Name) {
+				indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: "unsupported Immich media extension: " + path.Ext(res.Name)})
+				continue
+			}
+			key := resourceIndexKey("files", p, res.Metadata)
 			if indexedPaths[key] {
 				continue
 			}
 			indexedPaths[key] = true
 			hashVal := res.Hash
-			metaJSON, err := json.Marshal(storage.FileMetadata{
-				ModifiedTime: res.LastModified,
-				Description:  res.Metadata.Description,
-			})
+			meta := res.Metadata
+			if meta.ModifiedTime.IsZero() {
+				meta.ModifiedTime = res.LastModified
+			}
+			metaJSON, err := json.Marshal(meta)
 			if err != nil {
 				metaJSON = []byte("{}")
 			}
@@ -207,7 +214,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				totalDirs++
 			}
 		}
-		err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
+		err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
 			return
@@ -239,7 +246,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				totalDirs++
 			}
 		}
-		err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
+		err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 		if err != nil {
 			failMigration(idx.db, migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
 			return
@@ -351,13 +358,14 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 	}
 	return tokenResp.AccessToken, nil
 }
+
 //
 // Resilient indexing: a failure to list a single folder (e.g. a slow/stalled
 // WebDAV PROPFIND that hits the per-request timeout) is recorded in indexErrors
 // and skipped, so the rest of the tree keeps being indexed instead of aborting
 // the whole migration. If the overall indexing context is cancelled (deadline or
 // shutdown) traversal stops gracefully after recording a single interrupted error.
-func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
+func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	queue := []string{startPath}
 	visited := make(map[string]bool)
 	visited[startPath] = true
@@ -416,7 +424,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 				// Emit a mkdir task for every sub-directory encountered so that
 				// empty directories (no files inside) are created on the target.
 				dirKey := fmt.Sprintf("dir:%s:%s", resourceType, file.Path)
-				if !indexedPaths[dirKey] {
+				if targetProvider != "immich" && !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
 					mkdirMeta, _ := json.Marshal(map[string]interface{}{"action": "mkdir"})
 					taskBatch = append(taskBatch, &db.Task{
@@ -437,15 +445,20 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					queue = append(queue, file.Path)
 				}
 			} else {
-				key := fmt.Sprintf("%s:%s", resourceType, file.Path)
+				if targetProvider == "immich" && resourceType == "files" && !isImmichMedia(file.Name) {
+					*indexErrors = append(*indexErrors, db.IndexingErrorInput{Path: file.Path, ResourceType: resourceType, ErrorMessage: "unsupported Immich media extension: " + path.Ext(file.Name)})
+					continue
+				}
+				key := resourceIndexKey(resourceType, file.Path, file.Metadata)
 				if indexedPaths[key] {
 					continue
 				}
 				indexedPaths[key] = true
-				metaJSON, err := json.Marshal(storage.FileMetadata{
-					ModifiedTime: file.LastModified,
-					Description:  file.Metadata.Description,
-				})
+				meta := file.Metadata
+				if meta.ModifiedTime.IsZero() {
+					meta.ModifiedTime = file.LastModified
+				}
+				metaJSON, err := json.Marshal(meta)
 				if err != nil {
 					metaJSON = []byte("{}")
 				}
@@ -468,6 +481,26 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 		}
 	}
 	return nil
+}
+
+// resourceIndexKey prevents Immich's All Assets and album virtual paths from
+// producing duplicate tasks for the same stable asset UUID.
+func resourceIndexKey(resourceType, filePath string, meta storage.FileMetadata) string {
+	if id := meta.CustomProps["immich_asset_id"]; id != "" {
+		return resourceType + ":immich:" + id
+	}
+	return fmt.Sprintf("%s:%s", resourceType, filePath)
+}
+
+// Immich accepts media formats supported by its current MIME registry, including
+// common RAW camera formats, but intentionally excludes sidecars and documents.
+func isImmichMedia(name string) bool {
+	ext := strings.ToLower(strings.TrimPrefix(path.Ext(name), "."))
+	switch ext {
+	case "3fr", "3g2", "3gp", "ari", "arw", "avif", "avi", "bay", "bmp", "cap", "cine", "cr2", "cr3", "crw", "dcr", "dcs", "dng", "drf", "eip", "erf", "fff", "flv", "gif", "heic", "heif", "iiq", "jpeg", "jpg", "k25", "kdc", "m4v", "mef", "mjpeg", "mkv", "mos", "mov", "mp4", "mpeg", "mpg", "mrw", "nef", "nrw", "orf", "ori", "pef", "png", "ptx", "pxn", "raf", "raw", "rwl", "rw2", "r3d", "sr2", "srf", "srw", "tif", "tiff", "vob", "webm", "webp", "wmv", "x3f":
+		return true
+	}
+	return false
 }
 
 // indexingTimeout returns the maximum allowed duration for a single indexing run.

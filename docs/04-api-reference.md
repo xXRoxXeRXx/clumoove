@@ -17,6 +17,8 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 - `JWT` — requires `Authorization: Bearer <access_token>`.
 - `admin` — JWT + `role == ADMIN` (enforced inside the handler).
 
+Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`.
+
 ---
 
 ## 1. Authentication
