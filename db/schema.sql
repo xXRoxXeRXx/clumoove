@@ -283,6 +283,7 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
     delete_propagation BOOLEAN NOT NULL DEFAULT FALSE,
     interval_minutes INT NOT NULL DEFAULT 15,
     threads INT NOT NULL DEFAULT 8,
+    bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'IDLE',
     target_dir TEXT NOT NULL DEFAULT '/',
     selected_paths JSONB,

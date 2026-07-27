@@ -134,7 +134,7 @@ Redis is used for:
 - `TryClaimScheduleLock` — schedule trigger lock (`schedule:lock:{id}`, `SET NX`, 2-min TTL).
 - `TryClaimOrphanedSyncRecoveryLock` — orphaned sync-job recovery lock (`sync:orphaned-recovery-lock`, `SET NX`).
 - `PublishCancelEvent` / `SubscribeToCancelEvents` — cancel Pub/Sub with auto-reconnect backoff.
-- `PublishBandwidthChange` / `SubscribeToBandwidthChanges` — bandwidth Pub/Sub with auto-reconnect.
+- `PublishBandwidthChange` / `SubscribeToBandwidthChanges` — migration and sync-job bandwidth Pub/Sub with auto-reconnect.
 
 `NewQueue` **rejects empty or known-default passwords** (`redis_secret`, `dev_redis_secure_pass_999`).
 
@@ -151,7 +151,7 @@ Redis is used for:
    `PAUSED_CONNECTION_LOSS` to `IDLE` and sets its active schedule's `next_run_at` to `NOW()`;
    it never starts a sync-pass coordinator itself.
 3. Subscribes to cancel & bandwidth events (cancel invokes `activeTaskInfo.cancel()`; bandwidth updates
-   the per-migration throttler).
+   the per-migration or per-sync-job throttler).
 4. Spawns `maxThreads` worker goroutines (default 16, overridden by `MAX_THREADS`) that loop over
    `DequeueSQL` and call `processTask`.
 

@@ -32,6 +32,7 @@ type SyncJob struct {
 	DeletePropagation           bool           `json:"delete_propagation"`
 	IntervalMinutes             int            `json:"interval_minutes"`
 	Threads                     int            `json:"threads"`
+	BandwidthLimitMbps          int            `json:"bandwidth_limit_mbps"`
 	Status                      string         `json:"status"` // IDLE, INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
 	TargetDir                   string         `json:"target_dir"`
 	SelectedPaths               StringArray    `json:"selected_paths,omitempty"`
@@ -97,9 +98,9 @@ const createSyncJobQuery = `
 			target_url, target_username, target_password_encrypted,
 			target_refresh_token_encrypted, target_token_expires_at,
 			source_provider, target_provider, direction, conflict_strategy,
-			delete_propagation, interval_minutes, threads, status, target_dir,
+			delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 			selected_paths
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -120,7 +121,7 @@ func insertSyncJob(database queryExecer, s *SyncJob) error {
 		s.TargetURL, s.TargetUsername, s.TargetPasswordEncrypted,
 		s.TargetRefreshTokenEncrypted, s.TargetTokenExpiresAt,
 		s.SourceProvider, s.TargetProvider, s.Direction, s.ConflictStrategy,
-		s.DeletePropagation, s.IntervalMinutes, s.Threads, s.Status, s.TargetDir,
+		s.DeletePropagation, s.IntervalMinutes, s.Threads, s.BandwidthLimitMbps, s.Status, s.TargetDir,
 		s.SelectedPaths,
 	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
 }
@@ -176,7 +177,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		       target_url, target_username, target_password_encrypted,
 		       target_refresh_token_encrypted, target_token_expires_at,
 		       source_provider, target_provider, direction, conflict_strategy,
-		       delete_propagation, interval_minutes, threads, status, target_dir,
+		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
@@ -189,7 +190,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
 		&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt,
 		&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
-		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.Status, &s.TargetDir,
+		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.TargetDir,
 		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
 		&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 		&s.CreatedAt, &s.UpdatedAt,
@@ -218,7 +219,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, direction, conflict_strategy,
-		       delete_propagation, interval_minutes, threads, status, target_dir,
+		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
@@ -238,7 +239,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 		err := rows.Scan(
 			&s.ID, &s.UserID, &s.SourceURL, &s.SourceUsername, &s.SourceProvider,
 			&s.TargetURL, &s.TargetUsername, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
-			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.Status, &s.TargetDir,
+			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.TargetDir,
 			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
 			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 			&s.CreatedAt, &s.UpdatedAt,
@@ -264,6 +265,27 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	`
 	_, err := db.Exec(query, status, errVal, id)
 	return err
+}
+
+// UpdateSyncJobBandwidthLimit persists a sync job's transfer limit in Mbps.
+// A zero value means unlimited.
+func UpdateSyncJobBandwidthLimit(db *sql.DB, id string, limitMbps int) error {
+	result, err := db.Exec(`
+		UPDATE sync_jobs
+		SET bandwidth_limit_mbps = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`, limitMbps, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // PauseSyncJob atomically pauses an active job, or an idle job whose schedule

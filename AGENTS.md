@@ -106,7 +106,7 @@
 - **Backend delivery catalog**: E-mail and notification text lives under `delivery.*` in the frontend locale files. Docker build stages regenerate the checked-in Go catalog automatically before compiling; run `(cd backend && go generate ./internal/i18n)` only before a direct local `go build`.
 
 ### Threads & Parallelism
-- `threads` per migration is capped at 1–16 in `handleStart`. The worker respects this via the SQL dequeue query (`COUNT(*) < m.threads`).
+- `threads` per migration or sync job is capped at 1–16. The worker respects this via the SQL dequeue query (`COUNT(*) < m.threads`). Sync jobs also persist a 0–1000 Mbps bandwidth limit (0 is unlimited), which can be updated live.
 - Worker-level concurrency is set by `MAX_THREADS` env var (default: 16, matching the max selectable per-migration threads slider). This is the total parallel tasks per worker process, not per migration.
 
 ### Retry & Backoff

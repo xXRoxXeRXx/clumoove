@@ -456,6 +456,7 @@ func InitDB(connStr string) (*sql.DB, error) {
 				delete_propagation BOOLEAN NOT NULL DEFAULT FALSE,
 				interval_minutes INT NOT NULL DEFAULT 15,
 				threads INT NOT NULL DEFAULT 8,
+				bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
 				status TEXT NOT NULL DEFAULT 'IDLE',
 				target_dir TEXT NOT NULL DEFAULT '/',
 				selected_paths JSONB,
@@ -476,6 +477,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				db.Close()
 				return nil, fmt.Errorf("schema migration sync_jobs: %w", err)
+			}
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS bandwidth_limit_mbps INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync_jobs bandwidth_limit_mbps): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_user_id ON sync_jobs(user_id)`)

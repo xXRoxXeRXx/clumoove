@@ -133,6 +133,7 @@ from `delivery.*` locale keys.
 | `delete_propagation` | BOOLEAN NOT NULL DEFAULT FALSE | |
 | `interval_minutes` | INT NOT NULL DEFAULT 15 | |
 | `threads` | INT NOT NULL DEFAULT 8 | |
+| `bandwidth_limit_mbps` | INT NOT NULL DEFAULT 0 | 0–1000; 0 is unlimited |
 | `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `RUNNING`, `PAUSED`, `FAILED` |
 | `target_dir` | TEXT NOT NULL DEFAULT `/` | |
 | `selected_paths` | JSONB | |
