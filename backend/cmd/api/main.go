@@ -138,6 +138,7 @@ func main() {
 	}
 
 	syncEng := appSync.NewEngine(database, q, encryptionKey)
+	go syncEng.SubscribeToCancelEvents(ctx)
 	server := &APIServer{
 		db:                database,
 		queue:             q,

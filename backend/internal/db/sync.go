@@ -218,6 +218,57 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	return err
 }
 
+// PauseSyncJob atomically pauses an active job, or an idle job whose schedule
+// the user wants to disable. A connection-loss pause is deliberately excluded:
+// it remains owned by the automatic recovery flow.
+func PauseSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
+	var errVal sql.NullString
+	if errMsg != nil {
+		errVal = sql.NullString{String: *errMsg, Valid: true}
+	}
+	var pausedID string
+	err := db.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'PAUSED',
+		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2 AND status IN ('IDLE', 'INDEXING', 'RUNNING', 'VERIFYING')
+		RETURNING id
+	`, errVal, id).Scan(&pausedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ResumeSyncJob atomically returns a user-paused job to IDLE so a new pass can
+// be claimed. It must not overwrite a live or connection-recovery lifecycle.
+func ResumeSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
+	var errVal sql.NullString
+	if errMsg != nil {
+		errVal = sql.NullString{String: *errMsg, Valid: true}
+	}
+	var resumedID string
+	err := db.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'IDLE',
+		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2 AND status = 'PAUSED'
+		RETURNING id
+	`, errVal, id).Scan(&resumedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // TransitionSyncJobToRunning atomically starts task processing for an indexed
 // pass. It prevents a superseded INDEXING pass from reviving another status.
 func TransitionSyncJobToRunning(db *sql.DB, id string) (bool, error) {
@@ -302,9 +353,29 @@ func ClaimSyncJobPass(database *sql.DB, id string) (bool, error) {
 	err := database.QueryRow(`
 		UPDATE sync_jobs
 		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status IN ('IDLE', 'FAILED', 'PAUSED')
+		WHERE id = $1 AND status IN ('IDLE', 'FAILED')
 		RETURNING id
 	`, id).Scan(&claimedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ReleaseUnstartedSyncPass prevents a failed coordinator startup from leaving
+// an otherwise runnable job permanently in INDEXING. It deliberately only
+// releases INDEXING: a concurrent pause or lifecycle transition is preserved.
+func ReleaseUnstartedSyncPass(database *sql.DB, id string) (bool, error) {
+	var releasedID string
+	err := database.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'IDLE', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'INDEXING'
+		RETURNING id
+	`, id).Scan(&releasedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -378,13 +449,20 @@ func UpdateSyncJobRunStats(db *sql.DB, id string, lastRunStatus string, errMsg *
 	return err
 }
 
-// FinalizeSyncJobPass records a completed pass and returns the job to IDLE only
-// when the engine still owns an active pass. INDEXING is included for an empty
-// pass, which has no task-processing transition to RUNNING. A task worker can concurrently set
-// a job to FAILED or PAUSED_* (for example, after an authentication failure);
-// this conditional update must not overwrite that terminal/interrupted state.
-// The returned bool is false when the job was not in a completable state.
+// FinalizeSyncJobPass records a transfer/verification pass and returns it to
+// IDLE only from RUNNING or VERIFYING. It must not accept INDEXING: a newly
+// resumed pass can be INDEXING while a cancelled predecessor is winding down.
 func FinalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
+	return finalizeSyncJobPass(db, id, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status IN ('RUNNING', 'VERIFYING')")
+}
+
+// FinalizeEmptySyncJobPass completes an index-only pass that produced no
+// tasks. This is deliberately separate from transfer finalization.
+func FinalizeEmptySyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
+	return finalizeSyncJobPass(db, id, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status = 'INDEXING'")
+}
+
+func finalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, predicate string) (bool, error) {
 	var errVal sql.NullString
 	if errMsg != nil {
 		errVal = sql.NullString{String: *errMsg, Valid: true}
@@ -403,7 +481,7 @@ func FinalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *st
 		    deleted_files = $6,
 		    failed_files = $7,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $8 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING')
+		WHERE id = $8 AND `+predicate+`
 		RETURNING id
 	`, lastRunStatus, errVal, total, processed, changed, deleted, failed, id).Scan(&finalizedID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -514,6 +592,24 @@ func CancelRemainingPendingSyncTasks(dbsql *sql.DB, syncJobID string) (int, erro
 		WHERE sync_job_id = $1 AND status = 'PENDING'
 	`
 	res, err := dbsql.Exec(query, syncJobID)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := res.RowsAffected()
+	return int(rows), err
+}
+
+// CancelOpenSyncTasksForPause closes the interrupted pass. Resume always
+// starts a fresh index/delta pass, so retaining its pending work would be
+// misleading and can race the next pass's task cleanup.
+func CancelOpenSyncTasksForPause(dbsql *sql.DB, syncJobID string) (int, error) {
+	res, err := dbsql.Exec(`
+		UPDATE tasks
+		SET status = 'CANCELLED', worker_hash = NULL, next_retry_at = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE sync_job_id = $1
+		  AND (status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
+	`, syncJobID)
 	if err != nil {
 		return 0, err
 	}

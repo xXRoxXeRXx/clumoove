@@ -56,7 +56,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 
 	insertSyncClaimJob(t, database, "empty-indexing", "INDEXING")
-	finalized, err := FinalizeSyncJobPass(database, "empty-indexing", "SUCCESS", nil, 0, 0, 0, 0, 0)
+	finalized, err := FinalizeEmptySyncJobPass(database, "empty-indexing", "SUCCESS", nil, 0, 0, 0, 0, 0)
 	if err != nil || !finalized || syncClaimStatus(t, database, "empty-indexing") != "IDLE" {
 		t.Fatalf("finalize empty INDEXING pass: finalized=%v, err=%v", finalized, err)
 	}
@@ -84,7 +84,7 @@ func TestFinalizeSyncJobPass(t *testing.T) {
 		}
 	}
 
-	for _, status := range []string{"FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS", "IDLE"} {
+	for _, status := range []string{"INDEXING", "FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS", "IDLE"} {
 		id := "preserve-" + status
 		insertSyncClaimJob(t, database, id, status)
 		finalized, err := FinalizeSyncJobPass(database, id, "SUCCESS", nil, 2, 2, 1, 0, 0)
@@ -185,7 +185,7 @@ func TestAbortSyncJobVerification(t *testing.T) {
 func TestClaimSyncJobPass(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 
-	for _, status := range []string{"IDLE", "FAILED", "PAUSED"} {
+	for _, status := range []string{"IDLE", "FAILED"} {
 		id := "runnable-" + status
 		insertSyncClaimJob(t, database, id, status)
 		claimed, err := ClaimSyncJobPass(database, id)
@@ -197,13 +197,65 @@ func TestClaimSyncJobPass(t *testing.T) {
 		}
 	}
 
-	for _, status := range []string{"RUNNING", "INDEXING", "PAUSED_CONNECTION_LOSS", "VERIFYING"} {
+	for _, status := range []string{"RUNNING", "INDEXING", "PAUSED", "PAUSED_CONNECTION_LOSS", "VERIFYING"} {
 		id := "blocked-" + status
 		insertSyncClaimJob(t, database, id, status)
 		claimed, err := ClaimSyncJobPass(database, id)
 		if err != nil || claimed {
 			t.Errorf("claim %s: claimed=%v, err=%v; want false, nil", status, claimed, err)
 		}
+	}
+}
+
+func TestManualSyncPauseResumeTransitions(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+
+	for _, status := range []string{"IDLE", "INDEXING", "RUNNING", "VERIFYING"} {
+		id := "pause-" + status
+		insertSyncClaimJob(t, database, id, status)
+		paused, err := PauseSyncJob(database, id, nil)
+		if err != nil || !paused || syncClaimStatus(t, database, id) != "PAUSED" {
+			t.Errorf("pause %s: paused=%v, err=%v, status=%s", status, paused, err, syncClaimStatus(t, database, id))
+		}
+	}
+
+	for _, status := range []string{"PAUSED", "PAUSED_CONNECTION_LOSS", "FAILED"} {
+		id := "pause-blocked-" + status
+		insertSyncClaimJob(t, database, id, status)
+		paused, err := PauseSyncJob(database, id, nil)
+		if err != nil || paused || syncClaimStatus(t, database, id) != status {
+			t.Errorf("pause %s: paused=%v, err=%v; want false and unchanged", status, paused, err)
+		}
+	}
+
+	insertSyncClaimJob(t, database, "resume-paused", "PAUSED")
+	resumed, err := ResumeSyncJob(database, "resume-paused", nil)
+	if err != nil || !resumed || syncClaimStatus(t, database, "resume-paused") != "IDLE" {
+		t.Errorf("resume PAUSED: resumed=%v, err=%v", resumed, err)
+	}
+
+	for _, status := range []string{"IDLE", "RUNNING", "PAUSED_CONNECTION_LOSS"} {
+		id := "resume-blocked-" + status
+		insertSyncClaimJob(t, database, id, status)
+		resumed, err := ResumeSyncJob(database, id, nil)
+		if err != nil || resumed || syncClaimStatus(t, database, id) != status {
+			t.Errorf("resume %s: resumed=%v, err=%v; want false and unchanged", status, resumed, err)
+		}
+	}
+}
+
+func TestReleaseUnstartedSyncPass(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "stuck-indexing", "INDEXING")
+	released, err := ReleaseUnstartedSyncPass(database, "stuck-indexing")
+	if err != nil || !released || syncClaimStatus(t, database, "stuck-indexing") != "IDLE" {
+		t.Errorf("release INDEXING: released=%v, err=%v", released, err)
+	}
+
+	insertSyncClaimJob(t, database, "running", "RUNNING")
+	released, err = ReleaseUnstartedSyncPass(database, "running")
+	if err != nil || released || syncClaimStatus(t, database, "running") != "RUNNING" {
+		t.Errorf("release RUNNING: released=%v, err=%v; want false and unchanged", released, err)
 	}
 }
 

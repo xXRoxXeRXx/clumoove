@@ -223,6 +223,13 @@ func (q *Queue) PublishCancelEvent(ctx context.Context, migrationID string) erro
 	return q.client.Publish(ctx, channel, migrationID).Err()
 }
 
+// PublishSyncCancelEvent broadcasts a request to stop active transfers for a
+// sync job. Sync passes and transfer workers run in separate processes, so the
+// database status alone cannot promptly interrupt an in-flight stream.
+func (q *Queue) PublishSyncCancelEvent(ctx context.Context, syncJobID string) error {
+	return q.client.Publish(ctx, "sync-control:cancel", syncJobID).Err()
+}
+
 // SubscribeToCancelEvents listens for cancellation events and calls the callback.
 // If the Pub/Sub channel closes (e.g. transient Redis disconnect) it reconnects
 // with exponential back-off so cancel events are never silently lost.
@@ -250,6 +257,47 @@ func (q *Queue) SubscribeToCancelEvents(ctx context.Context, callback func(migra
 					closed = true
 				} else {
 					backoff = time.Second // reset on successful message
+					callback(msg.Payload)
+				}
+			}
+		}
+		pubsub.Close()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// SubscribeToSyncCancelEvents listens for sync transfer cancellation events.
+// It has the same reconnect behaviour as migration cancellation subscriptions.
+func (q *Queue) SubscribeToSyncCancelEvents(ctx context.Context, callback func(syncJobID string)) {
+	channel := "sync-control:cancel"
+	backoff := time.Second
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		pubsub := q.client.Subscribe(ctx, channel)
+		ch := pubsub.Channel()
+		closed := false
+		for !closed {
+			select {
+			case <-ctx.Done():
+				pubsub.Close()
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					closed = true
+				} else {
+					backoff = time.Second
 					callback(msg.Payload)
 				}
 			}

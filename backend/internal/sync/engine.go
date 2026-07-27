@@ -48,6 +48,12 @@ func (e *Engine) CancelPass(syncJobID string) {
 	}
 }
 
+// SubscribeToCancelEvents stops locally owned sync-pass coordinators when a
+// pause or deletion was requested through another API/worker process.
+func (e *Engine) SubscribeToCancelEvents(ctx context.Context) {
+	e.queue.SubscribeToSyncCancelEvents(ctx, e.CancelPass)
+}
+
 type fileState struct {
 	Path         string
 	Size         int64
@@ -78,19 +84,72 @@ func (e *Engine) ResumePausedSyncPass(serverCtx context.Context, syncJobID strin
 	return true, nil
 }
 
+// WaitForPassDrain serializes a manual resume with a cancelled predecessor on
+// every API instance. A PostgreSQL advisory lock is used rather than a local
+// mutex because the predecessor may be running in another process.
+func (e *Engine) WaitForPassDrain(ctx context.Context, syncJobID string) error {
+	conn, err := e.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext('sync-pass:' || $1))`, syncJobID); err != nil {
+		return err
+	}
+	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext('sync-pass:' || $1))`, syncJobID)
+	return nil
+}
+
+func (e *Engine) lockPass(ctx context.Context, syncJobID string) (func(), error) {
+	conn, err := e.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext('sync-pass:' || $1))`, syncJobID); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return func() {
+		_, _ = conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(hashtext('sync-pass:' || $1))`, syncJobID)
+		_ = conn.Close()
+	}, nil
+}
+
 // runSyncPass performs a previously claimed sync pass: scans, computes delta,
 // enqueues tasks, waits, and updates state.
 func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	log.Printf("[SyncEngine] Starting sync pass for job %s\n", syncJobID)
 
-	// Register a cancellable child context so handleDeleteSync / handlePauseSync
-	// can interrupt this goroutine without having to wait for the poll timeout.
 	ctx, cancel := context.WithCancel(serverCtx)
+	defer cancel()
+
+	// Hold the lock through the indexing critical section. A resume waits here
+	// until a cancelled predecessor can no longer write indexing results.
+	unlockPass, err := e.lockPass(ctx, syncJobID)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Printf("[SyncEngine] Failed to lock sync pass for %s: %v", syncJobID, err)
+			if released, releaseErr := db.ReleaseUnstartedSyncPass(e.db, syncJobID); releaseErr != nil {
+				log.Printf("[SyncEngine] Failed to release unstarted sync pass for %s: %v", syncJobID, releaseErr)
+			} else if !released {
+				log.Printf("[SyncEngine] Sync pass %s changed state before lock failure recovery", syncJobID)
+			}
+		}
+		return
+	}
+	passLockHeld := true
+	defer func() {
+		if passLockHeld {
+			unlockPass()
+		}
+	}()
+
+	// Register only after acquiring the cross-instance pass lock. This avoids a
+	// successor overwriting the predecessor's cancel entry while it is draining.
 	e.cancelMu.Lock()
 	e.activePassCancels[syncJobID] = cancel
 	e.cancelMu.Unlock()
 	defer func() {
-		cancel()
 		e.cancelMu.Lock()
 		delete(e.activePassCancels, syncJobID)
 		e.cancelMu.Unlock()
@@ -587,7 +646,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 
 	if totalCreatedTasks == 0 {
 		// No transfers needed: update stats immediately and complete run
-		finalized, err := db.FinalizeSyncJobPass(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
+		finalized, err := db.FinalizeEmptySyncJobPass(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
 		if err != nil {
 			log.Printf("[SyncEngine] Failed to finalize empty sync pass for job %s: %v\n", syncJobID, err)
 			return
@@ -642,6 +701,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 		log.Printf("[SyncEngine] Not starting task processing for job %s; status changed during indexing\n", syncJobID)
 		return
 	}
+	// The lock protects indexing's destructive task cleanup, delta insertion,
+	// and the INDEXING -> RUNNING handoff. Once RUNNING, pause changes status
+	// before any resume can claim a successor, and the old coordinator's final
+	// CAS checks prevent it from writing outcomes for that successor.
+	unlockPass()
+	passLockHeld = false
 	// Wake idle worker threads only after the queue predicate permits them to
 	// claim this pass's tasks, avoiding a fallback-poll delay after indexing.
 	e.queue.NotifyTaskAvailable(ctx, e.db)

@@ -356,25 +356,29 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := db.GetSyncJob(s.db, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-
-	// Only allow pausing from states where no active pass controls the lifecycle.
-	// RUNNING/INDEXING: the engine's completion path would overwrite PAUSED → IDLE.
-	if job.Status == "RUNNING" || job.Status == "INDEXING" {
-		writeError(w, http.StatusConflict, ErrSyncAlreadyRunning)
-		return
-	}
-
-	// Clear any stale error from a previous failed run so the UI doesn't keep
-	// showing it while the job is intentionally paused.
+	// A paused sync abandons the current pass. Resume starts a freshly indexed
+	// pass; it never attempts to continue a coordinator that was cancelled.
 	emptyErr := ""
-	_ = db.UpdateSyncJobStatus(s.db, id, "PAUSED", &emptyErr)
+	paused, err := db.PauseSyncJob(s.db, id, &emptyErr)
+	if err != nil {
+		log.Printf("Failed to pause sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !paused {
+		writeError(w, http.StatusConflict, ErrSyncInvalidState)
+		return
+	}
 	// Deactivate schedule
 	_, _ = s.db.Exec(`UPDATE schedules SET is_active = FALSE WHERE task_type = 'sync' AND task_id = $1`, id)
+
+	if _, err := db.CancelOpenSyncTasksForPause(s.db, id); err != nil {
+		log.Printf("Warning: failed to cancel open tasks for paused sync job %s: %v", id, err)
+	}
+	s.syncEngine.CancelPass(id)
+	if err := s.queue.PublishSyncCancelEvent(r.Context(), id); err != nil {
+		log.Printf("Warning: failed to publish cancel event for sync job %s: %v", id, err)
+	}
 
 	s.writeAudit(r, db.AuditSyncPaused, id, userID, nil)
 
@@ -400,16 +404,41 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Clear any stale error from a previous failed run when resuming.
+	// Resume starts a new full pass. The pass cancelled by pause cannot be
+	// continued because its in-memory indexing state was intentionally dropped.
+	// Wait for the cancelled coordinator on any API instance to exit before
+	// publishing a new INDEXING claim; otherwise it could finish stale writes.
+	if err := s.syncEngine.WaitForPassDrain(r.Context(), id); err != nil {
+		log.Printf("Failed waiting for sync job %s to drain: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 	emptyErr := ""
-	_ = db.UpdateSyncJobStatus(s.db, id, "IDLE", &emptyErr)
-	// Activate schedule
+	resumed, err := db.ResumeSyncJob(s.db, id, &emptyErr)
+	if err != nil {
+		log.Printf("Failed to resume sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !resumed {
+		writeError(w, http.StatusConflict, ErrSyncInvalidState)
+		return
+	}
+	claimed, startErr := s.syncEngine.StartSyncPass(s.ctx, id)
+	// Always reactivate the schedule. If the immediate claim was lost to an
+	// instance race or a transient DB error, the next scheduler tick safely
+	// starts the already-resumed IDLE job instead of reporting a false failure.
 	nextRun := time.Now()
 	_, _ = s.db.Exec(`UPDATE schedules SET is_active = TRUE, next_run_at = $1 WHERE task_type = 'sync' AND task_id = $2`, nextRun, id)
+	if startErr != nil {
+		log.Printf("Deferred resumed sync job %s after immediate start error: %v", id, startErr)
+	} else if !claimed {
+		log.Printf("Deferred resumed sync job %s because another instance claimed it", id)
+	}
 
 	s.writeAudit(r, db.AuditSyncResumed, id, userID, nil)
 
-	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true, "deferred": startErr != nil || !claimed})
 }
 
 func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
@@ -434,6 +463,9 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 	// Cancel any in-flight sync-pass goroutine before deleting the DB rows so
 	// the goroutine does not keep operating against a deleted job.
 	s.syncEngine.CancelPass(id)
+	if err := s.queue.PublishSyncCancelEvent(r.Context(), id); err != nil {
+		log.Printf("Warning: failed to publish cancel event for sync job %s: %v", id, err)
+	}
 
 	err = db.DeleteSyncJobCascade(s.db, id)
 	if err != nil {
