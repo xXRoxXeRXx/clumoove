@@ -99,7 +99,11 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 					WHERE t2.migration_id = m.id AND t2.status = 'RUNNING'
 				) < m.threads)
 				OR
-				(t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING') AND (
+				-- Do not claim PENDING tasks while the sync job is INDEXING: the pass
+				-- may still hold leftover PENDING rows from the prior pass and deletes
+				-- them before enqueuing a fresh delta. Claiming early runs stale work
+				-- and races drainRemainingTasks.
+				(t.sync_job_id IS NOT NULL AND sj.status = 'RUNNING' AND (
 					SELECT COUNT(*) FROM tasks t2 
 					WHERE t2.sync_job_id = sj.id AND t2.status = 'RUNNING'
 				) < sj.threads)

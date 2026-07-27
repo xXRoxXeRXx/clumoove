@@ -622,10 +622,6 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 		e.failSync(syncJobID, fmt.Sprintf("Failed to create tasks in DB: %v", err))
 		return
 	}
-	// Wake idle worker threads immediately so they start processing without
-	// waiting for their next fallback poll cycle.
-	e.queue.NotifyTaskAvailable(ctx, e.db)
-
 	// Update totals
 	_ = db.UpdateSyncJobTotals(e.db, job.ID, totalCreatedTasks, totalBytes)
 
@@ -635,6 +631,9 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 		log.Printf("[SyncEngine] Failed to set RUNNING status for job %s: %v\n", syncJobID, err)
 		return
 	}
+	// Wake idle worker threads only after the queue predicate permits them to
+	// claim this pass's tasks, avoiding a fallback-poll delay after indexing.
+	e.queue.NotifyTaskAvailable(ctx, e.db)
 
 	// 8. Poll database until all tasks finish (or context is cancelled)
 	// Poll every 1s: tight enough to react quickly when the last task finishes
