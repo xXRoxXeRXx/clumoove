@@ -83,3 +83,22 @@ func TestDequeueSQLSyncTasksWaitForRunning(t *testing.T) {
 		t.Fatalf("dequeue while running = %+v, want sync task", payload)
 	}
 }
+
+func TestDequeueSQLMigrationTasksMayRunWhileIndexing(t *testing.T) {
+	database := setupDequeueTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO migrations (id, status, threads) VALUES ('migration-1', 'INDEXING', 1);
+		INSERT INTO tasks (id, migration_id, status) VALUES ('task-1', 'migration-1', 'PENDING');
+	`); err != nil {
+		t.Fatalf("insert indexing migration task: %v", err)
+	}
+
+	q := &Queue{}
+	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue while indexing: %v", err)
+	}
+	if payload == nil || payload.TaskID != "task-1" || payload.MigrationID != "migration-1" {
+		t.Fatalf("dequeue while indexing = %+v, want migration task", payload)
+	}
+}
