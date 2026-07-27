@@ -337,7 +337,7 @@ export function MigrationsDashboard({
       <div className="glass-panel rounded-3xl border border-[var(--color-glass-border)]/50 shadow-portal p-6 space-y-6 min-h-[560px]">
         
         {/* Navigation Tabs & Controls Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-[var(--color-border)] pb-4 gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 gap-4">
           {/* Segmented Pill Tabs */}
           <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] p-1 rounded-full border border-[var(--color-border)]">
             <button
@@ -558,7 +558,7 @@ export function MigrationsDashboard({
                                   mig.total_files > 0
                                     ? (mig.processed_files / mig.total_files) * 100
                                     : 0
-                                } %`,
+                                }%`,
                               }}
                             />
                           </div>
@@ -801,10 +801,10 @@ function SyncList({
                   const color = job.status === 'FAILED' ? 'bg-rose-500' : job.status === 'COMPLETED_WITH_ERRORS' ? 'bg-amber-500' : progress === 100 ? 'bg-emerald-500' : 'bg-portal-orange';
                   return (
                     <div className="flex flex-col gap-1.5">
-                      <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-                        {job.processed_files} / {job.total_files} {t('dashboard.files')}
-                        {totalBytes > 0 && <> · {formatBytes(displayedBytes)} / {formatBytes(totalBytes)}</>}
-                      </span>
+                      <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
+                        <span>{t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })}</span>
+                        {totalBytes > 0 && <span>{formatBytes(displayedBytes)}</span>}
+                      </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-tertiary)]">
                         <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${progress}%` }} />
                       </div>
