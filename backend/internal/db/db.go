@@ -62,6 +62,22 @@ type queryExecer interface {
 	QueryRow(query string, args ...interface{}) *sql.Row
 }
 
+// schemaErrorLogger records a failed bootstrap DDL statement while preserving
+// the existing diagnostic log. InitDB checks the recorded error before handing
+// the database to callers, so a partially applied schema never starts a usable
+// service.
+type schemaErrorLogger struct {
+	logger *log.Logger
+	err    *error
+}
+
+func (l schemaErrorLogger) Printf(format string, v ...interface{}) {
+	l.logger.Printf(format, v...)
+	if *l.err == nil && (strings.HasPrefix(format, "Failed schema migration") || strings.HasPrefix(format, "Failed data migration")) {
+		*l.err = fmt.Errorf("%s", strings.TrimSpace(fmt.Sprintf(format, v...)))
+	}
+}
+
 func IsUniqueViolation(err error) bool {
 	if err == nil {
 		return false
@@ -140,7 +156,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 				defer db.Exec(`SELECT pg_advisory_unlock(84736291)`)
 			}
 
-			// Apply inline schema DDL migrations on startup
+			// Apply inline schema DDL migrations on startup. Shadow the package
+			// logger in this scope so every existing migration failure is retained
+			// and can fail startup after the DDL sequence completes.
+			var schemaErr error
+			log := schemaErrorLogger{logger: log.Default(), err: &schemaErr}
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 				email VARCHAR(255) UNIQUE NOT NULL,
@@ -405,6 +425,85 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_connection_profiles_user ON connection_profiles(user_id)`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_connection_profiles_user): %v\n", err)
+				db.Close()
+				return nil, fmt.Errorf("schema migration idx_connection_profiles_user: %w", err)
+			}
+
+			// Keep this bootstrap DDL in sync with db/schema.sql. It must precede
+			// the tasks.sync_job_id foreign key below.
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sync_jobs (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				source_url TEXT NOT NULL,
+				source_username TEXT NOT NULL,
+				source_password_encrypted TEXT NOT NULL,
+				source_refresh_token_encrypted TEXT,
+				source_token_expires_at TIMESTAMP WITH TIME ZONE,
+				target_url TEXT NOT NULL,
+				target_username TEXT NOT NULL,
+				target_password_encrypted TEXT NOT NULL,
+				target_refresh_token_encrypted TEXT,
+				target_token_expires_at TIMESTAMP WITH TIME ZONE,
+				source_provider TEXT NOT NULL DEFAULT 'nextcloud',
+				target_provider TEXT NOT NULL DEFAULT 'nextcloud',
+				direction TEXT NOT NULL DEFAULT 'one_way' CHECK (direction IN ('one_way', 'two_way')),
+				conflict_strategy TEXT NOT NULL DEFAULT 'OVERWRITE' CHECK (conflict_strategy IN ('OVERWRITE', 'SKIP', 'RENAME')),
+				delete_propagation BOOLEAN NOT NULL DEFAULT FALSE,
+				interval_minutes INT NOT NULL DEFAULT 15,
+				threads INT NOT NULL DEFAULT 8,
+				status TEXT NOT NULL DEFAULT 'IDLE',
+				target_dir TEXT NOT NULL DEFAULT '/',
+				selected_paths JSONB,
+				last_run_at TIMESTAMP WITH TIME ZONE,
+				last_run_status TEXT,
+				error_message TEXT,
+				total_files INT NOT NULL DEFAULT 0,
+				total_bytes BIGINT NOT NULL DEFAULT 0,
+				processed_files INT NOT NULL DEFAULT 0,
+				processed_bytes BIGINT NOT NULL DEFAULT 0,
+				live_bytes BIGINT NOT NULL DEFAULT 0,
+				changed_files INT NOT NULL DEFAULT 0,
+				deleted_files INT NOT NULL DEFAULT 0,
+				failed_files INT NOT NULL DEFAULT 0,
+				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+			)`)
+			if err != nil {
+				db.Close()
+				return nil, fmt.Errorf("schema migration sync_jobs: %w", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_user_id ON sync_jobs(user_id)`)
+			if err != nil {
+				db.Close()
+				return nil, fmt.Errorf("schema migration idx_sync_jobs_user_id: %w", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_status ON sync_jobs(status)`)
+			if err != nil {
+				db.Close()
+				return nil, fmt.Errorf("schema migration idx_sync_jobs_status: %w", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sync_state (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+				sync_job_id UUID NOT NULL REFERENCES sync_jobs(id) ON DELETE CASCADE,
+				side TEXT NOT NULL CHECK (side IN ('source', 'target')),
+				rel_path TEXT NOT NULL,
+				size BIGINT NOT NULL DEFAULT 0,
+				mtime TIMESTAMP WITH TIME ZONE,
+				source_hash TEXT,
+				target_hash TEXT,
+				etag TEXT,
+				UNIQUE (sync_job_id, side, rel_path)
+			)`)
+			if err != nil {
+				db.Close()
+				return nil, fmt.Errorf("schema migration sync_state: %w", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_state_job ON sync_state(sync_job_id, side)`)
+			if err != nil {
+				db.Close()
+				return nil, fmt.Errorf("schema migration idx_sync_state_job: %w", err)
 			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS tasks (
@@ -486,6 +585,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_sync_status ON tasks(sync_job_id, status)`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_tasks_sync_status): %v\n", err)
+			}
+
+			if schemaErr != nil {
+				db.Close()
+				return nil, schemaErr
 			}
 
 			maxConns := 50
