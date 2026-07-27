@@ -65,47 +65,17 @@ type Processor struct {
 	// so a task that failed twice for non-network reasons is not wrongly escalated
 	// to a full migration pause on its next (first) network loss (P1-4).
 	connLossTaskAttempts sync.Map
-	// providerCache caches storage.StorageProvider instances per migration role
-	// to eliminate TCP/TLS/SSH/SMB connection setup overhead on every file task.
-	providerCache sync.Map
 	// verifyingEntities tracks currently running checksum verification passes
 	// (keyed by "mig:<id>" or "sync:<id>") to prevent concurrent ticks from
 	// spawning duplicate verification passes for the same entity.
 	verifyingEntities sync.Map
 }
 
-type cachedProviderEntry struct {
-	client   storage.StorageProvider
-	credHash string
-}
-
-func (p *Processor) getOrCreateProvider(ctx context.Context, key, providerType, urlStr, username, password string) (storage.StorageProvider, func(), error) {
-	credHash := fmt.Sprintf("%s:%s:%s:%s", providerType, urlStr, username, password)
-	if val, ok := p.providerCache.Load(key); ok {
-		entry := val.(*cachedProviderEntry)
-		if entry.credHash == credHash {
-			return entry.client, func() {}, nil
-		}
-		entry.client.Close()
-		p.providerCache.Delete(key)
-	}
-
-	client, err := storage.NewProvider(ctx, providerType, urlStr, username, password)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	entry := &cachedProviderEntry{
-		client:   client,
-		credHash: credHash,
-	}
-	actual, loaded := p.providerCache.LoadOrStore(key, entry)
-	if loaded {
-		client.Close()
-		return actual.(*cachedProviderEntry).client, func() {}, nil
-	}
-
-	return client, func() {}, nil
+// newProvider creates a provider scoped to a single operation. Providers retain
+// their credentials internally, so retaining them in a shared cache would keep
+// decrypted credentials alive beyond the task that needs them.
+func newProvider(ctx context.Context, providerType, urlStr, username, password string) (storage.StorageProvider, error) {
+	return storage.NewProvider(ctx, providerType, urlStr, username, password)
 }
 
 // SetDBConnStr sets the PostgreSQL DSN used to open a dedicated LISTEN
@@ -458,39 +428,42 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if err != nil {
 		return fmt.Errorf("failed to decrypt source password: %w", err)
 	}
+	defer crypto.ZeroString(&sourcePass)
+
 	targetPass, err := crypto.Decrypt(mig.TargetPasswordEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target password: %w", err)
 	}
+	defer crypto.ZeroString(&targetPass)
 
 	// For OAuth providers: if the token is expired or within 2 minutes of expiry,
 	// refresh it now so this task does not hit a 401. The daemon already handles
 	// proactive rotation every 5 min, but tasks could be dequeued right as a token
 	// expires, so we have this last-resort inline refresh.
-	sourcePass, err = p.ensureFreshOAuthToken(ctx, mig, "source", sourcePass)
+	sourceProviderPass, err := p.ensureFreshOAuthToken(ctx, mig, "source", sourcePass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh source OAuth token: %w", err)
 	}
-	targetPass, err = p.ensureFreshOAuthToken(ctx, mig, "target", targetPass)
+	defer crypto.ZeroString(&sourceProviderPass)
+
+	targetProviderPass, err := p.ensureFreshOAuthToken(ctx, mig, "target", targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
+	defer crypto.ZeroString(&targetProviderPass)
 
-	// Get or create cached storage providers
-	sourceKey := fmt.Sprintf("%s:source", mig.ID)
-	targetKey := fmt.Sprintf("%s:target", mig.ID)
-
-	sourceClient, closeSource, err := p.getOrCreateProvider(ctx, sourceKey, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	// Providers are task-scoped because they retain credentials internally.
+	sourceClient, err := newProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourceProviderPass)
 	if err != nil {
 		return fmt.Errorf("failed to create source client: %w", err)
 	}
-	defer closeSource()
+	defer sourceClient.Close()
 
-	targetClient, closeTarget, err := p.getOrCreateProvider(ctx, targetKey, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetPass)
+	targetClient, err := newProvider(ctx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetProviderPass)
 	if err != nil {
 		return fmt.Errorf("failed to create target client: %w", err)
 	}
-	defer closeTarget()
+	defer targetClient.Close()
 
 	if nc, ok := sourceClient.(*storage.NextcloudProvider); ok {
 		nc.Threads = mig.Threads
@@ -1233,6 +1206,7 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt %s refresh token: %w", role, err)
 	}
+	defer crypto.ZeroString(&refreshToken)
 
 	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	tokenResp, err := oauth.RefreshToken(refreshCtx, provider, refreshToken)
