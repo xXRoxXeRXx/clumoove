@@ -473,7 +473,7 @@ export function MigrationsDashboard({
                     <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-[var(--color-border-light)]">
                   {filteredMigrations.map((mig) => {
                     const createdDate = formatDateTime(mig.created_at);
 
@@ -501,7 +501,7 @@ export function MigrationsDashboard({
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
                               {mig.source_url || t('migrations.oauth')}
                             </span>
-                            <span className="text-[10px] font-mono text-portal-navy max-w-[120px] truncate block" title={mig.selected_paths?.join(', ') || '/'}>
+                            <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[120px] truncate block" title={mig.selected_paths?.join(', ') || '/'}>
                               {t('sync.sourcePath')}: {mig.selected_paths?.length ? mig.selected_paths.join(', ') : '/'}
                             </span>
                           </div>
@@ -515,7 +515,7 @@ export function MigrationsDashboard({
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
                               {mig.target_url || t('migrations.oauth')}
                             </span>
-                            <span className="text-[10px] font-mono text-portal-navy max-w-[120px] truncate block" title={mig.target_dir || '/'}>
+                            <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[120px] truncate block" title={mig.target_dir || '/'}>
                               {t('sync.targetPath')}: {mig.target_dir || '/'}
                             </span>
                           </div>
@@ -742,7 +742,7 @@ function SyncList({
             <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-slate-100">
+        <tbody className="divide-y divide-[var(--color-border-light)]">
           {filteredSyncJobs.map((job) => (
             <tr
               key={job.id}
@@ -764,7 +764,7 @@ function SyncList({
                     <span className="text-[10px] text-[var(--color-text-muted)] max-w-[130px] truncate block">
                       {job.source_url || t('migrations.oauth')}
                     </span>
-                    <span className="text-[10px] font-mono text-portal-navy max-w-[130px] truncate block" title={job.selected_paths?.join(', ') || '/'}>
+                    <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[130px] truncate block" title={job.selected_paths?.join(', ') || '/'}>
                       {t('sync.sourcePath')}: {job.selected_paths && job.selected_paths.length > 0 ? job.selected_paths.join(', ') : '/'}
                     </span>
                   </div>
@@ -776,7 +776,7 @@ function SyncList({
                     <span className="text-[10px] text-[var(--color-text-muted)] max-w-[130px] truncate block">
                       {job.target_url || t('migrations.oauth')}
                     </span>
-                    <span className="text-[10px] font-mono text-portal-navy max-w-[130px] truncate block" title={job.target_dir || '/'}>
+                    <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[130px] truncate block" title={job.target_dir || '/'}>
                       {t('sync.targetPath')}: {job.target_dir || '/'}
                     </span>
                   </div>
