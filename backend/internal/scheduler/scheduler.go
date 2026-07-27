@@ -204,10 +204,14 @@ func nextSyncRunAt(intervalMinutes int, from time.Time) (time.Time, error) {
 
 // isJobActiveStatus reports whether a job with the given status is considered
 // still running for overlap-protection purposes. A job is "active" while it is
-// RUNNING or INDEXING; any other state (PENDING, SCHEDULED, COMPLETED, FAILED,
-// PAUSED_CONNECTION_LOSS) means a new trigger is allowed.
+// RUNNING, INDEXING, VERIFYING, or PAUSED_CONNECTION_LOSS. VERIFYING owns the
+// completion of the current pass, while PAUSED_CONNECTION_LOSS must remain
+// reserved for the connection-recovery scheduler; neither may be overlapped.
 func isJobActiveStatus(status string) bool {
-	return status == "RUNNING" || status == "INDEXING"
+	return status == "RUNNING" ||
+		status == "INDEXING" ||
+		status == "VERIFYING" ||
+		status == "PAUSED_CONNECTION_LOSS"
 }
 
 // isJobActive checks if the linked job is currently running (overlap protection)
@@ -221,7 +225,7 @@ func (s *Scheduler) isJobActive(taskType, taskID string) (bool, error) {
 			}
 			return false, err
 		}
-		// Migration is active if it's in RUNNING or INDEXING state
+		// Keep migration overlap protection aligned with isJobActiveStatus.
 		return isJobActiveStatus(mig.Status), nil
 
 	case "sync":
@@ -296,17 +300,9 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 		return fmt.Errorf("failed to fetch sync job %s: %w", syncJobID, err)
 	}
 
-	// PAUSED_CONNECTION_LOSS is a transient state managed by the recovery scheduler.
-	// Returning an error here would permanently deactivate the schedule, so we
-	// skip this trigger silently and let the scheduler advance next_run_at normally.
-	if job.Status == "PAUSED_CONNECTION_LOSS" {
-		log.Printf("[Scheduler] Skipping sync job %s trigger: job is in PAUSED_CONNECTION_LOSS (recovery pending)", syncJobID)
-		return nil
-	}
-
 	// Skip an already active pass without deactivating the recurring schedule.
 	// The conditional UPDATE below closes the race after this status read.
-	if job.Status == "RUNNING" || job.Status == "INDEXING" {
+	if isJobActiveStatus(job.Status) {
 		log.Printf("[Scheduler] Skipping sync job %s trigger: job is already %s (overlap protection)", syncJobID, job.Status)
 		return nil
 	}
