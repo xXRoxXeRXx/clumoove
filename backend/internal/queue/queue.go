@@ -20,8 +20,11 @@ type Payload struct {
 	TaskID      string `json:"task_id"`
 }
 
+// BandwidthEvent updates exactly one job's throttler. Exactly one of
+// MigrationID or SyncJobID must be set.
 type BandwidthEvent struct {
 	MigrationID        string `json:"migration_id"`
+	SyncJobID          string `json:"sync_job_id"`
 	BandwidthLimitMbps int    `json:"bandwidth_limit_mbps"`
 }
 
@@ -315,7 +318,7 @@ func (q *Queue) SubscribeToSyncCancelEvents(ctx context.Context, callback func(s
 	}
 }
 
-// PublishBandwidthChange publishes a bandwidth change event for a migration via Redis Pub/Sub
+// PublishBandwidthChange publishes a bandwidth change event for a migration or sync job via Redis Pub/Sub.
 func (q *Queue) PublishBandwidthChange(ctx context.Context, event BandwidthEvent) error {
 	channel := "migration-control:bandwidth"
 	payload, err := json.Marshal(event)

@@ -286,9 +286,12 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 	defer downloadStream.Close()
 
-	// Wrap throttler (0 bandwidth limit is unlimited)
-	throttler, _ := p.throttlers.LoadOrStore(job.ID, throttle.NewMigrationThrottler(0))
+	// The stored limit initializes the throttler for a new pass. Set it again
+	// for a reused throttler because mid-pass changes arrive via Pub/Sub, while
+	// the map keeps the throttler for subsequent passes.
+	throttler, _ := p.throttlers.LoadOrStore(job.ID, throttle.NewMigrationThrottler(job.BandwidthLimitMbps))
 	jobThrottler := throttler.(*throttle.MigrationThrottler)
+	jobThrottler.SetLimit(job.BandwidthLimitMbps)
 	throttledDownloadStream := throttle.NewThrottledReader(downloadStream, jobThrottler, downloadCtx)
 
 	var sourceHasher hash.Hash

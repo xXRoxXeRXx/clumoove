@@ -154,8 +154,9 @@ File-scoped commands referenced in `AGENTS.md`:
   formatting.
 
 ### Threads & parallelism
-- `threads` per migration capped 1–16 (validated in `handleStart`). The worker respects this via the
-  dequeue query (`COUNT(*) < m.threads`).
+- `threads` per migration or sync job are capped at 1–16. The worker respects this via the
+  dequeue query (`COUNT(*) < m.threads`). Sync jobs also persist a 0–1000 Mbps bandwidth limit (0 is unlimited),
+  which can be adjusted while a pass is running.
 - Worker-level `MAX_THREADS` (default 16) is total parallel tasks per worker process.
 
 ### Retry & backoff

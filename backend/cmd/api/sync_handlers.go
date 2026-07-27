@@ -12,6 +12,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/queue"
 	"backend/internal/storage"
 )
 
@@ -695,6 +696,11 @@ func parseSyncTokenExpiry(raw *string) sql.NullTime {
 }
 
 func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
@@ -723,6 +729,64 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 		log.Printf("Error updating threads for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	if err != nil || !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+		return
+	}
+
+	var req BandwidthRequest
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+	if req.LimitMbps < 0 || req.LimitMbps > 1000 {
+		writeError(w, http.StatusBadRequest, ErrBandwidthOutOfRange)
+		return
+	}
+
+	if err := db.UpdateSyncJobBandwidthLimit(s.db, id, req.LimitMbps); err != nil {
+		log.Printf("Error updating bandwidth limit for sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	job, err := db.GetSyncJob(s.db, id)
+	if err != nil {
+		log.Printf("Error loading sync job %s after bandwidth update: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	// Only active passes have a worker-side throttler to update. The persisted
+	// value is used when a later pass starts, so idle and terminal jobs do not
+	// need a Redis broadcast.
+	if job.Status != "INDEXING" && job.Status != "RUNNING" && job.Status != "VERIFYING" {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+		return
+	}
+
+	if err := s.queue.PublishBandwidthChange(r.Context(), queue.BandwidthEvent{
+		SyncJobID:          id,
+		BandwidthLimitMbps: req.LimitMbps,
+	}); err != nil {
+		log.Printf("Warning: failed to publish bandwidth change for sync job %s: %v", id, err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})

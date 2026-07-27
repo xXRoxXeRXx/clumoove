@@ -252,9 +252,15 @@ func (p *Processor) Start(ctx context.Context) {
 
 	// Start Bandwidth Change Listener
 	go p.queue.SubscribeToBandwidthChanges(ctx, func(event queue.BandwidthEvent) {
-		log.Printf("[Worker %s] Bandwidth change for migration %s: %d Mbps",
-			p.workerID, event.MigrationID, event.BandwidthLimitMbps)
-		if throttler, ok := p.throttlers.Load(event.MigrationID); ok {
+		jobID := event.MigrationID
+		jobType := "migration"
+		if event.SyncJobID != "" {
+			jobID = event.SyncJobID
+			jobType = "sync job"
+		}
+		log.Printf("[Worker %s] Bandwidth change for %s %s: %d Mbps",
+			p.workerID, jobType, jobID, event.BandwidthLimitMbps)
+		if throttler, ok := p.throttlers.Load(jobID); ok {
 			throttler.(*throttle.MigrationThrottler).SetLimit(event.BandwidthLimitMbps)
 		}
 	})

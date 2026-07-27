@@ -90,6 +90,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `GET` | `/sync/{id}/report` | JWT (own) | Download CSV report for sync errors. |
 | `GET` | `/sync/{id}/errors` | JWT (own) | Paginated JSON list of final transfer failures; accepts `limit` (max. 100) and `offset`. |
 | `PUT` | `/sync/{id}/threads` | JWT (own) | Live thread count adjustment. |
+| `PUT` | `/sync/{id}/bandwidth` | JWT (own) | Live bandwidth limit (0–1000 Mbps); publishes Redis event. |
 
 ---
 

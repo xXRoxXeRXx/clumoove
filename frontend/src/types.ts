@@ -83,6 +83,7 @@ export interface SyncJob {
   id: string;
   status: string;
   threads?: number;
+  bandwidth_limit_mbps?: number;
   direction: 'one_way' | 'two_way';
   interval_minutes: number;
   delete_propagation: boolean;

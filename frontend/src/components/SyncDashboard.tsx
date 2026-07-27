@@ -11,6 +11,7 @@ import { StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ErrorOverview } from './ErrorOverview';
+import { BANDWIDTH_OPTIONS, bandwidthIndexToValue, getBandwidthLabel, valueToBandwidthIndex } from '../utils/bandwidth';
 
 interface SyncDashboardProps {
   syncId: string;
@@ -26,8 +27,11 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [actionLoading, setActionLoading] = useState<boolean>(false);
   const [threads, setThreads] = useState<number>(8);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
+  const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
+  const [bandwidthLoading, setBandwidthLoading] = useState<boolean>(false);
   const [now, setNow] = useState<number>(() => Date.now());
   const threadsDraggingRef = useRef<boolean>(false);
+  const bandwidthDraggingRef = useRef<boolean>(false);
 
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
@@ -47,6 +51,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       setThreads(job.threads);
     }
   }, [job?.threads]);
+
+  useEffect(() => {
+    if (job?.bandwidth_limit_mbps !== undefined && !bandwidthDraggingRef.current) {
+      setBandwidthLimit(job.bandwidth_limit_mbps);
+    }
+  }, [job?.bandwidth_limit_mbps]);
 
   const commitThreadsChange = async (value: number) => {
     setThreadsLoading(true);
@@ -74,6 +84,28 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       if (job?.threads) setThreads(job.threads);
     } finally {
       setThreadsLoading(false);
+    }
+  };
+
+  const commitBandwidthChange = async (value: number) => {
+    setBandwidthLoading(true);
+    try {
+      const response = await apiFetch(`${apiUrl}/api/sync/${syncId}/bandwidth`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ limit_mbps: value }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        toast(body?.error_code ? translateApiError(body.error_code) : t('dashboard.bandwidthFailed'));
+        setBandwidthLimit(job?.bandwidth_limit_mbps ?? 0);
+      }
+    } catch (err) {
+      console.error(err);
+      toast(t('dashboard.bandwidthFailed'));
+      setBandwidthLimit(job?.bandwidth_limit_mbps ?? 0);
+    } finally {
+      setBandwidthLoading(false);
     }
   };
 
@@ -571,6 +603,42 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               />
               <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
                 {t('dashboard.threadsHint')}
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                  {t('dashboard.bandwidthLimit')}
+                </label>
+                <span className="text-[11px] font-bold text-portal-orange font-mono">
+                  {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={BANDWIDTH_OPTIONS.length - 1}
+                step={1}
+                value={valueToBandwidthIndex(bandwidthLimit)}
+                disabled={bandwidthLoading}
+                onChange={(e) => setBandwidthLimit(bandwidthIndexToValue(Number(e.target.value)))}
+                onPointerDown={() => { bandwidthDraggingRef.current = true; }}
+                onPointerUp={(e) => {
+                  bandwidthDraggingRef.current = false;
+                  commitBandwidthChange(bandwidthIndexToValue(Number((e.target as HTMLInputElement).value)));
+                }}
+                onKeyDown={() => { bandwidthDraggingRef.current = true; }}
+                onKeyUp={(e) => {
+                  bandwidthDraggingRef.current = false;
+                  commitBandwidthChange(bandwidthIndexToValue(Number((e.target as HTMLInputElement).value)));
+                }}
+                className="w-full"
+              />
+              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
+                {bandwidthLimit === 0
+                  ? t('fileBrowser.bandwidthUnlimited')
+                  : t('fileBrowser.bandwidthHint', { limit: getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited')) })}
               </p>
             </div>
           </div>
