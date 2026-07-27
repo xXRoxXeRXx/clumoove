@@ -117,7 +117,14 @@ WHERE id = (SELECT id FROM available_tasks)
 RETURNING id, migration_id;
 ```
 
-This guarantees at-least-once delivery and per-migration thread caps.
+Migration tasks are eligible while their migration is `RUNNING` or `INDEXING`.
+Sync tasks are eligible only while their sync job is `RUNNING`: `INDEXING` is
+reserved for listing both sides, draining and removing leftover tasks from the
+previous pass, and building the new delta. Workers are notified after the sync
+job transitions to `RUNNING`, so they can claim the freshly created tasks
+without waiting for a fallback poll.
+
+This guarantees at-least-once delivery and per-job thread caps.
 
 Redis is used for:
 

@@ -226,10 +226,14 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 
 ## 3. Queue Semantics (in `tasks`)
 
-The dequeue (`queue.DequeueSQL`) selects `PENDING` tasks whose migration is `RUNNING`/`INDEXING` and
-where the running count for that migration is below `migration.threads`, using
-`FOR UPDATE SKIP LOCKED`. Because locking is at the row level, multiple workers (and multiple API/worker
-instances) safely share the same PostgreSQL queue without a broker.
+The dequeue (`queue.DequeueSQL`) selects `PENDING` migration tasks while their
+migration is `RUNNING`/`INDEXING`, and `PENDING` sync tasks only while their
+sync job is `RUNNING`. A sync job remains `INDEXING` while it lists both sides,
+drains/removes leftover tasks from its prior pass, and creates the new delta;
+holding its tasks until `RUNNING` prevents workers from processing stale work.
+For either job type, the running task count must be below the job's `threads`
+limit. It uses `FOR UPDATE SKIP LOCKED`, so multiple workers (and multiple
+API/worker instances) safely share the same PostgreSQL queue without a broker.
 
 ---
 
