@@ -1057,10 +1057,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               {t('settings.appearanceHint')}
             </p>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-3 gap-3" role="group" aria-label={t('settings.appearance')}>
               {/* Light Option */}
               <button
+                type="button"
                 onClick={() => setPreference('light')}
+                aria-pressed={preference === 'light'}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
                   preference === 'light'
                     ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
@@ -1075,7 +1077,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
               {/* Dark Option */}
               <button
+                type="button"
                 onClick={() => setPreference('dark')}
+                aria-pressed={preference === 'dark'}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
                   preference === 'dark'
                     ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
@@ -1090,7 +1094,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
               {/* Auto Option */}
               <button
+                type="button"
                 onClick={() => setPreference('auto')}
+                aria-pressed={preference === 'auto'}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
                   preference === 'auto'
                     ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
@@ -1245,11 +1251,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <label className="relative inline-flex items-center cursor-pointer select-none">
                   <input
                     type="checkbox"
+                    aria-label={t('settings.smtpNotify')}
                     checked={smtpNotify}
                     onChange={(e) => setSmtpNotify(e.target.checked)}
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
+                  <div aria-hidden="true" className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
                 </label>
               </div>
 

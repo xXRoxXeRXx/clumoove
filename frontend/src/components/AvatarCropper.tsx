@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ZoomIn, ZoomOut, Check, X } from 'lucide-react';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface AvatarCropperProps {
   file: File;
@@ -11,12 +12,18 @@ interface AvatarCropperProps {
 export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [zoom, setZoom] = useState<number>(1.0);
   const [panX, setPanX] = useState<number>(0);
   const [panY, setPanY] = useState<number>(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  useFocusTrap(dialogRef, cancelRef, onCancel);
 
   // Load file as image
   useEffect(() => {
@@ -118,6 +125,16 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
     setZoom(newZoom);
   };
 
+  const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+    const panStep = e.shiftKey ? 20 : 5;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); setPanX((value) => value - panStep); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); setPanX((value) => value + panStep); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setPanY((value) => value - panStep); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); setPanY((value) => value + panStep); }
+    else if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom((value) => Math.min(3, value + 0.05)); }
+    else if (e.key === '-') { e.preventDefault(); setZoom((value) => Math.max(1, value - 0.05)); }
+  };
+
   const handleSave = () => {
     if (!image) return;
 
@@ -162,9 +179,9 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--color-bg-inverse)]/60 backdrop-blur-sm p-4 animate-fade-in">
-      <div className="glass-panel max-w-sm w-full rounded-3xl p-6 border border-[var(--color-glass-border)]/40 shadow-2xl flex flex-col items-center bg-[var(--color-bg-secondary)]/95">
-        <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">{t('settings.profilePicture')}</h3>
-        <p className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">{t('settings.avatarCropperTitle')}</p>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="glass-panel max-w-sm w-full rounded-3xl p-6 border border-[var(--color-glass-border)]/40 shadow-2xl flex flex-col items-center bg-[var(--color-bg-secondary)]/95">
+        <h3 id={titleId} className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">{t('settings.profilePicture')}</h3>
+        <p id={descriptionId} className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">{t('settings.avatarCropperTitle')}</p>
 
         {/* Canvas Area */}
         <div className="relative border border-[var(--color-border)] rounded-2xl overflow-hidden bg-[var(--color-bg-inverse)] shadow-inner group">
@@ -176,6 +193,10 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onWheel={handleWheel}
+            onKeyDown={handleCanvasKeyDown}
+            tabIndex={0}
+            role="img"
+            aria-label={`${t('settings.avatarCropperHint')} (${Math.round(zoom * 100)}%)`}
             className="cursor-move block touch-none"
           />
           <div className="absolute bottom-2 left-2 right-2 text-center text-[9px] font-mono text-[var(--color-text-inverse)]/50 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
@@ -187,6 +208,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
         <div className="w-full flex items-center gap-3 mt-5 px-1">
           <ZoomOut className="w-4 h-4 text-[var(--color-text-muted)]" />
           <input
+            aria-label={t('settings.avatarCropperTitle')}
             type="range"
             min="1.0"
             max="3.0"
@@ -201,6 +223,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
         {/* Actions Button Grid */}
         <div className="w-full grid grid-cols-2 gap-3 mt-6">
           <button
+            ref={cancelRef}
             type="button"
             onClick={onCancel}
             className="flex items-center justify-center gap-1.5 py-2.5 border border-[var(--color-border)] hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer shadow-xs"
