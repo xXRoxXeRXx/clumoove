@@ -64,6 +64,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `POST` | `/migration/{id}/cancel` | JWT (own) | Cancel; marks tasks cancelled + publishes Redis cancel event. |
 | `DELETE` | `/migration/{id}` | JWT (own) | Delete migration + cascading tasks. |
 | `GET` | `/migration/{id}/report` | JWT (own) | CSV report (failed tasks + skipped indexing errors). |
+| `GET` | `/migration/{id}/errors` | JWT (own) | Paginated JSON error list (final transfer failures + indexing errors); accepts `limit` (max. 100) and `offset`. |
 | `POST` | `/migration/{id}/retry-failed` | JWT (own) | Re-enqueue failed tasks (`COMPLETED`/`FAILED` only). |
 | `POST` | `/migration/{id}/reindex` | JWT (own) | Re-run indexing for a `FAILED` migration. |
 | `PUT` | `/migration/{id}/threads` | JWT (own) | Live thread count (1–16). |
@@ -89,6 +90,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `POST` | `/sync/{id}/resume` | JWT (own) | Resume a paused sync job. |
 | `DELETE` | `/sync/{id}` | JWT (own) | Delete sync job + cascading state/tasks. |
 | `GET` | `/sync/{id}/report` | JWT (own) | Download CSV report for sync errors. |
+| `GET` | `/sync/{id}/errors` | JWT (own) | Paginated JSON list of final transfer failures; accepts `limit` (max. 100) and `offset`. |
 | `PUT` | `/sync/{id}/threads` | JWT (own) | Live thread count adjustment. |
 
 ---

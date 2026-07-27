@@ -10,6 +10,7 @@ import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
+import { ErrorOverview } from './ErrorOverview';
 
 interface SyncDashboardProps {
   syncId: string;
@@ -574,6 +575,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             </div>
           </div>
         </div>
+
+        <ErrorOverview
+          endpoint={`${apiUrl}/api/sync/${syncId}/errors`}
+          token={token}
+          refreshKey={`${job.failed_files}-${job.last_run_at}-${job.status}`}
+        />
 
         {job.error_message && (
           <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-xs font-mono text-rose-700 flex items-start gap-2">

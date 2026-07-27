@@ -24,7 +24,18 @@
     "user": "Benutzer",
     "active": "Aktiv",
     "enabled": "Aktiviert",
-    "disabled": "Deaktiviert"
+    "disabled": "Deaktiviert",
+    "errorOverview": "Fehlerübersicht",
+    "errorPath": "Pfad",
+    "errorType": "Typ",
+    "errorMessage": "Fehler",
+    "errorOccurredAt": "Zeitpunkt",
+    "errorTypeTransfer": "Übertragung",
+    "errorTypeIndexing": "Indexierung",
+    "errorAttempts": "{{count}} Versuch(e)",
+    "errorNoMessage": "Keine Fehlerdetails verfügbar",
+    "loadMoreErrors": "Weitere Fehler laden",
+    "loadMoreErrorsFailed": "Weitere Fehler konnten nicht geladen werden. Bitte erneut versuchen."
   },
   "nav": {
     "settings": "Einstellungen",

@@ -24,7 +24,18 @@
     "user": "User",
     "active": "Active",
     "enabled": "Enabled",
-    "disabled": "Disabled"
+    "disabled": "Disabled",
+    "errorOverview": "Error overview",
+    "errorPath": "Path",
+    "errorType": "Type",
+    "errorMessage": "Error",
+    "errorOccurredAt": "Occurred",
+    "errorTypeTransfer": "Transfer",
+    "errorTypeIndexing": "Indexing",
+    "errorAttempts": "{{count}} attempt(s)",
+    "errorNoMessage": "No error details available",
+    "loadMoreErrors": "Load more errors",
+    "loadMoreErrorsFailed": "More errors could not be loaded. Please try again."
   },
   "nav": {
     "settings": "Settings",
