@@ -217,13 +217,6 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		SelectedPaths:               req.SelectedPaths,
 	}
 
-	jobID, err := db.CreateSyncJob(s.db, job)
-	if err != nil {
-		log.Printf("Failed to create sync job: %v\n", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
 	// Create a duration-based linked schedule. Cron's minute field is limited to
 	// 0-59, so values such as a 90-minute interval cannot be represented by a
 	// cron expression. The scheduler reads interval_minutes from this sync job
@@ -233,13 +226,15 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	sched := &db.Schedule{
 		UserID:         userID,
 		TaskType:       "sync",
-		TaskID:         jobID,
 		CronExpression: sql.NullString{},
 		NextRunAt:      sql.NullTime{Time: nextRun, Valid: true},
 		IsActive:       true,
 	}
-	if _, err := db.CreateSchedule(s.db, sched); err != nil {
-		log.Printf("[Sync] Warning: sync job %s created but schedule creation failed: %v\n", jobID, err)
+	jobID, err := db.CreateSyncJobAndSchedule(s.db, job, sched)
+	if err != nil {
+		log.Printf("Failed to create sync job and schedule: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
 	}
 
 	s.writeAudit(r, db.AuditSyncCreated, jobID, userID, map[string]interface{}{

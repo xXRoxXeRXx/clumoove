@@ -89,9 +89,7 @@ type SyncState struct {
 	ETag       string       `json:"etag,omitempty"`
 }
 
-// CreateSyncJob inserts a new sync job
-func CreateSyncJob(db *sql.DB, s *SyncJob) (string, error) {
-	query := `
+const createSyncJobQuery = `
 		INSERT INTO sync_jobs (
 			user_id, source_url, source_username, source_password_encrypted,
 			source_refresh_token_encrypted, source_token_expires_at,
@@ -103,8 +101,19 @@ func CreateSyncJob(db *sql.DB, s *SyncJob) (string, error) {
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 		RETURNING id, created_at, updated_at
 	`
-	err := db.QueryRow(
-		query,
+
+// CreateSyncJob inserts a sync job without a schedule. Production callers that
+// need periodic execution must use CreateSyncJobAndSchedule.
+func CreateSyncJob(db *sql.DB, s *SyncJob) (string, error) {
+	if err := insertSyncJob(db, s); err != nil {
+		return "", err
+	}
+	return s.ID, nil
+}
+
+func insertSyncJob(database queryExecer, s *SyncJob) error {
+	return database.QueryRow(
+		createSyncJobQuery,
 		s.UserID, s.SourceURL, s.SourceUsername, s.SourcePasswordEncrypted,
 		s.SourceRefreshTokenEncrypted, s.SourceTokenExpiresAt,
 		s.TargetURL, s.TargetUsername, s.TargetPasswordEncrypted,
@@ -113,11 +122,49 @@ func CreateSyncJob(db *sql.DB, s *SyncJob) (string, error) {
 		s.DeletePropagation, s.IntervalMinutes, s.Threads, s.Status, s.TargetDir,
 		s.SelectedPaths,
 	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
+}
 
+// CreateSyncJobAndSchedule creates a sync job and its periodic schedule atomically.
+// A sync job without a schedule cannot run automatically, so neither record may be
+// committed unless both inserts succeed.
+func CreateSyncJobAndSchedule(db *sql.DB, job *SyncJob, schedule *Schedule) (string, error) {
+	resetSyncJobAndSchedule(job, schedule)
+	tx, err := db.Begin()
 	if err != nil {
 		return "", err
 	}
-	return s.ID, nil
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+			resetSyncJobAndSchedule(job, schedule)
+		}
+	}()
+
+	if err := insertSyncJob(tx, job); err != nil {
+		return "", err
+	}
+
+	schedule.TaskID = job.ID
+	if err := insertSchedule(tx, schedule); err != nil {
+		return "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	committed = true
+	return job.ID, nil
+}
+
+func resetSyncJobAndSchedule(job *SyncJob, schedule *Schedule) {
+	job.ID = ""
+	job.CreatedAt = time.Time{}
+	job.UpdatedAt = time.Time{}
+	schedule.ID = ""
+	schedule.TaskID = ""
+	schedule.CreatedAt = time.Time{}
+	schedule.UpdatedAt = time.Time{}
 }
 
 // GetSyncJob retrieves a sync job by ID
