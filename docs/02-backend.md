@@ -178,6 +178,12 @@ For each task:
   **size comparison**; a failed *size query* is treated as success because the chunked-upload commit
   already verified size. A source-hash mismatch with a verified target size is also accepted (some
   providers report unreliable legacy checksums). This avoids false "corrupted" verdicts.
+- The worker verifies `VERIFYING` sync passes and refreshes an expiring OAuth target token before
+  constructing its target provider. The sync engine is the sole owner of final run statistics,
+  `sync_state`, and the transition back to `IDLE`; after its two-minute verification deadline it
+  moves the job out of `VERIFYING`, which cancels the worker verifier across processes. Verifier
+  task writes are conditional on that persisted status, so an in-flight provider call cannot mutate
+  tasks after the engine has aborted the verification pass.
 
 ### Failure handling (`handleTaskFailure`)
 

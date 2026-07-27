@@ -476,30 +476,7 @@ func (e *Engine) ensureFreshToken(syncJobID string, job *db.SyncJob, role string
 	}
 	newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 
-	// Overwrite tokens in database
-	var query string
-	if role == "source" {
-		query = `
-			UPDATE sync_jobs
-			SET source_password_encrypted = $1,
-			    source_refresh_token_encrypted = $2,
-			    source_token_expires_at = $3,
-			    updated_at = CURRENT_TIMESTAMP
-			WHERE id = $4
-		`
-	} else {
-		query = `
-			UPDATE sync_jobs
-			SET target_password_encrypted = $1,
-			    target_refresh_token_encrypted = $2,
-			    target_token_expires_at = $3,
-			    updated_at = CURRENT_TIMESTAMP
-			WHERE id = $4
-		`
-	}
-
-	_, err = e.db.Exec(query, newAccessEnc, newRefreshEnc, newExpiresAt, syncJobID)
-	if err != nil {
+	if err := db.UpdateSyncJobOAuthTokens(e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt); err != nil {
 		return "", fmt.Errorf("failed to persist refreshed tokens: %w", err)
 	}
 

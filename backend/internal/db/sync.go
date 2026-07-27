@@ -257,6 +257,44 @@ func TransitionSyncJobToVerifying(db *sql.DB, id string) (bool, error) {
 	return true, nil
 }
 
+// AbortSyncJobVerification withdraws a sync pass from the worker verifier while
+// keeping the engine as the sole owner of final run statistics and the eventual
+// RUNNING -> IDLE transition. RUNNING is safe here because all transfer tasks
+// were already observed as terminal before verification began.
+func AbortSyncJobVerification(db *sql.DB, id string) (bool, error) {
+	var transitionedID string
+	err := db.QueryRow(`
+		UPDATE sync_jobs
+		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'VERIFYING'
+		RETURNING id
+	`, id).Scan(&transitionedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// UpdateSyncJobOAuthTokens persists a rotated OAuth token pair for a sync job.
+// Keeping this update in db makes token rotation identical for the API engine
+// and the worker-side checksum verifier.
+func UpdateSyncJobOAuthTokens(db *sql.DB, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time) error {
+	if role != "source" && role != "target" {
+		return fmt.Errorf("invalid oauth token role %q", role)
+	}
+	var query string
+	if role == "source" {
+		query = `UPDATE sync_jobs SET source_password_encrypted = $1, source_refresh_token_encrypted = $2, source_token_expires_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
+	} else {
+		query = `UPDATE sync_jobs SET target_password_encrypted = $1, target_refresh_token_encrypted = $2, target_token_expires_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
+	}
+	_, err := db.Exec(query, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, id)
+	return err
+}
+
 // ClaimSyncJobPass atomically reserves a manually runnable sync job for a new
 // pass. A successful claim moves the job to INDEXING before its pass starts.
 func ClaimSyncJobPass(database *sql.DB, id string) (bool, error) {

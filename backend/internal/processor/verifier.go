@@ -13,6 +13,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
@@ -126,6 +127,11 @@ type verificationPassConfig struct {
 	MarkAllVerified   func(ctx context.Context) error
 	OnVerified        func(task *db.Task, targetPath string, targetHash string)
 	ReconcileProgress func() error
+	MarkVerified      func(ctx context.Context, task *db.Task, targetHash string) (bool, error)
+	MarkMismatch      func(ctx context.Context, task *db.Task) (bool, error)
+	// IsStillVerifying is used for sync jobs, whose engine can cancel a
+	// cross-process verifier by moving the persisted status out of VERIFYING.
+	IsStillVerifying func(ctx context.Context) (bool, error)
 }
 
 func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPassConfig) {
@@ -136,7 +142,72 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	}
 	defer p.verifyingEntities.Delete(guardKey)
 
-	unverifiedTasks, err := cfg.GetTasks(ctx)
+	passCtx, cancelPass := context.WithCancel(ctx)
+	defer cancelPass()
+	if cfg.IsStillVerifying != nil {
+		stillVerifying, err := cfg.IsStillVerifying(passCtx)
+		if err != nil {
+			log.Printf("[VERIFIER] Cannot confirm verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+			return
+		}
+		if !stillVerifying {
+			return
+		}
+		stopWatch := make(chan struct{})
+		defer close(stopWatch)
+		go func() {
+			ticker := time.NewTicker(250 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-stopWatch:
+					return
+				case <-passCtx.Done():
+					return
+				case <-ticker.C:
+					stillVerifying, err := cfg.IsStillVerifying(passCtx)
+					if err != nil {
+						log.Printf("[VERIFIER] Cannot refresh verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+						continue
+					}
+					if !stillVerifying {
+						log.Printf("[VERIFIER] %s %s cancelled because it is no longer VERIFYING.\n", cfg.EntityType, cfg.EntityID)
+						cancelPass()
+						return
+					}
+				}
+			}
+		}()
+	}
+	canWrite := func() bool {
+		if passCtx.Err() != nil {
+			return false
+		}
+		if cfg.IsStillVerifying == nil {
+			return true
+		}
+		stillVerifying, err := cfg.IsStillVerifying(passCtx)
+		if err != nil {
+			log.Printf("[VERIFIER] Cannot confirm write ownership for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+			return false
+		}
+		return stillVerifying
+	}
+	markVerified := func(task *db.Task, targetHash string) bool {
+		if !canWrite() {
+			return false
+		}
+		if cfg.MarkVerified != nil {
+			ok, err := cfg.MarkVerified(passCtx, task, targetHash)
+			if err != nil {
+				log.Printf("[VERIFIER] Failed to save verification for task %s: %v\n", task.ID, err)
+			}
+			return ok && err == nil
+		}
+		return db.MarkTaskChecksumVerified(p.db, passCtx, task.ID, targetHash) == nil
+	}
+
+	unverifiedTasks, err := cfg.GetTasks(passCtx)
 	if err != nil {
 		log.Printf("[VERIFIER] Error fetching unverified tasks for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 		return
@@ -151,13 +222,16 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 
 	if cfg.TargetProvider == "webdav" {
 		log.Printf("[VERIFIER] WebDAV target does not support checksums — accepting size verification for %d tasks in %s %s\n", total, cfg.EntityType, cfg.EntityID)
-		_ = cfg.MarkAllVerified(ctx)
+		if !canWrite() {
+			return
+		}
+		_ = cfg.MarkAllVerified(passCtx)
 		_ = cfg.ReconcileProgress()
 		return
 	}
 
 	targetKey := fmt.Sprintf("%s:target", cfg.EntityID)
-	targetClient, cleanup, err := p.getOrCreateProvider(ctx, targetKey, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
+	targetClient, cleanup, err := p.getOrCreateProvider(passCtx, targetKey, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
 	if err != nil {
 		log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 		return
@@ -191,13 +265,15 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 			defer wg.Done()
 			for task := range taskChan {
 				select {
-				case <-ctx.Done():
+				case <-passCtx.Done():
 					return
 				default:
 				}
 
 				if task.ResourceType != "files" {
-					_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, "")
+					if !markVerified(task, "") {
+						return
+					}
 					processedCount.Add(1)
 					continue
 				}
@@ -212,7 +288,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				var targetHash string
 				var errHash error
 				for attempt := 0; attempt < 3; attempt++ {
-					taskCtx, taskCancel := context.WithTimeout(ctx, 15*time.Second)
+					taskCtx, taskCancel := context.WithTimeout(passCtx, 15*time.Second)
 					targetHash, errHash = targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
 					taskCancel()
 
@@ -220,7 +296,11 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						break
 					}
 					if attempt < 2 {
-						time.Sleep(2 * time.Second)
+						select {
+						case <-passCtx.Done():
+							return
+						case <-time.After(2 * time.Second):
+						}
 					}
 				}
 
@@ -234,40 +314,47 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						if isCryptographicHash(sourceAlgo) && isCryptographicHash(targetAlgo) && sourceAlgo == targetAlgo {
 							if cleanSource == cleanTarget {
 								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
-								_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
-								if cfg.OnVerified != nil {
+								if markVerified(task, targetHash) && cfg.OnVerified != nil {
 									cfg.OnVerified(task, targetPath, targetHash)
 								}
 							} else {
 								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
 								task.Status = "FAILED"
-								task.NextRetryAt = sql.NullTime{Time: time.Now(), Valid: true}
 								task.ErrorMessage = sql.NullString{
 									String: fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget),
 									Valid:  true,
 								}
-								_ = db.UpdateTaskStatus(p.db, task)
+								if canWrite() {
+									if cfg.MarkMismatch != nil {
+										// A sync pass is being finalized by the engine; do not
+										// create new runnable work during that finalization.
+										task.NextRetryAt = sql.NullTime{}
+										_, _ = cfg.MarkMismatch(passCtx, task)
+									} else {
+										// Migrations keep their established automatic re-copy
+										// behavior after a checksum mismatch.
+										task.NextRetryAt = sql.NullTime{Time: time.Now(), Valid: true}
+										_ = db.UpdateTaskStatus(p.db, task)
+									}
+								}
 							}
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
 							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
 								targetPath, sourceAlgo, cleanSource, cleanTarget, task.FileSize)
-							_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
-							if cfg.OnVerified != nil {
+							if markVerified(task, targetHash) && cfg.OnVerified != nil {
 								cfg.OnVerified(task, targetPath, targetHash)
 							}
 						} else {
 							log.Printf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — size (%d bytes) verified\n",
 								targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget, task.FileSize)
-							_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
-							if cfg.OnVerified != nil {
+							if markVerified(task, targetHash) && cfg.OnVerified != nil {
 								cfg.OnVerified(task, targetPath, targetHash)
 							}
 						}
 					} else {
 						log.Printf("[VERIFIER] [NO_SOURCE_HASH] %s | Target (%s): %s — registered target hash\n", targetPath, targetAlgo, cleanTarget)
-						_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, targetHash)
-						if cfg.OnVerified != nil {
+						if markVerified(task, targetHash) && cfg.OnVerified != nil {
 							cfg.OnVerified(task, targetPath, targetHash)
 						}
 					}
@@ -284,7 +371,9 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Reason: %s — falling back to size verification (%d bytes)\n",
 							targetPath, reason, task.FileSize)
 					}
-					_ = db.MarkTaskChecksumVerified(p.db, ctx, task.ID, "")
+					if !markVerified(task, "") {
+						return
+					}
 				}
 
 				current := processedCount.Add(1)
@@ -297,6 +386,10 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	}
 
 	wg.Wait()
+	if passCtx.Err() != nil {
+		log.Printf("[VERIFIER] %s %s verification pass aborted.\n", cfg.EntityType, cfg.EntityID)
+		return
+	}
 	_ = cfg.ReconcileProgress()
 	log.Printf("[VERIFIER] %s %s checksum verification pass completed.\n", cfg.EntityType, cfg.EntityID)
 }
@@ -357,6 +450,11 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 			targetPass = dec
 		}
 	}
+	targetPass, err = p.ensureFreshSyncOAuthToken(ctx, job, "target", targetPass)
+	if err != nil {
+		log.Printf("[VERIFIER] Failed to refresh target OAuth token for sync job %s: %v\n", syncJobID, err)
+		return
+	}
 
 	cfg := verificationPassConfig{
 		EntityType:     "Sync job",
@@ -373,6 +471,12 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		MarkAllVerified: func(ctx context.Context) error {
 			return db.MarkAllSyncTasksVerified(p.db, ctx, syncJobID)
 		},
+		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
+			return db.MarkSyncTaskChecksumVerifiedWhileVerifying(p.db, ctx, task.ID, targetHash)
+		},
+		MarkMismatch: func(ctx context.Context, task *db.Task) (bool, error) {
+			return db.MarkSyncTaskChecksumMismatchWhileVerifying(p.db, ctx, task)
+		},
 		// The engine applies all durable sync-state changes after it owns the
 		// successful finalization, so verification itself only changes tasks.
 		OnVerified: nil,
@@ -382,7 +486,79 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 			// the engine and leave an IDLE job without a completed-run record.
 			return nil
 		},
+		IsStillVerifying: func(ctx context.Context) (bool, error) {
+			var status string
+			if err := p.db.QueryRowContext(ctx, `SELECT status FROM sync_jobs WHERE id = $1`, syncJobID).Scan(&status); err != nil {
+				return false, err
+			}
+			return status == "VERIFYING", nil
+		},
 	}
 
 	p.runVerificationPass(ctx, cfg)
+}
+
+// ensureFreshSyncOAuthToken refreshes a sync target/source access token before
+// a worker-side provider is constructed. It mirrors the engine path so a long
+// running pass cannot silently fail checksum verification after token expiry.
+func (p *Processor) ensureFreshSyncOAuthToken(ctx context.Context, job *db.SyncJob, role, accessToken string) (string, error) {
+	var refreshTokenEnc sql.NullString
+	var expiresAt sql.NullTime
+	var provider, accessTokenEnc string
+	if role == "source" {
+		refreshTokenEnc, expiresAt, provider, accessTokenEnc = job.SourceRefreshTokenEncrypted, job.SourceTokenExpiresAt, job.SourceProvider, job.SourcePasswordEncrypted
+	} else if role == "target" {
+		refreshTokenEnc, expiresAt, provider, accessTokenEnc = job.TargetRefreshTokenEncrypted, job.TargetTokenExpiresAt, job.TargetProvider, job.TargetPasswordEncrypted
+	} else {
+		return "", fmt.Errorf("invalid OAuth role %q", role)
+	}
+	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
+		return accessToken, nil
+	}
+
+	mu := p.getOrCreateRefreshLock("sync:" + job.ID)
+	mu.Lock()
+	defer mu.Unlock()
+	latest, err := db.GetSyncJob(p.db, job.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch sync job inside refresh lock: %w", err)
+	}
+	if role == "source" {
+		refreshTokenEnc, expiresAt, provider, accessTokenEnc = latest.SourceRefreshTokenEncrypted, latest.SourceTokenExpiresAt, latest.SourceProvider, latest.SourcePasswordEncrypted
+	} else {
+		refreshTokenEnc, expiresAt, provider, accessTokenEnc = latest.TargetRefreshTokenEncrypted, latest.TargetTokenExpiresAt, latest.TargetProvider, latest.TargetPasswordEncrypted
+	}
+	if latestAccess, derr := crypto.Decrypt(accessTokenEnc, p.secretKey); derr == nil {
+		accessToken = latestAccess
+	}
+	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+		return accessToken, nil
+	}
+
+	refreshToken, err := crypto.Decrypt(refreshTokenEnc.String, p.secretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt %s refresh token: %w", role, err)
+	}
+	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	tokenResp, err := oauth.RefreshToken(refreshCtx, provider, refreshToken)
+	cancel()
+	if err != nil {
+		return "", fmt.Errorf("OAuth refresh failed for %s (%s): %w", role, provider, err)
+	}
+	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt refreshed %s access token: %w", role, err)
+	}
+	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, p.secretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt refreshed %s refresh token: %w", role, err)
+	}
+	expiresIn := tokenResp.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	if err := db.UpdateSyncJobOAuthTokens(p.db, job.ID, role, newAccessEnc, newRefreshEnc, time.Now().Add(time.Duration(expiresIn)*time.Second)); err != nil {
+		return "", fmt.Errorf("failed to persist refreshed %s OAuth tokens: %w", role, err)
+	}
+	return tokenResp.AccessToken, nil
 }

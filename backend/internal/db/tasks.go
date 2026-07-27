@@ -9,17 +9,17 @@ import (
 )
 
 type Task struct {
-	ID           string          `json:"id"`
-	MigrationID  string          `json:"migration_id,omitempty"`
-	SyncJobID    string          `json:"sync_job_id,omitempty"`
-	ResourceType string          `json:"resource_type"` // files, calendars, contacts
-	FilePath     string          `json:"file_path"`
-	FileSize     int64           `json:"file_size"`
-	Status       string          `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
-	Attempts     int             `json:"attempts"`
-	ErrorMessage sql.NullString  `json:"error_message,omitempty"`
-	NextRetryAt  sql.NullTime    `json:"next_retry_at,omitempty"`
-	WorkerHash   sql.NullString  `json:"worker_hash,omitempty"`
+	ID               string          `json:"id"`
+	MigrationID      string          `json:"migration_id,omitempty"`
+	SyncJobID        string          `json:"sync_job_id,omitempty"`
+	ResourceType     string          `json:"resource_type"` // files, calendars, contacts
+	FilePath         string          `json:"file_path"`
+	FileSize         int64           `json:"file_size"`
+	Status           string          `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
+	Attempts         int             `json:"attempts"`
+	ErrorMessage     sql.NullString  `json:"error_message,omitempty"`
+	NextRetryAt      sql.NullTime    `json:"next_retry_at,omitempty"`
+	WorkerHash       sql.NullString  `json:"worker_hash,omitempty"`
 	SourceHash       sql.NullString  `json:"source_hash,omitempty"`
 	TargetHash       sql.NullString  `json:"target_hash,omitempty"`
 	ChecksumVerified bool            `json:"checksum_verified"`
@@ -140,6 +140,43 @@ func MarkTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHas
 	return err
 }
 
+// MarkSyncTaskChecksumVerifiedWhileVerifying rejects writes after an engine
+// timeout has withdrawn the sync pass from VERIFYING.
+func MarkSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID, targetHash string) (bool, error) {
+	res, err := db.ExecContext(ctx, `
+		UPDATE tasks AS t
+		SET checksum_verified = TRUE,
+		    target_hash = CASE WHEN $2 <> '' THEN $2 ELSE t.target_hash END,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE t.id = $1
+		  AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status = 'VERIFYING')
+	`, taskID, targetHash)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	return affected == 1, err
+}
+
+// MarkSyncTaskChecksumMismatchWhileVerifying records a mismatch only while
+// the verifier owns VERIFYING. It does not schedule a retry during finalization.
+func MarkSyncTaskChecksumMismatchWhileVerifying(db *sql.DB, ctx context.Context, task *Task) (bool, error) {
+	res, err := db.ExecContext(ctx, `
+		UPDATE tasks AS t
+		SET status = $1, attempts = $2, error_message = $3, next_retry_at = NULL,
+		    worker_hash = $4, source_hash = $5, target_hash = $6,
+		    checksum_verified = $7, updated_at = CURRENT_TIMESTAMP
+		WHERE t.id = $8
+		  AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status = 'VERIFYING')
+	`, task.Status, task.Attempts, task.ErrorMessage, task.WorkerHash, task.SourceHash,
+		task.TargetHash, task.ChecksumVerified, task.ID)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	return affected == 1, err
+}
+
 func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID string) error {
 	query := `
 		UPDATE tasks
@@ -152,9 +189,10 @@ func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID 
 
 func MarkAllSyncTasksVerified(db *sql.DB, ctx context.Context, syncJobID string) error {
 	query := `
-		UPDATE sync_tasks
+		UPDATE tasks AS t
 		SET checksum_verified = TRUE, updated_at = CURRENT_TIMESTAMP
-		WHERE sync_job_id = $1 AND checksum_verified = FALSE
+		WHERE t.sync_job_id = $1 AND t.checksum_verified = FALSE
+		  AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status = 'VERIFYING')
 	`
 	_, err := db.ExecContext(ctx, query, syncJobID)
 	return err
