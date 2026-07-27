@@ -141,9 +141,6 @@ const (
 	ErrEmailUnchanged               APIErrorCode = "EMAIL_UNCHANGED"
 	ErrEmailChangeTokenInvalid      APIErrorCode = "EMAIL_CHANGE_TOKEN_INVALID"
 	ErrCorsOriginUntrusted          APIErrorCode = "CORS_ORIGIN_UNTRUSTED"
-	ErrWsTokenInsecure              APIErrorCode = "WS_TOKEN_INSECURE"
-	ErrWsTokenMissing               APIErrorCode = "WS_TOKEN_MISSING"
-	ErrWsTokenInvalid               APIErrorCode = "WS_TOKEN_INVALID"
 	ErrSetupAlreadyCompleted        APIErrorCode = "SETUP_ALREADY_COMPLETED"
 	ErrInternalError                APIErrorCode = "INTERNAL_ERROR"
 

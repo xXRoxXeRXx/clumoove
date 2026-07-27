@@ -111,8 +111,8 @@ File-scoped commands referenced in `AGENTS.md`:
 ### Multi-tenancy & ownership
 - All per-migration endpoints call `auth.GetUserIDFromContext(r.Context())` and compare with
   `mig.UserID` → `403` on mismatch.
-- WebSocket `/migration/{id}/ws` re-checks current active account state and performs the same ownership
-  check manually via the `?token` query param; it also blocks 2FA temp tokens.
+- Detail SSE `/migration/{id}/stream` is behind `AuthMiddleware` and verifies migration ownership from
+  the JWT context; it never accepts a token in a query parameter.
 - Schedule endpoints use `db.VerifyScheduleOwnership` (EXISTS) and return `404` (not `403`) for
   non-owners.
 

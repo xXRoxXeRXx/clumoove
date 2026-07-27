@@ -9,7 +9,7 @@ export const useApiError = () => {
 
   // Memoize so the returned function keeps a stable identity across renders.
   // Passing it as a useEffect dependency otherwise re-runs the effect on every
-  // render, which for long-lived connections (SSE/WebSocket) opens a new
+  // render, which for long-lived SSE connections opens a new
   // connection each time and floods the rate limiter.
   return useCallback((code?: string | null): string => {
     if (code) {

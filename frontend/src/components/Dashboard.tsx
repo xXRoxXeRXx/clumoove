@@ -11,6 +11,7 @@ import { StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 import { apiFetch } from '../utils/apiClient';
 import { ErrorOverview } from './ErrorOverview';
+import { connectSseLoop } from '../utils/sse';
 
 interface DashboardProps {
   migrationId: string;
@@ -148,7 +149,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         const body = (await response.json().catch(() => ({}))) as { error_code?: string };
         throw new Error(translateApiError(body.error_code));
       }
-      // Status will automatically update via WebSocket
+      // Status is reflected by the migration SSE stream.
     } catch (err) {
       console.error(err);
       toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
@@ -238,18 +239,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
   useEffect(() => {
     resetMetrics();
-
-    // Construct WebSocket URL. The backend authenticates the socket by accepting
-    // the JWT either as a query parameter (HTTP only) or as a WebSocket
-    // subprotocol (works over both HTTP and HTTPS). On HTTPS the query-param path
-    // is explicitly rejected (see handleWebSocket / ErrWsTokenInsecure), so we
-    // must pass the token via the Subprotocol argument to keep the socket
-    // authenticated over wss://. The backend echoes it back in the handshake.
-    const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const apiUrlObj = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
-    const wsUrl = `${wsProto}://${apiUrlObj.host}/api/migration/${migrationId}/ws`;
-
     let isMounted = true;
+    const controller = new AbortController();
 
     const sanitizeErrorMsg = (val: unknown): string => {
       if (typeof val === 'string') return val;
@@ -259,7 +250,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       return '';
     };
 
-    // Fetch initial migration details immediately to avoid waiting for initial WS tick
+    // Keep the direct fetch so details are visible while the SSE connection opens.
     apiFetch(`${apiUrl}/api/migration/${migrationId}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -272,77 +263,58 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       })
       .catch((err) => console.error('Initial migration fetch error:', err));
 
-    // Pass the JWT as the subprotocol (2nd arg) so the secure HTTPS path works.
-    let ws = new WebSocket(wsUrl, token);
+    void connectSseLoop({
+      url: `${apiUrl}/api/migration/${migrationId}/stream`,
+      token,
+      signal: controller.signal,
+      fetchImpl: apiFetch,
+      handlers: {
+        onEvent: (event, eventData) => {
+          if (event === 'error') {
+            if (isMounted) setServerUnreachable(true);
+            controller.abort();
+            return;
+          }
+          if (event !== 'migration' || !eventData) return;
+          let payload: ProgressData;
+          try {
+            payload = JSON.parse(eventData);
+          } catch (err) {
+            console.error('Failed to parse migration SSE data:', err);
+            return;
+          }
+          payload.error_message = sanitizeErrorMsg(payload.error_message);
+          setServerUnreachable(false);
+          setData((prev) => (prev ? { ...prev, ...payload } : payload));
 
-    ws.onopen = () => {
-      // Connection established
-    };
+          if (payload.bandwidth_limit_mbps !== undefined) {
+            setBandwidthLimit(payload.bandwidth_limit_mbps);
+          }
+          if (payload.threads !== undefined && !threadsDraggingRef.current) {
+            setThreads(payload.threads);
+          }
 
-    ws.onmessage = (event) => {
-      let payload: ProgressData;
-      try {
-        payload = JSON.parse(event.data);
-      } catch (err) {
-        console.error("Failed to parse progress data:", err);
-        return;
-      }
-      payload.error_message = sanitizeErrorMsg(payload.error_message);
-      setData((prev) => (prev ? { ...prev, ...payload } : payload));
-
-      if (payload.bandwidth_limit_mbps !== undefined) {
-        setBandwidthLimit(payload.bandwidth_limit_mbps);
-      }
-      if (payload.threads !== undefined && !threadsDraggingRef.current) {
-        setThreads(payload.threads);
-      }
-
-      updateMetrics(payload);
-    };
-
-    ws.onerror = (err) => {
-      if (!isMounted) return;
-      console.error('WS Error:', err);
-    };
-
-    // Reconnect with exponential backoff (cap 30 s). If the migration ID came from
-    // a bookmarked URL and the server is temporarily down, we surface a clear banner
-    // instead of leaving the user on a frozen loading spinner.
-    let reconnectDelay = 1000;
-    let reconnectTimeout: ReturnType<typeof setTimeout>;
-    ws.onclose = () => {
-      if (!isMounted) return;
-      if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'COMPLETED_WITH_ERRORS' || prevStatusRef.current === 'FAILED') {
-        return;
-      }
-
-      // Ping API to trigger token refresh if it expired during WebSocket connection (I4 WS fix)
-      apiFetch(`${apiUrl}/api/auth/me`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      }).catch(err => console.error("WS connection loss auth check failed:", err));
-
-      if (reconnectDelay > 15000) {
-        setServerUnreachable(true);
-        return;
-      }
-      reconnectTimeout = setTimeout(() => {
-        reconnectDelay = Math.min(reconnectDelay * 2, 30000);
-        const wsProtoR = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const apiUrlObjR = new URL(apiUrl.startsWith('http') ? apiUrl : `${window.location.origin}${apiUrl}`);
-        const wsUrlR = `${wsProtoR}://${apiUrlObjR.host}/api/migration/${migrationId}/ws`;
-        const wsR = new WebSocket(wsUrlR, token);
-        wsR.onopen = ws.onopen;
-        wsR.onmessage = ws.onmessage;
-        wsR.onerror = ws.onerror;
-        wsR.onclose = ws.onclose;
-        ws = wsR;
-      }, reconnectDelay);
-    };
+          updateMetrics(payload);
+          if (prevStatusRef.current === 'COMPLETED' || prevStatusRef.current === 'COMPLETED_WITH_ERRORS' || prevStatusRef.current === 'FAILED') {
+            controller.abort();
+          }
+        },
+        onError: () => {
+          // Retrying is handled by connectSseLoop; the banner is deferred until
+          // its bounded exponential backoff has been exhausted.
+        },
+      },
+      onRetryScheduled: (delayMs) => {
+        if (delayMs >= 16000 && isMounted) {
+          setServerUnreachable(true);
+          controller.abort();
+        }
+      },
+    });
 
     return () => {
       isMounted = false;
-      clearTimeout(reconnectTimeout);
-      ws.close();
+      controller.abort();
     };
   }, [migrationId, apiUrl, token, reconnectNonce, resetMetrics, updateMetrics, prevStatusRef]);
 

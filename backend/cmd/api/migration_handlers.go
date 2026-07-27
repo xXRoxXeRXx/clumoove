@@ -11,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"backend/internal/auth"
@@ -20,19 +19,7 @@ import (
 	"backend/internal/queue"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
-
-	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return false
-		}
-		return allowedOrigins[origin]
-	},
-}
 
 type BrowseRequest struct {
 	SourceURL       string `json:"source_url"`
@@ -1063,39 +1050,13 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 
 func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
-
-	if !s.rateLimiter.Allow(r.Context(), "migration-stream", s.clientIP(r), streamRateLimit, streamRateWindow) {
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+	if !s.acquireMigrationStream(w, r, userID) {
 		return
 	}
-
-	s.streamMu.Lock()
-	if s.activeStreams[userID] >= maxStreamsPerUser {
-		s.streamMu.Unlock()
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return
-	}
-	s.activeStreams[userID]++
-	s.streamMu.Unlock()
-	defer func() {
-		s.streamMu.Lock()
-		s.activeStreams[userID]--
-		if s.activeStreams[userID] <= 0 {
-			delete(s.activeStreams, userID)
-		}
-		s.streamMu.Unlock()
-	}()
+	defer s.releaseMigrationStream(userID)
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
-	rc := http.NewResponseController(w)
-	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1104,6 +1065,10 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 
 	writeEvent := func(payload []byte) error {
 		if _, err := fmt.Fprintf(w, "event: migrations\ndata: %s\n\n", payload); err != nil {
@@ -1235,14 +1200,8 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := db.GetMigrationResourceStats(s.db, id)
-	if err != nil {
-		log.Printf("Error fetching resource stats for migration %s: %v\n", id, err)
-	} else {
-		mig.ResourceStats = stats
-	}
-
-	writeJSON(w, http.StatusOK, mig)
+	payload := s.migrationDetailPayload(r.Context(), mig)
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request) {
@@ -1359,67 +1318,100 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]interface{}{"errors": items, "total": total, "limit": limit, "offset": offset})
 }
 
-func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+// migrationDetailPayload is the canonical, sanitized live migration payload
+// shared by the detail API and its SSE stream.
+func (s *APIServer) migrationDetailPayload(ctx context.Context, mig *db.Migration) map[string]interface{} {
+	activeFiles, err := db.GetActiveTaskPaths(s.db, ctx, mig.ID)
+	if err != nil {
+		log.Printf("Migration detail active paths error for %s: %v", mig.ID, err)
+		activeFiles = nil
+	}
+	activeFile := ""
+	if len(activeFiles) > 0 {
+		activeFile = activeFiles[0]
+	}
+
+	payload := map[string]interface{}{
+		"id":                   mig.ID,
+		"status":               mig.Status,
+		"source_provider":      mig.SourceProvider,
+		"source_url":           mig.SourceURL,
+		"target_provider":      mig.TargetProvider,
+		"target_url":           mig.TargetURL,
+		"target_dir":           mig.TargetDir,
+		"selected_paths":       mig.SelectedPaths,
+		"selected_calendars":   mig.SelectedCalendars,
+		"selected_contacts":    mig.SelectedContacts,
+		"created_at":           mig.CreatedAt,
+		"total_files":          mig.TotalFiles,
+		"total_bytes":          mig.TotalBytes,
+		"processed_files":      mig.ProcessedFiles,
+		"processed_bytes":      mig.ProcessedBytes,
+		"live_bytes":           mig.LiveBytes,
+		"skipped_files":        mig.SkippedFiles,
+		"failed_files":         mig.FailedFiles,
+		"error_message":        "",
+		"active_file":          activeFile,
+		"active_files":         activeFiles,
+		"threads":              mig.Threads,
+		"bandwidth_limit_mbps": mig.BandwidthLimitMbps,
+	}
+	if mig.ErrorMessage.Valid {
+		payload["error_message"] = sanitize.SanitizeError(mig.ErrorMessage.String)
+	}
+
+	stats, err := db.GetMigrationResourceStats(s.db, mig.ID)
+	if err != nil {
+		log.Printf("Migration detail resource stats error for %s: %v", mig.ID, err)
+		return payload
+	}
+	payload["resource_stats"] = stats
+	return payload
+}
+
+// acquireMigrationStream applies the shared SSE request and concurrent-stream
+// limits. List and detail streams deliberately consume the same per-user pool.
+func (s *APIServer) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
+	if !s.rateLimiter.Allow(r.Context(), "migration-stream", s.clientIP(r), streamRateLimit, streamRateWindow) {
+		w.Header().Set("Retry-After", "15")
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return false
+	}
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	if s.activeStreams[userID] >= maxStreamsPerUser {
+		w.Header().Set("Retry-After", "15")
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return false
+	}
+	s.activeStreams[userID]++
+	return true
+}
+
+func (s *APIServer) releaseMigrationStream(userID string) {
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	s.activeStreams[userID]--
+	if s.activeStreams[userID] <= 0 {
+		delete(s.activeStreams, userID)
+	}
+}
+
+func isTerminalMigrationStatus(status string) bool {
+	return status == "COMPLETED" || status == "COMPLETED_WITH_ERRORS" || status == "FAILED"
+}
+
+func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
-
-	tokenStr := ""
-	isProtocolToken := false
-
-	if protocol := r.Header.Get("Sec-WebSocket-Protocol"); protocol != "" {
-		parts := strings.Split(protocol, ",")
-		for _, part := range parts {
-			trimmed := strings.TrimSpace(part)
-			if trimmed != "" {
-				tokenStr = trimmed
-				isProtocolToken = true
-				break
-			}
-		}
-	}
-
-	if tokenStr == "" {
-		queryToken := r.URL.Query().Get("token")
-		if queryToken != "" {
-			isHTTPS := s.isSecure(r)
-			if isHTTPS {
-				writeError(w, http.StatusUnauthorized, ErrWsTokenInsecure)
-				return
-			}
-			tokenStr = queryToken
-		}
-	}
-
-	if tokenStr == "" {
-		writeError(w, http.StatusUnauthorized, ErrWsTokenMissing)
+	userID := auth.GetUserIDFromContext(r.Context())
+	if !s.acquireMigrationStream(w, r, userID) {
 		return
 	}
-
-	claims, err := auth.ValidateToken(tokenStr, s.jwtSecret)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, ErrWsTokenInvalid)
-		return
-	}
-	// WebSockets bypass AuthMiddleware, so enforce the same authoritative
-	// account check here. A valid JWT must not survive a suspension or role
-	// change until its expiry.
-	state, err := db.GetUserAuthState(s.db, claims.UserID)
-	if err != nil || auth.RefreshClaimsFromAuthState(claims, state) != nil {
-		writeError(w, http.StatusUnauthorized, ErrWsTokenInvalid)
-		return
-	}
-	if err := auth.RequireAuthenticated(claims); err != nil {
-		if claims.MustChangePassword {
-			writeError(w, http.StatusUnauthorized, ErrPasswordChangeRequired)
-		} else {
-			writeError(w, http.StatusUnauthorized, ErrTotpRequired)
-		}
-		return
-	}
-	userID := claims.UserID
+	defer s.releaseMigrationStream(userID)
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
@@ -1436,111 +1428,74 @@ func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var responseHeader http.Header
-	if isProtocolToken {
-		responseHeader = make(http.Header)
-		responseHeader.Set("Sec-WebSocket-Protocol", tokenStr)
-	}
-
-	ws, err := upgrader.Upgrade(w, r, responseHeader)
-	if err != nil {
-		log.Printf("Failed to upgrade WebSocket: %v\n", err)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	defer ws.Close()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 
-	log.Printf("WebSocket client connected for migration: %s\n", id)
-
-	ws.SetReadLimit(512)
-	ws.SetReadDeadline(time.Now().Add(35 * time.Second))
-	ws.SetPongHandler(func(string) error {
-		ws.SetReadDeadline(time.Now().Add(35 * time.Second))
-		return nil
-	})
-
-	go func() {
-		for {
-			if _, _, err := ws.NextReader(); err != nil {
-				break
-			}
+	writeEvent := func(payload []byte) error {
+		if _, err := fmt.Fprintf(w, "event: migration\ndata: %s\n\n", payload); err != nil {
+			return err
 		}
-	}()
+		flusher.Flush()
+		return nil
+	}
+	writePayload := func(migration *db.Migration) ([]byte, error) {
+		return json.Marshal(s.migrationDetailPayload(r.Context(), migration))
+	}
 
-	ticker := time.NewTicker(1 * time.Second)
+	previous, err := writePayload(mig)
+	if err != nil {
+		log.Printf("Migration detail stream initial payload error for %s: %v", id, err)
+		return
+	}
+	if err := writeEvent(previous); err != nil {
+		return
+	}
+	if isTerminalMigrationStatus(mig.Status) {
+		return
+	}
+
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-
-	pingTicker := time.NewTicker(15 * time.Second)
-	defer pingTicker.Stop()
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
 
 	for {
 		select {
-		case <-pingTicker.C:
-			if err := ws.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
-				log.Printf("WebSocket write ping error: %v\n", err)
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
 				return
 			}
+			flusher.Flush()
 		case <-ticker.C:
-			mig, err = db.GetMigration(s.db, id)
+			mig, err := db.GetMigration(s.db, id)
 			if err != nil {
 				return
 			}
-
-			activeFiles, _ := db.GetActiveTaskPaths(s.db, r.Context(), id)
-			var activeFile string
-			if len(activeFiles) > 0 {
-				activeFile = activeFiles[0]
-			}
-
-			responsePayload := map[string]interface{}{
-				"id":                   mig.ID,
-				"status":               mig.Status,
-				"source_provider":      mig.SourceProvider,
-				"source_url":           mig.SourceURL,
-				"target_provider":      mig.TargetProvider,
-				"target_url":           mig.TargetURL,
-				"target_dir":           mig.TargetDir,
-				"selected_paths":       mig.SelectedPaths,
-				"selected_calendars":   mig.SelectedCalendars,
-				"selected_contacts":    mig.SelectedContacts,
-				"created_at":           mig.CreatedAt,
-				"total_files":          mig.TotalFiles,
-				"total_bytes":          mig.TotalBytes,
-				"processed_files":      mig.ProcessedFiles,
-				"processed_bytes":      mig.ProcessedBytes,
-				"live_bytes":           mig.LiveBytes,
-				"skipped_files":        mig.SkippedFiles,
-				"failed_files":         mig.FailedFiles,
-				"error_message":        "",
-				"active_file":          activeFile,
-				"active_files":         activeFiles,
-				"threads":              mig.Threads,
-				"bandwidth_limit_mbps": mig.BandwidthLimitMbps,
-			}
-
-			if mig.ErrorMessage.Valid {
-				responsePayload["error_message"] = mig.ErrorMessage.String
-			}
-
-			stats, err := db.GetMigrationResourceStats(s.db, id)
-			if err == nil {
-				responsePayload["resource_stats"] = stats
-			} else {
-				log.Printf("WebSocket error fetching resource stats: %v\n", err)
-			}
-
-			data, err := json.Marshal(responsePayload)
+			current, err := writePayload(mig)
 			if err != nil {
+				log.Printf("Migration detail stream payload error for %s: %v", id, err)
 				return
 			}
-
-			ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			err = ws.WriteMessage(websocket.TextMessage, data)
-			if err != nil {
-				return
+			if !bytes.Equal(current, previous) {
+				if err := writeEvent(current); err != nil {
+					return
+				}
+				previous = current
 			}
-
-			if (mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED") && mig.ProcessedFiles >= mig.TotalFiles {
-				time.Sleep(1 * time.Second)
+			if isTerminalMigrationStatus(mig.Status) {
 				return
 			}
 		}

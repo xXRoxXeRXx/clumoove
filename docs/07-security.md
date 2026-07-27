@@ -59,14 +59,11 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 ---
 
-## 5. WebSocket Authentication
+## 5. Migration Detail SSE Authentication
 
-`GET /api/migration/{id}/ws` is **not** behind `AuthMiddleware`. It authenticates via the `?token=<jwt>`
-query parameter (or `Sec-WebSocket-Protocol`), re-checks the account is active and current in the
-database at connection time, validates ownership (`mig.UserID == claims.sub`), and **blocks 2FA temp
-tokens** (a `2fa_pending` claim cannot open the migration socket). This prevents a valid access JWT
-from opening a new socket after account suspension or a role change. Established sockets are not
-asynchronously terminated on suspension.
+`GET /api/migration/{id}/stream` is protected by `AuthMiddleware` and accepts the JWT only through the
+`Authorization: Bearer` header. It validates ownership (`mig.UserID == claims.sub`) before opening the
+stream. No realtime endpoint accepts access tokens in query parameters.
 
 ---
 
@@ -77,7 +74,6 @@ asynchronously terminated on suspension.
 - `corsMiddleware` reflects credentials (`Access-Control-Allow-Credentials: true`) **only** for
   whitelisted origins; it never reflects the incoming `Origin` for unknown hosts (no wildcard +
   credentials).
-- The WebSocket `CheckOrigin` enforces the same whitelist and rejects requests with no `Origin` header.
 
 ---
 
@@ -107,7 +103,7 @@ endpoint group from consuming another group's request budget. Limits:
 
 All JSON request bodies pass through `http.MaxBytesReader` before decoding. Normal API requests are limited to 1 MiB; avatar JSON is limited to 3 MiB to support its existing 2 MiB decoded-image cap; authentication and TOTP requests are limited to 64 KiB. Malformed, oversized, trailing-data, and otherwise invalid JSON bodies return `INVALID_BODY`, except password-reset requests preserve their generic success response for anti-enumeration.
 
-The API's normal HTTP timeouts are read 30 seconds, write 60 seconds, and idle 120 seconds. Migration and sync SSE handlers explicitly clear their per-response write deadline through `http.ResponseController`, so the normal write timeout does not terminate healthy long-lived streams; 15-second SSE comment heartbeats keep intermediary proxies from treating them as idle.
+The API's normal HTTP timeouts are read 30 seconds, write 60 seconds, and idle 120 seconds. Migration list/detail and sync SSE handlers explicitly clear their per-response write deadline through `http.ResponseController`, so the normal write timeout does not terminate healthy long-lived streams; 15-second SSE comment heartbeats keep intermediary proxies from treating them as idle.
 
 **Account lockouts** (mirror the TOTP lockout): 5 failed logins → 15-minute lockout; 5 failed TOTP
 attempts → 15-minute lockout. Both are enforced in `db` with single-statement atomic increments.

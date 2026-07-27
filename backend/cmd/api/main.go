@@ -204,6 +204,7 @@ func main() {
 	mux.Handle("POST /api/migration/target/mkdir", jwtMiddleware(http.HandlerFunc(server.handleTargetMkdir)))
 	mux.Handle("POST /api/migration/start", jwtMiddleware(http.HandlerFunc(server.handleStart)))
 	mux.Handle("GET /api/migration/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetStatus)))
+	mux.Handle("GET /api/migration/{id}/stream", jwtMiddleware(http.HandlerFunc(server.handleMigrationDetailStream)))
 	mux.Handle("POST /api/migration/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePause)))
 	mux.Handle("POST /api/migration/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResume)))
 	mux.Handle("POST /api/migration/{id}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancel)))
@@ -253,8 +254,7 @@ func main() {
 	mux.Handle("GET /api/admin/syncs", jwtMiddleware(http.HandlerFunc(server.handleAdminListSyncs)))
 	mux.Handle("GET /api/audit/log", jwtMiddleware(http.HandlerFunc(server.handleAdminAuditLog)))
 
-	// WebSockets & OAuth Callbacks (Require custom/token-based verification inside handler)
-	mux.HandleFunc("GET /api/migration/{id}/ws", server.handleWebSocket)
+	// OAuth callbacks use their own state validation.
 	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
 	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
 

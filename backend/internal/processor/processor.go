@@ -1048,7 +1048,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 1, task.FileSize, 0, 1)
 		// Cancel any remaining PENDING tasks so they are not orphaned: the dequeue
 		// query only selects PENDING while RUNNING/INDEXING, so they would otherwise
-		// stay stuck forever (processed_files never reaches total_files, WebSocket
+		// stay stuck forever (processed_files never reaches total_files, live stream
 		// never closes, CSV report incomplete). Count them as FAILED (not processed)
 		// so the report does not understate how many files were not migrated.
 		cancelled, cerr := db.CancelRemainingPendingTasks(p.db, task.MigrationID)
