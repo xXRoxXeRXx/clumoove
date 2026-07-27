@@ -208,7 +208,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 
 - `Run` ticks every 1 minute (and once on startup to catch overdue schedules).
 - `processDueSchedules` claims each schedule via `TryClaimScheduleLock` (multi-instance safety).
-- `processSchedule` applies overlap protection (`isJobActive`: `RUNNING`/`INDEXING`), triggers the job,
+- `processSchedule` applies overlap protection (`isJobActive`: `RUNNING`/`INDEXING`/`VERIFYING`/`PAUSED_CONNECTION_LOSS`), triggers the job,
   then advances `next_run_at` (recurring) or deactivates (one-shot / trigger failure).
 - `triggerMigration` verifies `SCHEDULED` state and delegates to the shared `indexer.Start` in a
   goroutine (indexing can take up to 20 min). `triggerSync` atomically claims an `IDLE`/`FAILED`

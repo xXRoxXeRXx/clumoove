@@ -132,7 +132,7 @@ func TestNextSyncRunAtRejectsInvalidInterval(t *testing.T) {
 }
 
 func TestIsJobActiveStatus(t *testing.T) {
-	active := []string{"RUNNING", "INDEXING"}
+	active := []string{"RUNNING", "INDEXING", "VERIFYING", "PAUSED_CONNECTION_LOSS"}
 	for _, s := range active {
 		if !isJobActiveStatus(s) {
 			t.Errorf("status %q should be considered active (overlap protection)", s)
@@ -141,7 +141,7 @@ func TestIsJobActiveStatus(t *testing.T) {
 
 	inactive := []string{
 		"PENDING", "SCHEDULED", "COMPLETED", "FAILED",
-		"PAUSED_CONNECTION_LOSS", "", "UNKNOWN",
+		"", "UNKNOWN",
 	}
 	for _, s := range inactive {
 		if isJobActiveStatus(s) {
