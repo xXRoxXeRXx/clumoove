@@ -291,8 +291,8 @@
   },
   "migrations": {
     "tagline": "Data migration has never been this easy.",
-    "welcome": "Hello, {{name}}",
-    "welcomeSub": "Manage and monitor your data transfers between different cloud systems live in one central place.",
+      "welcome": "Hello {{name}},",
+      "welcomeSub": "manage and monitor your data transfers between different cloud systems live in one central place.",
     "newMigration": "New transfer",
     "dataTransferred": "Data transferred",
     "migrations": "Transfers",

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, Loader2, Search } from 'lucide-react';
+import { Play, Pause, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, Loader2, Search } from 'lucide-react';
 import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -32,6 +32,7 @@ export function MigrationsDashboard({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const [controlLoading, setControlLoading] = useState<string | null>(null);
 
   const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
   const [syncLoading, setSyncLoading] = useState<boolean>(true);
@@ -188,6 +189,29 @@ export function MigrationsDashboard({
     }
   };
 
+  const handleMigrationControl = async (migration: Migration, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const action = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(migration.status) ? 'resume' : 'pause';
+    setControlLoading(migration.id);
+    try {
+      const response = await apiFetch(`${apiUrl}/api/migration/${migration.id}/${action}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.error_code ? translateApiError(body.error_code) : t('dashboard.actionFailedMsg', { action }));
+      }
+      setMigrations((current) => current.map((item) => item.id === migration.id
+        ? { ...item, status: action === 'pause' ? 'PAUSED' : 'RUNNING' }
+        : item));
+    } catch (err) {
+      toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }));
+    } finally {
+      setControlLoading(null);
+    }
+  };
+
   const totalMigrations = migrations.length;
   const totalSyncs = syncJobs.length;
   const totalTransfers = totalMigrations + totalSyncs;
@@ -312,7 +336,7 @@ export function MigrationsDashboard({
       </div>
 
       {/* Main Section with Segmented Pill Tabs & Search Filter Bar */}
-      <div className="glass-panel rounded-3xl border border-[var(--color-glass-border)]/50 shadow-portal p-6 space-y-6">
+      <div className="glass-panel rounded-3xl border border-[var(--color-glass-border)]/50 shadow-portal p-6 space-y-6 min-h-[560px]">
         
         {/* Navigation Tabs & Controls Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-[var(--color-border)] pb-4 gap-4">
@@ -489,6 +513,9 @@ export function MigrationsDashboard({
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
                               {mig.source_url || t('migrations.oauth')}
                             </span>
+                            <span className="text-[10px] font-mono text-portal-navy max-w-[120px] truncate block" title={mig.selected_paths?.join(', ') || '/'}>
+                              {t('sync.sourcePath')}: {mig.selected_paths?.length ? mig.selected_paths.join(', ') : '/'}
+                            </span>
                           </div>
                           
                           <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
@@ -499,6 +526,9 @@ export function MigrationsDashboard({
                             </span>
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
                               {mig.target_url || t('migrations.oauth')}
+                            </span>
+                            <span className="text-[10px] font-mono text-portal-navy max-w-[120px] truncate block" title={mig.target_dir || '/'}>
+                              {t('sync.targetPath')}: {mig.target_dir || '/'}
                             </span>
                           </div>
                         </div>
@@ -551,11 +581,12 @@ export function MigrationsDashboard({
                       <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end items-center gap-2">
                           <button
-                            onClick={() => onSelectActiveMigration(mig.id)}
-                            className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer"
-                            title={t('migrations.openDashboard')}
+                            onClick={(e) => handleMigrationControl(mig, e)}
+                            disabled={controlLoading === mig.id || !['RUNNING', 'INDEXING', 'PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status)}
+                            className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+                            title={['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? t('dashboard.resume') : t('dashboard.pause')}
                           >
-                            <Play className="w-3.5 h-3.5 fill-current" />
+                            {controlLoading === mig.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
                           </button>
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
@@ -610,6 +641,7 @@ function SyncList({
   onStartNewSync: () => void;
 }) {
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const [controlLoading, setControlLoading] = useState<string | null>(null);
 
   const { t } = useTranslation();
   const { formatDateTime } = useFormat();
@@ -638,6 +670,29 @@ function SyncList({
       toast(err instanceof Error ? err.message : t('sync.deleteFailed'));
     } finally {
       setDeleteLoading(null);
+    }
+  };
+
+  const handleSyncControl = async (job: SyncJob, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const action = job.status === 'PAUSED' ? 'resume' : 'pause';
+    setControlLoading(job.id);
+    try {
+      const response = await apiFetch(`${apiUrl}/api/sync/${job.id}/${action}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body?.error_code ? translateApiError(body.error_code) : t('dashboard.actionFailedMsg', { action }));
+      }
+      setSyncJobs((current) => current.map((item) => item.id === job.id
+        ? { ...item, status: action === 'pause' ? 'PAUSED' : 'RUNNING' }
+        : item));
+    } catch (err) {
+      toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }));
+    } finally {
+      setControlLoading(null);
     }
   };
 
@@ -695,6 +750,7 @@ function SyncList({
             <th className="py-4.5 px-4 font-semibold">{t('migrations.sourceTarget')}</th>
             <th className="py-4.5 px-4 font-semibold">{t('sync.direction')}</th>
             <th className="py-4.5 px-4 font-semibold">{t('migrations.status')}</th>
+            <th className="py-4.5 px-4 font-semibold">{t('migrations.progress')}</th>
             <th className="py-4.5 px-4 font-semibold">{t('sync.lastRun')}</th>
             <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
           </tr>
@@ -706,8 +762,11 @@ function SyncList({
               onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}
               className="hover:bg-[var(--color-bg-tertiary)]/50 transition-all duration-200 cursor-pointer group"
             >
-              <td className="py-4 px-4 whitespace-nowrap text-xs font-mono text-[var(--color-text-secondary)]">
-                {formatDateTime(job.created_at)}
+              <td className="py-4 px-4 whitespace-nowrap">
+                <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
+                  <Calendar className="w-3.5 h-3.5 text-[var(--color-text-muted)] group-hover:text-[var(--color-portal-orange-themed)] transition-colors" />
+                  {formatDateTime(job.created_at)}
+                </div>
               </td>
               <td className="py-4 px-4">
                 <div className="flex items-center gap-2.5">
@@ -740,7 +799,16 @@ function SyncList({
                 {job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')}
               </td>
               <td className="py-4 px-4 whitespace-nowrap">
-                <StatusBadge status={job.status} size="sm" context="sync" />
+                <StatusBadge status={job.status} size="sm" />
+              </td>
+              <td className="py-4 px-4 min-w-[140px]">
+                {(() => {
+                  const progress = job.total_files > 0
+                    ? Math.min(100, Math.round((job.processed_files / job.total_files) * 100))
+                    : (job.status === 'IDLE' || job.status === 'COMPLETED' ? 100 : 0);
+                  const color = job.status === 'FAILED' ? 'bg-rose-500' : job.status === 'COMPLETED_WITH_ERRORS' ? 'bg-amber-500' : job.status === 'IDLE' || job.status === 'COMPLETED' ? 'bg-emerald-500' : 'bg-portal-orange';
+                  return <div className="flex flex-col gap-1.5"><span className="text-[10px] font-mono text-[var(--color-text-muted)]">{job.processed_files} / {job.total_files} {t('dashboard.files')}</span><div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-tertiary)]"><div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${progress}%` }} /></div></div>;
+                })()}
               </td>
               <td className="py-4 px-4 whitespace-nowrap text-xs font-mono text-[var(--color-text-secondary)]">
                 {job.last_run_at ? formatDateTime(job.last_run_at) : '-'}
@@ -748,11 +816,12 @@ function SyncList({
               <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-end items-center gap-2">
                   <button
-                    onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}
-                    className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer"
-                    title={t('sync.openDetail')}
+                    onClick={(e) => handleSyncControl(job, e)}
+                    disabled={controlLoading === job.id || !['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED'].includes(job.status)}
+                    className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+                    title={job.status === 'PAUSED' ? t('sync.resume') : t('sync.pause')}
                   >
-                    <Play className="w-3.5 h-3.5 fill-current" />
+                    {controlLoading === job.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : job.status === 'PAUSED' ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
                   </button>
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
