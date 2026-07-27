@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Plug, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
 import { apiFetch } from '../utils/apiClient';
 import { MessageBanner, type MessageState } from './MessageBanner';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import type { ApiErrBody } from './SettingsPage';
 
 interface ConnectionManagerProps {
@@ -325,6 +326,14 @@ interface ProfileEditorProps {
 function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSaved, onError }: ProfileEditorProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const nameId = useId();
+  const providerId = useId();
+  const urlId = useId();
+  const usernameId = useId();
+  const passwordId = useId();
 
   const [name, setName] = useState<string>(editing?.name || '');
   const [provider, setProvider] = useState<ProviderId>((editing?.provider as ProviderId) || 'nextcloud');
@@ -334,6 +343,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const [oauthUser, setOauthUser] = useState<string>(editing?.oauth_user || '');
   const [oauthRefreshToken, setOauthRefreshToken] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
+  useFocusTrap(dialogRef, closeRef, onClose);
 
   const isOAuth = provider === 'dropbox' || provider === 'google';
   const needsPassword = !isOAuth && provider !== 'local';
@@ -413,25 +423,26 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-900/40 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg bg-[var(--color-bg-primary)] rounded-2xl p-6 border border-[var(--color-border)] shadow-portal space-y-5">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-lg bg-[var(--color-bg-primary)] rounded-2xl p-6 border border-[var(--color-border)] shadow-portal space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
-          <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
+          <h3 id={titleId} className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
           </h3>
-          <button onClick={onClose} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer">
+          <button ref={closeRef} type="button" onClick={onClose} aria-label={t('common.cancel')} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-1.5">
-            <label className={labelCls}>{t('settings.connections.nameLabel')}</label>
-            <input type="text" required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />
+            <label htmlFor={nameId} className={labelCls}>{t('settings.connections.nameLabel')}</label>
+            <input id={nameId} type="text" required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />
           </div>
 
           <div className="space-y-1.5">
-            <label className={labelCls}>{t('settings.connections.providerLabel')}</label>
+            <label htmlFor={providerId} className={labelCls}>{t('settings.connections.providerLabel')}</label>
             <select
+              id={providerId}
               value={provider}
               disabled={!!editing}
               onChange={(e) => setProvider(e.target.value as ProviderId)}
@@ -471,17 +482,18 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
             <>
               {provider !== 'magentacloud' && (
                 <div className="space-y-1.5">
-                  <label className={labelCls}>{t('connect.nextcloudUrl')}</label>
-                  <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} className={inputCls} placeholder={provider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')} />
+                  <label htmlFor={urlId} className={labelCls}>{t('connect.nextcloudUrl')}</label>
+                  <input id={urlId} type="text" value={url} onChange={(e) => setUrl(e.target.value)} className={inputCls} placeholder={provider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')} />
                 </div>
               )}
               <div className="space-y-1.5">
-                <label className={labelCls}>{t('connect.username')}</label>
-                <input type="text" autoComplete="username" name="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
+                <label htmlFor={usernameId} className={labelCls}>{t('connect.username')}</label>
+                <input id={usernameId} type="text" autoComplete="username" name="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
               </div>
               <div className="space-y-1.5">
-                <label className={labelCls}>{t('settings.connections.passwordLabel')}</label>
+                <label htmlFor={passwordId} className={labelCls}>{t('settings.connections.passwordLabel')}</label>
                 <input
+                  id={passwordId}
                   type="password"
                   autoComplete="current-password"
                   name="password"

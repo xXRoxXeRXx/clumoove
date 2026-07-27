@@ -650,15 +650,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </div>
               ) : (
               <>
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</label>
+                <div id="source-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</div>
                 
                 {/* Visual Provider Pills */}
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-labelledby="source-provider-label">
                   {providerOptions.map(opt => (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => handleSourceProviderSelect(opt.id)}
+                      role="radio"
+                      aria-checked={sourceProvider === opt.id}
                       className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
                         sourceProvider === opt.id
                           ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light border-portal-navy text-white shadow-xs'
@@ -1113,15 +1115,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </div>
               ) : (
               <>
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</label>
+                <div id="target-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</div>
                 
                 {/* Visual Provider Pills */}
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-labelledby="target-provider-label">
                   {providerOptions.map(opt => (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => handleTargetProviderSelect(opt.id)}
+                      role="radio"
+                      aria-checked={targetProvider === opt.id}
                       className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
                         targetProvider === opt.id
                           ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light border-portal-navy text-white shadow-xs'
@@ -1550,7 +1554,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         )}
 
         {error && (
-          <div className="p-4 bg-rose-50/85 border border-rose-250 rounded-2xl flex items-start gap-3 max-w-xl mx-auto text-left animate-fade-in">
+          <div role="alert" className="p-4 bg-rose-50/85 border border-rose-250 rounded-2xl flex items-start gap-3 max-w-xl mx-auto text-left animate-fade-in">
             <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
             <div className="text-xs font-semibold text-rose-800 leading-normal">{error}</div>
           </div>

@@ -700,6 +700,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
           checked={registrationsEnabled}
           disabled={loading}
           onChange={handleToggleRegistrations}
+          label={t('settings.allowRegistrations')}
         />
       </div>
     </SectionCard>

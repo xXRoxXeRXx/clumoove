@@ -224,17 +224,18 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           </div>
 
           {mustChangeError && (
-            <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+            <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
               {mustChangeError}
             </div>
           )}
 
           <form onSubmit={handleMustChangeSubmit} className="space-y-5">
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+              <label htmlFor="must-change-new-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('auth.newPassword')}
               </label>
               <input
+                id="must-change-new-password"
                 type="password"
                 autoComplete="new-password"
                 name="new_password"
@@ -246,10 +247,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+              <label htmlFor="must-change-confirm-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('auth.confirmPassword')}
               </label>
               <input
+                id="must-change-confirm-password"
                 type="password"
                 autoComplete="new-password"
                 name="confirm_password"
@@ -301,7 +303,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           </div>
 
           {otpError && (
-            <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+            <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
               {otpError}
             </div>
           )}
@@ -390,7 +392,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {!resetEmailSent ? (
             <>
               {error && (
-                <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+                <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
                   {error}
                 </div>
               )}
@@ -529,7 +531,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           </div>
 
           {error && (
-            <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+            <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
               {error}
             </div>
           )}
@@ -707,7 +709,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         </div>
 
         {error && (
-          <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+          <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
             {error}
           </div>
         )}
