@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/queue"
+	"backend/internal/sanitize"
 	"backend/internal/storage"
 
 	"github.com/gorilla/websocket"
@@ -1309,6 +1311,52 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 			})
 		}
 	}
+}
+
+func parseErrorListPagination(r *http.Request) (int, int) {
+	limit, offset := 20, 0
+	if value, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && value > 0 {
+		limit = min(value, 100)
+	}
+	// Offset zero is valid; negative offsets keep the safe default of zero.
+	if value, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && value >= 0 {
+		offset = value
+	}
+	return limit, offset
+}
+
+func sanitizeErrorListItems(items []db.ErrorListItem) {
+	for i := range items {
+		items[i].ErrorMessage = sanitize.SanitizeError(items[i].ErrorMessage)
+	}
+}
+
+func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
+		return
+	}
+	userID := auth.GetUserIDFromContext(r.Context())
+	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("Error checking migration %s error-list ownership: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
+		return
+	}
+	limit, offset := parseErrorListPagination(r)
+	items, total, err := db.GetMigrationErrors(s.db, id, limit, offset)
+	if err != nil {
+		log.Printf("Error fetching migration %s errors: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	sanitizeErrorListItems(items)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"errors": items, "total": total, "limit": limit, "offset": offset})
 }
 
 func (s *APIServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {

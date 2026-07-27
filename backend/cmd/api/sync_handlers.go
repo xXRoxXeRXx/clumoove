@@ -533,6 +533,34 @@ func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 	writer.Flush()
 }
 
+func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
+		return
+	}
+	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	if err != nil {
+		log.Printf("Error checking sync job %s error-list ownership: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+		return
+	}
+	limit, offset := parseErrorListPagination(r)
+	items, total, err := db.GetSyncErrors(s.db, id, limit, offset)
+	if err != nil {
+		log.Printf("Error fetching sync job %s errors: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	sanitizeErrorListItems(items)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"errors": items, "total": total, "limit": limit, "offset": offset})
+}
+
 func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {

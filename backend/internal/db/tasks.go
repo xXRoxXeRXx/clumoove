@@ -51,6 +51,19 @@ type IndexingErrorInput struct {
 	Err          error
 }
 
+// ErrorListItem is a safe, display-oriented representation of an error that
+// occurred while indexing or transferring a migration/sync resource.
+type ErrorListItem struct {
+	ID           string    `json:"id"`
+	Kind         string    `json:"kind"`
+	ResourceType string    `json:"resource_type"`
+	Path         string    `json:"path"`
+	Status       string    `json:"status"`
+	Attempts     int       `json:"attempts"`
+	ErrorMessage string    `json:"error_message"`
+	OccurredAt   time.Time `json:"occurred_at"`
+}
+
 func CreateTask(db *sql.DB, t *Task) (string, error) {
 	query := `
 		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata)
@@ -445,6 +458,100 @@ func GetIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError
 		errs = append(errs, ie)
 	}
 	return errs, rows.Err()
+}
+
+// GetMigrationErrors returns final transfer failures and non-fatal indexing
+// errors in one chronologically ordered, paginated list.
+func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
+	rows, err := db.Query(`
+		WITH errors AS MATERIALIZED (
+			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,
+			       COALESCE(error_message, '') AS error_message, updated_at AS occurred_at
+			FROM tasks
+			WHERE migration_id = $1 AND status = 'FAILED'
+			UNION ALL
+			SELECT id::text AS id, 'indexing' AS kind, resource_type, path, 'INDEXING' AS status, 0 AS attempts,
+			       error_message, created_at AS occurred_at
+			FROM indexing_errors
+			WHERE migration_id = $1
+		), counted AS (
+			SELECT COUNT(*) AS total FROM errors
+		)
+		SELECT page.id, page.kind, page.resource_type, page.path, page.status, page.attempts,
+		       page.error_message, page.occurred_at, counted.total
+		FROM counted
+		LEFT JOIN LATERAL (
+			SELECT * FROM errors ORDER BY occurred_at DESC, path ASC, id ASC LIMIT $2 OFFSET $3
+		) page ON TRUE
+		ORDER BY page.occurred_at DESC NULLS LAST, page.path ASC NULLS LAST, page.id ASC NULLS LAST
+	`, migrationID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]ErrorListItem, 0)
+	total := 0
+	for rows.Next() {
+		var item ErrorListItem
+		var id, kind, resourceType, path, status, errorMessage sql.NullString
+		var attempts sql.NullInt32
+		var occurredAt sql.NullTime
+		if err := rows.Scan(&id, &kind, &resourceType, &path, &status, &attempts, &errorMessage, &occurredAt, &total); err != nil {
+			return nil, 0, err
+		}
+		if !kind.Valid { // The count row remains when the requested page is empty.
+			continue
+		}
+		item.ID, item.Kind, item.ResourceType, item.Path, item.Status = id.String, kind.String, resourceType.String, path.String, status.String
+		item.Attempts, item.ErrorMessage, item.OccurredAt = int(attempts.Int32), errorMessage.String, occurredAt.Time
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
+// GetSyncErrors returns final transfer failures for the current sync job.
+func GetSyncErrors(db *sql.DB, syncJobID string, limit, offset int) ([]ErrorListItem, int, error) {
+	rows, err := db.Query(`
+		WITH errors AS MATERIALIZED (
+			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,
+			       COALESCE(error_message, '') AS error_message, updated_at AS occurred_at
+			FROM tasks
+			WHERE sync_job_id = $1 AND status = 'FAILED'
+		), counted AS (
+			SELECT COUNT(*) AS total FROM errors
+		)
+		SELECT page.id, page.kind, page.resource_type, page.path, page.status, page.attempts,
+		       page.error_message, page.occurred_at, counted.total
+		FROM counted
+		LEFT JOIN LATERAL (
+			SELECT * FROM errors ORDER BY occurred_at DESC, path ASC, id ASC LIMIT $2 OFFSET $3
+		) page ON TRUE
+		ORDER BY page.occurred_at DESC NULLS LAST, page.path ASC NULLS LAST, page.id ASC NULLS LAST
+	`, syncJobID, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]ErrorListItem, 0)
+	total := 0
+	for rows.Next() {
+		var item ErrorListItem
+		var id, kind, resourceType, path, status, errorMessage sql.NullString
+		var attempts sql.NullInt32
+		var occurredAt sql.NullTime
+		if err := rows.Scan(&id, &kind, &resourceType, &path, &status, &attempts, &errorMessage, &occurredAt, &total); err != nil {
+			return nil, 0, err
+		}
+		if !kind.Valid {
+			continue
+		}
+		item.ID, item.Kind, item.ResourceType, item.Path, item.Status = id.String, kind.String, resourceType.String, path.String, status.String
+		item.Attempts, item.ErrorMessage, item.OccurredAt = int(attempts.Int32), errorMessage.String, occurredAt.Time
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
 }
 
 func DeleteIndexingErrors(db *sql.DB, migrationID string) error {

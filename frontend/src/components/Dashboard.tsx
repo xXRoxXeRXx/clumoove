@@ -10,6 +10,7 @@ import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 import { apiFetch } from '../utils/apiClient';
+import { ErrorOverview } from './ErrorOverview';
 
 interface DashboardProps {
   migrationId: string;
@@ -717,6 +718,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             </div>
           </div>
         </div>
+
+        <ErrorOverview
+          endpoint={`${apiUrl}/api/migration/${migrationId}/errors`}
+          token={token}
+          refreshKey={`${data.failed_files}-${data.status}`}
+        />
 
         {typeof data.error_message === 'string' && data.error_message.trim() !== '' && (
           <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-xs font-mono text-rose-700 flex items-start gap-2">
