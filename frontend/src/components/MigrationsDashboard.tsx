@@ -308,12 +308,6 @@ export function MigrationsDashboard({
 
         {/* Active Transits */}
         <div className="glass-panel border border-[var(--color-glass-border)]/50 rounded-2xl p-4.5 shadow-portal flex items-center gap-4 relative overflow-hidden">
-          {activeTotal > 0 && (
-            <div className="absolute top-2 right-2 flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </div>
-          )}
           <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
             <RefreshCw className={`w-5 h-5 stroke-[2] ${activeTotal > 0 ? 'animate-spin' : ''}`} />
           </div>
@@ -383,14 +377,14 @@ export function MigrationsDashboard({
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder={t('migrations.searchPlaceholder')}
-                className="w-full pl-9 pr-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+                className="h-9 w-full pl-9 pr-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
               />
             </div>
 
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs font-mono text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 transition-all cursor-pointer"
+              className="h-9 px-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs font-mono text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 transition-all cursor-pointer"
             >
               <option value="all">{t('migrations.filterAll')}</option>
               <option value="active">{t('migrations.filterActive')}</option>
@@ -399,21 +393,11 @@ export function MigrationsDashboard({
               <option value="paused">{t('migrations.filterPaused')}</option>
             </select>
 
-            <button
-              onClick={() => {
-                setLoading(true);
-                setSyncLoading(true);
-                void Promise.all([fetchMigrations(), fetchSyncJobs()]);
-              }}
-              className="p-2 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 transition-all cursor-pointer shrink-0"
-              title={t('common.refresh')}
-            >
-              <RefreshCw className={`w-4 h-4 ${(loading || syncLoading) ? 'animate-spin' : ''}`} />
-            </button>
           </div>
         </div>
 
         {/* Filtered Data Rendering */}
+        <div className="min-h-[360px]">
         {(() => {
           const filteredMigrations = migrations.filter((m) => {
             const matchSearch = !searchTerm || [m.id, m.source_provider, m.target_provider, m.source_url, m.target_url]
@@ -614,6 +598,7 @@ export function MigrationsDashboard({
             </div>
           );
         })()}
+        </div>
 
       </div>
       </>}
@@ -648,7 +633,7 @@ function SyncList({
   const [controlLoading, setControlLoading] = useState<string | null>(null);
 
   const { t } = useTranslation();
-  const { formatDateTime } = useFormat();
+  const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
   const confirm = useConfirm();
   const toast = useToast();
@@ -752,10 +737,8 @@ function SyncList({
           <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
             <th className="py-4.5 px-4 font-semibold">{t('migrations.createdAt')}</th>
             <th className="py-4.5 px-4 font-semibold">{t('migrations.sourceTarget')}</th>
-            <th className="py-4.5 px-4 font-semibold">{t('sync.direction')}</th>
             <th className="py-4.5 px-4 font-semibold">{t('migrations.status')}</th>
             <th className="py-4.5 px-4 font-semibold">{t('migrations.progress')}</th>
-            <th className="py-4.5 px-4 font-semibold">{t('sync.lastRun')}</th>
             <th className="py-4.5 px-4 font-semibold text-right">{t('migrations.actions')}</th>
           </tr>
         </thead>
@@ -799,23 +782,35 @@ function SyncList({
                   </div>
                 </div>
               </td>
-              <td className="py-4 px-4 whitespace-nowrap text-xs font-mono">
-                {job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')}
-              </td>
               <td className="py-4 px-4 whitespace-nowrap">
                 <StatusBadge status={job.status} size="sm" />
               </td>
               <td className="py-4 px-4 min-w-[140px]">
                 {(() => {
-                  const progress = job.total_files > 0
-                    ? Math.min(100, Math.round((job.processed_files / job.total_files) * 100))
-                    : (job.status === 'IDLE' || job.status === 'COMPLETED' ? 100 : 0);
-                  const color = job.status === 'FAILED' ? 'bg-rose-500' : job.status === 'COMPLETED_WITH_ERRORS' ? 'bg-amber-500' : job.status === 'IDLE' || job.status === 'COMPLETED' ? 'bg-emerald-500' : 'bg-portal-orange';
-                  return <div className="flex flex-col gap-1.5"><span className="text-[10px] font-mono text-[var(--color-text-muted)]">{job.processed_files} / {job.total_files} {t('dashboard.files')}</span><div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-tertiary)]"><div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${progress}%` }} /></div></div>;
+                  const totalBytes = job.total_bytes ?? 0;
+                  const processedBytes = job.processed_bytes ?? 0;
+                  const liveBytes = job.live_bytes ?? processedBytes;
+                  const displayedBytes = totalBytes > 0
+                    ? Math.min(totalBytes, Math.max(processedBytes, liveBytes))
+                    : processedBytes;
+                  const progress = totalBytes > 0
+                    ? Math.min(100, Math.round((displayedBytes / totalBytes) * 100))
+                    : job.total_files > 0
+                      ? Math.min(100, Math.round((job.processed_files / job.total_files) * 100))
+                      : 0;
+                  const color = job.status === 'FAILED' ? 'bg-rose-500' : job.status === 'COMPLETED_WITH_ERRORS' ? 'bg-amber-500' : progress === 100 ? 'bg-emerald-500' : 'bg-portal-orange';
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                        {job.processed_files} / {job.total_files} {t('dashboard.files')}
+                        {totalBytes > 0 && <> · {formatBytes(displayedBytes)} / {formatBytes(totalBytes)}</>}
+                      </span>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-tertiary)]">
+                        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${progress}%` }} />
+                      </div>
+                    </div>
+                  );
                 })()}
-              </td>
-              <td className="py-4 px-4 whitespace-nowrap text-xs font-mono text-[var(--color-text-secondary)]">
-                {job.last_run_at ? formatDateTime(job.last_run_at) : '-'}
               </td>
               <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-end items-center gap-2">
