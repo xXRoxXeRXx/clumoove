@@ -238,6 +238,8 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     : (job?.total_files && job.total_files > 0
         ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100)
         : (job?.status === 'IDLE' || job?.status === 'COMPLETED' ? 100 : 0));
+  const canPause = ['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING'].includes(job.status);
+  const canStart = ['IDLE', 'FAILED'].includes(job.status);
 
   return (
     <div className="w-full space-y-6 animate-fade-in">
@@ -307,7 +309,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             ) : (
               <button
                 onClick={handlePause}
-                disabled={actionLoading || job.status === 'INDEXING' || job.status === 'RUNNING'}
+                disabled={actionLoading || !canPause}
                 className="flex items-center gap-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] text-[var(--color-text-primary)] px-4 py-2 rounded-xl text-xs font-bold border border-[var(--color-border)] cursor-pointer disabled:opacity-50 transition-colors"
               >
                 <Pause className="w-4 h-4" />
@@ -317,7 +319,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
             <button
               onClick={handleTriggerStart}
-              disabled={actionLoading || job.status === 'INDEXING' || job.status === 'RUNNING'}
+              disabled={actionLoading || !canStart}
               className="flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-all"
             >
               {actionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}

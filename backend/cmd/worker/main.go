@@ -73,6 +73,7 @@ func main() {
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	go syncEng.SubscribeToCancelEvents(ctx)
 
 	// Wait for termination signals
 	sigChan := make(chan os.Signal, 1)

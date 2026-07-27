@@ -282,6 +282,20 @@ func (p *Processor) Start(ctx context.Context) {
 		})
 	})
 
+	// Sync transfers have their own control channel because their lifecycle is
+	// coordinated by the sync engine rather than the migration processor.
+	go p.queue.SubscribeToSyncCancelEvents(ctx, func(syncJobID string) {
+		log.Printf("[Worker %s] Received Cancel Event for Sync Job: %s\n", p.workerID, syncJobID)
+		p.activeTasks.Range(func(key, value interface{}) bool {
+			info, ok := value.(activeTaskInfo)
+			if ok && info.syncJobID == syncJobID {
+				log.Printf("[Worker %s] Cancelling active sync stream for task: %s\n", p.workerID, key)
+				info.cancel()
+			}
+			return true
+		})
+	})
+
 	// Start Bandwidth Change Listener
 	go p.queue.SubscribeToBandwidthChanges(ctx, func(event queue.BandwidthEvent) {
 		log.Printf("[Worker %s] Bandwidth change for migration %s: %d Mbps",

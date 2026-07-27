@@ -741,7 +741,7 @@ function SyncList({
                   </button>
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
-                    disabled={deleteLoading === job.id || job.status === 'RUNNING' || job.status === 'INDEXING'}
+                    disabled={deleteLoading === job.id}
                     className="p-1.5 bg-[var(--color-bg-tertiary)] rounded-lg text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 transition-all disabled:opacity-30 cursor-pointer"
                     title={t('sync.deleteJob')}
                   >
