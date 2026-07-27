@@ -39,6 +39,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `GET` | `/auth/2fa/status` | JWT | 2FA enabled? |
 | `GET` | `/auth/password-reset-available` | public | Whether system SMTP is configured. |
 | `POST` | `/auth/forgot-password` | public | Send reset email (rate-limited). |
+| `PUT` | `/auth/me/language` | JWT | Persist the user's notification and email language (`de` or `en`). |
 | `POST` | `/auth/reset-password` | public | Set new password via token. |
 | `GET` | `/auth/email-change-available` | public | Whether email-change is available. |
 | `POST` | `/auth/change-email` | JWT | Request email change (confirmation to old address). |

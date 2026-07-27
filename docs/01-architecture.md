@@ -199,6 +199,10 @@ reports progress ─────────────▶ DB counters ──�
 
 ## 8. Project Layout
 
+The frontend locale files are the source of truth for UI and delivery text. The checked-in Go catalog
+under `backend/internal/i18n` is generated from their `delivery.*` keys so API and worker processes use
+the account's persisted language without depending on a frontend runtime.
+
 ```
 migration/
 ├── backend/                 # Go module (cmd/api, cmd/worker)

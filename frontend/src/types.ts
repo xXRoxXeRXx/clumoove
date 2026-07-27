@@ -56,6 +56,7 @@ export interface User {
   id?: string;
   email?: string;
   display_name?: string;
+  language?: 'de' | 'en';
   role?: UserRole | string;
   avatar?: string;
   totp_enabled?: boolean;

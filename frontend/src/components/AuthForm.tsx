@@ -11,7 +11,8 @@ interface AuthFormProps {
 }
 
 export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
-  const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
+	const language = i18n.language?.startsWith('de') ? 'de' : 'en';
   const translateApiError = useApiError();
   const [isLogin, setIsLogin] = useState<boolean>(true);
   const [email, setEmail] = useState<string>('');
@@ -487,6 +488,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           email: trimmedEmail,
           password,
           display_name: trimmedName,
+			language,
         }),
       });
 
@@ -635,7 +637,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
     const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
     const payload = isLogin
       ? { email: trimmedEmail, password }
-      : { email: trimmedEmail, password, display_name: displayName.trim() };
+		: { email: trimmedEmail, password, display_name: displayName.trim(), language };
 
     try {
       const response = await apiFetch(`${apiUrl}${endpoint}`, {

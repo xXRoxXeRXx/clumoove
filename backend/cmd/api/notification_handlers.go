@@ -201,7 +201,7 @@ func (s *APIServer) handleTestNotification(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	u, err := db.GetUserByID(s.db, userID)
-	if err != nil || notify.Send(r.Context(), req.Type, notify.Config(req.Config), json.RawMessage(`{"kind":"test","name":"Clumoove","status":"TEST","total":0,"processed":0,"failed":0,"skipped":0}`), u.Email) != nil {
+	if err != nil || notify.Send(r.Context(), req.Type, notify.Config(req.Config), json.RawMessage(`{"kind":"test","name":"Clumoove","status":"TEST","total":0,"processed":0,"failed":0,"skipped":0}`), u.Email, u.Language) != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrNotificationTestFailed})
 		return
 	}

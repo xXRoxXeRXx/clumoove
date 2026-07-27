@@ -76,7 +76,7 @@ func (p *Processor) sendPendingNotifications(ctx context.Context) {
 			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
 			continue
 		}
-		err = notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail)
+		err = notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
 		if err != nil {
 			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
 			log.Printf("[Notifier] channel=%s delivery=%s send failed", d.ChannelType, d.ID)

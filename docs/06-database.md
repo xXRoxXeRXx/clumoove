@@ -27,6 +27,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | :----- | :--- | :---- |
 | `id` | UUID PK | `gen_random_uuid()` |
 | `email` | TEXT UNIQUE NOT NULL | login identity |
+| `language` | TEXT NOT NULL DEFAULT `en` | User-facing delivery language (`de` or `en`) for emails and notifications. |
 | `password_hash` | TEXT NOT NULL | bcrypt |
 | `display_name` | TEXT NOT NULL | |
 | `role` | TEXT NOT NULL DEFAULT `USER` | `USER` or `ADMIN` |
@@ -82,7 +83,9 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 sync pass; migrations are unique by `(migration_id, run_generation)` and sync runs by
 `(sync_job_id, run_at)`. `notification_deliveries` copies the encrypted channel configuration and
 tracks `PENDING`, `RUNNING`, `SENT`, or `FAILED`, attempts, retry time, and a non-sensitive error
-code. This keeps channel changes from altering already-created events.
+code. This keeps channel changes from altering already-created events. At delivery time, the worker joins
+the event owner and uses `users.language`; message text comes from the generated backend catalog derived
+from `delivery.*` locale keys.
 
 ### `tasks`
 | Column | Type | Notes |

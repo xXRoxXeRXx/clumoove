@@ -1,13 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe, Check, ChevronUp } from 'lucide-react';
+import { apiFetch } from '../utils/apiClient';
 
-const LANGUAGES = [
+const LANGUAGES: { code: 'de' | 'en'; label: string }[] = [
   { code: 'de', label: 'Deutsch' },
   { code: 'en', label: 'English' },
 ];
 
-export function LanguageSwitcher() {
+export function LanguageSwitcher({ authenticated = false }: { authenticated?: boolean }) {
   const { i18n, t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -24,13 +25,20 @@ export function LanguageSwitcher() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const select = (code: string) => {
+  const select = (code: 'de' | 'en') => {
     try {
       localStorage.setItem('i18nextLng', code);
     } catch {
       /* ignore storage error */
     }
     void i18n.changeLanguage(code);
+	    if (authenticated) {
+	      void apiFetch('/api/auth/me/language', {
+	        method: 'PUT',
+	        headers: { 'Content-Type': 'application/json' },
+	        body: JSON.stringify({ language: code }),
+	      });
+	    }
     setOpen(false);
   };
 

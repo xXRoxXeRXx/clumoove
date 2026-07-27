@@ -14,9 +14,9 @@ type NotificationChannel struct {
 	ConfigEncrypted string `json:"-"`
 }
 type NotificationDelivery struct {
-	ID, ChannelType, ConfigEncrypted, RecipientEmail string
-	Payload                                          json.RawMessage
-	Attempts                                         int
+	ID, ChannelType, ConfigEncrypted, RecipientEmail, Language string
+	Payload                                                    json.RawMessage
+	Attempts                                                   int
 }
 
 func GetNotificationChannels(database *sql.DB, userID string) ([]NotificationChannel, error) {
@@ -140,7 +140,7 @@ func ClaimNotificationDeliveries(database *sql.DB, limit int) ([]NotificationDel
 	rows, err := database.Query(`WITH due AS (SELECT id FROM notification_deliveries WHERE state='PENDING' AND next_retry_at <= NOW() ORDER BY next_retry_at FOR UPDATE SKIP LOCKED LIMIT $1)
 		UPDATE notification_deliveries d SET state='RUNNING',updated_at=CURRENT_TIMESTAMP FROM due, notification_events e, users u
 		WHERE d.id=due.id AND e.id=d.event_id AND u.id=e.user_id
-		RETURNING d.id,d.channel_type,d.config_encrypted,e.payload,u.email,d.attempts`, limit)
+		RETURNING d.id,d.channel_type,d.config_encrypted,e.payload,u.email,u.language,d.attempts`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func ClaimNotificationDeliveries(database *sql.DB, limit int) ([]NotificationDel
 	var out []NotificationDelivery
 	for rows.Next() {
 		var d NotificationDelivery
-		if err := rows.Scan(&d.ID, &d.ChannelType, &d.ConfigEncrypted, &d.Payload, &d.RecipientEmail, &d.Attempts); err != nil {
+		if err := rows.Scan(&d.ID, &d.ChannelType, &d.ConfigEncrypted, &d.Payload, &d.RecipientEmail, &d.Language, &d.Attempts); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
