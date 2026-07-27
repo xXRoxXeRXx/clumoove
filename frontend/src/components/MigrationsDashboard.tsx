@@ -89,6 +89,12 @@ export function MigrationsDashboard({
     }
   }, [apiUrl, token, t, translateApiError]);
 
+  // Load both lists immediately instead of waiting for the initial SSE frames.
+  // The streams remain responsible for live updates after this first snapshot.
+  useEffect(() => {
+    void Promise.all([fetchMigrations(), fetchSyncJobs()]);
+  }, [fetchMigrations, fetchSyncJobs]);
+
   useEffect(() => {
     const controller = new AbortController();
     void connectSseLoop({
@@ -185,6 +191,7 @@ export function MigrationsDashboard({
   const totalMigrations = migrations.length;
   const totalSyncs = syncJobs.length;
   const totalTransfers = totalMigrations + totalSyncs;
+  const initialDataLoading = loading || syncLoading;
 
   const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING').length;
   const activeSyncs = syncJobs.filter(s => s.status === 'RUNNING' || s.status === 'INDEXING').length;
@@ -237,6 +244,12 @@ export function MigrationsDashboard({
         </div>
       </div>
 
+      {initialDataLoading ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-4" aria-live="polite">
+          <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
+          <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
+        </div>
+      ) : <>
       {/* Stats Widgets Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Bytes */}
@@ -360,8 +373,9 @@ export function MigrationsDashboard({
 
             <button
               onClick={() => {
-                void fetchMigrations();
-                void fetchSyncJobs();
+                setLoading(true);
+                setSyncLoading(true);
+                void Promise.all([fetchMigrations(), fetchSyncJobs()]);
               }}
               className="p-2 border border-[var(--color-border)] rounded-xl text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)]/50 transition-all cursor-pointer shrink-0"
               title={t('common.refresh')}
@@ -567,6 +581,7 @@ export function MigrationsDashboard({
         })()}
 
       </div>
+      </>}
     </div>
   );
 }
