@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"backend/internal/email"
+	"backend/internal/i18n"
 	"backend/internal/storage"
 )
 
@@ -74,11 +75,11 @@ func Validate(typ string, cfg Config) error {
 	return nil
 }
 
-func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, recipient string) error {
+func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, recipient, language string) error {
 	if err := Validate(typ, cfg); err != nil {
 		return err
 	}
-	text := formatEnglish(payload)
+	text := formatLocalized(payload, language)
 	if typ == "discord" {
 		text = truncate(text, 2000)
 	}
@@ -90,7 +91,7 @@ func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, 
 		if port == "" || port == "<nil>" {
 			port = "587"
 		}
-		return email.SendMail(email.SMTPConfig{Host: fmt.Sprint(cfg["smtp_host"]), Port: port, Username: fmt.Sprint(cfg["smtp_username"]), Password: fmt.Sprint(cfg["smtp_password"]), FromEmail: fmt.Sprint(cfg["smtp_from_email"]), FromName: fmt.Sprint(cfg["smtp_from_name"]), Encryption: fmt.Sprint(cfg["smtp_encryption"])}, recipient, "Clumoove notification", "<pre>"+html.EscapeString(text)+"</pre>")
+		return email.SendMail(email.SMTPConfig{Host: fmt.Sprint(cfg["smtp_host"]), Port: port, Username: fmt.Sprint(cfg["smtp_username"]), Password: fmt.Sprint(cfg["smtp_password"]), FromEmail: fmt.Sprint(cfg["smtp_from_email"]), FromName: fmt.Sprint(cfg["smtp_from_name"]), Encryption: fmt.Sprint(cfg["smtp_encryption"])}, recipient, notificationSubject(language), "<pre>"+html.EscapeString(text)+"</pre>")
 	}
 	var endpoint string
 	var body any
@@ -98,13 +99,13 @@ func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, 
 	switch typ {
 	case "gotify":
 		endpoint = strings.TrimRight(fmt.Sprint(cfg["url"]), "/") + "/message"
-		body = map[string]any{"message": text, "title": "Clumoove"}
+		body = map[string]any{"message": text, "title": notificationSubject(language)}
 		headers["X-Gotify-Key"] = fmt.Sprint(cfg["token"])
 	case "ntfy":
 		endpoint = strings.TrimRight(fmt.Sprint(cfg["url"]), "/") + "/" + url.PathEscape(fmt.Sprint(cfg["topic"]))
 		body = text
 		headers["Content-Type"] = "text/plain; charset=utf-8"
-		headers["Title"] = "Clumoove"
+		headers["Title"] = notificationSubject(language)
 		if t := fmt.Sprint(cfg["token"]); t != "" && t != "<nil>" {
 			headers["Authorization"] = "Bearer " + t
 		}
@@ -159,6 +160,17 @@ func formatEnglish(payload json.RawMessage) string {
 	var p map[string]any
 	_ = json.Unmarshal(payload, &p)
 	return fmt.Sprintf("%s %s\nStatus: %v\nProcessed: %v / %v\nFailed: %v\nSkipped: %v", p["kind"], p["name"], p["status"], p["processed"], p["total"], p["failed"], p["skipped"])
+}
+
+func formatLocalized(payload json.RawMessage, language string) string {
+	var p map[string]any
+	_ = json.Unmarshal(payload, &p)
+	kind := fmt.Sprint(p["kind"])
+	return fmt.Sprintf("%s %v\n%s: %v\n%s: %v / %v\n%s: %v\n%s: %v", i18n.T(language, "delivery.notification.kind."+kind), p["name"], i18n.T(language, "delivery.notification.status"), p["status"], i18n.T(language, "delivery.notification.processed"), p["processed"], p["total"], i18n.T(language, "delivery.notification.failed"), p["failed"], i18n.T(language, "delivery.notification.skipped"), p["skipped"])
+}
+
+func notificationSubject(language string) string {
+	return i18n.T(language, "delivery.notification.subject")
 }
 
 func truncate(value string, max int) string {

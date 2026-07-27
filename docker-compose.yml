@@ -40,7 +40,8 @@ services:
   # Go API Gateway & Backend Control
   api-backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: prod
     container_name: migration-api
     restart: unless-stopped
@@ -74,7 +75,8 @@ services:
   # Core Migration Engine (Worker)
   migration-worker:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
       target: prod
     container_name: migration-worker-1
     restart: unless-stopped

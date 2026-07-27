@@ -48,7 +48,7 @@ Responsibilities:
 | `internal/auth` | JWT generation/validation (`auth.go`), TOTP helpers, HTTP middleware (`middleware.go`). |
 | `internal/crypto` | AES-256-GCM `Encrypt`/`Decrypt` with SHA-256 key derivation. |
 | `internal/db` | PostgreSQL access layer, `InitDB` schema migration, audit log, users, migrations, tasks, schedules, SMTP, indexing errors, admin queries. |
-| `internal/email` | SMTP config + `SendMail`, HTML report rendering. |
+| `internal/email` | SMTP config + `SendMail`, localized HTML delivery rendering. |
 | `internal/indexer` | BFS indexing of source paths/calendars/contacts → `PENDING` tasks. |
 | `internal/oauth` | OAuth2 token refresh for Dropbox/Google; `InitConfigs`. |
 | `internal/processor` | The worker loop, transfer logic, conflict resolution, hash verification, retry/backoff, liveness & recovery schedulers, completion notifier. |
@@ -198,7 +198,7 @@ For each task:
 - **Permanent errors** (Google export limits, not-found, etc.) → `FAILED` immediately (no retry).
 - **Transient** → exponential backoff `10, 30, 90`s, max 3 attempts; `FAILED` after exhaustion.
 
-`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. The legacy `email_sent` column remains for compatibility; it no longer drives delivery.
+`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
 
 ---
 
@@ -295,6 +295,11 @@ implementation. `magentacloud` uses a fixed endpoint (URL ignored).
 
 - `SMTPConfig` + `SendMail` — sends mail via the user's own per-user SMTP (or system SMTP settings).
 - `BuildMigrationReportEmail` — HTML migration summary used by the completion notifier.
+
+User-facing email and notification strings are not defined in Go. They are sourced from `delivery.*` in
+`frontend/src/locales/{de,en}/translation.json`; `backend/internal/i18n/translations_gen.go` is generated
+from those files and is checked in for API and worker builds. The Docker build stages run
+`go generate ./internal/i18n` automatically before compiling.
 
 ---
 

@@ -171,6 +171,7 @@ func main() {
 	jwtMiddleware := auth.AuthMiddleware(server.db, server.jwtSecret)
 	mux.Handle("GET /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleMe)))
 	mux.Handle("PUT /api/auth/me", jwtMiddleware(http.HandlerFunc(server.handleUpdateProfile)))
+	mux.Handle("PUT /api/auth/me/language", jwtMiddleware(http.HandlerFunc(server.handleUpdateLanguage)))
 	mux.Handle("POST /api/auth/change-password", auth.AuthMiddlewareAllowMustChange(server.db, server.jwtSecret)(http.HandlerFunc(server.handleChangePassword)))
 	mux.Handle("GET /api/auth/2fa/setup", jwtMiddleware(http.HandlerFunc(server.handle2FASetup)))
 	mux.Handle("POST /api/auth/2fa/enable", jwtMiddleware(http.HandlerFunc(server.handle2FAEnable)))

@@ -9,6 +9,7 @@ import (
 	"net/smtp"
 	"strings"
 
+	"backend/internal/i18n"
 	"backend/internal/storage"
 )
 
@@ -21,7 +22,6 @@ type SMTPConfig struct {
 	FromName   string
 	Encryption string // tls, starttls, none
 }
-
 
 // ValidateSMTPHost checks that the SMTP host is not a private/internal IP
 // address to prevent SSRF attacks. Literal internal IPs are rejected directly;
@@ -194,6 +194,9 @@ func encodeFromHeader(from string) string {
 	return mime.QEncoding.Encode("UTF-8", from)
 }
 
+// BuildMigrationReportEmail is retained for source compatibility only. The
+// notifier uses the localized delivery catalog and does not call this legacy
+// German-only report builder.
 func BuildMigrationReportEmail(migrationID, status string, totalFiles, processedFiles, failedFiles, skippedFiles int, totalBytes, processedBytes int64, errorMessage string) string {
 	statusColor := "#10b981"
 	statusLabel := "Erfolgreich abgeschlossen"
@@ -243,7 +246,8 @@ func BuildMigrationReportEmail(migrationID, status string, totalFiles, processed
 </html>`, statusColor, statusLabel, migrationID, processedFiles, totalFiles, statusColor, failedFiles, skippedFiles, formatBytes(processedBytes), formatBytes(totalBytes), errorSection)
 }
 
-
+// BuildEmailChangeEmail is a legacy German template. New delivery uses
+// BuildEmailChangeEmailLocalized and the delivery.* catalog.
 func BuildEmailChangeEmail(confirmURL, newEmail string) string {
 	escapedURL := html.EscapeString(confirmURL)
 	escapedEmail := html.EscapeString(newEmail)
@@ -280,6 +284,8 @@ func BuildEmailChangeEmail(confirmURL, newEmail string) string {
 </html>`, escapedEmail, escapedURL, escapedURL)
 }
 
+// BuildEmailChangedNotificationEmail is a legacy German template. New delivery
+// uses BuildEmailChangedNotificationEmailLocalized and the delivery.* catalog.
 func BuildEmailChangedNotificationEmail(newEmail string) string {
 	escapedEmail := html.EscapeString(newEmail)
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -307,6 +313,8 @@ func BuildEmailChangedNotificationEmail(newEmail string) string {
 </html>`, escapedEmail)
 }
 
+// BuildPasswordResetEmail is a legacy German template. New delivery uses
+// BuildPasswordResetEmailLocalized and the delivery.* catalog.
 func BuildPasswordResetEmail(resetURL string) string {
 	escapedURL := html.EscapeString(resetURL)
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -342,6 +350,8 @@ func BuildPasswordResetEmail(resetURL string) string {
 </html>`, escapedURL, escapedURL)
 }
 
+// BuildTestEmail is a legacy German template. New delivery uses
+// BuildTestEmailLocalized and the delivery.* catalog.
 func BuildTestEmail() string {
 	return `<!DOCTYPE html>
 <html>
@@ -364,6 +374,43 @@ func BuildTestEmail() string {
 	</div>
 </body>
 </html>`
+}
+
+// Localized mail builders keep the user-facing language choice out of HTTP
+// handlers and worker code. German remains the legacy/default template.
+func BuildPasswordResetEmailLocalized(url, language string) string {
+	return buildActionEmail(i18n.T(language, "delivery.passwordReset.title"), i18n.T(language, "delivery.passwordReset.message"), i18n.T(language, "delivery.passwordReset.action"), url, i18n.T(language, "delivery.passwordReset.note"))
+}
+
+func BuildEmailChangeEmailLocalized(url, newEmail, language string) string {
+	return buildActionEmail(i18n.T(language, "delivery.emailChange.title"), i18n.Format(language, "delivery.emailChange.message", map[string]string{"email": html.EscapeString(newEmail)}), i18n.T(language, "delivery.emailChange.action"), url, i18n.T(language, "delivery.emailChange.note"))
+}
+
+func BuildEmailChangedNotificationEmailLocalized(newEmail, language string) string {
+	return buildActionEmail(i18n.T(language, "delivery.emailChanged.title"), i18n.Format(language, "delivery.emailChanged.message", map[string]string{"email": html.EscapeString(newEmail)}), "", "", "")
+}
+
+func BuildTestEmailLocalized(language string) string {
+	return buildActionEmail(i18n.T(language, "delivery.smtpTest.title"), i18n.T(language, "delivery.smtpTest.message"), "", "", "")
+}
+
+func PasswordResetSubject(language string) string {
+	return i18n.T(language, "delivery.passwordReset.subject")
+}
+func EmailChangeSubject(language string) string {
+	return i18n.T(language, "delivery.emailChange.subject")
+}
+func EmailChangedSubject(language string) string {
+	return i18n.T(language, "delivery.emailChanged.subject")
+}
+func SMTPTestSubject(language string) string { return i18n.T(language, "delivery.smtpTest.subject") }
+
+func buildActionEmail(title, message, action, actionURL, note string) string {
+	button := ""
+	if action != "" && actionURL != "" {
+		button = fmt.Sprintf(`<p style="text-align:center"><a href="%s" style="display:inline-block;padding:14px 24px;background:#ea580c;color:#fff;text-decoration:none;border-radius:8px">%s</a></p>`, html.EscapeString(actionURL), html.EscapeString(action))
+	}
+	return fmt.Sprintf(`<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px"><div style="max-width:600px;margin:auto;background:#fff;padding:30px;border-radius:12px"><h1>Clumoove</h1><h2>%s</h2><p>%s</p>%s<p style="color:#6b7280;font-size:12px">%s</p></div></body></html>`, html.EscapeString(title), message, button, html.EscapeString(note))
 }
 
 func formatBytes(b int64) string {

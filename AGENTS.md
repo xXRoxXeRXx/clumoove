@@ -95,6 +95,8 @@
 - **API error parsing**: Read `error_code` from the JSON body, e.g. `const body = await res.json().catch(() => ({})); translateApiError(body.error_code)`.
 - **Formatting**: Locale-aware number/date/bytes formatting lives in `src/utils/format.ts` (`formatBytes`, `formatDate`, `formatDateTime`, `useFormat`). Never hand-format with `toFixed`/`toLocaleString` without passing the active language.
 - **Language switcher**: `src/components/LanguageSwitcher.tsx` lets users switch; the choice is persisted to `localStorage` by the detector.
+- **Delivery language**: The selected `de`/`en` value is also persisted on the user account and determines all emails and notification channels.
+- **Backend delivery catalog**: E-mail and notification text lives under `delivery.*` in the frontend locale files. Docker build stages regenerate the checked-in Go catalog automatically before compiling; run `(cd backend && go generate ./internal/i18n)` only before a direct local `go build`.
 
 ### Threads & Parallelism
 - `threads` per migration is capped at 1–16 in `handleStart`. The worker respects this via the SQL dequeue query (`COUNT(*) < m.threads`).

@@ -1,20 +1,24 @@
 # --- Development Stage ---
 FROM golang:alpine AS dev
-WORKDIR /app
+WORKDIR /app/backend
 # Install git and other utilities if needed
 RUN apk add --no-cache git build-base
-COPY go.mod go.sum* ./
+COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
-COPY . .
+COPY backend/ ./
+COPY frontend/src/locales /app/frontend/src/locales
+RUN go generate ./internal/i18n
 # API runs by default in dev stage, worker can override via docker-compose command
 CMD ["go", "run", "./cmd/api"]
 
 # --- Build Stage ---
 FROM golang:alpine AS builder
-WORKDIR /src
-COPY go.mod go.sum* ./
+WORKDIR /src/backend
+COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
-COPY . .
+COPY backend/ ./
+COPY frontend/src/locales /src/frontend/src/locales
+RUN go generate ./internal/i18n
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/worker ./cmd/worker
 

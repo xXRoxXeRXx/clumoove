@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     display_name TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('de', 'en')),
     role TEXT NOT NULL DEFAULT 'USER', -- USER, ADMIN
     active BOOLEAN NOT NULL DEFAULT TRUE, -- soft deactivation (suspend); blocks login
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE, -- forced rotation on first login

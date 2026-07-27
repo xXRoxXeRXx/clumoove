@@ -177,6 +177,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (display_name): %v\n", err)
 			}
 
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS language VARCHAR(8) NOT NULL DEFAULT 'en'`)
+			if err != nil {
+				log.Printf("Failed schema migration (user language): %v\n", err)
+			}
+
 			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(32) NOT NULL DEFAULT 'USER'`)
 			if err != nil {
 				log.Printf("Failed schema migration (role): %v\n", err)

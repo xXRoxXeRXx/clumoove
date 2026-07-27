@@ -49,7 +49,7 @@ if (API_URL.startsWith('http://') && !/(localhost|127\.0\.0\.1)/.test(new URL(AP
 }
 
 function App() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const dismissConfirm = useDismissConfirm();
   const resetTokenFromUrl = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('reset-token')
@@ -308,6 +308,10 @@ function App() {
           if (meRes.ok) {
             const userData = await meRes.json();
             setUser(userData);
+			if (userData.language === 'de' || userData.language === 'en') {
+			  localStorage.setItem('i18nextLng', userData.language);
+			  void i18n.changeLanguage(userData.language);
+			}
 
             // Check if there is an active migration ID in url
             const params = new URLSearchParams(window.location.search);
@@ -381,6 +385,10 @@ function App() {
     localStorage.setItem('has_session', 'true');
     setToken(accessToken);
     setUser(loggedUser);
+	if (loggedUser.language === 'de' || loggedUser.language === 'en') {
+	  localStorage.setItem('i18nextLng', loggedUser.language);
+	  void i18n.changeLanguage(loggedUser.language);
+	}
     replaceNav('history', '');
   };
 
@@ -648,7 +656,7 @@ function App() {
       {/* Footer */}
       <footer className="border-t border-[var(--color-border)] py-4 mt-auto bg-[var(--color-glass-bg)] backdrop-blur-md relative z-40">
         <div className="max-w-6xl mx-auto px-6 flex justify-end items-center">
-          <LanguageSwitcher />
+          <LanguageSwitcher authenticated={Boolean(user && token)} />
         </div>
       </footer>
     </div>

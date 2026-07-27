@@ -11,6 +11,7 @@ type User struct {
 	Email               string       `json:"email"`
 	PasswordHash        string       `json:"-"`
 	DisplayName         string       `json:"display_name"`
+	Language            string       `json:"language"`
 	Role                string       `json:"role"`
 	Active              bool         `json:"active"`
 	MustChangePassword  bool         `json:"must_change_password"`
@@ -52,37 +53,43 @@ type GlobalStats struct {
 	TasksByStatus      map[string]int `json:"tasks_by_status"`
 }
 
-func CreateUser(db *sql.DB, email, passwordHash, displayName string) (*User, error) {
+func CreateUser(db *sql.DB, email, passwordHash, displayName, language string) (*User, error) {
+	if language != "de" && language != "en" {
+		language = "en"
+	}
 	query := `
-		INSERT INTO users (email, password_hash, display_name)
-		VALUES ($1, $2, $3)
-		RETURNING id, role, active, must_change_password, created_at, updated_at
+		INSERT INTO users (email, password_hash, display_name, language)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, role, active, must_change_password, language, created_at, updated_at
 	`
 	var u User
 	u.Email = email
 	u.DisplayName = displayName
-	err := db.QueryRow(query, email, passwordHash, displayName).
-		Scan(&u.ID, &u.Role, &u.Active, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
+	err := db.QueryRow(query, email, passwordHash, displayName, language).
+		Scan(&u.ID, &u.Role, &u.Active, &u.MustChangePassword, &u.Language, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
 	return &u, nil
 }
 
-func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role string, mustChangePassword bool) (*User, error) {
+func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role string, mustChangePassword bool, language string) (*User, error) {
 	if !ValidRoles[role] {
 		role = "USER"
 	}
+	if language != "de" && language != "en" {
+		language = "en"
+	}
 	query := `
-		INSERT INTO users (email, password_hash, display_name, role, active, must_change_password)
-		VALUES ($1, $2, $3, $4, TRUE, $5)
-		RETURNING id, role, active, must_change_password, created_at, updated_at
+		INSERT INTO users (email, password_hash, display_name, role, active, must_change_password, language)
+		VALUES ($1, $2, $3, $4, TRUE, $5, $6)
+		RETURNING id, role, active, must_change_password, language, created_at, updated_at
 	`
 	var u User
 	u.Email = email
 	u.DisplayName = displayName
-	err := database.QueryRow(query, email, passwordHash, displayName, role, mustChangePassword).
-		Scan(&u.ID, &u.Role, &u.Active, &u.MustChangePassword, &u.CreatedAt, &u.UpdatedAt)
+	err := database.QueryRow(query, email, passwordHash, displayName, role, mustChangePassword, language).
+		Scan(&u.ID, &u.Role, &u.Active, &u.MustChangePassword, &u.Language, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +98,7 @@ func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role
 
 func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
+		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
 		       login_failed_attempts, login_locked_until
 		FROM users WHERE email = $1
@@ -99,7 +106,7 @@ func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 	var u User
 	var mime sql.NullString
 	var totpSecret sql.NullString
-	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {
@@ -116,7 +123,7 @@ func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 
 func GetUserByID(db *sql.DB, id string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
+		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
 		       login_failed_attempts, login_locked_until
 		FROM users WHERE id = $1
@@ -124,7 +131,7 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	var u User
 	var mime sql.NullString
 	var totpSecret sql.NullString
-	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {
@@ -142,7 +149,7 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 // GetUserByIDTx is the transaction-scoped counterpart of GetUserByID.
 func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
 	query := `
-		SELECT id, email, password_hash, display_name, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
+		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
 		       login_failed_attempts, login_locked_until
 		FROM users WHERE id = $1
@@ -150,7 +157,7 @@ func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
 	var u User
 	var mime sql.NullString
 	var totpSecret sql.NullString
-	err := tx.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+	err := tx.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {
@@ -233,6 +240,14 @@ func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
 
 func UpdateUserDisplayName(db *sql.DB, id, name string) error {
 	_, err := db.Exec(`UPDATE users SET display_name = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, name, id)
+	return err
+}
+
+func UpdateUserLanguage(database *sql.DB, id, language string) error {
+	if language != "de" && language != "en" {
+		return fmt.Errorf("unsupported language %q", language)
+	}
+	_, err := database.Exec(`UPDATE users SET language = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, language, id)
 	return err
 }
 

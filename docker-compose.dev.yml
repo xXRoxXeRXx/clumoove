@@ -40,8 +40,8 @@ services:
   # Go API Gateway & Backend Control
   api-backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
       target: dev
     container_name: migration-api
     restart: unless-stopped
@@ -68,7 +68,8 @@ services:
       - postgres-db
       - redis-queue
     volumes:
-      - ./backend:/app
+      - ./backend:/app/backend
+      - ./frontend/src/locales:/app/frontend/src/locales:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     networks:
       - migration-network
@@ -76,8 +77,8 @@ services:
   # Core Migration Engine (Worker)
   migration-worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
       target: dev
     container_name: migration-worker-1
     restart: unless-stopped
@@ -99,7 +100,8 @@ services:
       - postgres-db
       - redis-queue
     volumes:
-      - ./backend:/app
+      - ./backend:/app/backend
+      - ./frontend/src/locales:/app/frontend/src/locales:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     networks:
       - migration-network

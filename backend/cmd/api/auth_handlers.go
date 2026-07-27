@@ -303,6 +303,7 @@ type RegisterRequest struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
+	Language    string `json:"language"`
 }
 
 func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
@@ -360,7 +361,7 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName)
+	u, err := db.CreateUser(s.db, req.Email, passHash, req.DisplayName, req.Language)
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -626,12 +627,17 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func userResponse(u *db.User) map[string]interface{} {
+	language := u.Language
+	if language != "de" && language != "en" {
+		language = "en"
+	}
 	resp := map[string]interface{}{
 		"id":           u.ID,
 		"email":        u.Email,
 		"display_name": u.DisplayName,
 		"role":         u.Role,
 		"totp_enabled": u.TotpEnabled,
+		"language":     language,
 	}
 	if len(u.Avatar) > 0 {
 		resp["avatar"] = avatarDataURL(u)
@@ -816,8 +822,8 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 		smtpCfg.FromName = "Clumoove"
 	}
 
-	htmlBody := email.BuildPasswordResetEmail(resetURL)
-	if err := email.SendMail(smtpCfg, u.Email, "Clumoove — Passwort zurücksetzen", htmlBody); err != nil {
+	htmlBody := email.BuildPasswordResetEmailLocalized(resetURL, u.Language)
+	if err := email.SendMail(smtpCfg, u.Email, email.PasswordResetSubject(u.Language), htmlBody); err != nil {
 		log.Printf("handleForgotPassword: error sending email: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
@@ -978,8 +984,8 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 		smtpCfg.FromName = "Clumoove"
 	}
 
-	htmlBody := email.BuildEmailChangeEmail(confirmURL, req.NewEmail)
-	if err := email.SendMail(smtpCfg, u.Email, "Clumoove — E-Mail-Adresse ändern", htmlBody); err != nil {
+	htmlBody := email.BuildEmailChangeEmailLocalized(confirmURL, req.NewEmail, u.Language)
+	if err := email.SendMail(smtpCfg, u.Email, email.EmailChangeSubject(u.Language), htmlBody); err != nil {
 		log.Printf("handleChangeEmail: error sending email: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -1052,8 +1058,13 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 			smtpCfg.FromName = "Clumoove"
 		}
 
-		htmlBody := email.BuildEmailChangedNotificationEmail(newEmail)
-		if err := email.SendMail(smtpCfg, newEmail, "Clumoove — E-Mail-Adresse geändert", htmlBody); err != nil {
+		u, lookupErr := db.GetUserByID(s.db, userID)
+		language := "en"
+		if lookupErr == nil {
+			language = u.Language
+		}
+		htmlBody := email.BuildEmailChangedNotificationEmailLocalized(newEmail, language)
+		if err := email.SendMail(smtpCfg, newEmail, email.EmailChangedSubject(language), htmlBody); err != nil {
 			log.Printf("handleConfirmEmailChange: error sending notification to new email (user %s): %v\n", userID, err)
 		}
 	}
@@ -1069,6 +1080,7 @@ type SetupAdminRequest struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
 	DisplayName string `json:"display_name"`
+	Language    string `json:"language"`
 }
 
 func (s *APIServer) handleGetSetupStatus(w http.ResponseWriter, r *http.Request) {
@@ -1133,7 +1145,7 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, "ADMIN", false)
+	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, "ADMIN", false, req.Language)
 	if err != nil {
 		log.Printf("handleSetupAdmin: failed to create admin user: %v\n", err)
 		if db.IsUniqueViolation(err) {

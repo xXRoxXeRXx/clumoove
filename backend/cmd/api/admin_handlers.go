@@ -21,6 +21,26 @@ type UpdateProfileRequest struct {
 	DisplayName string `json:"display_name"`
 }
 
+type UpdateLanguageRequest struct {
+	Language string `json:"language"`
+}
+
+func (s *APIServer) handleUpdateLanguage(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	var req UpdateLanguageRequest
+	if userID == "" || !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		if userID == "" {
+			writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		}
+		return
+	}
+	if err := db.UpdateUserLanguage(s.db, userID, strings.ToLower(strings.TrimSpace(req.Language))); err != nil {
+		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"language": strings.ToLower(strings.TrimSpace(req.Language))})
+}
+
 func (s *APIServer) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
@@ -368,7 +388,7 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, req.Role, false)
+	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, req.Role, false, "en")
 	if err != nil {
 		if db.IsUniqueViolation(err) {
 			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
@@ -896,7 +916,7 @@ func (s *APIServer) handleTestSMTP(w http.ResponseWriter, r *http.Request) {
 		Encryption: settings.SMTPEncryption,
 	}
 
-	if err := email.SendMail(smtpCfg, user.Email, "Clumoove — SMTP-Test erfolgreich", email.BuildTestEmail()); err != nil {
+	if err := email.SendMail(smtpCfg, user.Email, email.SMTPTestSubject(user.Language), email.BuildTestEmailLocalized(user.Language)); err != nil {
 		log.Printf("handleTestSMTP: send failed: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSmtpTestFailed})
 		return

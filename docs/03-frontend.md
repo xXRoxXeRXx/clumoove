@@ -106,7 +106,12 @@ A console warning is emitted when the API is reached over plaintext HTTP on a no
 ## 5. Internationalization (i18n)
 
 - `i18n.ts` initializes with resources `de`/`en`, `fallbackLng: 'en'`, `supportedLngs: ['de','en']`,
-  `load: 'languageOnly'`, detector order `localStorage → navigator → htmlTag`.
+  `load: 'languageOnly'`, detector order `localStorage → navigator → htmlTag`. Once authenticated, the
+  persisted account language overrides the detected value so background emails and notifications use the
+  same language.
+- Delivery strings live under `delivery.*` in the same locale files. Docker build stages regenerate the
+  worker/API catalog from those source files before compiling; use `cd backend && go generate ./internal/i18n`
+  only before a direct local Go build.
 - Both `locales/de/translation.json` and `locales/en/translation.json` **must stay in key parity** —
   every key present in one must exist in the other.
 - **Error codes:** The backend sends **only** a machine-readable `error_code` (never human text).
@@ -131,7 +136,7 @@ A console warning is emitted when the API is reached over plaintext HTTP on a no
 | `SyncDashboard` | Live progress and details for synchronization jobs (delta stats, changed/deleted files, pause/resume/threads). |
 | `SettingsPage` | Display name, password change, avatar (cropper), 2FA setup/enable/disable, email change, per-user SMTP settings + test, connection profile management. |
 | `AdminPanel` | (ADMIN) user list/suspend/reactivate/delete/role, global stats, all-migrations view, all-syncs view, audit log. |
-| `LanguageSwitcher` | Switch `de`/`en`; persisted to `localStorage` by the detector. |
+| `LanguageSwitcher` | Switch `de`/`en`; persisted locally and to the authenticated account. |
 
 ---
 

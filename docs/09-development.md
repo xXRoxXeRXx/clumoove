@@ -132,6 +132,10 @@ File-scoped commands referenced in `AGENTS.md`:
 - Frontend: `i18next` + `react-i18next` + `i18next-browser-languagedetector`; supported `de`, `en`
   (fallback `en`).
 - `locales/de/translation.json` and `locales/en/translation.json` **must stay in key parity**.
+- Email and notification strings belong under `delivery.*` in those same locale files. Docker builds run
+  the generator automatically before compiling. Before a direct local Go build, run
+  `(cd backend && go generate ./internal/i18n)` and commit the regenerated
+  `backend/internal/i18n/translations_gen.go`.
 - Error codes localized under `errors.*`; `useApiError()` maps `error_code` → translated string,
   falling back to `errors.UNKNOWN`.
 - Use `utils/format.ts` (`formatBytes`, `formatDate`, `formatDateTime`, `useFormat`) for locale-aware
