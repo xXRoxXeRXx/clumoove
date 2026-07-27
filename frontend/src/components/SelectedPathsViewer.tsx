@@ -248,7 +248,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               return (
                 <span
                   key={idx}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs max-w-[200px] truncate"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-portal-navy-themed)] shadow-2xs max-w-[200px] truncate"
                   title={p}
                 >
                   {getPathIcon(type)}
@@ -261,15 +261,15 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               <button
                 type="button"
                 onClick={() => setIsModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-portal-navy/5 hover:bg-portal-navy/10 border border-portal-navy/20 text-[10px] font-medium text-portal-navy transition-colors cursor-pointer shadow-2xs group"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[10px] font-medium text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer shadow-2xs group"
               >
-                <Eye className="w-3 h-3 text-portal-navy/70 group-hover:scale-110 transition-transform" />
+                <Eye className="w-3 h-3 text-[var(--color-text-secondary)] group-hover:scale-110 transition-transform" />
                 <span>{t('paths.moreItems', { count: hiddenCount })}</span>
               </button>
             )}
           </>
         ) : (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-portal-navy-themed)] shadow-2xs">
             <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span>/</span>
           </span>
@@ -288,7 +288,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
             {/* Modal Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-portal-navy/10 text-portal-navy">
+                <div className="p-2 rounded-xl bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
                   <Layers className="w-5 h-5" />
                 </div>
                 <div>

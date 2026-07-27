@@ -87,22 +87,24 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
   if (loading || total === 0) return null;
 
   return (
-    <section className="p-5 rounded-2xl border border-rose-200 bg-rose-50/40 space-y-4">
-      <div className="flex items-center justify-between gap-3 border-b border-rose-100 pb-3">
+    <section className="overflow-hidden rounded-2xl border border-[var(--color-error-border)] bg-[var(--color-error-bg)]/45 shadow-xs">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--color-error-border)] px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
-          <h3 className="font-display font-bold text-xs text-rose-800 uppercase tracking-wider font-mono">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-error-border)] text-[var(--color-error-text)]">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+          </span>
+          <h3 className="font-display font-bold text-xs text-[var(--color-error-text)] uppercase tracking-wider font-mono">
             {t('common.errorOverview')}
           </h3>
         </div>
-        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700 font-mono">
+        <span className="rounded-full border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
           {total}
         </span>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-rose-100 bg-[var(--color-bg-primary)]">
+      <div className="m-4 overflow-x-auto rounded-xl border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)]">
         <table className="w-full min-w-[680px] text-left text-xs">
-          <thead className="bg-rose-50 text-[10px] font-mono uppercase tracking-wider text-rose-700">
+          <thead className="bg-[var(--color-bg-tertiary)] text-[10px] font-mono uppercase tracking-wider text-[var(--color-error-text)]">
             <tr>
               <th className="px-3 py-2.5 font-bold">{t('common.errorPath')}</th>
               <th className="px-3 py-2.5 font-bold">{t('common.errorType')}</th>
@@ -112,13 +114,13 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
           </thead>
           <tbody className="divide-y divide-[var(--color-border-light)]">
             {items.map((item) => (
-              <tr key={`${item.kind}-${item.id}`}>
+              <tr key={`${item.kind}-${item.id}`} className="transition-colors hover:bg-[var(--color-bg-tertiary)]/60">
                 <td className="max-w-[220px] px-3 py-2.5 font-mono text-[var(--color-text-primary)] break-all">{item.path}</td>
                 <td className="px-3 py-2.5 whitespace-nowrap text-[var(--color-text-secondary)]">
                   {item.kind === 'indexing' ? t('common.errorTypeIndexing') : t('common.errorTypeTransfer')}
                   {item.attempts > 0 ? ` / ${t('common.errorAttempts', { count: item.attempts })}` : ''}
                 </td>
-                <td className="max-w-[360px] px-3 py-2.5 text-rose-700 break-words">{item.error_message || t('common.errorNoMessage')}</td>
+                <td className="max-w-[360px] px-3 py-2.5 text-[var(--color-error-text)] break-words">{item.error_message || t('common.errorNoMessage')}</td>
                 <td className="px-3 py-2.5 whitespace-nowrap text-[var(--color-text-muted)]">{formatDateTime(item.occurred_at)}</td>
               </tr>
             ))}
@@ -131,13 +133,13 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
           type="button"
           onClick={loadMore}
           disabled={loadingMore}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl border border-rose-200 bg-white text-xs font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50 cursor-pointer"
+          className="mb-4 ml-4 flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)] text-xs font-bold text-[var(--color-error-text)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 cursor-pointer"
         >
           {loadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
           {t('common.loadMoreErrors')}
         </button>
       )}
-      {loadMoreError && <p className="text-xs text-rose-700">{t('common.loadMoreErrorsFailed')}</p>}
+      {loadMoreError && <p className="mx-4 mb-4 text-xs text-[var(--color-error-text)]">{t('common.loadMoreErrorsFailed')}</p>}
     </section>
   );
 }
