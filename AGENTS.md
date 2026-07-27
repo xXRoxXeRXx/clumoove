@@ -17,7 +17,7 @@
 - **Worker background schedulers** (all started by `processor.Start()`):
   - `RunWorkerLiveness` — heartbeat every 10 s, detects dead workers and reclaims their tasks
   - `RunRetryScheduler` — re-enqueues tasks whose `next_retry_at <= NOW()` every 10 s
-  - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s
+  - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s; for sync jobs it only returns the job to `IDLE` and makes its active schedule due, so the API scheduler exclusively starts the pass
   - `RunOrphanedRunningTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
   - `RunChecksumVerifier` — performs automated post-migration cryptographic checksum validation for `VERIFYING` migrations every 10 s
 - **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google/Google Photos refresh tokens before expiry.

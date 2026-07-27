@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"sync"
@@ -47,6 +48,17 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 	`); err != nil {
 		database.Close()
 		t.Fatalf("create temp sync_jobs: %v", err)
+	}
+	if _, err := database.Exec(`
+		CREATE TEMP TABLE schedules (
+			task_type TEXT NOT NULL,
+			task_id TEXT NOT NULL,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			next_run_at TIMESTAMP WITH TIME ZONE
+		)
+	`); err != nil {
+		database.Close()
+		t.Fatalf("create temp schedules: %v", err)
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
@@ -259,22 +271,105 @@ func TestReleaseUnstartedSyncPass(t *testing.T) {
 	}
 }
 
-func TestClaimPausedSyncJobPass(t *testing.T) {
+func TestRecoverConnectionLostSyncJob(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 	insertSyncClaimJob(t, database, "connection-loss", "PAUSED_CONNECTION_LOSS")
 	insertSyncClaimJob(t, database, "manually-paused", "PAUSED")
-
-	claimed, err := ClaimPausedSyncJobPass(database, "connection-loss")
-	if err != nil || !claimed {
-		t.Fatalf("claim connection-loss job: claimed=%v, err=%v", claimed, err)
-	}
-	if got := syncClaimStatus(t, database, "connection-loss"); got != "INDEXING" {
-		t.Errorf("connection-loss status = %q, want INDEXING", got)
+	if _, err := database.Exec(`INSERT INTO schedules (task_type, task_id, is_active, next_run_at) VALUES
+		('sync', 'connection-loss', TRUE, NOW() + INTERVAL '1 hour'),
+		('sync', 'manually-paused', TRUE, NOW() + INTERVAL '1 hour')`); err != nil {
+		t.Fatalf("insert schedules: %v", err)
 	}
 
-	claimed, err = ClaimPausedSyncJobPass(database, "manually-paused")
-	if err != nil || claimed {
-		t.Errorf("claim manually paused job: claimed=%v, err=%v; want false, nil", claimed, err)
+	recovered, err := RecoverConnectionLostSyncJob(database, context.Background(), "connection-loss")
+	if err != nil || !recovered {
+		t.Fatalf("recover connection-loss job: recovered=%v, err=%v", recovered, err)
+	}
+	if got := syncClaimStatus(t, database, "connection-loss"); got != "IDLE" {
+		t.Errorf("connection-loss status = %q, want IDLE", got)
+	}
+	var due bool
+	if err := database.QueryRow(`SELECT next_run_at <= NOW() FROM schedules WHERE task_id = 'connection-loss'`).Scan(&due); err != nil || !due {
+		t.Errorf("connection-loss schedule not made due: due=%v, err=%v", due, err)
+	}
+	// The compare-and-set recovery is idempotent: a second worker that probes
+	// the same restored connection must not claim it again.
+	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "connection-loss")
+	if err != nil || recovered {
+		t.Errorf("second recovery: recovered=%v, err=%v; want false, nil", recovered, err)
+	}
+
+	insertSyncClaimJob(t, database, "without-schedule", "PAUSED_CONNECTION_LOSS")
+	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "without-schedule")
+	if err != nil || !recovered || syncClaimStatus(t, database, "without-schedule") != "IDLE" {
+		t.Errorf("recover without active schedule: recovered=%v, err=%v, status=%s", recovered, err, syncClaimStatus(t, database, "without-schedule"))
+	}
+
+	insertSyncClaimJob(t, database, "inactive-schedule", "PAUSED_CONNECTION_LOSS")
+	if _, err := database.Exec(`INSERT INTO schedules (task_type, task_id, is_active, next_run_at)
+		VALUES ('sync', 'inactive-schedule', FALSE, NOW() + INTERVAL '1 hour')`); err != nil {
+		t.Fatalf("insert inactive schedule: %v", err)
+	}
+	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "inactive-schedule")
+	if err != nil || !recovered {
+		t.Fatalf("recover inactive schedule: recovered=%v, err=%v", recovered, err)
+	}
+	if err := database.QueryRow(`SELECT next_run_at > NOW() FROM schedules WHERE task_id = 'inactive-schedule'`).Scan(&due); err != nil || !due {
+		t.Errorf("inactive schedule was made due: remainsFuture=%v, err=%v", due, err)
+	}
+
+	recovered, err = RecoverConnectionLostSyncJob(database, context.Background(), "manually-paused")
+	if err != nil || recovered {
+		t.Errorf("recover manually paused job: recovered=%v, err=%v; want false, nil", recovered, err)
+	}
+	if got := syncClaimStatus(t, database, "manually-paused"); got != "PAUSED" {
+		t.Errorf("manually paused status = %q, want PAUSED", got)
+	}
+	if err := database.QueryRow(`SELECT next_run_at > NOW() FROM schedules WHERE task_id = 'manually-paused'`).Scan(&due); err != nil || !due {
+		t.Errorf("manually paused schedule was made due: remainsFuture=%v, err=%v", due, err)
+	}
+}
+
+func TestRecoverConnectionLostSyncJobConcurrent(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "concurrent-recovery", "PAUSED_CONNECTION_LOSS")
+	if _, err := database.Exec(`INSERT INTO schedules (task_type, task_id, is_active, next_run_at)
+		VALUES ('sync', 'concurrent-recovery', TRUE, NOW() + INTERVAL '1 hour')`); err != nil {
+		t.Fatalf("insert schedule: %v", err)
+	}
+
+	results := make(chan bool, 2)
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			recovered, err := RecoverConnectionLostSyncJob(database, context.Background(), "concurrent-recovery")
+			results <- recovered
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	recoveries := 0
+	for recovered := range results {
+		if recovered {
+			recoveries++
+		}
+	}
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent recovery: %v", err)
+		}
+	}
+	if recoveries != 1 {
+		t.Errorf("recoveries = %d, want 1", recoveries)
+	}
+	if got := syncClaimStatus(t, database, "concurrent-recovery"); got != "IDLE" {
+		t.Errorf("concurrent-recovery status = %q, want IDLE", got)
 	}
 }
 

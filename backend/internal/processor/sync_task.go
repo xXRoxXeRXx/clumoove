@@ -619,18 +619,16 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		tClient.Close()
 
 		if sOK && tOK {
-			log.Printf("[RecoveryScheduler] Connection restored for sync job %s! Resuming...\n", id)
-			if p.syncEngine == nil {
-				log.Printf("[RecoveryScheduler] Sync engine unavailable; cannot resume sync job %s\n", id)
+			// Workers only release the job. The API scheduler is the sole owner of
+			// sync-pass coordinators, avoiding one engine per worker and duplicate
+			// recovery passes across workers/API replicas.
+			recovered, recoverErr := db.RecoverConnectionLostSyncJob(p.db, ctx, id)
+			if recoverErr != nil {
+				log.Printf("[RecoveryScheduler] Error recovering sync job %s: %v\n", id, recoverErr)
 				continue
 			}
-			// Claim directly from PAUSED_CONNECTION_LOSS; an intermediate IDLE
-			// state would let another starter launch a duplicate pass.
-			claimed, claimErr := p.syncEngine.ResumePausedSyncPass(ctx, id)
-			if claimErr != nil {
-				log.Printf("[RecoveryScheduler] Error claiming resumed sync job %s: %v\n", id, claimErr)
-			} else if !claimed {
-				log.Printf("[RecoveryScheduler] Sync job %s was claimed before recovery could resume it\n", id)
+			if recovered {
+				log.Printf("[RecoveryScheduler] Connection restored for sync job %s; scheduled API retry\n", id)
 			}
 			p.recoveryAttempts.Delete(id)
 		} else {

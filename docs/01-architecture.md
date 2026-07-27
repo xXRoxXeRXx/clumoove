@@ -115,8 +115,9 @@ Cloud services frequently suffer connection fluctuations, so the backend is buil
   ($10 \times 3^{\text{attempt}}$ seconds → 10 s, 30 s, 90 s, max 3 attempts). Permanent errors (e.g.
   invalid OAuth token) skip retry immediately.
 - **Connection-loss auto-pause (`PAUSED_CONNECTION_LOSS`):** If a service stays offline, the migration
-  self-pauses (`RunConnectionRecoveryScheduler`). The scheduler periodically checks whether servers are
-  back, then resumes the queue from where it stopped.
+  self-pauses (`RunConnectionRecoveryScheduler`). The worker scheduler periodically checks whether servers are
+  back, then resumes migration queues from where they stopped. For sync jobs it atomically returns the job to
+  `IDLE` and sets the active schedule's `next_run_at` to `NOW()`; only the API scheduler starts the fresh pass.
 - **Orphaned-task recovery:** `RunOrphanedRunningTasksRecovery` detects tasks stuck in `RUNNING` for too
   long (> 10 min) and resets them to `PENDING`.
 - **Retry-failed & reindex:** `POST /api/migration/{id}/retry-failed` re-enqueues failed tasks;
