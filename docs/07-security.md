@@ -101,8 +101,11 @@ endpoint group from consuming another group's request budget. Limits:
 | Login | 10 / 1 min |
 | Register | 5 / 5 min |
 | Connect/browse/mkdir | 30 / 1 min |
+| Migration/sync create or start | 10 / 1 min |
 | TOTP | 10 / 1 min |
 | Migration stream (SSE) | 60 / 1 min, max 10 concurrent streams per user |
+
+All JSON request bodies pass through `http.MaxBytesReader` before decoding. Normal API requests are limited to 1 MiB; avatar JSON is limited to 3 MiB to support its existing 2 MiB decoded-image cap; authentication and TOTP requests are limited to 64 KiB. Malformed, oversized, trailing-data, and otherwise invalid JSON bodies return `INVALID_BODY`, except password-reset requests preserve their generic success response for anti-enumeration.
 
 The API's normal HTTP timeouts are read 30 seconds, write 60 seconds, and idle 120 seconds. Migration and sync SSE handlers explicitly clear their per-response write deadline through `http.ResponseController`, so the normal write timeout does not terminate healthy long-lived streams; 15-second SSE comment heartbeats keep intermediary proxies from treating them as idle.
 

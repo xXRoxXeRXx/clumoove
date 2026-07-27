@@ -56,8 +56,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req BrowseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -147,8 +146,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TargetBrowseRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -227,8 +225,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TargetMkdirRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -487,8 +484,7 @@ func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ThreadsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -522,8 +518,7 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req BandwidthRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -589,8 +584,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ConnectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -679,8 +673,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ConnectRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -807,9 +800,13 @@ type StartRequest struct {
 }
 
 func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	var req StartRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"html"
 	"log"
@@ -324,8 +323,7 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 
@@ -389,8 +387,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 
@@ -747,7 +744,7 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		Email string `json:"email"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if !decodeJSONBodySilent(r, &req, authJSONBodyLimit) {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
@@ -842,8 +839,7 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 		Token       string `json:"token"`
 		NewPassword string `json:"new_password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 
@@ -900,8 +896,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NewEmail string `json:"new_email"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 
@@ -1005,8 +1000,7 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 	var req struct {
 		Token string `json:"token"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 
@@ -1110,8 +1104,7 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SetupAdminRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 

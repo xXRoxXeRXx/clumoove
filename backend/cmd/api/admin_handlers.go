@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -29,8 +28,7 @@ func (s *APIServer) handleUpdateProfile(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req UpdateProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -65,8 +63,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 	mustChange := claims.MustChangePassword
 
 	var req ChangePasswordRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -155,8 +152,7 @@ func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req SetAvatarRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, avatarJSONBodyLimit) {
 		return
 	}
 
@@ -273,8 +269,7 @@ func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req UpdateSettingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -337,8 +332,7 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 	}
 
 	var req AdminCreateUserRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -507,8 +501,7 @@ func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request
 	}
 
 	var req AdminUpdateRoleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -761,8 +754,7 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 		SMTPEncryption     string `json:"smtp_encryption"`
 		NotifyOnCompletion *bool  `json:"notify_on_completion"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
