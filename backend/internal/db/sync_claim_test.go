@@ -34,6 +34,14 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 		CREATE TEMP TABLE sync_jobs (
 			id TEXT PRIMARY KEY,
 			status TEXT NOT NULL,
+			last_run_status TEXT,
+			error_message TEXT,
+			last_run_at TIMESTAMP WITH TIME ZONE,
+			total_files INTEGER NOT NULL DEFAULT 0,
+			processed_files INTEGER NOT NULL DEFAULT 0,
+			changed_files INTEGER NOT NULL DEFAULT 0,
+			deleted_files INTEGER NOT NULL DEFAULT 0,
+			failed_files INTEGER NOT NULL DEFAULT 0,
 			updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)
 	`); err != nil {
@@ -42,6 +50,104 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestFinalizeSyncJobPass(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+
+	insertSyncClaimJob(t, database, "empty-indexing", "INDEXING")
+	finalized, err := FinalizeSyncJobPass(database, "empty-indexing", "SUCCESS", nil, 0, 0, 0, 0, 0)
+	if err != nil || !finalized || syncClaimStatus(t, database, "empty-indexing") != "IDLE" {
+		t.Fatalf("finalize empty INDEXING pass: finalized=%v, err=%v", finalized, err)
+	}
+
+	for _, status := range []string{"RUNNING", "VERIFYING"} {
+		id := "finalize-" + status
+		insertSyncClaimJob(t, database, id, status)
+		finalized, err := FinalizeSyncJobPass(database, id, "SUCCESS", nil, 2, 2, 1, 0, 0)
+		if err != nil || !finalized {
+			t.Fatalf("finalize %s: finalized=%v, err=%v", status, finalized, err)
+		}
+		if got := syncClaimStatus(t, database, id); got != "IDLE" {
+			t.Errorf("finalize %s status = %q, want IDLE", status, got)
+		}
+		var lastRunStatus string
+		var total, processed, changed, deleted, failed int
+		if err := database.QueryRow(`
+			SELECT last_run_status, total_files, processed_files, changed_files, deleted_files, failed_files
+			FROM sync_jobs WHERE id = $1
+		`, id).Scan(&lastRunStatus, &total, &processed, &changed, &deleted, &failed); err != nil {
+			t.Fatalf("read finalized stats for %s: %v", status, err)
+		}
+		if lastRunStatus != "SUCCESS" || total != 2 || processed != 2 || changed != 1 || deleted != 0 || failed != 0 {
+			t.Errorf("finalize %s stats = (%q, %d, %d, %d, %d, %d), want (SUCCESS, 2, 2, 1, 0, 0)", status, lastRunStatus, total, processed, changed, deleted, failed)
+		}
+	}
+
+	for _, status := range []string{"FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS", "IDLE"} {
+		id := "preserve-" + status
+		insertSyncClaimJob(t, database, id, status)
+		finalized, err := FinalizeSyncJobPass(database, id, "SUCCESS", nil, 2, 2, 1, 0, 0)
+		if err != nil || finalized {
+			t.Errorf("finalize %s: finalized=%v, err=%v; want false, nil", status, finalized, err)
+		}
+		if got := syncClaimStatus(t, database, id); got != status {
+			t.Errorf("finalize %s status = %q, want unchanged", status, got)
+		}
+	}
+}
+
+func TestFailSyncJobPass(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+
+	for _, status := range []string{"INDEXING", "RUNNING", "VERIFYING"} {
+		id := "fail-" + status
+		insertSyncClaimJob(t, database, id, status)
+		failed, err := FailSyncJobPass(database, id, "indexing failed")
+		if err != nil || !failed {
+			t.Fatalf("fail %s: failed=%v, err=%v", status, failed, err)
+		}
+		var currentStatus, lastRunStatus, errorMessage string
+		if err := database.QueryRow(`SELECT status, last_run_status, error_message FROM sync_jobs WHERE id = $1`, id).Scan(&currentStatus, &lastRunStatus, &errorMessage); err != nil {
+			t.Fatalf("read failed pass for %s: %v", status, err)
+		}
+		if currentStatus != "FAILED" || lastRunStatus != "FAILED" || errorMessage != "indexing failed" {
+			t.Errorf("fail %s = (%q, %q, %q), want (FAILED, FAILED, indexing failed)", status, currentStatus, lastRunStatus, errorMessage)
+		}
+	}
+
+	insertSyncClaimJob(t, database, "preserve-paused", "PAUSED")
+	failed, err := FailSyncJobPass(database, "preserve-paused", "indexing failed")
+	if err != nil || failed {
+		t.Errorf("fail paused: failed=%v, err=%v; want false, nil", failed, err)
+	}
+}
+
+func TestSyncJobLifecycleTransitions(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+
+	insertSyncClaimJob(t, database, "indexing", "INDEXING")
+	transitioned, err := TransitionSyncJobToRunning(database, "indexing")
+	if err != nil || !transitioned || syncClaimStatus(t, database, "indexing") != "RUNNING" {
+		t.Fatalf("INDEXING -> RUNNING: transitioned=%v, err=%v", transitioned, err)
+	}
+
+	transitioned, err = TransitionSyncJobToVerifying(database, "indexing")
+	if err != nil || !transitioned || syncClaimStatus(t, database, "indexing") != "VERIFYING" {
+		t.Fatalf("RUNNING -> VERIFYING: transitioned=%v, err=%v", transitioned, err)
+	}
+
+	for _, status := range []string{"FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS"} {
+		id := "do-not-revive-" + status
+		insertSyncClaimJob(t, database, id, status)
+		transitioned, err := TransitionSyncJobToVerifying(database, id)
+		if err != nil || transitioned {
+			t.Errorf("%s -> VERIFYING: transitioned=%v, err=%v; want false, nil", status, transitioned, err)
+		}
+		if got := syncClaimStatus(t, database, id); got != status {
+			t.Errorf("%s -> VERIFYING changed status to %q", status, got)
+		}
+	}
 }
 
 func insertSyncClaimJob(t *testing.T, database *sql.DB, id, status string) {
