@@ -230,13 +230,12 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		return
 	}
 
-	targetKey := fmt.Sprintf("%s:target", cfg.EntityID)
-	targetClient, cleanup, err := p.getOrCreateProvider(passCtx, targetKey, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
+	targetClient, err := newProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
 	if err != nil {
 		log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 		return
 	}
-	defer cleanup()
+	defer targetClient.Close()
 
 	numWorkers := cfg.Threads
 	if numWorkers <= 0 {
