@@ -89,21 +89,25 @@
 
 /* Theme Variables - Dark Mode */
 [data-theme="dark"] {
-  --color-bg-primary: #0f172a;
-  --color-bg-secondary: #1e293b;
-  --color-bg-tertiary: #334155;
-  --color-bg-elevated: #1e293b;
-  --color-text-primary: #f8fafc;
-  --color-text-secondary: #cbd5e1;
-  --color-text-muted: #64748b;
+  /* Neutral charcoal palette: dark mode should not inherit the blue brand surface. */
+  --color-bg-primary: #121212;
+  --color-bg-secondary: #1b1b1b;
+  --color-bg-tertiary: #262626;
+  --color-bg-elevated: #202020;
+  --color-text-primary: #f5f5f5;
+  --color-text-secondary: #d4d4d4;
+  --color-text-muted: #a3a3a3;
   --color-text-inverse: #ffffff;
-  --color-border: #334155;
-  --color-border-light: #1e293b;
+  --color-border: #383838;
+  --color-border-light: #262626;
   --color-shadow: rgba(0, 0, 0, 0.3);
   --color-shadow-dark: rgba(0, 0, 0, 0.5);
   --color-portal-orange-themed: #ff8533;
-  --color-portal-navy-themed: #4a90d9;
-  --color-glass-bg: rgba(15, 23, 42, 0.8);
+  --color-portal-navy-themed: #f5f5f5;
+  --color-portal-navy: #262626;
+  --color-portal-navy-dark: #0a0a0a;
+  --color-portal-navy-light: #404040;
+  --color-glass-bg: rgba(27, 27, 27, 0.8);
   --color-glass-border: rgba(255, 255, 255, 0.05);
   --color-error-bg: #450a0a;
   --color-error-border: #7f1d1d;
@@ -113,9 +117,9 @@
   --color-success-bg: #052e16;
   --color-success-border: #14532d;
   --color-success-text: #bbf7d0;
-  --color-info-bg: #172554;
-  --color-info-border: #1e3a8a;
-  --color-info-text: #bfdbfe;
+  --color-info-bg: #262626;
+  --color-info-border: #404040;
+  --color-info-text: #e5e5e5;
   --color-bg-inverse: #000000;
 }
 
@@ -148,7 +152,7 @@
 }
 
 @utility glass-panel-dark {
-  background-color: rgba(15, 23, 42, 0.8);
+  background-color: rgba(23, 23, 23, 0.8);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid rgba(255, 255, 255, 0.05);
