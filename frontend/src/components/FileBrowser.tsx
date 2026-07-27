@@ -104,6 +104,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
   const translateApiError = useApiError();
+  const isImmichSource = credentials.source_provider === 'immich';
+  const isImmichTarget = credentials.target_provider === 'immich';
+  const hasImmichEndpoint = isImmichSource || isImmichTarget;
 
   const [activeTab, setActiveTab] = useState<'files' | 'calendars' | 'contacts'>('files');
   const [calendars, setCalendars] = useState<CloudFile[]>([]);
@@ -121,7 +124,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // entries so the selection checkboxes render checked on first paint.
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>(() =>
     initialFiles.reduce((acc, f) => {
-      acc[f.path] = true;
+      acc[f.path] = !isImmichSource || f.path === '/All Assets';
       return acc;
     }, {} as Record<string, boolean>)
   );
@@ -145,6 +148,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [direction, setDirection] = useState<'one_way' | 'two_way'>('one_way');
   const [intervalMinutes, setIntervalMinutes] = useState<number>(15);
   const [deletePropagation, setDeletePropagation] = useState<boolean>(false);
+  // A profile change can introduce Immich after sync was selected. Deriving the
+  // active mode keeps the UI and request path migration-only without a stateful
+  // effect that would cause an unnecessary render.
+  const effectiveJobType = hasImmichEndpoint ? 'migration' : jobType;
 
   // Scheduling state
   const [enableScheduling, setEnableScheduling] = useState(false);
@@ -467,7 +474,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       return;
     }
 
-    if (jobType === 'sync') {
+    if (effectiveJobType === 'sync') {
       if (pathsToMigrate.length === 0) {
         setError(t('fileBrowser.errors.selectOne'));
         return;
@@ -487,7 +494,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setError(null);
 
     try {
-      if (jobType === 'sync') {
+      if (effectiveJobType === 'sync') {
         const response = await apiFetch(`${apiUrl}/api/sync`, {
           method: 'POST',
           headers: {
@@ -807,7 +814,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
         <div className="flex items-center">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider bg-portal-orange/10 text-portal-orange border border-portal-orange/30 shrink-0">
-            {jobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
+            {effectiveJobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
           </span>
         </div>
       </div>
@@ -886,24 +893,26 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 type="button"
                 onClick={() => setJobType('migration')}
                 className={`flex items-center px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
-                  jobType === 'migration'
+                  effectiveJobType === 'migration'
                     ? 'bg-portal-orange text-white shadow-xs'
                     : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
                 }`}
               >
                 {t('sync.modeMigration')}
               </button>
-              <button
-                type="button"
-                onClick={() => setJobType('sync')}
-                className={`flex items-center px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
-                  jobType === 'sync'
-                    ? 'bg-portal-orange text-white shadow-xs'
-                    : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
-                }`}
-              >
-                {t('sync.modeSync')}
-              </button>
+              {!hasImmichEndpoint && (
+                <button
+                  type="button"
+                  onClick={() => setJobType('sync')}
+                  className={`flex items-center px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
+                    effectiveJobType === 'sync'
+                      ? 'bg-portal-orange text-white shadow-xs'
+                      : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
+                  }`}
+                >
+                  {t('sync.modeSync')}
+                </button>
+              )}
             </div>
           </div>
 
@@ -930,7 +939,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         {/* Settings body */}
         <div className="p-5 sm:p-6 space-y-6">
           {/* Sync-only options */}
-          {jobType === 'sync' && (
+          {effectiveJobType === 'sync' && (
             <div className="space-y-4 p-4 rounded-2xl bg-amber-50/60 border border-amber-200 text-xs animate-fade-in">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {/* Direction */}
@@ -1005,7 +1014,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start">
             {/* Target folder (readonly mirror of the Target card primary action) */}
             <div className="space-y-2 text-xs md:col-span-2 xl:col-span-1">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('fileBrowser.targetDir')}</label>
+              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{isImmichTarget ? t('fileBrowser.targetAlbum') : t('fileBrowser.targetDir')}</label>
               <div className="flex items-center gap-2">
                 <span className="flex-grow flex items-center gap-2 px-3 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[11px] text-[var(--color-text-secondary)] truncate">
                   <Folder className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -1021,12 +1030,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </button>
               </div>
               <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed font-sans">
-                {t('fileBrowser.targetCopied')}
+                {isImmichTarget ? t('fileBrowser.targetAlbumCopied') : t('fileBrowser.targetCopied')}
               </p>
             </div>
 
             {/* Conflict Strategy */}
-            {jobType === 'sync' && direction === 'one_way' ? (
+            {isImmichTarget ? (
+              <div className="p-3.5 rounded-2xl bg-blue-50/70 border border-blue-200 text-blue-900 text-xs font-mono flex items-center gap-2 xl:col-span-2">
+                <Info className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>{t('fileBrowser.immichDuplicateDetection')}</span>
+              </div>
+            ) : effectiveJobType === 'sync' && direction === 'one_way' ? (
               <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 text-amber-900 text-xs font-mono flex items-center gap-2 xl:col-span-2">
                 <Info className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>{t('sync.oneWayConflictNote')}</span>
@@ -1047,7 +1061,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   >
                     <div className="flex items-center justify-between text-xs font-semibold">
                       <span className="font-display">
-                        {jobType === 'sync' ? t('sync.conflictSourceWins') : t('fileBrowser.overwrite')}
+                        {effectiveJobType === 'sync' ? t('sync.conflictSourceWins') : t('fileBrowser.overwrite')}
                       </span>
                       {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
                     </div>
@@ -1068,7 +1082,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   >
                     <div className="flex items-center justify-between text-xs font-semibold">
                       <span className="font-display">
-                        {jobType === 'sync' ? t('sync.conflictKeepBoth') : t('fileBrowser.rename')}
+                        {effectiveJobType === 'sync' ? t('sync.conflictKeepBoth') : t('fileBrowser.rename')}
                       </span>
                       {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
                     </div>
@@ -1089,7 +1103,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   >
                     <div className="flex items-center justify-between text-xs font-semibold">
                       <span className="font-display">
-                        {jobType === 'sync' ? t('sync.conflictSkip') : t('fileBrowser.skip')}
+                        {effectiveJobType === 'sync' ? t('sync.conflictSkip') : t('fileBrowser.skip')}
                       </span>
                       {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-[var(--color-portal-orange-themed)] stroke-[3]" />}
                     </div>
@@ -1129,7 +1143,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             </div>
 
             {/* Bandwidth Limit (migration only — Sync API does not accept it) */}
-            {jobType === 'migration' && (
+            {effectiveJobType === 'migration' && (
               <div className="space-y-3 text-xs">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
                   {t('fileBrowser.bandwidth')}
@@ -1163,7 +1177,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </div>
 
           {/* Migration-only scheduling */}
-          {jobType === 'migration' && (
+          {effectiveJobType === 'migration' && (
             <div className="space-y-3 text-xs pt-5 border-t border-[var(--color-border-light)]">
               <label className="flex items-center gap-3 cursor-pointer group">
                 <input
@@ -1376,10 +1390,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             <div className="p-5 border-b border-[var(--color-border-light)] flex items-center justify-between bg-[var(--color-bg-tertiary)]/50">
               <div>
                 <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] tracking-tight">
-                  {t('fileBrowser.targetSelectTitle')}
+                  {isImmichTarget ? t('fileBrowser.targetAlbumSelectTitle') : t('fileBrowser.targetSelectTitle')}
                 </h3>
                 <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 uppercase tracking-wider font-mono">
-                  {t('fileBrowser.targetSelectSubtitle')}
+                  {isImmichTarget ? t('fileBrowser.targetAlbumSelectSubtitle') : t('fileBrowser.targetSelectSubtitle')}
                 </p>
               </div>
               <button
@@ -1443,7 +1457,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     <span className={`text-[11.5px] truncate flex-grow text-left leading-normal py-0.5 ${
                       targetDir === '/' ? 'text-[var(--color-portal-navy-themed)]' : 'text-[var(--color-text-secondary)]'
                     }`}>
-                      {t('fileBrowser.mainDir')}
+                      {isImmichTarget ? t('fileBrowser.immichLibrary') : t('fileBrowser.mainDir')}
                     </span>
                     {targetDir === '/' && (
                       <Check className="w-3.5 h-3.5 text-[var(--color-portal-orange-themed)] stroke-[3]" />
@@ -1480,7 +1494,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               >
                 <div className="flex-grow space-y-1">
                   <label className="block text-[9px] font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-widest">
-                    {t('fileBrowser.mkdirIn', { path: targetDir })}
+                    {isImmichTarget ? t('fileBrowser.createAlbumIn', { path: targetDir }) : t('fileBrowser.mkdirIn', { path: targetDir })}
                   </label>
                   <input
                     type="text"
@@ -1527,7 +1541,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   title={t('fileBrowser.newFolderHint')}
                 >
                   <FolderPlus className="w-4 h-4 text-[var(--color-portal-navy-themed)]" />
-                  <span>{t('fileBrowser.newFolder')}</span>
+                  <span>{isImmichTarget ? t('fileBrowser.newAlbum') : t('fileBrowser.newFolder')}</span>
                 </button>
                 <button
                   type="button"

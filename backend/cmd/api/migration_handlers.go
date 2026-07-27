@@ -857,12 +857,18 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
 	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
 
-	if req.SourceProvider == "magentacloud" && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
+	if (req.SourceProvider == "magentacloud" || req.SourceProvider == "immich") && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
 		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
 		return
 	}
-	if req.TargetProvider == "magentacloud" && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
+	if (req.TargetProvider == "magentacloud" || req.TargetProvider == "immich") && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
 		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
+		return
+	}
+	// Conflict strategy controls writes at the target; Immich remains a valid
+	// source with any strategy supported by the non-Immich target.
+	if req.TargetProvider == "immich" && req.ConflictStrategy != "SKIP" {
+		writeError(w, http.StatusBadRequest, ErrImmichConflictStrategy)
 		return
 	}
 

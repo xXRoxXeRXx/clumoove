@@ -17,7 +17,8 @@ export type Provider =
   | 'smb'
   | 's3'
   | 'sftp'
-  | 'local';
+  | 'local'
+  | 'immich';
 
 export interface MigrationConfig {
   source_url: string;
@@ -32,8 +33,8 @@ export interface MigrationConfig {
   target_token_expires_in: number;
   source_provider: Provider;
   target_provider: Provider;
-  source_profile_id?: string;
-  target_profile_id?: string;
+	source_profile_id?: string;
+	target_profile_id?: string;
 }
 
 export type UserRole = 'USER' | 'ADMIN';

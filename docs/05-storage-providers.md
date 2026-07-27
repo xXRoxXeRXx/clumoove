@@ -75,6 +75,7 @@ time, description, tags, etc.) after a successful upload.
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
 | `sftp` | `sftp.go` | SSH SFTP (`pkg/sftp`) | user/pass (or key) | files |
 | `local` | `local.go` | Local filesystem (server-side sandbox) | none (no URL/user/pass) | files only |
+| `immich` | `immich.go` | Immich stable v2 API | server URL + API key in encrypted password field | files only, one-time migrations |
 
 ---
 
@@ -94,11 +95,15 @@ contacted). `GetFileHash` returns a `SHA1:` hash, enabling the standard 3-way ha
 
 ## 3. Factory & Validation (`factory.go`)
 
+### Immich
+
+Immich uses a server URL and API key sent as `x-api-key`; the key uses the encrypted password field and is never logged. It uses the stable v2 endpoint subset for API-key validation, asset search/download/upload, and album operations. Source browsing exposes `/All Assets` and `/Albums`, retaining asset UUID metadata for deduplication. It is files-only and migration-only: calendars, contacts, and sync jobs are rejected. Immich target conflicts must use native duplicate `SKIP`; overwrite, rename, delete, and atomic rename are unsupported. Only supported image, video, and RAW extensions are indexed for an Immich target; rejected files are recorded as indexing errors.
+
 `NewProvider(ctx, providerType, urlStr, username, password)`:
 
 1. For `nextcloud`/`webdav`, extracts credentials embedded in the URL (`user:pass@host`) and strips them
    from the URL before use (prevents leakage in `url.Error`).
-2. For `nextcloud`/`webdav`/`smb`/`sftp`, runs `validateEgressURL` (SSRF guard).
+2. For `nextcloud`/`webdav`/`smb`/`sftp`/`immich`, runs `validateEgressURL` (SSRF guard).
 3. Switches on the whitelisted provider type and returns the concrete client. `magentacloud` ignores
    the URL (uses its fixed endpoint). `google`, `dropbox`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
 
@@ -151,7 +156,7 @@ computes a second (target) hasher when algorithms differ (CPU optimization).
    SupportsAtomicRename)` for *every* implementer, including test mocks — so add it together with the other
    methods. Return `true` when the provider supports an atomic "upload to `<path>.tmp` then rename"
    overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Google Photos).
-3. Add the provider value to the whitelist in `api/main.go` (`validProviders` map) **and** the frontend
+3. Add the provider value to the whitelist in `internal/storage/factory.go` (`ValidProviders`) **and** the frontend
    provider selector.
 4. Register it in `NewProvider` (`factory.go`), including any SSRF egress validation for
    user-supplied hosts.

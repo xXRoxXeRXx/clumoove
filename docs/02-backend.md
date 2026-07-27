@@ -4,6 +4,8 @@ The backend is a single Go module (`backend/`) with two binary entrypoints that 
 internal packages. It is written in Go 1.25 and uses the standard library `net/http` mux
 (Go 1.22 method/pattern routing) — no external router dependencies.
 
+Immich is a files-only, one-time-migration provider. Its API key is stored as the encrypted password, URLs use the normal SSRF-safe transport, and API handlers reject calendars, contacts, non-`SKIP` target conflicts, and sync-job creation involving Immich.
+
 ---
 
 ## 1. Entrypoints

@@ -163,6 +163,8 @@ const (
 	ErrProfileNameExists      APIErrorCode = "PROFILE_NAME_EXISTS"
 	ErrProfileInvalidProvider APIErrorCode = "PROFILE_INVALID_PROVIDER"
 	ErrProfileURLRequired     APIErrorCode = "PROFILE_URL_REQUIRED"
+	ErrImmichSyncUnsupported  APIErrorCode = "IMMICH_SYNC_UNSUPPORTED"
+	ErrImmichConflictStrategy APIErrorCode = "IMMICH_CONFLICT_STRATEGY_INVALID"
 )
 
 // writeError emits a structured error response carrying only a machine-readable

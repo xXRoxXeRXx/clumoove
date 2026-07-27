@@ -131,6 +131,10 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
 	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
+	if req.SourceProvider == "immich" || req.TargetProvider == "immich" {
+		writeError(w, http.StatusBadRequest, ErrImmichSyncUnsupported)
+		return
+	}
 
 	if req.Direction == "" {
 		req.Direction = "one_way"

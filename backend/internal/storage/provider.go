@@ -20,6 +20,10 @@ var ErrHashNotSupported = errors.New("checksum hash not supported")
 // ErrChecksumNotAvailable is returned when a checksum is not available for a specific file or resource.
 var ErrChecksumNotAvailable = errors.New("checksum not available")
 
+// ErrNativeDuplicate indicates that a target accepted an upload as an existing
+// asset. It is deliberately distinct from a transport failure so the processor
+// can record the normal SKIP outcome without retrying or deleting anything.
+var ErrNativeDuplicate = errors.New("native duplicate detected")
 
 type FileMetadata struct {
 	ModifiedTime time.Time         `json:"modified_time,omitempty"`
@@ -50,6 +54,25 @@ type FileInfo struct {
 
 type MetadataApplier interface {
 	ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error
+}
+
+// NativeDuplicateDetector marks providers that own duplicate detection. Their
+// object model cannot safely implement FileExists by a filename lookup.
+type NativeDuplicateDetector interface {
+	UsesNativeDuplicateDetection() bool
+}
+
+type transferMetadataContextKey struct{}
+
+// WithTransferMetadata supplies provider-specific upload attributes without
+// widening StorageProvider or persisting plaintext credentials.
+func WithTransferMetadata(ctx context.Context, meta FileMetadata) context.Context {
+	return context.WithValue(ctx, transferMetadataContextKey{}, meta)
+}
+
+func TransferMetadataFromContext(ctx context.Context) (FileMetadata, bool) {
+	meta, ok := ctx.Value(transferMetadataContextKey{}).(FileMetadata)
+	return meta, ok
 }
 
 // StorageProvider is the contract every storage backend must satisfy. It is a
@@ -135,4 +158,3 @@ func IsSystemOrAppGeneratedPath(p string) bool {
 	}
 	return false
 }
-

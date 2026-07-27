@@ -552,10 +552,18 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		// Use path (POSIX) rather than filepath: WebDAV/Nextcloud paths are always
 		// slash-separated, independent of the OS this server process runs on.
 		targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
+		// Immich source paths are stable virtual asset IDs, not filesystem names.
+		// Its original filename is retained in task metadata during indexing.
+		if mig.TargetProvider == "immich" {
+			var meta storage.FileMetadata
+			if err := json.Unmarshal(task.Metadata, &meta); err == nil && meta.CustomProps["immich_filename"] != "" {
+				targetPath = path.Clean(path.Join(mig.TargetDir, meta.CustomProps["immich_filename"]))
+			}
+		}
 	}
 
 	// 3a. Filename Sanitization (before conflict resolution)
-	if task.ResourceType == "files" {
+	if task.ResourceType == "files" && mig.TargetProvider != "immich" {
 		result := sanitize.SanitizeFilename(path.Base(targetPath), mig.TargetProvider)
 		if result.Changed {
 			dir := path.Dir(targetPath)
@@ -584,7 +592,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 	}
 
-	if task.ResourceType == "files" && mig.ConflictStrategy == "OVERWRITE" {
+	_, nativeDuplicates := targetClient.(storage.NativeDuplicateDetector)
+	if nativeDuplicates {
+		// Immich determines duplicates from its native asset identity/checksum;
+		// filename preflight would be both inaccurate and unsafe.
+	} else if task.ResourceType == "files" && mig.ConflictStrategy == "OVERWRITE" {
 		// Optimization: for OVERWRITE on files, bypass the pre-flight FileExists
 		// network query (PROPFIND/HEAD) since the file will be overwritten regardless.
 		deleteAfterUpload = true
@@ -835,6 +847,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// Use the same file-size-scaled deadline as the download phase so neither
 	// times out before the other for a given file size.
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
+	var transferMeta storage.FileMetadata
+	if task.Metadata != nil {
+		_ = json.Unmarshal(task.Metadata, &transferMeta)
+	}
+	uploadCtx = storage.WithTransferMetadata(uploadCtx, transferMeta)
 	if sourceHashStr != "" && sourceAlgo != "ETAG" {
 		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
 	}
@@ -858,6 +875,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}
 
 	if err != nil {
+		if errors.Is(err, storage.ErrNativeDuplicate) {
+			task.Status = "SKIPPED"
+			task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError("Asset already exists in Immich; duplicate handled natively (SKIP)"), Valid: true}
+			_ = db.UpdateTaskStatus(p.db, task)
+			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
+			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+			return nil
+		}
 		if errors.Is(err, storage.ErrDuplicateUID) || (task.ResourceType != "files" && isWebDAVSystemConflict(err)) {
 			task.Status = "SKIPPED"
 			task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(fmt.Sprintf("Sabredav/WebDAV: calendar/contact entry skipped (%v)", err)), Valid: true}

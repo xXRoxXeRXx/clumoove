@@ -20,7 +20,7 @@ interface ConnectFormProps {
   onBack?: () => void;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local' | 'immich';
 
 export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {}, onBack }) => {
   const [sourceUrl, setSourceUrl] = useState('');
@@ -304,10 +304,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
     if (
       (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
-      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourceUser) ||
+      (sourceProvider !== 'local' && sourceProvider !== 'immich' && !sourceProfileSelected && !finalSourceUser) ||
       (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourcePass) ||
       (targetUrlRequired && !targetProfileSelected && !finalTargetUrl) ||
-      (targetProvider !== 'local' && !targetProfileSelected && !finalTargetUser) ||
+      (targetProvider !== 'local' && targetProvider !== 'immich' && !targetProfileSelected && !finalTargetUser) ||
       (targetProvider !== 'local' && !targetProfileSelected && !finalTargetPass)
     ) {
       setError(t('connect.errors.missingFields'));
@@ -423,7 +423,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local';
     if (
       (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
-      (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourceUser) ||
+      (sourceProvider !== 'local' && sourceProvider !== 'immich' && !sourceProfileSelected && !finalSourceUser) ||
       (sourceProvider !== 'local' && !sourceProfileSelected && !finalSourcePass)
     ) {
       setError(t('connect.errors.missingFields'));
@@ -558,6 +558,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 'smb', name: 'SMB/CIFS' },
     { id: 's3', name: 'S3' },
     { id: 'sftp', name: 'SFTP' },
+    ...(localStorageEnabled ? [{ id: 'immich' as const, name: 'Immich' }] : []),
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
     ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
     ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
@@ -925,6 +926,37 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label htmlFor="sourceS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
                        {t('connect.s3AllowHttp')}
                      </label>
+                  </div>
+                </>
+              ) : sourceProvider === 'immich' ? (
+                <>
+                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.immichPermissionHint')}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichUrl')}</label>
+                    <input
+                      type="url"
+                      placeholder={t('connect.immichUrlPlaceholder')}
+                      value={sourceUrl}
+                      onChange={(e) => setSourceUrl(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichApiKey')}</label>
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      name="source_immich_api_key"
+                      placeholder={t('connect.immichApiKeyPlaceholder')}
+                      value={sourcePass}
+                      onChange={(e) => setSourcePass(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                      required
+                    />
                   </div>
                 </>
               ) : sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
@@ -1390,6 +1422,37 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <label htmlFor="targetS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
                        {t('connect.s3AllowHttp')}
                      </label>
+                  </div>
+                </>
+              ) : targetProvider === 'immich' ? (
+                <>
+                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                    <p className="text-xs font-sans leading-relaxed">{t('connect.immichPermissionHint')}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichUrl')}</label>
+                    <input
+                      type="url"
+                      placeholder={t('connect.immichUrlPlaceholder')}
+                      value={targetUrl}
+                      onChange={(e) => setTargetUrl(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichApiKey')}</label>
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      name="target_immich_api_key"
+                      placeholder={t('connect.immichApiKeyPlaceholder')}
+                      value={targetPass}
+                      onChange={(e) => setTargetPass(e.target.value)}
+                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                      required
+                    />
                   </div>
                 </>
               ) : targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
