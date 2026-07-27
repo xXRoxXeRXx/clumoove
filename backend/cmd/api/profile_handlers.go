@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -132,8 +131,7 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req ConnectionProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -259,8 +257,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 	}
 
 	var req ConnectionProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 

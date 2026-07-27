@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
@@ -34,8 +33,7 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TOTPVerifyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 
@@ -205,8 +203,7 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TOTPEnableRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 	req.Code = sanitizeCode(req.Code)
@@ -277,8 +274,7 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req TOTPDisableRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, authJSONBodyLimit) {
 		return
 	}
 	req.Code = sanitizeCode(req.Code)

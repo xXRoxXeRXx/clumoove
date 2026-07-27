@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +15,43 @@ import (
 
 	"backend/internal/db"
 )
+
+const (
+	normalJSONBodyLimit = 1 << 20  // 1 MiB
+	authJSONBodyLimit   = 64 << 10 // 64 KiB
+	// Base64-encoded 2 MiB avatars need about 2.67 MiB plus JSON framing.
+	avatarJSONBodyLimit = 3 << 20 // 3 MiB
+)
+
+// decodeJSONBody bounds every JSON request body and rejects trailing data.
+// Reading through the end is intentional: it makes an oversized body fail even
+// when its first JSON value is valid before the byte limit is reached.
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if !decodeJSON(r, dst) {
+		writeValidationError(w, ErrInvalidBody)
+		return false
+	}
+	return true
+}
+
+// decodeJSONBodySilent applies the same bounded decoding without exposing a
+// parse failure. It is used only for anti-enumeration responses.
+func decodeJSONBodySilent(r *http.Request, dst any, limit int64) bool {
+	r.Body = http.MaxBytesReader(nil, r.Body, limit)
+	return decodeJSON(r, dst)
+}
+
+func decodeJSON(r *http.Request, dst any) bool {
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return false
+	}
+	return true
+}
 
 // Helpers
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -104,12 +142,12 @@ const (
 	ErrSetupAlreadyCompleted    APIErrorCode = "SETUP_ALREADY_COMPLETED"
 	ErrInternalError            APIErrorCode = "INTERNAL_ERROR"
 
-	ErrUserDisabled                       APIErrorCode = "USER_DISABLED"
-	ErrUserNotFound                       APIErrorCode = "USER_NOT_FOUND"
-	ErrCannotModifySelf                   APIErrorCode = "CANNOT_MODIFY_SELF"
-	ErrLastAdmin                          APIErrorCode = "LAST_ADMIN"
-	ErrInvalidRole                        APIErrorCode = "INVALID_ROLE"
-	ErrPasswordChangeRequired             APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
+	ErrUserDisabled           APIErrorCode = "USER_DISABLED"
+	ErrUserNotFound           APIErrorCode = "USER_NOT_FOUND"
+	ErrCannotModifySelf       APIErrorCode = "CANNOT_MODIFY_SELF"
+	ErrLastAdmin              APIErrorCode = "LAST_ADMIN"
+	ErrInvalidRole            APIErrorCode = "INVALID_ROLE"
+	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
 
 	// Sync Engine
 	ErrSyncIdMissing      APIErrorCode = "SYNC_ID_MISSING"

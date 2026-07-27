@@ -60,6 +60,11 @@ func (s *APIServer) handleListSyncs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
 		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
@@ -67,8 +72,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createSyncRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 
@@ -285,6 +289,11 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
 	userID := auth.GetUserIDFromContext(r.Context())
 	if userID == "" {
 		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
@@ -672,8 +681,7 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req ThreadsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, ErrInvalidBody)
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 

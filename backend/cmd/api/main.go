@@ -54,6 +54,8 @@ const (
 	connectRateWindow     = 1 * time.Minute
 	connectTestRateLimit  = 30
 	connectTestRateWindow = 1 * time.Minute
+	jobMutationRateLimit  = 10
+	jobMutationRateWindow = 1 * time.Minute
 	totpRateLimit         = 10
 	totpRateWindow        = 1 * time.Minute
 	streamRateLimit       = 60
