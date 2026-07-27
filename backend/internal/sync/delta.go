@@ -13,6 +13,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
+	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
 
@@ -224,7 +225,7 @@ func (e *Engine) listFiles(
 		indexErrors = append(indexErrors, db.IndexingErrorInput{
 			Path:         path,
 			ResourceType: "files",
-			ErrorMessage: msg,
+			ErrorMessage: sanitize.SanitizeError(msg),
 		})
 		errsMu.Unlock()
 	}
