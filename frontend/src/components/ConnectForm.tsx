@@ -607,7 +607,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
           {/* Source Host Card */}
           {subStep === 1 && (
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-1/2 mx-auto">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             
@@ -1072,7 +1072,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
            {/* Target Host Card */}
            {subStep === 2 && (
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-1/2 mx-auto">
+          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             
