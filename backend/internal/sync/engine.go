@@ -701,14 +701,30 @@ SyncTasksDone:
 		for verifying := true; verifying; {
 			select {
 			case <-ctx.Done():
+				_, _ = db.AbortSyncJobVerification(e.db, job.ID)
 				verifying = false
 			case <-verifyTimeout:
 				log.Printf("[SyncEngine] Verification timeout reached for job %s\n", syncJobID)
+				// The worker polls this persisted status before and during its
+				// verification pass. Moving out of VERIFYING is therefore the
+				// cross-process cancellation signal; the engine still owns final
+				// stats, sync_state, and the transition to IDLE below.
+				if aborted, err := db.AbortSyncJobVerification(e.db, job.ID); err != nil {
+					log.Printf("[SyncEngine] Failed to abort timed-out verification for job %s: %v\n", syncJobID, err)
+				} else if !aborted {
+					log.Printf("[SyncEngine] Verification for job %s already changed status before timeout abort\n", syncJobID)
+				}
 				verifying = false
 			case <-verifyTicker.C:
 				var currentStatus string
 				if err := e.db.QueryRow(`SELECT status FROM sync_jobs WHERE id = $1`, job.ID).Scan(&currentStatus); err == nil {
 					if currentStatus != "VERIFYING" {
+						verifying = false
+						continue
+					}
+					var remaining int
+					if err := e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID).Scan(&remaining); err == nil && remaining == 0 {
+						log.Printf("[SyncEngine] Verification completed for job %s\n", syncJobID)
 						verifying = false
 					}
 				}

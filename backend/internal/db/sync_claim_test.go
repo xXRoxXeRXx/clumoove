@@ -166,6 +166,22 @@ func syncClaimStatus(t *testing.T, database *sql.DB, id string) string {
 	return status
 }
 
+func TestAbortSyncJobVerification(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "verifying", "VERIFYING")
+
+	aborted, err := AbortSyncJobVerification(database, "verifying")
+	if err != nil || !aborted || syncClaimStatus(t, database, "verifying") != "RUNNING" {
+		t.Fatalf("VERIFYING -> RUNNING abort: aborted=%v, err=%v", aborted, err)
+	}
+
+	insertSyncClaimJob(t, database, "idle", "IDLE")
+	aborted, err = AbortSyncJobVerification(database, "idle")
+	if err != nil || aborted || syncClaimStatus(t, database, "idle") != "IDLE" {
+		t.Fatalf("IDLE abort: aborted=%v, err=%v", aborted, err)
+	}
+}
+
 func TestClaimSyncJobPass(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 
