@@ -25,37 +25,37 @@ type MigrationResourceStats struct {
 }
 
 type Migration struct {
-	ID                          string         `json:"id"`
-	UserID                      sql.NullString `json:"user_id,omitempty"`
-	SourceURL                   string         `json:"source_url"`
-	SourceUsername              string         `json:"source_username"`
-	SourcePasswordEncrypted     string         `json:"-"`
-	SourceProvider              string         `json:"source_provider"`
-	SourceRefreshTokenEncrypted sql.NullString `json:"-"`
-	SourceTokenExpiresAt        sql.NullTime   `json:"-"`
-	TargetURL                   string         `json:"target_url"`
-	TargetUsername              string         `json:"target_username"`
-	TargetPasswordEncrypted     string         `json:"-"`
-	TargetProvider              string         `json:"target_provider"`
-	TargetRefreshTokenEncrypted sql.NullString `json:"-"`
-	TargetTokenExpiresAt        sql.NullTime   `json:"-"`
-	TargetDir                   string         `json:"target_dir"`
-	Status                      string         `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED
-	ConflictStrategy            string         `json:"conflict_strategy"`
-	TotalFiles                  int            `json:"total_files"`
-	TotalBytes                  int64          `json:"total_bytes"`
-	ProcessedFiles              int            `json:"processed_files"`
-	ProcessedBytes              int64          `json:"processed_bytes"`
-	LiveBytes                   int64          `json:"live_bytes"`
-	SkippedFiles                int            `json:"skipped_files"`
-	FailedFiles                 int            `json:"failed_files"`
-	ErrorMessage                sql.NullString `json:"error_message,omitempty"`
-	CreatedAt                   time.Time      `json:"created_at"`
-	UpdatedAt                   time.Time      `json:"updated_at"`
-	Threads                     int            `json:"threads"`
-	BandwidthLimitMbps          int            `json:"bandwidth_limit_mbps"`
-	PickerSessionID             string         `json:"picker_session_id,omitempty"`
-	SelectedPaths               StringArray    `json:"selected_paths,omitempty"`
+	ID                          string                  `json:"id"`
+	UserID                      sql.NullString          `json:"user_id,omitempty"`
+	SourceURL                   string                  `json:"source_url"`
+	SourceUsername              string                  `json:"source_username"`
+	SourcePasswordEncrypted     string                  `json:"-"`
+	SourceProvider              string                  `json:"source_provider"`
+	SourceRefreshTokenEncrypted sql.NullString          `json:"-"`
+	SourceTokenExpiresAt        sql.NullTime            `json:"-"`
+	TargetURL                   string                  `json:"target_url"`
+	TargetUsername              string                  `json:"target_username"`
+	TargetPasswordEncrypted     string                  `json:"-"`
+	TargetProvider              string                  `json:"target_provider"`
+	TargetRefreshTokenEncrypted sql.NullString          `json:"-"`
+	TargetTokenExpiresAt        sql.NullTime            `json:"-"`
+	TargetDir                   string                  `json:"target_dir"`
+	Status                      string                  `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED
+	ConflictStrategy            string                  `json:"conflict_strategy"`
+	TotalFiles                  int                     `json:"total_files"`
+	TotalBytes                  int64                   `json:"total_bytes"`
+	ProcessedFiles              int                     `json:"processed_files"`
+	ProcessedBytes              int64                   `json:"processed_bytes"`
+	LiveBytes                   int64                   `json:"live_bytes"`
+	SkippedFiles                int                     `json:"skipped_files"`
+	FailedFiles                 int                     `json:"failed_files"`
+	ErrorMessage                sql.NullString          `json:"error_message,omitempty"`
+	CreatedAt                   time.Time               `json:"created_at"`
+	UpdatedAt                   time.Time               `json:"updated_at"`
+	Threads                     int                     `json:"threads"`
+	BandwidthLimitMbps          int                     `json:"bandwidth_limit_mbps"`
+	PickerSessionID             string                  `json:"picker_session_id,omitempty"`
+	SelectedPaths               StringArray             `json:"selected_paths,omitempty"`
 	SelectedCalendars           StringArray             `json:"selected_calendars,omitempty"`
 	SelectedContacts            StringArray             `json:"selected_contacts,omitempty"`
 	ResourceStats               *MigrationResourceStats `json:"resource_stats,omitempty"`
@@ -119,8 +119,7 @@ type PendingEmailNotification struct {
 	ErrorMessage   sql.NullString
 }
 
-func CreateMigration(db *sql.DB, m *Migration) (string, error) {
-	query := `
+const createMigrationQuery = `
 		INSERT INTO migrations (
 			user_id, source_url, source_username, source_password_encrypted, source_provider,
 			target_url, target_username, target_password_encrypted, target_provider,
@@ -129,18 +128,62 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		RETURNING id, created_at, updated_at
 	`
-	err := db.QueryRow(
-		query,
+
+func CreateMigration(db *sql.DB, m *Migration) (string, error) {
+	if err := insertMigration(db, m); err != nil {
+		return "", err
+	}
+	return m.ID, nil
+}
+
+func insertMigration(database queryExecer, m *Migration) error {
+	return database.QueryRow(
+		createMigrationQuery,
 		m.UserID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted, m.SourceProvider,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted, m.TargetProvider,
 		m.Status, m.ConflictStrategy, m.TargetDir, m.Threads, m.BandwidthLimitMbps,
 		m.PickerSessionID, m.SelectedPaths, m.SelectedCalendars, m.SelectedContacts,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
+}
 
+// CreateMigrationAndSchedule creates a scheduled migration and its one-shot
+// schedule atomically, preventing scheduled migrations without a trigger.
+func CreateMigrationAndSchedule(db *sql.DB, migration *Migration, schedule *Schedule) (string, error) {
+	resetMigrationAndSchedule(migration, schedule)
+	tx, err := db.Begin()
 	if err != nil {
 		return "", err
 	}
-	return m.ID, nil
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+			resetMigrationAndSchedule(migration, schedule)
+		}
+	}()
+
+	if err := insertMigration(tx, migration); err != nil {
+		return "", err
+	}
+	schedule.TaskID = migration.ID
+	if err := insertSchedule(tx, schedule); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	committed = true
+	return migration.ID, nil
+}
+
+func resetMigrationAndSchedule(migration *Migration, schedule *Schedule) {
+	migration.ID = ""
+	migration.CreatedAt = time.Time{}
+	migration.UpdatedAt = time.Time{}
+	schedule.ID = ""
+	schedule.TaskID = ""
+	schedule.CreatedAt = time.Time{}
+	schedule.UpdatedAt = time.Time{}
 }
 
 func GetMigration(db *sql.DB, id string) (*Migration, error) {

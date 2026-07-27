@@ -1006,9 +1006,21 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		PickerSessionID:             req.SourcePickerSessionID,
 	}
 
-	migrationID, err := db.CreateMigration(s.db, m)
+	var migrationID string
+	if req.ScheduledTime != "" {
+		schedule := &db.Schedule{
+			UserID:    userID,
+			TaskType:  "migration",
+			RunAt:     sql.NullTime{Time: scheduledAt, Valid: true},
+			NextRunAt: sql.NullTime{Time: scheduledAt, Valid: true},
+			IsActive:  true,
+		}
+		migrationID, err = db.CreateMigrationAndSchedule(s.db, m, schedule)
+	} else {
+		migrationID, err = db.CreateMigration(s.db, m)
+	}
 	if err != nil {
-		log.Printf("Start migration error: failed to create migration: %v\n", err)
+		log.Printf("Start migration error: failed to create migration or schedule: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1020,22 +1032,6 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if req.ScheduledTime != "" {
-		schedule := &db.Schedule{
-			UserID:    userID,
-			TaskType:  "migration",
-			TaskID:    migrationID,
-			RunAt:     sql.NullTime{Time: scheduledAt, Valid: true},
-			NextRunAt: sql.NullTime{Time: scheduledAt, Valid: true},
-			IsActive:  true,
-		}
-
-		_, err = db.CreateSchedule(s.db, schedule)
-		if err != nil {
-			log.Printf("Failed to create schedule for migration %s: %v\n", migrationID, err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-
 		log.Printf("Migration %s scheduled for %s\n", migrationID, scheduledAt.Format(time.RFC3339))
 
 		writeJSON(w, http.StatusAccepted, map[string]interface{}{

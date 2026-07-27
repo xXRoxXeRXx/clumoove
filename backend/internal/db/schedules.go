@@ -18,22 +18,25 @@ type Schedule struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
-func CreateSchedule(db *sql.DB, s *Schedule) (string, error) {
-	query := `
+const createScheduleQuery = `
 		INSERT INTO schedules (
 			user_id, task_type, task_id, cron_expression, run_at, next_run_at, is_active
 		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at
 	`
-	err := db.QueryRow(
-		query,
-		s.UserID, s.TaskType, s.TaskID, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive,
-	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
 
-	if err != nil {
+func CreateSchedule(db *sql.DB, s *Schedule) (string, error) {
+	if err := insertSchedule(db, s); err != nil {
 		return "", err
 	}
 	return s.ID, nil
+}
+
+func insertSchedule(database queryExecer, s *Schedule) error {
+	return database.QueryRow(
+		createScheduleQuery,
+		s.UserID, s.TaskType, s.TaskID, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive,
+	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
 }
 
 func GetSchedule(db *sql.DB, id string) (*Schedule, error) {
