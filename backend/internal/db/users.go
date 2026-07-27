@@ -139,6 +139,32 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	return &u, nil
 }
 
+// GetUserByIDTx is the transaction-scoped counterpart of GetUserByID.
+func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
+	query := `
+		SELECT id, email, password_hash, display_name, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
+		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
+		       login_failed_attempts, login_locked_until
+		FROM users WHERE id = $1
+	`
+	var u User
+	var mime sql.NullString
+	var totpSecret sql.NullString
+	err := tx.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
+		&u.LoginFailedAttempts, &u.LoginLockedUntil)
+	if err != nil {
+		return nil, err
+	}
+	if mime.Valid {
+		u.AvatarMime = mime.String
+	}
+	if totpSecret.Valid {
+		u.TotpSecretEnc = totpSecret.String
+	}
+	return &u, nil
+}
+
 // GetUserAuthState fetches the current authorization state for an account.
 func GetUserAuthState(database *sql.DB, id string) (*UserAuthState, error) {
 	var state UserAuthState

@@ -491,25 +491,43 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	oldTokenHash := hashToken(cookie.Value)
-	userID, err := db.GetUserIDByRefreshToken(s.db, oldTokenHash)
-	if err != nil {
-		auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
-		writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
-		return
-	}
-
-	u, err := db.GetUserByID(s.db, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	defer tx.Rollback()
+
+	// Consume the presented token before issuing a replacement. DELETE ...
+	// RETURNING locks the token row, so concurrent uses of the same token leave
+	// exactly one request able to continue.
+	var userID string
+	if err := tx.QueryRowContext(r.Context(), `
+		DELETE FROM refresh_tokens
+		WHERE token_hash = $1 AND expires_at > NOW()
+		RETURNING user_id
+	`, oldTokenHash).Scan(&userID); err != nil {
+		if err == sql.ErrNoRows {
+			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
+			return
+		}
+		log.Printf("Error consuming refresh token in tx: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	u, err := db.GetUserByIDTx(tx, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
+			return
+		}
+		log.Printf("Error loading refresh-token user: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 
 	// Re-check the account state while holding a row lock. If suspension wins
 	// the race, its transaction removes all refresh tokens before this request
@@ -542,13 +560,6 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		}
 		auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
 		writeError(w, http.StatusForbidden, ErrUserDisabled)
-		return
-	}
-
-	deleteQuery := `DELETE FROM refresh_tokens WHERE token_hash = $1`
-	if _, err := tx.ExecContext(r.Context(), deleteQuery, oldTokenHash); err != nil {
-		log.Printf("Error deleting old refresh token in tx: %v\n", err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
