@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"sort"
@@ -55,6 +56,23 @@ func validateEgressHost(host string) error {
 // validateEgressHost.
 func ValidateEgressHost(host string) error {
 	return validateEgressHost(host)
+}
+
+// NewEgressHTTPClient returns an HTTP client that validates the requested URL
+// and re-validates its hostname immediately before every TCP connection.
+// It is intended for user-configured webhook-style endpoints.
+func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
+	if err := validateEgressURL(rawURL); err != nil {
+		return nil, err
+	}
+	u, _ := url.Parse(rawURL)
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	transport := base.Clone()
+	transport.DialContext = egressDialer(u.Hostname())
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second}, nil
 }
 
 // egressDialer returns a DialContext that pins egress to a validated address.

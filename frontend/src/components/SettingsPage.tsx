@@ -212,11 +212,20 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const [smtpHasConfig, setSmtpHasConfig] = useState<boolean>(false);
   const [smtpLoading, setSmtpLoading] = useState<boolean>(false);
   const [smtpMessage, setSmtpMessage] = useState<MessageState>(null);
+  type PushChannel = 'gotify' | 'ntfy' | 'telegram' | 'discord';
+  const [pushConfigs, setPushConfigs] = useState<Record<PushChannel, Record<string, string>>>({
+    gotify: { url: '', token: '' }, ntfy: { url: '', topic: '', token: '', priority: '' },
+    telegram: { bot_token: '', chat_id: '' }, discord: { webhook_url: '' },
+  });
+  const [pushEnabled, setPushEnabled] = useState<Record<PushChannel, boolean>>({ gotify: false, ntfy: false, telegram: false, discord: false });
+  const [pushLoading, setPushLoading] = useState<PushChannel | null>(null);
+  const [pushMessage, setPushMessage] = useState<MessageState>(null);
 
-  // Fetch SMTP settings
+  // The email card is one of the notification channels. Other channels can be
+  // added without changing the legacy SMTP-shaped form fields below.
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/settings/smtp`, {
+    apiFetch(`${apiUrl}/api/settings/notifications`, {
       headers: { 'Authorization': `Bearer ${token}` },
     })
       .then((res) => {
@@ -225,14 +234,26 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       })
       .then((data) => {
         if (cancelled) return;
-        setSmtpHasConfig(true);
-        setSmtpHost(data.smtp_host || '');
-        setSmtpPort(String(data.smtp_port || '587'));
-        setSmtpUsername(data.smtp_username || '');
-        setSmtpFromEmail(data.smtp_from_email || '');
-        setSmtpFromName(data.smtp_from_name || '');
-        setSmtpEncryption(data.smtp_encryption || 'tls');
-        setSmtpNotify(data.notify_on_completion !== false);
+        const email = (data.channels || []).find((channel: { type: string }) => channel.type === 'email');
+        if (!email) { setSmtpHasConfig(false); } else {
+          const config = email.config || {};
+          setSmtpHasConfig(true);
+          setSmtpHost(config.smtp_host || '');
+          setSmtpPort(String(config.smtp_port || '587'));
+          setSmtpUsername(config.smtp_username || '');
+          setSmtpFromEmail(config.smtp_from_email || '');
+          setSmtpFromName(config.smtp_from_name || '');
+          setSmtpEncryption(config.smtp_encryption || 'tls');
+          setSmtpNotify(email.enabled !== false);
+        }
+        (['gotify', 'ntfy', 'telegram', 'discord'] as PushChannel[]).forEach((type) => {
+          const channel = (data.channels || []).find((item: { type: string }) => item.type === type);
+          if (channel) {
+            setPushEnabled((current) => ({ ...current, [type]: channel.enabled }));
+            const editable = Object.fromEntries(Object.entries(channel.config || {}).filter(([key]) => !key.endsWith('_set')));
+            setPushConfigs((current) => ({ ...current, [type]: { ...current[type], ...editable } }));
+          }
+        });
       })
       .catch(() => {
         if (!cancelled) setSmtpHasConfig(false);
@@ -252,28 +273,27 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       return;
     }
 
-    const payload: Record<string, string | number | boolean> = {
+    const config: Record<string, string | number> = {
       smtp_host: smtpHost,
       smtp_port: portNum,
       smtp_username: smtpUsername,
       smtp_from_email: smtpFromEmail,
       smtp_from_name: smtpFromName,
       smtp_encryption: smtpEncryption,
-      notify_on_completion: smtpNotify,
     };
     // Only send the password when the user entered a new one (existing password is kept otherwise)
     if (smtpPassword) {
-      payload.smtp_password = smtpPassword;
+      config.smtp_password = smtpPassword;
     }
 
     try {
-      const res = await apiFetch(`${apiUrl}/api/settings/smtp`, {
+      const res = await apiFetch(`${apiUrl}/api/settings/notifications`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ type: 'email', enabled: smtpNotify, config }),
       });
 
       if (!res.ok) {
@@ -295,9 +315,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     setSmtpMessage(null);
     setSmtpLoading(true);
     try {
-      const res = await apiFetch(`${apiUrl}/api/settings/smtp/test`, {
+      const res = await apiFetch(`${apiUrl}/api/settings/notifications/test`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ type: 'email', config: {
+          smtp_host: smtpHost, smtp_port: parseInt(smtpPort, 10), smtp_username: smtpUsername,
+          smtp_password: smtpPassword, smtp_from_email: smtpFromEmail, smtp_from_name: smtpFromName, smtp_encryption: smtpEncryption,
+        } }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -310,6 +334,38 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       setSmtpLoading(false);
     }
   };
+
+  const savePushChannel = async (type: PushChannel, test = false) => {
+    setPushMessage(null);
+    setPushLoading(type);
+    try {
+      const endpoint = test ? '/api/settings/notifications/test' : '/api/settings/notifications';
+      const res = await apiFetch(`${apiUrl}${endpoint}`, {
+        method: test ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ type, enabled: pushEnabled[type], config: pushConfigs[type] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) throw new Error(translateApiError(data.error_code));
+      setPushMessage({ text: test ? t('settings.notificationTestSent') : t('settings.notificationSaved'), type: 'success' });
+      if (!test) {
+        setPushConfigs((current) => ({ ...current, [type]: { ...current[type], token: '', bot_token: '', webhook_url: '' } }));
+      }
+    } catch (err) {
+      setPushMessage({ text: (err as Error).message, type: 'error' });
+    } finally { setPushLoading(null); }
+  };
+
+  const renderPushChannel = (type: PushChannel, fields: Array<{ key: string; label: string; secret?: boolean; placeholder?: string }>) => (
+    <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-4" key={type}>
+      <div className="flex items-center justify-between gap-3 pb-3 border-b border-[var(--color-border-light)]">
+        <div className="flex items-center gap-2"><Plug className="w-4 h-4 text-[var(--color-portal-orange-themed)]" /><h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{type === 'ntfy' ? 'ntfy' : type[0].toUpperCase() + type.slice(1)}</h3></div>
+        <label className="flex items-center gap-2 text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono"><input type="checkbox" checked={pushEnabled[type]} onChange={(e) => setPushEnabled((current) => ({ ...current, [type]: e.target.checked }))} /> {t('settings.notificationEnabled')}</label>
+      </div>
+      {fields.map((field) => <div className="space-y-1.5" key={field.key}><label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{field.label}</label><input type={field.secret ? 'password' : 'text'} value={pushConfigs[type][field.key] || ''} placeholder={field.placeholder || (field.secret ? t('settings.notificationSecretHint') : '')} onChange={(e) => setPushConfigs((current) => ({ ...current, [type]: { ...current[type], [field.key]: e.target.value } }))} className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30" /></div>)}
+      <div className="flex gap-2.5"><button type="button" onClick={() => savePushChannel(type)} disabled={pushLoading !== null} className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] py-2.5 rounded-xl text-xs font-bold font-mono disabled:opacity-50">{pushLoading === type ? t('settings.saving') : t('settings.notificationSave')}</button><button type="button" onClick={() => savePushChannel(type, true)} disabled={pushLoading !== null} className="px-4 py-2.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl font-mono font-bold text-[10px]">{t('settings.notificationTest')}</button></div>
+    </div>
+  );
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1215,6 +1271,26 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 </button>
               </div>
             </form>
+          </div>
+          <div className="space-y-6">
+            <MessageBanner message={pushMessage} />
+            {renderPushChannel('gotify', [
+              { key: 'url', label: t('settings.notificationUrl'), placeholder: 'https://gotify.example.com' },
+              { key: 'token', label: t('settings.notificationToken'), secret: true },
+            ])}
+            {renderPushChannel('ntfy', [
+              { key: 'url', label: t('settings.notificationUrl'), placeholder: 'https://ntfy.sh' },
+              { key: 'topic', label: t('settings.notificationTopic'), placeholder: 'clumoove' },
+              { key: 'token', label: t('settings.notificationToken'), secret: true },
+              { key: 'priority', label: t('settings.notificationPriority'), placeholder: 'default' },
+            ])}
+            {renderPushChannel('telegram', [
+              { key: 'bot_token', label: t('settings.telegramBotToken'), secret: true },
+              { key: 'chat_id', label: t('settings.telegramChatId') },
+            ])}
+            {renderPushChannel('discord', [
+              { key: 'webhook_url', label: t('settings.discordWebhookUrl'), secret: true },
+            ])}
           </div>
         </div>
       )}

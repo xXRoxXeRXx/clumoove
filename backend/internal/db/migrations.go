@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -299,11 +300,20 @@ func ListAllMigrations(database *sql.DB, p MigrationListParams) ([]AdminMigratio
 func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string) error {
 	query := `
 		UPDATE migrations
-		SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
+		SET notification_generation = CASE WHEN status IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED') AND $1 NOT IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED') THEN notification_generation + 1 ELSE notification_generation END,
+		    status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3
 	`
 	_, err := db.Exec(query, status, errMsg, id)
-	return err
+	if err != nil {
+		return err
+	}
+	if status == "COMPLETED" || status == "COMPLETED_WITH_ERRORS" || status == "FAILED" {
+		if notifyErr := CreateMigrationNotificationEvent(db, id); notifyErr != nil {
+			log.Printf("notification event creation for migration %s failed: %v", id, notifyErr)
+		}
+	}
+	return nil
 }
 
 func UpdateMigrationStatusIfIndexing(db *sql.DB, id string, status string) error {
@@ -433,6 +443,15 @@ func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("ReconcileMigrationProgress: migration %s not found", migrationID)
+	}
+	var status string
+	if err := dbsql.QueryRow(`SELECT status FROM migrations WHERE id = $1`, migrationID).Scan(&status); err != nil {
+		return err
+	}
+	if status == "COMPLETED" || status == "COMPLETED_WITH_ERRORS" || status == "FAILED" {
+		if notifyErr := CreateMigrationNotificationEvent(dbsql, migrationID); notifyErr != nil {
+			log.Printf("notification event creation for reconciled migration %s failed: %v", migrationID, notifyErr)
+		}
 	}
 	return nil
 }

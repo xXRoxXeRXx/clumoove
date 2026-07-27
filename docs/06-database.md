@@ -71,8 +71,18 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `error_message` | TEXT | sanitized, credential-redacted |
 | `threads` | INT NOT NULL DEFAULT 8 | 1–16 |
 | `bandwidth_limit_mbps` | INT NOT NULL DEFAULT 0 | 0–1000 |
-| `email_sent` | BOOLEAN NOT NULL DEFAULT FALSE | completion email flag |
+| `email_sent` | BOOLEAN NOT NULL DEFAULT FALSE | legacy completion-email flag; no longer drives delivery |
+| `notification_generation` | INT NOT NULL DEFAULT 0 | increments for each retry/reindex run, making terminal notifications pass-scoped |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+### Notification outbox
+
+`notification_channels` stores one encrypted, global configuration per user and channel (`email`,
+`gotify`, `ntfy`, `telegram`, `discord`). `notification_events` snapshots a terminal migration or
+sync pass; migrations are unique by `(migration_id, run_generation)` and sync runs by
+`(sync_job_id, run_at)`. `notification_deliveries` copies the encrypted channel configuration and
+tracks `PENDING`, `RUNNING`, `SENT`, or `FAILED`, attempts, retry time, and a non-sensitive error
+code. This keeps channel changes from altering already-created events.
 
 ### `tasks`
 | Column | Type | Notes |

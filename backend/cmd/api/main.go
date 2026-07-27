@@ -182,6 +182,9 @@ func main() {
 	mux.Handle("GET /api/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleGetSMTPSettings)))
 	mux.Handle("PUT /api/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleUpdateSMTPSettings)))
 	mux.Handle("POST /api/settings/smtp/test", jwtMiddleware(http.HandlerFunc(server.handleTestSMTP)))
+	mux.Handle("GET /api/settings/notifications", jwtMiddleware(http.HandlerFunc(server.handleGetNotificationSettings)))
+	mux.Handle("PUT /api/settings/notifications", jwtMiddleware(http.HandlerFunc(server.handleUpdateNotificationSettings)))
+	mux.Handle("POST /api/settings/notifications/test", jwtMiddleware(http.HandlerFunc(server.handleTestNotification)))
 
 	mux.HandleFunc("GET /api/auth/password-reset-available", server.handlePasswordResetAvailable)
 	mux.HandleFunc("POST /api/auth/forgot-password", server.handleForgotPassword)
