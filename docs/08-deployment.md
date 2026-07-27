@@ -136,8 +136,9 @@ running several migrations concurrently.
 
 - **Graceful shutdown:** API and worker catch `SIGINT`/`SIGTERM`; the worker drains in-flight tasks
   before exiting.
-- **Completion emails:** the worker's `RunCompletionNotifier` sends per-user SMTP reports for terminal
-  migrations and cleans expired reset/email-change tokens hourly.
+- **Completion notifications:** the worker's `RunNotifier` drains durable per-channel deliveries for
+  email, Gotify, ntfy, Telegram, and Discord. Each channel retries independently; it also cleans
+  expired reset/email-change tokens hourly. Legacy SMTP settings are bridged into the email channel.
 - **Permanent history:** migrations persist until manually deleted (the 24h GC is disabled). Deleting a
   migration cascades to its tasks/indexing errors.
 - **Manual recovery endpoints:** users can `retry-failed` (re-enqueue failed tasks) or `reindex`

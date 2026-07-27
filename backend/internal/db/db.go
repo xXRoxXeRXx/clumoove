@@ -587,6 +587,61 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (idx_tasks_sync_status): %v\n", err)
 			}
 
+			// Notification tables intentionally follow migrations and sync_jobs because
+			// their event foreign keys reference both tables.
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS notification_channels (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				type TEXT NOT NULL CHECK (type IN ('email','gotify','ntfy','telegram','discord')), enabled BOOLEAN NOT NULL DEFAULT FALSE,
+				config_encrypted TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (user_id, type))`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_channels): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_notification_channels_user ON notification_channels(user_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_notification_channels_user): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS notification_events (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				kind TEXT NOT NULL CHECK (kind IN ('migration','sync')), migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE, run_generation INT NOT NULL DEFAULT 0,
+				sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE, run_at TIMESTAMP WITH TIME ZONE NOT NULL, payload JSONB NOT NULL,
+				created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				CHECK ((kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL AND migration_id IS NULL)),
+				UNIQUE (sync_job_id, run_at))`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_events): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS notification_generation INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations notification_generation): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_events run_generation): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_migration_id_key`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_events old migration uniqueness): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_migration_generation ON notification_events(migration_id, run_generation)`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_events migration generation uniqueness): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS notification_deliveries (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), event_id UUID NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
+				channel_type TEXT NOT NULL CHECK (channel_type IN ('email','gotify','ntfy','telegram','discord')), config_encrypted TEXT NOT NULL,
+				state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','RUNNING','SENT','FAILED')), attempts INT NOT NULL DEFAULT 0,
+				next_retry_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, last_error_code TEXT, sent_at TIMESTAMP WITH TIME ZONE,
+				created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE (event_id, channel_type))`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_deliveries): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_notification_deliveries_pending ON notification_deliveries(state, next_retry_at)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_notification_deliveries_pending): %v\n", err)
+			}
+
 			if schemaErr != nil {
 				db.Close()
 				return nil, schemaErr

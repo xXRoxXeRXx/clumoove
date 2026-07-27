@@ -67,7 +67,8 @@ Responsibilities:
 migrations** so the schema self-heals on first boot:
 
 - `CREATE TABLE IF NOT EXISTS` for `users`, `refresh_tokens`, `settings`, `schedules`, `audit_log`,
-  `user_smtp_settings`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`,
+  `user_smtp_settings` (legacy SMTP compatibility), `notification_channels`, `notification_events`,
+  `notification_deliveries`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`,
   `connection_profiles`, `sync_jobs`, `sync_state`.
 - `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for every new column added over time (e.g.
   `user_id`, `source_provider`/`target_provider`, `resource_type`, `threads`, OAuth token columns,
@@ -145,7 +146,7 @@ Redis is used for:
 
 1. Recovers any abandoned tasks on startup.
 2. Spawns background schedulers: `RunWorkerLiveness`, `RunRetryScheduler`, `RunConnectionRecoveryScheduler`,
-   `RunOrphanedRunningTasksRecovery`, `RunCompletionNotifier`.
+   `RunOrphanedRunningTasksRecovery`, `RunNotifier`.
    On recovered sync connectivity, the worker atomically moves the job from
    `PAUSED_CONNECTION_LOSS` to `IDLE` and sets its active schedule's `next_run_at` to `NOW()`;
    it never starts a sync-pass coordinator itself.
@@ -197,8 +198,7 @@ For each task:
 - **Permanent errors** (Google export limits, not-found, etc.) → `FAILED` immediately (no retry).
 - **Transient** → exponential backoff `10, 30, 90`s, max 3 attempts; `FAILED` after exhaustion.
 
-`RunCompletionNotifier` polls for terminal migrations with `email_sent = FALSE` and sends a per-user
-SMTP report; also cleans expired reset/email-change tokens and throttlers.
+`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. The legacy `email_sent` column remains for compatibility; it no longer drives delivery.
 
 ---
 

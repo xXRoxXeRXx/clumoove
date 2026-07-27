@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -555,6 +556,9 @@ func finalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *st
 	if err != nil {
 		return false, err
 	}
+	if err := CreateSyncNotificationEvent(db, id); err != nil {
+		log.Printf("notification event creation for sync %s failed: %v", id, err)
+	}
 	return true, nil
 }
 
@@ -583,6 +587,9 @@ func FailSyncJobPass(db *sql.DB, id string, errMsg string) (bool, error) {
 	}
 	if err != nil {
 		return false, err
+	}
+	if err := CreateSyncNotificationEvent(db, id); err != nil {
+		log.Printf("notification event creation for sync %s failed: %v", id, err)
 	}
 	return true, nil
 }

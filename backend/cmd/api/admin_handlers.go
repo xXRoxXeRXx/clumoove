@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"log"
 	"net/http"
 	"os"
@@ -828,6 +829,25 @@ func (s *APIServer) handleUpdateSMTPSettings(w http.ResponseWriter, r *http.Requ
 
 	if err := db.UpsertUserSMTPSettings(s.db, settings); err != nil {
 		log.Printf("handleUpdateSMTPSettings: error upserting settings: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	// Compatibility bridge: legacy SMTP clients configure the same email
+	// notification channel used by the outbox.
+	password, err := crypto.Decrypt(encryptedPassword, s.encryptionKey)
+	if err != nil {
+		log.Printf("handleUpdateSMTPSettings: notification bridge decrypt failed: %v\n", err)
+		writeError(w, http.StatusInternalServerError, ErrNotificationDecryptFailed)
+		return
+	}
+	channelJSON, _ := json.Marshal(map[string]interface{}{
+		"smtp_host": req.SMTPHost, "smtp_port": req.SMTPPort, "smtp_username": req.SMTPUsername,
+		"smtp_password": password, "smtp_from_email": req.SMTPFromEmail, "smtp_from_name": req.SMTPFromName,
+		"smtp_encryption": req.SMTPEncryption,
+	})
+	channelEncrypted, err := crypto.Encrypt(string(channelJSON), s.encryptionKey)
+	if err != nil || db.UpsertNotificationChannel(s.db, userID, "email", notify, channelEncrypted) != nil {
+		log.Printf("handleUpdateSMTPSettings: notification bridge update failed\n")
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

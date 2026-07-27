@@ -219,7 +219,7 @@ func (p *Processor) Start(ctx context.Context) {
 	go p.RunRetryScheduler(ctx)
 	go p.RunConnectionRecoveryScheduler(ctx)
 	go p.RunOrphanedRunningTasksRecovery(ctx)
-	go p.RunCompletionNotifier(ctx)
+	go p.RunNotifier(ctx)
 	go p.RunProgressReconciler(ctx)
 	go p.RunChecksumVerifier(ctx)
 
