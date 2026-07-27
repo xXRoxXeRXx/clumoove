@@ -16,7 +16,7 @@ and describes the system in detail for developers, operators, and architects.
 | 01 | [Architecture](./01-architecture.md) | Components, data flow, migration lifecycle, resilience concepts |
 | 02 | [Backend](./02-backend.md) | Go modules, packages (`db`, `queue`, `processor`, `scheduler`, `indexer`, `storage`, `auth`, `crypto`, …), startup logic |
 | 03 | [Frontend](./03-frontend.md) | React SPA, components, routing, i18n, API client, theming |
-| 04 | [API Reference](./04-api-reference.md) | Full REST/WebSocket endpoint list with protection and semantics |
+| 04 | [API Reference](./04-api-reference.md) | Full REST/SSE endpoint list with protection and semantics |
 | 05 | [Storage Providers](./05-storage-providers.md) | `StorageProvider` interface, supported providers, factory, SSRF protection |
 | 06 | [Database Schema](./06-database.md) | Tables, columns, indexes, triggers, auto-migration |
 | 07 | [Security Model](./07-security.md) | Key segregation, encryption, OAuth, CORS, rate limiting, audit log |

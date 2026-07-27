@@ -15,8 +15,6 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 - `public` — no auth.
 - `refresh` — requires the HTTP-only refresh-token cookie.
 - `JWT` — requires `Authorization: Bearer <access_token>`.
-- `token/query` — the `/ws` endpoint is **not** behind `AuthMiddleware`; it authenticates via the
-  `?token=<jwt>` query parameter (and validates ownership, blocking 2FA temp tokens).
 - `admin` — JWT + `role == ADMIN` (enforced inside the handler).
 
 ---
@@ -59,6 +57,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `POST` | `/migration/target/mkdir` | JWT | Create a target directory. Rate-limited. |
 | `POST` | `/migration/start` | JWT | Create + start a migration (optional `scheduled_time`). |
 | `GET` | `/migration/{id}` | JWT (own) | Migration status + resource stats. |
+| `GET` | `/migration/{id}/stream` | JWT (own) | SSE detail stream. Sends `migration` immediately and only when its sanitized payload changes; terminal migrations send once and close. |
 | `POST` | `/migration/{id}/pause` | JWT (own) | Pause (`RUNNING`/`INDEXING` only). |
 | `POST` | `/migration/{id}/resume` | JWT (own) | Resume (`PAUSED`/`PAUSED_CONNECTION_LOSS`). |
 | `POST` | `/migration/{id}/cancel` | JWT (own) | Cancel; marks tasks cancelled + publishes Redis cancel event. |
@@ -69,11 +68,10 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 | `POST` | `/migration/{id}/reindex` | JWT (own) | Re-run indexing for a `FAILED` migration. |
 | `PUT` | `/migration/{id}/threads` | JWT (own) | Live thread count (1–16). |
 | `PUT` | `/migration/{id}/bandwidth` | JWT (own) | Live bandwidth limit (0–1000 Mbps); publishes Redis event. |
-| `GET` | `/migration/{id}/ws` | token/query | WebSocket live progress. |
 
 > **Ownership:** endpoints operating on a specific migration compare the JWT `sub` against
-> `mig.UserID` and return `403 Forbidden` on mismatch. The WebSocket re-checks current active account
-> state and performs the same ownership check manually.
+> `mig.UserID` and return `403 Forbidden` on mismatch. The authenticated detail SSE endpoint uses the
+> same JWT middleware, so no credential is accepted in a query parameter.
 
 ---
 
@@ -149,13 +147,12 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 
 ---
 
-## 8. OAuth & WebSocket
+## 8. OAuth
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
 | `GET` | `/oauth/auth` | public | Begin OAuth2 flow (Dropbox/Google); redirects to provider. |
 | `GET` | `/oauth/callback` | public | Provider callback; sets tokens, posts result to opener via `postMessage`. |
-| `GET` | `/migration/{id}/ws` | token/query | Live progress WebSocket (see §2). |
 
 ---
 

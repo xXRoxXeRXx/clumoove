@@ -10,7 +10,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.1
 	github.com/boombuler/barcode v1.1.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/gorilla/websocket v1.5.3
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/lib/pq v1.12.3
 	github.com/pkg/sftp v1.13.11

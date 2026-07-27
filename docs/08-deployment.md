@@ -163,3 +163,5 @@ When fronting the API with a reverse proxy (e.g. nginx):
   accounting use the real client IP.
 - Do **not** expose PostgreSQL/Redis; keep them on the internal Docker network.
 - Ensure `CORS_ALLOWED_ORIGIN` matches the public frontend origin.
+- For SSE routes, disable response buffering (for nginx: `proxy_buffering off`) and configure proxy
+  read/send timeouts longer than the expected idle period; the API sends a 15-second SSE heartbeat.

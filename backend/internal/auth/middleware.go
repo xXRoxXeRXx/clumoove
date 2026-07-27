@@ -41,7 +41,6 @@ func databaseAuthStateLookup(database *sql.DB) AuthStateLookup {
 
 // RefreshClaimsFromAuthState fails closed when an account is missing or
 // suspended, and copies mutable authorization claims from the database.
-// WebSocket authentication uses this too because it bypasses HTTP middleware.
 func RefreshClaimsFromAuthState(claims *Claims, state *db.UserAuthState) error {
 	if claims == nil || state == nil || !state.Active {
 		return errors.New("inactive or missing user")

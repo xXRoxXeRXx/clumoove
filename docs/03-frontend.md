@@ -37,7 +37,7 @@ frontend/src/
 │   ├── AuthForm.tsx         # Login / register / 2FA / forgot-password entry
 │   ├── ConnectForm.tsx      # Source/target provider selection + connection test
 │   ├── FileBrowser.tsx      # Path/calendar/contact selection before start
-│   ├── Dashboard.tsx        # Live migration progress (WebSocket / SSE)
+│   ├── Dashboard.tsx        # Live migration progress (SSE)
 │   ├── MigrationsDashboard.tsx # History list of the user's migrations
 │   ├── SettingsPage.tsx     # Profile, password, 2FA, email, SMTP, avatar
 │   ├── AdminPanel.tsx       # ADMIN-only user/migration/audit oversight
@@ -131,7 +131,7 @@ A console warning is emitted when the API is reached over plaintext HTTP on a no
 | `AuthForm` | Login, registration, TOTP code entry, password reset request. |
 | `ConnectForm` | Choose source/target provider + credentials; supports saved connection profiles; calls `/migration/connect`; on success hands config + listed files to the next step. |
 | `FileBrowser` | Pick paths/calendars/contacts, conflict strategy, target dir, threads, bandwidth, optional `scheduled_time`; calls `/migration/start`; drops secrets from memory after success. |
-| `Dashboard` | Live progress for a migration via the `/migration/{id}/ws` WebSocket (token query param); shows files/calendars/contacts stats, pause/resume/cancel, threads/bandwidth controls, a paginated in-app error overview, and CSV report download. |
+| `Dashboard` | Live progress for a migration via authenticated `/migration/{id}/stream` SSE using `connectSseLoop`; shows files/calendars/contacts stats, pause/resume/cancel, threads/bandwidth controls, a paginated in-app error overview, and CSV report download. |
 | `MigrationsDashboard` | Lists the user's migrations and sync jobs with status; opens a selected migration/sync or starts a new one. |
 | `SyncDashboard` | Live progress and details for synchronization jobs (delta stats, changed/deleted files, pause/resume/threads) plus a paginated in-app error overview. |
 | `SettingsPage` | Display name, password change, avatar (cropper), 2FA setup/enable/disable, email change, per-user SMTP settings + test, connection profile management. |

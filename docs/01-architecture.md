@@ -16,7 +16,7 @@ cache, and migration workers. Every migration is tied to a user account and isol
 │  (frontend)        │
 │  http://:3001      │
 └─────────┬──────────┘
-          │ HTTPS / WebSocket / REST
+          │ HTTPS / SSE / REST
           ▼
 ┌────────────────────┐          ┌──────────────────────────┐
 │  Go API Gateway    │◀────────▶│  PostgreSQL 15           │
@@ -51,7 +51,7 @@ cache, and migration workers. Every migration is tied to a user account and isol
 
 | Component | Entrypoint | Responsibilities |
 | :-------- | :--------- | :--------------- |
-| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), WebSocket upgrades, OAuth callbacks, OAuth rotation daemon, scheduler daemon, sync engine endpoints, connection profile management, admin endpoints. |
+| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), SSE streams, OAuth callbacks, OAuth rotation daemon, scheduler daemon, sync engine endpoints, connection profile management, admin endpoints. |
 | **Worker Engine** | `backend/cmd/worker` | Dequeue tasks via SQL, stream transfer with integrity verification, conflict resolution, retry/backoff, worker liveness, connection-loss recovery, orphan recovery, completion notifier. |
 | **PostgreSQL** | container `migration-postgres` | System of record **and** queue. Stores users, credentials (encrypted), migrations, sync jobs, sync state, connection profiles, tasks, schedules, audit log, OAuth/refresh tokens, settings. |
 | **Redis** | container `migration-redis` | Liveness keys, recovery/schedule distributed locks, cancel & bandwidth Pub/Sub. Password-protected, not exposed to host. |
@@ -95,7 +95,7 @@ cache, and migration workers. Every migration is tied to a user account and isol
    by the migration's `threads` field. Transfers are streamed (no temp files on disk). Threads and
    bandwidth can be adjusted **during** a running migration.
 7. **Real-time updates** — During transfer the worker reports progress to the DB; the API gateway pushes
-   it over WebSocket (`GET /api/migration/{id}/ws`, token-secured) to the live dashboard.
+   it over authenticated SSE (`GET /api/migration/{id}/stream`) to the live dashboard.
 8. **Report** — On completion a CSV report can be downloaded (`GET /api/migration/{id}/report`) that
    includes failed tasks **and** skipped indexing errors.
 
@@ -192,7 +192,7 @@ POST /migration/start ─────────▶ creates migration
                                                                          │
 Worker dequeue (SKIP LOCKED) ◀─────────────────────────────────────────── PENDING tasks
 stream source → target (hash verify)
-reports progress ─────────────▶ DB counters ──▶ WebSocket push ──────────▶ Frontend dashboard
+reports progress ─────────────▶ DB counters ──▶ SSE push ────────────────▶ Frontend dashboard
 ```
 
 ---
@@ -206,7 +206,7 @@ the account's persisted language without depending on a frontend runtime.
 ```
 migration/
 ├── backend/                 # Go module (cmd/api, cmd/worker)
-│   ├── cmd/api/             # HTTP gateway, auth, websocket, OAuth, scheduler trigger
+│   ├── cmd/api/             # HTTP gateway, auth, SSE, OAuth, scheduler trigger
 │   ├── cmd/worker/          # migration engine (processor, recovery schedulers)
 │   └── internal/
 │       ├── auth/            # JWT, TOTP, middleware
