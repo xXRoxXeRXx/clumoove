@@ -93,7 +93,11 @@ export function MigrationsDashboard({
   // Load both lists immediately instead of waiting for the initial SSE frames.
   // The streams remain responsible for live updates after this first snapshot.
   useEffect(() => {
-    void Promise.all([fetchMigrations(), fetchSyncJobs()]);
+    const loadInitialSnapshot = () => {
+      void Promise.all([fetchMigrations(), fetchSyncJobs()]);
+    };
+    const timeoutId = window.setTimeout(loadInitialSnapshot, 0);
+    return () => window.clearTimeout(timeoutId);
   }, [fetchMigrations, fetchSyncJobs]);
 
   useEffect(() => {
