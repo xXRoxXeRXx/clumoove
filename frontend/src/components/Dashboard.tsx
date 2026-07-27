@@ -343,8 +343,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   if (!data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <RefreshCw className="w-10 h-10 text-[var(--color-portal-navy-themed)] animate-spin" />
-        <p className="font-sans text-xs italic text-[var(--color-text-muted)]">{t('dashboard.loadingInfo')}</p>
+        <Loader2 className="w-10 h-10 text-[var(--color-portal-orange-themed)] animate-spin" />
+        <p className="text-xs font-mono text-[var(--color-text-muted)]">{t('common.loading')}</p>
       </div>
     );
   }
