@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowRight, RefreshCw, AlertCircle, HelpCircle, CheckCircle2 } from 'lucide-react';
+import { ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, CheckCircleIcon as CheckCircle2, ExclamationCircleIcon as AlertCircle, QuestionMarkCircleIcon as HelpCircle } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
 

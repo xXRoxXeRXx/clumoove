@@ -4,9 +4,9 @@ export function MessageBanner({ message }: { message: MessageState }) {
   if (!message) return null;
   const styles =
     message.type === 'success'
-      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+      ? 'bg-[var(--color-success-bg)] border-[var(--color-success-border)] text-[var(--color-success-text)]'
       : message.type === 'info'
-        ? 'bg-[var(--color-info-bg)] border-[var(--color-info-border)] text-blue-800'
+        ? 'bg-[var(--color-info-bg)] border-[var(--color-info-border)] text-[var(--color-info-text)]'
         : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]';
   return (
     <div

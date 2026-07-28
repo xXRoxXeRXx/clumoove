@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Users as UsersIcon, Activity, BarChart3, ScrollText, Ban, CheckCircle2, Trash2, ShieldCheck, ShieldOff, RefreshCw, CloudSync, SlidersHorizontal } from 'lucide-react';
+import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, CloudIcon as CloudSync, DocumentTextIcon as ScrollText, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
 import { useApiError } from '../utils/apiError';
 import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
@@ -20,25 +20,26 @@ interface AdminPanelProps {
 
 const LIMIT = 20;
 
-function SectionCard({ icon: _Icon, title, children }: {
+function SectionCard({ icon: Icon, title, children }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="glass-panel rounded-lg p-6 space-y-5">
+    <div className="ui-card p-5 space-y-5">
       <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-        <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{title}</h3>
+        <Icon className="h-4 w-4 text-[var(--color-text-muted)]" />
+        <h3 className="font-display font-semibold text-sm text-[var(--color-text-primary)]">{title}</h3>
       </div>
       {children}
     </div>
   );
 }
 
-const inputCls = 'w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm font-sans';
-const selectCls = 'rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm font-sans';
-const primaryBtnCls = 'rounded-md bg-[var(--color-bg-inverse)] py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90';
-const secondaryBtnCls = 'rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]';
+const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
+const selectCls = 'ui-input px-3 py-2 text-sm font-sans';
+const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium hover:opacity-90';
+const secondaryBtnCls = 'ui-button-secondary px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]';
 
 export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
   const { t } = useTranslation();
@@ -61,19 +62,19 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
   ] as const;
 
   return (
-    <div className="max-w-4xl w-full mx-auto my-4 space-y-6">
+    <div className="max-w-5xl w-full mx-auto my-4 space-y-6">
       {/* Back Header */}
       <div className="flex items-center justify-between pb-4 border-b border-[var(--color-border)]/50">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
+          className="ui-button-secondary flex items-center gap-2 px-3 py-2 font-medium text-sm cursor-pointer hover:bg-[var(--color-bg-tertiary)]"
         >
           <ArrowLeft className="w-4 h-4" />
           {t('common.back')}
         </button>
         <div className="flex items-center gap-2">
-          <ShieldCheck className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
-          <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] leading-none">{t('admin.title')}</h2>
+          <ShieldCheck className="w-5 h-5 text-[var(--color-text-primary)]" />
+          <h2 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('admin.title')}</h2>
         </div>
       </div>
 
@@ -83,10 +84,10 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-md border font-medium text-sm cursor-pointer ${
               tab === key
-                ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
-                : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+                ? 'bg-[var(--color-bg-inverse)] border-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
+                : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
             }`}
           >
             <Icon className="w-4 h-4" />

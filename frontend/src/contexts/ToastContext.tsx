@@ -33,10 +33,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((item) => {
           const styles =
             item.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              ? 'bg-[var(--color-success-bg)] border-[var(--color-success-border)] text-[var(--color-success-text)]'
               : item.type === 'info'
-                ? 'bg-blue-50 border-blue-200 text-blue-900'
-                : 'bg-rose-50 border-rose-200 text-rose-900';
+                ? 'bg-[var(--color-info-bg)] border-[var(--color-info-border)] text-[var(--color-info-text)]'
+                : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]';
           return (
             <div
               key={item.id}

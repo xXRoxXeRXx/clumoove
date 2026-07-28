@@ -105,7 +105,7 @@ export function ConfirmationDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={messageId}
-        className="w-full max-w-md overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)]"
+        className="w-full max-w-md overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)]"
       >
         <div className="flex items-center gap-3 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-5 py-4">
           <h3

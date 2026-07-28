@@ -1,26 +1,26 @@
 import React, { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { 
-  Folder, 
-  FolderOpen,
-  File, 
-  FileText, 
-  Image as ImageIcon, 
-  Film, 
-  Music,
-  FileCode,
-  Archive,
-  Search, 
-  Copy, 
-  Check, 
-  X, 
-  Eye, 
-  Layers,
-  ChevronRight,
-  ChevronDown,
-  List,
-  FolderTree
-} from 'lucide-react';
+import {
+  ArchiveBoxIcon as Archive,
+  CheckIcon as Check,
+  ChevronDownIcon as ChevronDown,
+  ChevronRightIcon as ChevronRight,
+  CodeBracketIcon as FileCode,
+  DocumentIcon as File,
+  DocumentTextIcon as FileText,
+  EyeIcon as Eye,
+  FolderIcon as Folder,
+  FolderOpenIcon as FolderOpen,
+  RectangleStackIcon as FolderTree,
+  MagnifyingGlassIcon as Search,
+  PhotoIcon as ImageIcon,
+  FilmIcon as Film,
+  MusicalNoteIcon as Music,
+  ClipboardDocumentIcon as Copy,
+  Squares2X2Icon as Layers,
+  ListBulletIcon as List,
+  XMarkIcon as X,
+} from '@heroicons/react/24/outline';
 
 interface SelectedPathsViewerProps {
   paths?: string[];
