@@ -11,7 +11,7 @@ export function MessageBanner({ message }: { message: MessageState }) {
   return (
     <div
       role="status"
-      className={`p-3 rounded-xl border text-[11px] font-mono text-center leading-relaxed ${styles}`}
+      className={`rounded-md border px-3 py-2 text-sm text-center leading-relaxed ${styles}`}
     >
       {message.text}
     </div>
