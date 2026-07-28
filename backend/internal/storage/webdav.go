@@ -94,6 +94,21 @@ func (p *WebDAVProvider) newRequest(method, urlStr string, body io.Reader) (*htt
 	return req, nil
 }
 
+func (p *WebDAVProvider) confirmCollection(ctx context.Context, dirPath string) error {
+	// The caller supplies a bounded operation context; cap this verification
+	// request separately so a server cannot stall a failed MKCOL indefinitely.
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resource, err := p.InspectResource(ctx, "files", dirPath)
+	if err != nil {
+		return fmt.Errorf("failed to confirm existing directory: %w", err)
+	}
+	if !resource.IsDir {
+		return fmt.Errorf("existing path is not a directory")
+	}
+	return nil
+}
+
 func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -612,6 +627,12 @@ func (p *WebDAVProvider) CreateParentDirectories(ctx context.Context, resourceTy
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("webdav mkdir: %w", ErrAuth)
 		}
+		if resp.StatusCode == http.StatusMethodNotAllowed {
+			if err := p.confirmCollection(ctx, currentPath); err != nil {
+				return err
+			}
+			// The path was confirmed as a collection; cache it below.
+		}
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
 			p.createdDirs.Store(localDirKey, true)
 			globalWebDAVCreatedDirs.Add(globalDirKey)
@@ -653,6 +674,12 @@ func (p *WebDAVProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("webdav mkdir: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		if err := p.confirmCollection(ctx, dirPath); err != nil {
+			return err
+		}
+		// The path was confirmed as a collection; cache it below.
 	}
 	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
 		localDirKey := dirPath

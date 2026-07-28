@@ -3,6 +3,8 @@ package storage
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -88,5 +90,73 @@ func TestWebDAVProviderSupportsAtomicRename(t *testing.T) {
 func TestWebDAVProviderErrAuth(t *testing.T) {
 	if !errors.Is(ErrAuth, ErrAuth) {
 		t.Error("ErrAuth mismatch")
+	}
+}
+
+func TestWebDAVCreateDirectoryVerifiesMKCOLMethodNotAllowed(t *testing.T) {
+	collectionResponse := `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
+	fileResponse := `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
+	cases := []struct {
+		name           string
+		propfindStatus int
+		propfindBody   string
+		wantErr        bool
+	}{
+		{"existing collection", http.StatusMultiStatus, collectionResponse, false},
+		{"existing file", http.StatusMultiStatus, fileResponse, true},
+		{"missing collection", http.StatusNotFound, "", true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case "MKCOL":
+					w.WriteHeader(http.StatusMethodNotAllowed)
+				case "PROPFIND":
+					w.WriteHeader(test.propfindStatus)
+					if test.propfindBody != "" {
+						_, _ = w.Write([]byte(test.propfindBody))
+					}
+				default:
+					t.Errorf("unexpected method %s", r.Method)
+				}
+			}))
+			defer server.Close()
+
+			p := &WebDAVProvider{BaseURL: server.URL, HTTPClient: server.Client()}
+			err := p.CreateDirectory(context.Background(), "files", "/folder")
+			if (err != nil) != test.wantErr {
+				t.Fatalf("CreateDirectory() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if !test.wantErr {
+				if _, ok := p.createdDirs.Load("/folder"); !ok {
+					t.Error("confirmed directory was not cached")
+				}
+			}
+		})
+	}
+}
+
+func TestWebDAVCreateParentDirectoriesVerifiesMKCOLMethodNotAllowed(t *testing.T) {
+	collectionResponse := `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "MKCOL":
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		case "PROPFIND":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(collectionResponse))
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	p := &WebDAVProvider{BaseURL: server.URL, HTTPClient: server.Client()}
+	if err := p.CreateParentDirectories(context.Background(), "files", "/folder/file.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.createdDirs.Load("/folder"); !ok {
+		t.Error("confirmed parent directory was not cached")
 	}
 }
