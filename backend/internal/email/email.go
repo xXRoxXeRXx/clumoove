@@ -394,6 +394,29 @@ func BuildTestEmailLocalized(language string) string {
 	return buildActionEmail(i18n.T(language, "delivery.smtpTest.title"), i18n.T(language, "delivery.smtpTest.message"), "", "", "")
 }
 
+// BuildNotificationEmailLocalized renders the delivery summary with the same
+// restrained visual language as the application UI. Values are escaped before
+// insertion because notification payloads may contain user-provided names.
+func BuildNotificationEmailLocalized(kind, name, status, processed, total, failed, skipped, language string) string {
+	rows := []struct {
+		label string
+		value string
+	}{
+		{i18n.T(language, "delivery.notification.status"), status},
+		{i18n.T(language, "delivery.notification.processed"), processed + " / " + total},
+		{i18n.T(language, "delivery.notification.failed"), failed},
+		{i18n.T(language, "delivery.notification.skipped"), skipped},
+	}
+
+	var table strings.Builder
+	for _, row := range rows {
+		table.WriteString(fmt.Sprintf(`<tr><td style="padding:10px 0;border-top:1px solid #e4e4e7;color:#71717a;font-size:13px">%s</td><td style="padding:10px 0;border-top:1px solid #e4e4e7;color:#18181b;font-size:13px;font-weight:600;text-align:right">%s</td></tr>`, html.EscapeString(row.label), html.EscapeString(row.value)))
+	}
+
+	title := fmt.Sprintf("%s · %s", i18n.T(language, "delivery.notification.kind."+kind), name)
+	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0 0 20px;color:#52525b;font-size:14px;line-height:1.6">%s</p><table role="presentation" style="width:100%%;border-collapse:collapse">%s</table>`, html.EscapeString(title), table.String()))
+}
+
 func PasswordResetSubject(language string) string {
 	return i18n.T(language, "delivery.passwordReset.subject")
 }
@@ -408,9 +431,29 @@ func SMTPTestSubject(language string) string { return i18n.T(language, "delivery
 func buildActionEmail(title, message, action, actionURL, note string) string {
 	button := ""
 	if action != "" && actionURL != "" {
-		button = fmt.Sprintf(`<p style="text-align:center"><a href="%s" style="display:inline-block;padding:14px 24px;background:#ea580c;color:#fff;text-decoration:none;border-radius:8px">%s</a></p>`, html.EscapeString(actionURL), html.EscapeString(action))
+		button = fmt.Sprintf(`<p style="margin:24px 0;text-align:center"><a href="%s" style="display:inline-block;padding:12px 20px;background:#18181b;border:1px solid #18181b;border-radius:4px;color:#ffffff;font-size:14px;font-weight:600;line-height:20px;text-decoration:none">%s</a></p>`, html.EscapeString(actionURL), html.EscapeString(action))
 	}
-	return fmt.Sprintf(`<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px"><div style="max-width:600px;margin:auto;background:#fff;padding:30px;border-radius:12px"><h1>Clumoove</h1><h2>%s</h2><p>%s</p>%s<p style="color:#6b7280;font-size:12px">%s</p></div></body></html>`, html.EscapeString(title), message, button, html.EscapeString(note))
+	noteBlock := ""
+	if note != "" {
+		noteBlock = fmt.Sprintf(`<p style="margin:20px 0 0;color:#71717a;font-size:12px;line-height:1.6">%s</p>`, html.EscapeString(note))
+	}
+	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0;color:#52525b;font-size:14px;line-height:1.6">%s</p>%s%s`, message, button, noteBlock))
+}
+
+func buildEmailShell(title, content string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<body style="margin:0;padding:0;background:#fafafa;color:#18181b;font-family:Arial,Helvetica,sans-serif">
+  <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;background:#fafafa"><tr><td style="padding:32px 16px">
+    <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e4e4e7;border-radius:6px">
+      <tr><td style="padding:24px 28px;border-bottom:1px solid #e4e4e7"><p style="margin:0;color:#18181b;font-size:20px;font-weight:700;letter-spacing:-0.3px">Clumoove</p></td></tr>
+      <tr><td style="padding:28px"><h1 style="margin:0 0 16px;color:#18181b;font-size:20px;font-weight:700;line-height:1.3">%s</h1>%s</td></tr>
+      <tr><td style="padding:16px 28px;border-top:1px solid #e4e4e7;color:#71717a;font-size:12px;line-height:1.5">Clumoove</td></tr>
+    </table>
+  </td></tr></table>
+</body>
+</html>`, html.EscapeString(title), content)
 }
 
 func formatBytes(b int64) string {

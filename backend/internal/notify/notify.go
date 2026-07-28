@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -91,7 +90,9 @@ func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, 
 		if port == "" || port == "<nil>" {
 			port = "587"
 		}
-		return email.SendMail(email.SMTPConfig{Host: fmt.Sprint(cfg["smtp_host"]), Port: port, Username: fmt.Sprint(cfg["smtp_username"]), Password: fmt.Sprint(cfg["smtp_password"]), FromEmail: fmt.Sprint(cfg["smtp_from_email"]), FromName: fmt.Sprint(cfg["smtp_from_name"]), Encryption: fmt.Sprint(cfg["smtp_encryption"])}, recipient, notificationSubject(language), "<pre>"+html.EscapeString(text)+"</pre>")
+		var p map[string]any
+		_ = json.Unmarshal(payload, &p)
+		return email.SendMail(email.SMTPConfig{Host: fmt.Sprint(cfg["smtp_host"]), Port: port, Username: fmt.Sprint(cfg["smtp_username"]), Password: fmt.Sprint(cfg["smtp_password"]), FromEmail: fmt.Sprint(cfg["smtp_from_email"]), FromName: fmt.Sprint(cfg["smtp_from_name"]), Encryption: fmt.Sprint(cfg["smtp_encryption"])}, recipient, notificationSubject(language), email.BuildNotificationEmailLocalized(fmt.Sprint(p["kind"]), fmt.Sprint(p["name"]), fmt.Sprint(p["status"]), fmt.Sprint(p["processed"]), fmt.Sprint(p["total"]), fmt.Sprint(p["failed"]), fmt.Sprint(p["skipped"]), language))
 	}
 	var endpoint string
 	var body any
