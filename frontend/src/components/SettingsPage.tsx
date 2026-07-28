@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ComputerDesktopIcon as Monitor, Cog6ToothIcon as Settings, EnvelopeIcon as Mail, EyeIcon as Eye, EyeSlashIcon as EyeOff, InformationCircleIcon as Info, LockClosedIcon as Lock, MoonIcon as Moon, LinkIcon as Plug, SunIcon as Sun, SwatchIcon as Palette, TrashIcon as Trash2, ArrowUpTrayIcon as Upload, UserIcon as User } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon as ArrowLeft, ComputerDesktopIcon as Monitor, Cog6ToothIcon as Settings, EnvelopeIcon as Mail, EyeIcon as Eye, EyeSlashIcon as EyeOff, InformationCircleIcon as Info, LockClosedIcon as Lock, MoonIcon as Moon, LinkIcon as Plug, SunIcon as Sun, SwatchIcon as Palette, TrashIcon as Trash2, ArrowUpTrayIcon as Upload, UserIcon as User } from '@heroicons/react/24/outline';
 import { AvatarCropper } from './AvatarCropper';
 import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
@@ -547,6 +547,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={onBack}
           className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
         >
+          <ArrowLeft className="w-4 h-4" />
           {t('settings.back')}
         </button>
         <div className="flex items-center gap-2">
@@ -629,7 +630,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   {t('settings.avatarHint')}
                 </p>
                 <div className="flex flex-wrap gap-2.5">
-                  <label className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-[var(--color-bg-tertiary)]">
+                  <label className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-sm font-medium cursor-pointer hover:bg-[var(--color-bg-tertiary)]">
                     <Upload className="w-3.5 h-3.5" />
                     <span>{t('settings.selectImage')}</span>
                     <input
@@ -644,7 +645,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     <button
                       onClick={handleDeleteAvatar}
                       disabled={avatarLoading}
-                      className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-[var(--color-error-border)] text-[var(--color-error-text)] cursor-pointer hover:bg-[var(--color-error-bg)] disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-[var(--color-error-border)] text-[var(--color-error-text)] cursor-pointer hover:bg-[var(--color-error-bg)] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       {t('settings.delete')}

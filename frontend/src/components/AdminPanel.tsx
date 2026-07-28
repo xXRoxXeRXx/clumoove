@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, CloudIcon as CloudSync, DocumentTextIcon as ScrollText, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
+import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, DocumentTextIcon as ScrollText, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
 import { useApiError } from '../utils/apiError';
 import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
@@ -8,7 +8,7 @@ import { useConfirm } from '../contexts/useConfirm';
 import { MessageBanner } from './MessageBanner';
 import { apiFetch } from '../utils/apiClient';
 import { Toggle } from './Toggle';
-import { StatusBadge } from './StatusBadge';
+import { Badge, StatusBadge } from './StatusBadge';
 
 type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
 
@@ -280,14 +280,12 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
                 <td className="px-3 py-2">{u.email}</td>
                 <td className="px-3 py-2">{u.display_name}</td>
                 <td className="px-3 py-2">
-                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]">
-                    {u.role}
-                  </span>
+                  <Badge size="sm" variant="muted" label={u.role} />
                 </td>
                 <td className="px-3 py-2">
                   {u.active
-                    ? <span className="ui-badge ui-badge-success">{t('common.active')}</span>
-                    : <span className="ui-badge ui-badge-error">{t('admin.users.suspended')}</span>}
+                    ? <Badge size="sm" variant="success" label={t('common.active')} />
+                    : <Badge size="sm" variant="error" label={t('admin.users.suspended')} />}
                 </td>
                 <td className="px-3 py-2 text-[var(--color-text-muted)]">{u.created_at ? formatDateTime(u.created_at) : ''}</td>
                 <td className="px-3 py-2">
@@ -418,11 +416,9 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
               <tr key={m.id} className="border-t border-[var(--color-border)]">
                 <td className="px-3 py-2">{m.owner_email || <span className="text-[var(--color-text-muted)]">—</span>}</td>
                 <td className="px-3 py-2">
-                  <span className={`ui-badge ${m.type === 'SYNC' ? 'ui-badge-info' : 'ui-badge-muted'}`}>
-                    {m.type === 'SYNC' ? t('admin.transfers.sync') : t('admin.transfers.migration')}
-                  </span>
+                  <Badge size="sm" variant={m.type === 'SYNC' ? 'info' : 'muted'} label={m.type === 'SYNC' ? t('admin.transfers.sync') : t('admin.transfers.migration')} />
                 </td>
-                <td className="px-3 py-2"><StatusBadge status={m.status} /></td>
+                <td className="px-3 py-2"><StatusBadge status={m.status} size="sm" /></td>
                 <td className="px-3 py-2">{m.source_provider} → {m.target_provider}</td>
                 <td className="px-3 py-2">{m.processed_files}/{m.total_files} · {formatBytes(m.processed_bytes)}</td>
                 <td className="px-3 py-2 text-[var(--color-text-muted)]">{formatDateTime(m.created_at)}</td>
@@ -481,7 +477,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
           <div className="space-y-1.5">
             {Object.entries(stats.migrations_by_status).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between text-xs">
-                <StatusBadge status={k} />
+                <StatusBadge status={k} size="sm" />
                 <span className="font-mono">{v}</span>
               </div>
             ))}
@@ -493,7 +489,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
           <div className="space-y-1.5">
             {Object.entries(stats.syncs_by_status || {}).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between text-xs">
-                <StatusBadge status={k} />
+                <StatusBadge status={k} size="sm" />
                 <span className="font-mono">{v}</span>
               </div>
             ))}
@@ -505,7 +501,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
           <div className="space-y-1.5">
             {Object.entries(stats.tasks_by_status).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between text-xs">
-                <StatusBadge status={k} />
+                <StatusBadge status={k} size="sm" />
                 <span className="font-mono">{v}</span>
               </div>
             ))}
@@ -591,7 +587,7 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
             {entries.map((e) => (
               <tr key={e.id} className="border-t border-[var(--color-border)]">
                 <td className="px-3 py-2 text-[var(--color-text-muted)] whitespace-nowrap">{formatDateTime(e.created_at)}</td>
-                <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]">{t(`admin.audit.actions.${e.action}`)}</span></td>
+                <td className="px-3 py-2"><Badge size="sm" variant="muted" label={t(`admin.audit.actions.${e.action}`)} /></td>
                 <td className="px-3 py-2 font-mono text-[10px]">{e.user_id ? e.user_id.slice(0, 8) : '—'}</td>
                 <td className="px-3 py-2 font-mono text-[10px] max-w-[160px] truncate" title={e.target}>{e.target || '—'}</td>
                 <td className="px-3 py-2 font-mono text-[10px]">{e.ip || '—'}</td>
@@ -671,7 +667,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
   };
 
   return (
-    <SectionCard icon={CloudSync} title={t('admin.system.title')}>
+    <SectionCard icon={SlidersHorizontal} title={t('admin.system.title')}>
       <MessageBanner message={message} />
 
       <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
