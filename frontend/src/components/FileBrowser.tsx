@@ -823,24 +823,21 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   return (
     <div className="w-full max-w-5xl mx-auto py-2 text-left space-y-6">
       
-      {/* Wizard navigation */}
-      {onBack && (
-        <div className="border-b border-[var(--color-border-light)] pb-4">
+      {/* Wizard header */}
+      <div className="flex items-center justify-between border-b border-[var(--color-border)]/50 pb-4">
+        {onBack ? (
           <button
             type="button"
             onClick={onBack}
-            className="ui-button-secondary inline-flex items-center gap-2 px-4 py-2 font-mono font-bold text-xs hover:bg-[var(--color-bg-tertiary)]"
+            className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
           >
-            <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
+            <ArrowLeft className="w-4 h-4" />
             <span>{t('common.back')}</span>
           </button>
-        </div>
-      )}
-
-      <div>
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">
+        ) : <span />}
+        <h2 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
           {t('fileBrowser.wizardStep')}
-        </h1>
+        </h2>
       </div>
 
       {/* Source & Target Connection Cards Grid */}
