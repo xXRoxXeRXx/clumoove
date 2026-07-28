@@ -571,39 +571,24 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   return (
     <div className="w-full max-w-5xl mx-auto py-2 space-y-6">
-      
-      {/* Top Header / Back Button */}
+
+      {/* Wizard navigation */}
       {onBack && (
-        <div className="flex items-center justify-between pb-1">
+        <div className="border-b border-[var(--color-border-light)] pb-4">
           <button
             type="button"
             onClick={subStep === 1 ? onBack : () => { setSourceVerified(false); setSubStep(1); }}
-            className="ui-button-secondary flex items-center gap-2 px-4 py-2 font-mono font-bold text-xs hover:bg-[var(--color-bg-tertiary)] shrink-0"
+            className="ui-button-secondary inline-flex items-center gap-2 px-4 py-2 font-mono font-bold text-xs hover:bg-[var(--color-bg-tertiary)]"
           >
             <span>{t('common.back')}</span>
           </button>
         </div>
       )}
 
-      {/* Wizard Step Progress Banner */}
-      <div className="ui-card flex items-center justify-between p-4">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-8 h-8 rounded-full bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] font-mono font-bold text-xs">
-              {subStep}
-            </span>
-            <div className="flex flex-col text-left">
-              <span className="font-display font-extrabold text-sm text-[var(--color-text-primary)]">
-                {subStep === 1 ? t('connect.sourceTitle') : t('connect.targetTitle')}
-              </span>
-              <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-                {subStep === 1 ? t('connect.wizardStepSource') : t('connect.wizardStepTarget')}
-              </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-[var(--color-text-secondary)] bg-[var(--color-bg-tertiary)] px-3 py-1 rounded-full border border-[var(--color-border)]">
-          <span>{t('connect.connectionsBadge')}</span>
-        </div>
+      <div>
+        <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">
+          {subStep === 1 ? t('connect.wizardStepSource') : t('connect.wizardStepTarget')}
+        </h1>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -614,13 +599,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             
-            <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-              <div className="text-left">
-                <h2 className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-none">{t('connect.sourceTitle')}</h2>
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.sourceSubtitle')}</p>
-              </div>
-            </div>
-
             <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
               <ProfileSelect
                 idPrefix="source"
@@ -650,7 +628,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </div>
               ) : (
               <>
-                <div id="source-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</div>
+                <div id="source-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.sourceProvider')}</div>
                 
                 {/* Visual Provider Pills */}
                 <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="source-provider-label">
@@ -1108,13 +1086,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             
-            <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-              <div className="text-left">
-                <h2 className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-none">{t('connect.targetTitle')}</h2>
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.targetSubtitle')}</p>
-              </div>
-            </div>
-
             <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
               <ProfileSelect
                 idPrefix="target"
@@ -1144,7 +1115,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </div>
               ) : (
               <>
-                <div id="target-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</div>
+                <div id="target-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.targetProvider')}</div>
                 
                 {/* Visual Provider Pills */}
                 <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="target-provider-label">

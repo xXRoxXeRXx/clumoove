@@ -105,6 +105,8 @@
     "targetTitle": "Ziel (Daten hierhin kopieren)",
     "targetSubtitle": "Zielverzeichnis für die Übertragung",
     "provider": "Anbieter",
+    "sourceProvider": "Anbieter der Quelldaten",
+    "targetProvider": "Anbieter der Zieldaten",
     "serverHost": "Server-Adresse (IP)",
     "port": "Anschluss (Port)",
     "share": "Name der Freigabe",
