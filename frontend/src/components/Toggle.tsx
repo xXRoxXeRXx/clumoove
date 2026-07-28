@@ -16,7 +16,7 @@ export function Toggle({ checked, disabled, onChange, label }: ToggleProps) {
         onChange={(e) => onChange(e.target.checked)}
         className="sr-only peer"
       />
-      <div aria-hidden="true" className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border after:border-[var(--color-border)] after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
+      <div aria-hidden="true" className="peer h-5 w-9 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-[var(--color-bg-secondary)] after:content-[''] peer-checked:bg-[var(--color-bg-inverse)] peer-checked:after:translate-x-4"></div>
     </label>
   );
 }
