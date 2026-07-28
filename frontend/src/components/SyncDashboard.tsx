@@ -6,13 +6,14 @@ import { useApiError } from '../utils/apiError';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
-import { StatusBadge } from './StatusBadge';
+import { Badge, StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ErrorOverview } from './ErrorOverview';
 import { BANDWIDTH_OPTIONS, bandwidthIndexToValue, getBandwidthLabel, valueToBandwidthIndex } from '../utils/bandwidth';
 import {
   AdjustmentsHorizontalIcon,
+  ArrowLeftIcon,
   ArrowsRightLeftIcon,
   ChartBarIcon,
   ClockIcon,
@@ -255,7 +256,8 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   if (error || !job) {
     return (
       <div className="space-y-4">
-        <button onClick={onBack} className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)]">
+        <button onClick={onBack} className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]">
+          <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
           {t('common.back')}
         </button>
         <div className="ui-card p-4 bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)] text-sm font-mono text-center">
@@ -286,30 +288,14 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-mono font-bold hover:bg-[var(--color-bg-tertiary)]"
+          className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
         >
+          <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
           {t('common.back')}
         </button>
       </div>
 
       <div className="ui-card p-6 space-y-6">
-        {/* Top Badges Row (Above Title & Action Buttons) */}
-        <div className="flex items-center justify-end gap-2.5 pb-2">
-          {/* Status Info Badge */}
-          <StatusBadge status={job.status} />
-
-          {/* Direction Info Badge (rechtsbündig) */}
-          {job.direction === 'two_way' ? (
-            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-info-text)] px-3 py-1 bg-[var(--color-info-bg)] border border-[var(--color-info-border)]">
-              <span>{t('sync.twoWay')}</span>
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-info-text)] px-3 py-1 bg-[var(--color-info-bg)] border border-[var(--color-info-border)]">
-              <span>{t('sync.oneWay')}</span>
-            </span>
-          )}
-        </div>
-
         {/* Title & Action Controls */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
           <div className="space-y-1">
@@ -322,15 +308,6 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
 
           <div className="flex items-center gap-2.5 w-full md:w-auto justify-start md:justify-end flex-wrap">
-            {(job.failed_files > 0 || job.last_run_status === 'PARTIAL' || job.last_run_status === 'FAILED') && (
-              <button
-                onClick={handleDownloadReport}
-                className="ui-button-secondary flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"
-              >
-                {t('sync.downloadReport')}
-              </button>
-            )}
-
             {job.status === 'PAUSED' ? (
               <button
                 onClick={handleResume}
@@ -349,15 +326,22 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               </button>
             )}
 
-            <button
+            {canStart && (
+              <button
               onClick={handleTriggerStart}
-              disabled={actionLoading || !canStart}
+              disabled={actionLoading}
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
-            >
-              {actionLoading && `${t('common.loading')} `}
-              {t('sync.syncNow')}
-            </button>
+              >
+                {actionLoading && `${t('common.loading')} `}
+                {t('sync.syncNow')}
+              </button>
+            )}
           </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <StatusBadge status={job.status} />
+          <Badge variant="muted" label={job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')} />
         </div>
 
         {/* Live Transfer Progress (only shown while a run is active) */}
@@ -645,6 +629,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           endpoint={`${apiUrl}/api/sync/${syncId}/errors`}
           token={token}
           refreshKey={`${job.failed_files}-${job.last_run_at}-${job.status}`}
+          onDownloadReport={job.failed_files > 0 || job.last_run_status === 'PARTIAL' || job.last_run_status === 'FAILED' ? handleDownloadReport : undefined}
         />
 
         {job.error_message && (
