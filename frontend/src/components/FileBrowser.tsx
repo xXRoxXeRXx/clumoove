@@ -764,7 +764,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     );
   };
   return (
-    <div className="w-full max-w-5xl mx-auto py-2 animate-fade-in text-left space-y-6">
+    <div className="w-full max-w-5xl mx-auto py-2 text-left space-y-6">
       
       {/* Top Bar with Back Button */}
       {onBack && (
@@ -781,7 +781,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       )}
 
       {/* Wizard Step Progress Banner */}
-      <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-xs">
+      <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
         <div className="flex items-center gap-3">
           <span className="flex items-center justify-center w-8 h-8 rounded-full bg-portal-orange text-white font-mono font-bold text-xs shadow-xs">
             3
@@ -820,9 +820,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       </div>
 
       {/* Source & Target Connection Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/* Source Card */}
-        <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 shadow-2xs">
+        <div className="space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
           <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-2.5">
             <div className="flex items-center gap-2">
               <Folder className="w-4 h-4 text-portal-orange shrink-0" />
@@ -847,7 +847,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
 
         {/* Target Card */}
-        <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 shadow-2xs">
+        <div className="space-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-5">
           <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-2.5">
             <div className="flex items-center gap-2">
               <Folder className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -883,9 +883,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       </div>
 
       {/* Settings Strip — full width, backup-ready 3-mode layout */}
-      <div className="glass-panel border border-[var(--color-glass-border)] shadow-portal rounded-3xl">
+      <div className="glass-panel rounded-lg">
         {/* Sticky header: mode selector (left) + start button (right) */}
-        <div className="sticky top-18 z-20 -mx-px px-5 sm:px-6 py-3 bg-[var(--color-bg-secondary)]/95 backdrop-blur border-b border-[var(--color-border-light)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-t-3xl shadow-sm">
+        <div className="sticky top-16 z-20 -mx-px flex flex-col justify-between gap-3 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-5 py-3 sm:flex-row sm:items-center sm:px-6">
           {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
           <div className="text-xs w-full sm:w-auto">
             <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] p-1 rounded-full border border-[var(--color-border)]">
@@ -920,7 +920,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <button
             onClick={handleStartMigration}
             disabled={starting}
-            className="w-full sm:w-auto flex items-center justify-center gap-2.5 py-3 px-6 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md hover:scale-[1.01] active:scale-[0.99] transition-all rounded-2xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            className="w-full shrink-0 bg-[var(--color-bg-inverse)] px-4 py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90 disabled:opacity-50 sm:w-auto"
           >
             {starting ? (
               <>
@@ -1224,7 +1224,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       </div>
 
       {/* Ledger Browser Tree Card — full width */}
-      <div className="glass-panel border border-[var(--color-glass-border)] shadow-portal rounded-3xl flex flex-col p-5">
+      <div className="glass-panel flex flex-col rounded-lg p-5">
         {/* Tab Switcher */}
         <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4 mb-4 gap-4">
           <div className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-2xl flex-grow max-w-md">
@@ -1232,7 +1232,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               onClick={() => handleTabChange('files')}
               className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                 activeTab === 'files'
-                  ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
+                  ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
                   : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
               }`}
             >
@@ -1244,7 +1244,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   onClick={() => handleTabChange('calendars')}
                   className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                     activeTab === 'calendars'
-                      ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
+                      ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
                       : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                   }`}
                 >
@@ -1254,7 +1254,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   onClick={() => handleTabChange('contacts')}
                   className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                     activeTab === 'contacts'
-                      ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light text-[var(--color-text-inverse)] shadow-xs'
+                      ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
                       : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                   }`}
                 >
