@@ -87,6 +87,10 @@ html {
   --color-info-text: #bfdbfe;
 }
 
+[data-theme="dark"] .ui-brand-logo {
+  filter: invert(1);
+}
+
 @utility ui-card {
   background-color: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
