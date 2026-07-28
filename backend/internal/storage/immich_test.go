@@ -128,12 +128,16 @@ func TestImmichAllAssetsSearchOmitsEmptyAlbumID(t *testing.T) {
 		if request["withArchived"] != false || request["withDeleted"] != false {
 			t.Errorf("archive filters = withArchived:%v withDeleted:%v, want false", request["withArchived"], request["withDeleted"])
 		}
-		_, _ = w.Write([]byte(`{"assets":{"items":[]}}`))
+		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-id","originalFileName":"photo.jpg"}]}}`))
 	}))
 	defer server.Close()
 	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
-	if _, err := p.search(context.Background(), ""); err != nil {
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/All Assets")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Path != "/All Assets/asset-id" || items[0].Name != "photo.jpg" {
+		t.Errorf("items = %#v", items)
 	}
 }
 
