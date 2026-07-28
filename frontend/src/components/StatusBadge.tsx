@@ -11,7 +11,7 @@ const variantCls: Record<BadgeVariant, string> = {
   cyan: 'ui-badge-info',
 };
 
-function Badge({
+export function Badge({
   variant,
   pulse,
   label,
