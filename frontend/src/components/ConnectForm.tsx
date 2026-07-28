@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Server, ArrowRight, ArrowLeft, RefreshCw, AlertCircle, HelpCircle, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, RefreshCw, AlertCircle, HelpCircle, CheckCircle2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
 
@@ -566,7 +566,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   ];
 
   return (
-    <div className="w-full max-w-5xl mx-auto py-2 space-y-6 animate-fade-in">
+    <div className="w-full max-w-5xl mx-auto py-2 space-y-6">
       
       {/* Top Header / Back Button */}
       {onBack && (
@@ -576,14 +576,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             onClick={subStep === 1 ? onBack : () => { setSourceVerified(false); setSubStep(1); }}
             className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm shrink-0"
           >
-            <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
             <span>{t('common.back')}</span>
           </button>
         </div>
       )}
 
       {/* Wizard Step Progress Banner */}
-      <div className="flex items-center justify-between p-4 rounded-2xl bg-[var(--color-bg-secondary)] border border-[var(--color-border)] shadow-xs">
+      <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
         <div className="flex items-center gap-3">
           <span className="flex items-center justify-center w-8 h-8 rounded-full bg-portal-orange text-white font-mono font-bold text-xs shadow-xs">
               {subStep}
@@ -599,7 +598,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         </div>
 
         <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-portal-orange bg-portal-orange/10 px-3 py-1 rounded-full border border-portal-orange/20">
-          <Server className="w-3.5 h-3.5" />
           <span>{t('connect.connectionsBadge')}</span>
         </div>
       </div>
@@ -608,14 +606,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
           {/* Source Host Card */}
           {subStep === 1 && (
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
+          <fieldset className="glass-panel rounded-lg p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-              <div className="p-2.5 bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)] rounded-xl group-hover:bg-portal-orange/10 group-hover:text-portal-orange transition-colors duration-300">
-                <Server className="w-5 h-5" />
-              </div>
               <div className="text-left">
                 <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">{t('connect.sourceTitle')}</h2>
                 <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.sourceSubtitle')}</p>
@@ -635,7 +630,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
                     <div className="flex items-center">
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
                         {getProfile(sourceProfileId)?.provider.toUpperCase()}
                       </span>
                     </div>
@@ -664,7 +658,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       aria-checked={sourceProvider === opt.id}
                       className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
                         sourceProvider === opt.id
-                          ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light border-portal-navy text-white shadow-xs'
+                          ? 'bg-[var(--color-bg-inverse)] border-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
                           : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
                       }`}
                     >
@@ -1104,14 +1098,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
            {/* Target Host Card */}
            {subStep === 2 && (
-          <fieldset className="glass-panel border border-[var(--color-glass-border)] rounded-3xl p-6.5 shadow-portal hover:shadow-portal-hover transition-all duration-300 relative overflow-hidden flex flex-col justify-between group m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
+          <fieldset className="glass-panel rounded-lg p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-              <div className="p-2.5 bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)] rounded-xl group-hover:bg-portal-orange/10 group-hover:text-portal-orange transition-colors duration-300">
-                <Server className="w-5 h-5" />
-              </div>
               <div className="text-left">
                 <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">{t('connect.targetTitle')}</h2>
                 <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.targetSubtitle')}</p>
@@ -1131,7 +1122,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
                     <div className="flex items-center">
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
                         {getProfile(targetProfileId)?.provider.toUpperCase()}
                       </span>
                     </div>
@@ -1160,7 +1150,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       aria-checked={targetProvider === opt.id}
                       className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
                         targetProvider === opt.id
-                          ? 'bg-gradient-to-tr from-portal-navy to-portal-navy-light border-portal-navy text-white shadow-xs'
+                          ? 'bg-[var(--color-bg-inverse)] border-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
                           : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
                       }`}
                     >
