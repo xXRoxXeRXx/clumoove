@@ -382,6 +382,8 @@ func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, file
 }
 
 func AddMigrationTotalBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
+	// This SQL-side delta composes safely across concurrent worker updates. It is
+	// used only when an Immich listing omitted an asset's size.
 	_, err := db.ExecContext(ctx, `UPDATE migrations SET total_bytes = total_bytes + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, bytesDelta, id)
 	return err
 }
