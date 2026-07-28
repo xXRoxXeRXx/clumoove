@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, CheckCircleIcon as CheckCircle2, ExclamationCircleIcon as AlertCircle, QuestionMarkCircleIcon as HelpCircle } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, CheckCircleIcon as CheckCircle2, ExclamationCircleIcon as AlertCircle, QuestionMarkCircleIcon as HelpCircle } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
 import type { CloudFile, MigrationConfig } from '../types';
 
@@ -572,23 +572,21 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   return (
     <div className="w-full max-w-5xl mx-auto py-2 space-y-6">
 
-      {/* Wizard navigation */}
-      {onBack && (
-        <div className="border-b border-[var(--color-border-light)] pb-4">
+      {/* Wizard header */}
+      <div className="flex items-center justify-between border-b border-[var(--color-border)]/50 pb-4">
+        {onBack ? (
           <button
             type="button"
             onClick={subStep === 1 ? onBack : () => { setSourceVerified(false); setSubStep(1); }}
-            className="ui-button-secondary inline-flex items-center gap-2 px-4 py-2 font-mono font-bold text-xs hover:bg-[var(--color-bg-tertiary)]"
+            className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
           >
+            <ArrowLeft className="w-4 h-4" />
             <span>{t('common.back')}</span>
           </button>
-        </div>
-      )}
-
-      <div>
-        <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">
+        ) : <span />}
+        <h2 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
           {subStep === 1 ? t('connect.wizardStepSource') : t('connect.wizardStepTarget')}
-        </h1>
+        </h2>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
