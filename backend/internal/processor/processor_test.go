@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"sync"
@@ -98,6 +99,37 @@ func TestImmichOriginalFilenamePath(t *testing.T) {
 				t.Fatalf("immichOriginalFilenamePath(..., %q) = %q, want %q", test.filename, got, test.want)
 			}
 		})
+	}
+}
+
+func TestImmichTargetPath(t *testing.T) {
+	if got, want := immichTargetPath("/destination/Albums/album-id/asset-id", "photo.jpg", "Holiday"), "/destination/Albums/Holiday/photo.jpg"; got != want {
+		t.Fatalf("immichTargetPath() = %q, want %q", got, want)
+	}
+	if got, want := immichTargetPath("/destination/Albums/album-id", "", "Holiday"), "/destination/Albums/Holiday"; got != want {
+		t.Fatalf("immichTargetPath() directory = %q, want %q", got, want)
+	}
+}
+
+func TestCountingReader(t *testing.T) {
+	reader := &countingReader{Reader: bytes.NewBufferString("asset bytes")}
+	if _, err := io.ReadAll(reader); err != nil {
+		t.Fatal(err)
+	}
+	if reader.bytesRead != int64(len("asset bytes")) {
+		t.Fatalf("bytesRead = %d", reader.bytesRead)
+	}
+}
+
+func TestCanSkipBySize(t *testing.T) {
+	if canSkipBySize("immich", 0, 0) {
+		t.Fatal("unknown Immich size must not skip upload")
+	}
+	if !canSkipBySize("immich", 123, 123) {
+		t.Fatal("known matching Immich size should skip")
+	}
+	if !canSkipBySize("nextcloud", 0, 0) {
+		t.Fatal("known empty non-Immich file should retain skip behavior")
 	}
 }
 

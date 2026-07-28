@@ -253,8 +253,18 @@ func (p *ImmichProvider) InspectResource(ctx context.Context, typ, resourcePath 
 	if err := p.checkType(typ); err != nil {
 		return CloudResource{}, err
 	}
-	if resourcePath == "/" || resourcePath == "/All Assets" || resourcePath == "/Albums" || strings.HasPrefix(resourcePath, "/Albums/") && len(strings.Split(strings.Trim(resourcePath, "/"), "/")) == 2 {
+	if resourcePath == "/" || resourcePath == "/All Assets" || resourcePath == "/Albums" {
 		return CloudResource{Path: resourcePath, Name: path.Base(resourcePath), IsDir: true}, nil
+	}
+	if strings.HasPrefix(resourcePath, "/Albums/") && len(strings.Split(strings.Trim(resourcePath, "/"), "/")) == 2 {
+		if err := p.refreshAlbums(ctx); err != nil {
+			return CloudResource{}, err
+		}
+		albumID := path.Base(resourcePath)
+		p.albumsMu.RLock()
+		albumName := p.albums[albumID]
+		p.albumsMu.RUnlock()
+		return CloudResource{Path: resourcePath, Name: albumName, IsDir: true, Metadata: FileMetadata{CustomProps: map[string]string{"immich_album_id": albumID, "immich_album_name": albumName}}}, nil
 	}
 	parent := path.Dir(resourcePath)
 	items, err := p.GetDirectoryListing(ctx, typ, parent)

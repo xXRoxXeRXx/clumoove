@@ -381,6 +381,11 @@ func IncrementMigrationProgress(db *sql.DB, ctx context.Context, id string, file
 	return err
 }
 
+func AddMigrationTotalBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
+	_, err := db.ExecContext(ctx, `UPDATE migrations SET total_bytes = total_bytes + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, bytesDelta, id)
+	return err
+}
+
 func AddLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta int64) error {
 	query := `
 		UPDATE migrations
