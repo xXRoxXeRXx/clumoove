@@ -17,7 +17,7 @@ import {
   ChartBarIcon,
   ClockIcon,
   CloudArrowDownIcon,
-  FolderIcon,
+  CloudArrowUpIcon,
 } from '@heroicons/react/24/outline';
 
 interface SyncDashboardProps {
@@ -418,7 +418,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <FolderIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
+              <CloudArrowUpIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.target')}</h3>
             </div>
             <div className="space-y-2">
