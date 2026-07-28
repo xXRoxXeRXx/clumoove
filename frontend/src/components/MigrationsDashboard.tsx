@@ -8,6 +8,7 @@ import { useToast } from '../contexts/useToast';
 import { StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
+import { ArrowPathIcon, CalendarDaysIcon, PauseIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -472,6 +473,7 @@ export function MigrationsDashboard({
                       {/* Date */}
                       <td className="py-4 px-4 whitespace-nowrap">
                         <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
+                          <CalendarDaysIcon className="size-4 text-[var(--color-text-muted)]" aria-hidden="true" />
                           {createdDate}
                         </div>
                       </td>
@@ -553,21 +555,35 @@ export function MigrationsDashboard({
                       {/* Actions */}
                       <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end items-center gap-2">
+                          {(() => {
+                            const isPaused = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status);
+                            const label = isPaused ? t('dashboard.resume') : t('dashboard.pause');
+                            return (
                           <button
                             onClick={(e) => handleMigrationControl(mig, e)}
                             disabled={controlLoading === mig.id || !['RUNNING', 'INDEXING', 'PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status)}
-                             className="ui-button-secondary px-2 py-1 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
-                            title={['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? t('dashboard.resume') : t('dashboard.pause')}
+                            className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
+                            aria-label={label}
+                            title={label}
                           >
-                            {controlLoading === mig.id ? t('common.loading') : ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? t('dashboard.resume') : t('dashboard.pause')}
+                            {controlLoading === mig.id
+                              ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                              : isPaused
+                                ? <PlayIcon className="size-4" aria-hidden="true" />
+                                : <PauseIcon className="size-4" aria-hidden="true" />}
                           </button>
+                            );
+                          })()}
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
                             disabled={deleteLoading === mig.id || mig.status === 'RUNNING' || mig.status === 'INDEXING'}
-                             className="ui-button-secondary px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
+                            className="ui-button-secondary p-2 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
+                            aria-label={t('migrations.deleteMigration')}
                             title={t('migrations.deleteMigration')}
                           >
-                            {deleteLoading === mig.id ? t('common.loading') : t('migrations.deleteMigration')}
+                            {deleteLoading === mig.id
+                              ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                              : <TrashIcon className="size-4" aria-hidden="true" />}
                           </button>
                         </div>
                       </td>
@@ -738,6 +754,7 @@ function SyncList({
             >
               <td className="py-4 px-4 whitespace-nowrap">
                 <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
+                  <CalendarDaysIcon className="size-4 text-[var(--color-text-muted)]" aria-hidden="true" />
                   {formatDateTime(job.created_at)}
                 </div>
               </td>
@@ -800,21 +817,35 @@ function SyncList({
               </td>
               <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-end items-center gap-2">
+                  {(() => {
+                    const isPaused = job.status === 'PAUSED';
+                    const label = isPaused ? t('sync.resume') : t('sync.pause');
+                    return (
                   <button
                     onClick={(e) => handleSyncControl(job, e)}
                     disabled={controlLoading === job.id || !['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED'].includes(job.status)}
-                      className="ui-button-secondary px-2 py-1 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
-                    title={job.status === 'PAUSED' ? t('sync.resume') : t('sync.pause')}
+                    className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
+                    aria-label={label}
+                    title={label}
                   >
-                    {controlLoading === job.id ? t('common.loading') : job.status === 'PAUSED' ? t('sync.resume') : t('sync.pause')}
+                    {controlLoading === job.id
+                      ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                      : isPaused
+                        ? <PlayIcon className="size-4" aria-hidden="true" />
+                        : <PauseIcon className="size-4" aria-hidden="true" />}
                   </button>
+                    );
+                  })()}
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
                     disabled={deleteLoading === job.id}
-                      className="ui-button-secondary px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
+                    className="ui-button-secondary p-2 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
+                    aria-label={t('sync.deleteJob')}
                     title={t('sync.deleteJob')}
                   >
-                    {deleteLoading === job.id ? t('common.loading') : t('sync.deleteJob')}
+                    {deleteLoading === job.id
+                      ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                      : <TrashIcon className="size-4" aria-hidden="true" />}
                   </button>
                 </div>
               </td>
