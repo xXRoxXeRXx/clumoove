@@ -96,32 +96,6 @@ func immichTargetPath(targetPath, filename, albumName string) string {
 	return targetPath
 }
 
-func canSkipBySize(sourceProvider string, sourceSize, targetSize int64, targetExists bool) bool {
-	// Immich may omit fileSizeInByte. A zero then means unknown rather than an
-	// empty file, so it cannot prove an existing target is identical.
-	return targetExists && !(sourceProvider == "immich" && sourceSize == 0) && sourceSize == targetSize
-}
-
-func uploadSizeForDownload(sourceProvider string, indexedSize int64, stream io.ReadCloser) int64 {
-	if sourceProvider == "immich" && indexedSize == 0 {
-		if sized, ok := stream.(storage.SizedReadCloser); ok && sized.ContentLength() > 0 {
-			return sized.ContentLength()
-		}
-	}
-	return indexedSize
-}
-
-type countingReadCloser struct {
-	io.ReadCloser
-	bytesRead int64
-}
-
-func (r *countingReadCloser) Read(p []byte) (int, error) {
-	n, err := r.ReadCloser.Read(p)
-	r.bytesRead += int64(n)
-	return n, err
-}
-
 // newProvider creates a provider scoped to a single operation. Providers retain
 // their credentials internally, so retaining them in a shared cache would keep
 // decrypted credentials alive beyond the task that needs them.
@@ -687,7 +661,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				case "SKIP":
 					if task.Attempts > 0 {
 						deleteAfterUpload = true
-					} else if canSkipBySize(mig.SourceProvider, task.FileSize, existingSize, exists) {
+					} else if exists && task.FileSize == existingSize {
 						task.Status = "SKIPPED"
 						task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 						_ = db.UpdateTaskStatus(p.db, task)
@@ -747,12 +721,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if err != nil {
 		return fmt.Errorf("failed to download from source: %w", err)
 	}
-	uploadSize := uploadSizeForDownload(mig.SourceProvider, task.FileSize, downloadStream)
-
 	// Wrap download stream with throttling (before TeeReader to limit actual network I/O)
-	countedDownloadStream := &countingReadCloser{ReadCloser: downloadStream}
-	defer countedDownloadStream.Close()
-	throttledDownloadStream := throttle.NewThrottledReader(countedDownloadStream, migrationThrottler, downloadCtx)
+	defer downloadStream.Close()
+	throttledDownloadStream := throttle.NewThrottledReader(downloadStream, migrationThrottler, downloadCtx)
 
 	// Handle Hash Algorithm Selection
 	var sourceHasher hash.Hash
@@ -920,10 +891,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	defer uploadCancel()
 
 	// If size > chunkedUploadThreshold (50 MiB), do chunked upload
-	if uploadSize > chunkedUploadThreshold {
+	if task.FileSize > chunkedUploadThreshold {
 		// Wrap hashingReader with upload throttling
 		throttledHashingReader := throttle.NewUploadThrottledReader(hashingReader, migrationThrottler, uploadCtx)
-		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, uploadSize, progressChan)
+		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, task.FileSize, progressChan)
 	} else {
 		// Simple upload
 		// Wrap with a progress reporting reader
@@ -933,7 +904,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 		// Wrap progressReader with upload throttling
 		throttledProgressReader := throttle.NewUploadThrottledReader(progressReader, migrationThrottler, uploadCtx)
-		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, uploadSize)
+		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, task.FileSize)
 	}
 
 	if err != nil {
@@ -956,15 +927,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return fmt.Errorf("upload to target failed: %w", err)
 	}
 
-	if mig.SourceProvider == "immich" && task.FileSize == 0 && countedDownloadStream.bytesRead > 0 {
-		task.FileSize = countedDownloadStream.bytesRead
-		if err := db.UpdateTaskFileSize(p.db, task.ID, task.FileSize); err != nil {
-			return fmt.Errorf("failed to record streamed Immich file size: %w", err)
-		}
-		if err := db.AddMigrationTotalBytes(p.db, ctx, mig.ID, task.FileSize); err != nil {
-			return fmt.Errorf("failed to update migration total size: %w", err)
-		}
-	}
 	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
 	// If the upload succeeded but rename/metadata fails, the .tmp file must be cleaned up so it
 	// does not leak on the target and is not mistaken for a partial upload on the next retry.
@@ -979,16 +941,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		if renameErr := targetClient.RenameFile(ctx, task.ResourceType, uploadPath, targetPath); renameErr != nil {
 			_ = targetClient.DeleteFile(ctx, task.ResourceType, uploadPath)
 			return fmt.Errorf("failed to rename temp file to target path: %w", renameErr)
-		}
-	}
-
-	if mig.SourceProvider == "immich" && task.FileSize > 0 {
-		exists, targetSize, sizeErr := targetClient.FileExists(ctx, task.ResourceType, targetPath)
-		if sizeErr != nil {
-			return fmt.Errorf("failed to validate uploaded Immich file size: %w", sizeErr)
-		}
-		if !exists || targetSize != task.FileSize {
-			return fmt.Errorf("uploaded Immich file size mismatch")
 		}
 	}
 

@@ -28,13 +28,6 @@ type ImmichProvider struct {
 	albumsLoaded bool
 }
 
-type immichDownloadStream struct {
-	io.ReadCloser
-	contentLength int64
-}
-
-func (s *immichDownloadStream) ContentLength() int64 { return s.contentLength }
-
 func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("immich API key required: %w", ErrAuth)
@@ -132,7 +125,7 @@ func resourceForAsset(a immichAsset, virtualPath, albumID, albumName string) Clo
 func (p *ImmichProvider) search(ctx context.Context, albumID string) ([]immichAsset, error) {
 	var all []immichAsset
 	for page := 1; page <= 10000; page++ {
-		query := map[string]any{"page": page, "size": 500, "withArchived": false, "withDeleted": false}
+		query := map[string]any{"page": page, "size": 500, "withArchived": false, "withDeleted": false, "withExif": true}
 		if albumID != "" {
 			query["albumId"] = albumID
 		}
@@ -300,7 +293,7 @@ func (p *ImmichProvider) StreamDownload(ctx context.Context, typ, filePath strin
 		r.Body.Close()
 		return nil, immichStatus(r, "download")
 	}
-	return &immichDownloadStream{ReadCloser: r.Body, contentLength: r.ContentLength}, nil
+	return r.Body, nil
 }
 func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string, stream io.Reader, size int64) error {
 	if err := p.checkType(typ); err != nil {

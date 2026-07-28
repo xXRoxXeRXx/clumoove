@@ -1,7 +1,6 @@
 package processor
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"sync"
@@ -17,13 +16,6 @@ import (
 type fakeProvider struct {
 	atomicRename bool
 }
-
-type sizedTestStream struct {
-	io.ReadCloser
-	length int64
-}
-
-func (s sizedTestStream) ContentLength() int64 { return s.length }
 
 func (f *fakeProvider) Close() error { return nil }
 func (f *fakeProvider) Connect(ctx context.Context) (bool, error) {
@@ -118,41 +110,6 @@ func TestImmichTargetPath(t *testing.T) {
 	}
 	if got, want := immichTargetPath("/destination/unrelated/asset-id", "photo.jpg", "Holiday"), "/destination/unrelated/photo.jpg"; got != want {
 		t.Fatalf("immichTargetPath() unexpected layout = %q, want %q", got, want)
-	}
-}
-
-func TestCountingReader(t *testing.T) {
-	reader := &countingReadCloser{ReadCloser: io.NopCloser(bytes.NewBufferString("asset bytes"))}
-	if _, err := io.ReadAll(reader); err != nil {
-		t.Fatal(err)
-	}
-	if reader.bytesRead != int64(len("asset bytes")) {
-		t.Fatalf("bytesRead = %d", reader.bytesRead)
-	}
-}
-
-func TestCanSkipBySize(t *testing.T) {
-	if canSkipBySize("immich", 0, 0, true) {
-		t.Fatal("unknown Immich size must not skip upload")
-	}
-	if !canSkipBySize("immich", 123, 123, true) {
-		t.Fatal("known matching Immich size should skip")
-	}
-	if !canSkipBySize("nextcloud", 0, 0, true) {
-		t.Fatal("known empty non-Immich file should retain skip behavior")
-	}
-	if canSkipBySize("nextcloud", 0, 0, false) {
-		t.Fatal("non-existent target must not skip upload")
-	}
-}
-
-func TestUploadSizeForDownload(t *testing.T) {
-	stream := sizedTestStream{ReadCloser: io.NopCloser(bytes.NewReader(nil)), length: 123}
-	if got := uploadSizeForDownload("immich", 0, stream); got != 123 {
-		t.Fatalf("Immich upload size = %d, want 123", got)
-	}
-	if got := uploadSizeForDownload("nextcloud", 0, stream); got != 0 {
-		t.Fatalf("non-Immich upload size = %d, want 0", got)
 	}
 }
 

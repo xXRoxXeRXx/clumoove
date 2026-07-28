@@ -106,13 +106,6 @@ type StorageProvider interface {
 	SupportsAtomicRename() bool
 }
 
-// SizedReadCloser exposes a trusted HTTP response length when a provider has
-// one. Callers must still count streamed bytes for final validation.
-type SizedReadCloser interface {
-	io.ReadCloser
-	ContentLength() int64
-}
-
 // ProgressReader wraps an io.Reader and emits the number of bytes read
 // to ProgressChan. It is shared across storage providers for upload progress tracking.
 type ProgressReader struct {

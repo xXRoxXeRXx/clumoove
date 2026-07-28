@@ -38,7 +38,7 @@ func TestImmichUnsupportedOperations(t *testing.T) {
 	}
 }
 
-func TestImmichStreamDownloadExposesResponseLength(t *testing.T) {
+func TestImmichStreamDownloadReadsOriginal(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/assets/asset-id/original" || r.URL.Query().Get("edited") != "false" {
 			t.Errorf("unexpected request %s", r.URL.String())
@@ -46,20 +46,16 @@ func TestImmichStreamDownloadExposesResponseLength(t *testing.T) {
 		_, _ = w.Write([]byte("asset bytes"))
 	}))
 	defer server.Close()
+
 	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
 	stream, err := p.StreamDownload(context.Background(), "files", "/All Assets/asset-id")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	sized, ok := stream.(SizedReadCloser)
-	if !ok {
-		t.Fatal("download stream does not expose content length")
-	}
-	if sized.ContentLength() != int64(len("asset bytes")) {
-		t.Fatalf("content length = %d", sized.ContentLength())
-	}
-	if body, err := io.ReadAll(stream); err != nil || string(body) != "asset bytes" {
+
+	body, err := io.ReadAll(stream)
+	if err != nil || string(body) != "asset bytes" {
 		t.Fatalf("body = %q, err = %v", body, err)
 	}
 }
@@ -71,6 +67,15 @@ func TestImmichJSONRequestsAndAlbumCache(t *testing.T) {
 		case "/api/search/metadata":
 			if got := r.Header.Get("Content-Type"); got != "application/json" {
 				t.Errorf("search Content-Type = %q", got)
+			}
+			var request struct {
+				WithExif bool `json:"withExif"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if !request.WithExif {
+				t.Error("search request did not include withExif: true")
 			}
 			_, _ = w.Write([]byte(`{"assets":{"items":[]}}`))
 		case "/api/albums":
@@ -143,7 +148,7 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 	}
 }
 
-func TestImmichAllAssetsSearchOmitsEmptyAlbumID(t *testing.T) {
+func TestImmichAllAssetsSearchPayloadAndSizeMapping(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -155,7 +160,10 @@ func TestImmichAllAssetsSearchOmitsEmptyAlbumID(t *testing.T) {
 		if request["withArchived"] != false || request["withDeleted"] != false {
 			t.Errorf("archive filters = withArchived:%v withDeleted:%v, want false", request["withArchived"], request["withDeleted"])
 		}
-		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-id","originalFileName":"photo.jpg"}]}}`))
+		if request["withExif"] != true {
+			t.Errorf("withExif = %v, want true", request["withExif"])
+		}
+		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-id","originalFileName":"photo.jpg","exifInfo":{"fileSizeInByte":12345}}]}}`))
 	}))
 	defer server.Close()
 	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
@@ -163,7 +171,7 @@ func TestImmichAllAssetsSearchOmitsEmptyAlbumID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Path != "/All Assets/asset-id" || items[0].Name != "photo.jpg" {
+	if len(items) != 1 || items[0].Path != "/All Assets/asset-id" || items[0].Name != "photo.jpg" || items[0].Size != 12345 {
 		t.Errorf("items = %#v", items)
 	}
 }
