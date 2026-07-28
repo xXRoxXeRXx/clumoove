@@ -24,11 +24,12 @@ interface ErrorOverviewProps {
   endpoint: string;
   token: string;
   refreshKey: number | string | null | undefined;
+  onDownloadReport?: () => void;
 }
 
 const PAGE_SIZE = 20;
 
-export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProps) {
+export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }: ErrorOverviewProps) {
   const [items, setItems] = useState<ErrorListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -95,9 +96,20 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
             {t('common.errorOverview')}
           </h3>
         </div>
-        <span className="ui-card border-[var(--color-error-border)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
-          {total}
-        </span>
+        <div className="flex items-center gap-2">
+          {onDownloadReport && (
+            <button
+              type="button"
+              onClick={onDownloadReport}
+              className="ui-button-secondary border-[var(--color-error-border)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] hover:bg-[var(--color-bg-tertiary)]"
+            >
+              {t('sync.downloadReport')}
+            </button>
+          )}
+          <span className="ui-card border-[var(--color-error-border)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
+            {total}
+          </span>
+        </div>
       </div>
 
         <div className="ui-card m-4 overflow-x-auto border-[var(--color-error-border)]">

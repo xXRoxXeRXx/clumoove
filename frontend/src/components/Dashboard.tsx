@@ -6,12 +6,13 @@ import { useConfirm } from '../contexts/useConfirm';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
-import { StatusBadge } from './StatusBadge';
+import { Badge, StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 import { apiFetch } from '../utils/apiClient';
 import { ErrorOverview } from './ErrorOverview';
 import { connectSseLoop } from '../utils/sse';
 import {
+  ArrowLeftIcon,
   ArrowsRightLeftIcon,
   ChartBarIcon,
   CloudArrowDownIcon,
@@ -112,8 +113,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const [threads, setThreads] = useState<number>(8);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
 
-  const handleDownloadReport = async (e: React.MouseEvent) => {
-    e.preventDefault();
+  const handleDownloadReport = async (e?: React.MouseEvent) => {
+    e?.preventDefault();
     try {
       const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/report`, {
         headers: {
@@ -371,24 +372,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       <div className="flex items-center justify-between">
         <button
           onClick={onReset}
-          className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-mono font-bold hover:bg-[var(--color-bg-tertiary)]"
+          className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
         >
+          <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
           {t('common.back')}
         </button>
       </div>
 
       <div className="ui-card p-6 space-y-6">
-        {/* Top Badges Row (Above Title & Action Buttons) */}
-        <div className="flex items-center justify-end gap-2.5 pb-2">
-          {/* Status Info Badge */}
-          <StatusBadge status={data.status} />
-
-          {/* Direction Info Badge (rechtsbündig) */}
-          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-info-text)] px-3 py-1 bg-[var(--color-info-bg)] border border-[var(--color-info-border)]">
-            <span>{t('sync.oneWay')}</span>
-          </span>
-        </div>
-
         {/* Title & Action Controls */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
           <div className="space-y-1">
@@ -401,15 +392,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           <div className="flex items-center gap-2.5 w-full md:w-auto justify-start md:justify-end flex-wrap">
-            {data.failed_files > 0 && (
-              <button
-                onClick={handleDownloadReport}
-                className="ui-button-secondary flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"
-              >
-                {t('sync.downloadReport')}
-              </button>
-            )}
-
             {data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS' ? (
               <button
                 onClick={() => handleMigrationControl('resume')}
@@ -439,6 +421,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </button>
             )}
           </div>
+        </div>
+
+        <div className="flex items-center gap-2.5">
+          <StatusBadge status={data.status} />
+          <Badge variant="muted" label={t('sync.oneWay')} />
         </div>
 
         {/* Live Transfer Progress (ONLY rendered when RUNNING or INDEXING) */}
@@ -689,6 +676,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           endpoint={`${apiUrl}/api/migration/${migrationId}/errors`}
           token={token}
           refreshKey={`${data.failed_files}-${data.status}`}
+          onDownloadReport={data.failed_files > 0 ? handleDownloadReport : undefined}
         />
 
         {typeof data.error_message === 'string' && data.error_message.trim() !== '' && (
