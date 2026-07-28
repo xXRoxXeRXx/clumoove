@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { EyeIcon as Eye, EyeSlashIcon as EyeOff } from '@heroicons/react/24/outline';
 import type { User as UserType } from '../types';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
@@ -534,17 +535,14 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('auth.name')}
               </label>
-              <div className="relative group">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
-                  <span aria-hidden="true">A</span>
-                </span>
+              <div>
                 <input
                   type="text"
                   required
                   placeholder={t('auth.namePlaceholder')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className={`${authInputClass} pl-10 pr-4 font-sans`}
+                  className={`${authInputClass} font-sans`}
                 />
               </div>
             </div>
@@ -736,10 +734,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
               {t('auth.email')}
             </label>
-            <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
-                <span aria-hidden="true">@</span>
-              </span>
+            <div>
               <input
                 type="email"
                 required
@@ -747,7 +742,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder={t('auth.emailPlaceholder')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className={`${authInputClass} pl-10 pr-4 font-sans`}
+                className={`${authInputClass} font-sans`}
               />
             </div>
           </div>
@@ -758,9 +753,6 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 {t('auth.password')}
               </label>
             <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
-                <span aria-hidden="true">•</span>
-              </span>
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
@@ -768,7 +760,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder={t('auth.passwordPlaceholder')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className={`${authInputClass} pl-10 pr-10 font-mono`}
+                className={`${authInputClass} pr-10 font-mono`}
               />
                 <button
                   type="button"
@@ -776,7 +768,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                   className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
                 >
-                  <span className="text-[10px]">{showPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
             </div>
           </div>
