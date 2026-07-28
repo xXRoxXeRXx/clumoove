@@ -1,10 +1,3 @@
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Loader2,
-  Pause,
-  XCircle,
-} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 type BadgeVariant = 'success' | 'error' | 'warning' | 'info' | 'muted' | 'cyan';
@@ -21,13 +14,11 @@ const variantCls: Record<BadgeVariant, string> = {
 function Badge({
   variant,
   pulse,
-  icon,
   label,
   size = 'md',
 }: {
   variant: BadgeVariant;
   pulse?: boolean;
-  icon: React.ReactNode;
   label: string;
   size?: 'sm' | 'md';
 }) {
@@ -36,7 +27,6 @@ function Badge({
     <span
       className={`inline-flex items-center rounded-full font-bold border ${variantCls[variant]} ${sizeCls} ${pulse ? 'animate-pulse' : ''}`}
     >
-      {icon}
       {label}
     </span>
   );
@@ -50,8 +40,6 @@ export function StatusBadge({
   size?: 'sm' | 'md';
 }) {
   const { t } = useTranslation();
-  const iconCls = size === 'sm' ? 'w-3.5 h-3.5' : 'w-3.5 h-3.5';
-  const iconMd = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
 
   switch (status) {
     case 'COMPLETED':
@@ -59,7 +47,6 @@ export function StatusBadge({
         <Badge
           size={size}
           variant="success"
-          icon={<CheckCircle2 className={iconMd} />}
           label={t('status.completed')}
         />
       );
@@ -68,7 +55,6 @@ export function StatusBadge({
         <Badge
           size={size}
           variant="error"
-          icon={<XCircle className={iconMd} />}
           label={t('status.failed')}
         />
       );
@@ -77,7 +63,6 @@ export function StatusBadge({
         <Badge
           size={size}
           variant="warning"
-          icon={<AlertTriangle className={iconMd} />}
           label={t('status.completedWithErrors')}
         />
       );
@@ -87,7 +72,6 @@ export function StatusBadge({
           size={size}
           variant="cyan"
           pulse
-          icon={<Loader2 className={`${iconCls} animate-spin`} />}
           label={t('status.verifying')}
         />
       );
@@ -96,7 +80,6 @@ export function StatusBadge({
         <Badge
           size={size}
           variant="muted"
-          icon={<Pause className={iconMd} />}
           label={t('status.paused')}
         />
       );
@@ -106,7 +89,6 @@ export function StatusBadge({
           size={size}
           variant="warning"
           pulse
-          icon={<Pause className={iconMd} />}
           label={t('status.paused')}
         />
       );
@@ -115,7 +97,6 @@ export function StatusBadge({
         <Badge
           size={size}
           variant="error"
-          icon={<XCircle className={iconMd} />}
           label={t('status.cancelled')}
         />
       );
@@ -125,7 +106,6 @@ export function StatusBadge({
           size={size}
           variant="info"
           pulse
-          icon={<Loader2 className={`${iconCls} animate-spin`} />}
           label={t('status.transfer')}
         />
       );
@@ -134,7 +114,6 @@ export function StatusBadge({
         <Badge
           size={size}
           variant="warning"
-          icon={<Loader2 className={`${iconCls} animate-spin`} />}
           label={t('status.indexing')}
         />
       );
@@ -143,14 +122,13 @@ export function StatusBadge({
         <Badge
           size={size}
           variant="success"
-          icon={<CheckCircle2 className={iconMd} />}
           label={t('sync.statusIdle')}
         />
       );
     case 'PENDING':
     case 'SCHEDULED':
       return (
-        <Badge size={size} variant="muted" icon={null} label={status} />
+        <Badge size={size} variant="muted" label={status} />
       );
     default:
       return (
@@ -158,11 +136,6 @@ export function StatusBadge({
           size={size}
           variant="muted"
           pulse={status === 'RUNNING' || status === 'INDEXING'}
-          icon={
-            status === 'RUNNING' || status === 'INDEXING' ? (
-              <Loader2 className={`${iconCls} animate-spin`} />
-            ) : null
-          }
           label={status}
         />
       );
