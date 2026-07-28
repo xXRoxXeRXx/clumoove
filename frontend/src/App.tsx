@@ -10,7 +10,6 @@ import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { AdminPanel } from './components/AdminPanel';
-import { CloudSync, LogOut, User as UserIcon, Settings as SettingsIcon, Shield } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConfirmationProvider } from './contexts/ConfirmationContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -436,23 +435,10 @@ function App() {
 
   if (isValidating) {
     return (
-      <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col items-center justify-center font-sans selection:bg-portal-orange selection:text-white">
-        <div className="flex flex-col items-center justify-center gap-6 p-8 glass-panel rounded-2xl shadow-portal border border-[var(--color-glass-border)] max-w-sm w-full mx-4 text-center animate-fade-in">
-          <div className="relative">
-            <div className="absolute inset-0 bg-portal-orange/20 blur-xl rounded-full animate-pulse-glow" />
-            <div className="relative p-4 bg-gradient-to-tr from-portal-navy to-portal-navy-light rounded-2xl text-white shadow-md animate-bounce">
-              <CloudSync className="w-8 h-8 stroke-[2.5]" />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <h3 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)]">Clumoove Portal</h3>
-            <div className="flex items-center justify-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.3s]" />
-              <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce [animation-delay:-0.15s]" />
-              <div className="w-1.5 h-1.5 rounded-full bg-portal-orange animate-bounce" />
-            </div>
-            <p className="text-[10px] font-mono tracking-wider text-[var(--color-text-muted)] uppercase mt-2">{t('common.initializing')}</p>
-          </div>
+      <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex items-center justify-center px-4">
+        <div className="w-full max-w-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 text-center">
+          <h1 className="text-lg font-semibold">Clumoove</h1>
+          <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('common.initializing')}</p>
         </div>
       </div>
     );
@@ -461,23 +447,18 @@ function App() {
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans selection:bg-portal-orange selection:text-white relative">
       
-      {/* Floating Glassmorphism Header */}
-      <header className="sticky top-0 z-50 glass-panel border-b border-[var(--color-border)] backdrop-blur-lg shadow-sm transition-all duration-300">
-        <div className="max-w-6xl mx-auto px-6 h-18 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <header className="sticky top-0 z-50 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+          <div>
             <button
               type="button"
               onClick={step !== 'login' ? goToOverview : undefined}
               disabled={step === 'login'}
               aria-label="Clumoove – go to overview"
-              className="group w-10 h-10 flex items-center justify-center bg-gradient-to-tr from-portal-orange to-orange-500 rounded-xl text-white shadow-sm hover:shadow-md transition-all duration-300 cursor-pointer hover:-translate-y-0.5 disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:shadow-sm"
+              className="text-lg font-semibold tracking-tight text-[var(--color-text-primary)] disabled:cursor-default"
             >
-              <CloudSync className="w-5 h-5 stroke-[2.5] group-hover:rotate-12 transition-transform duration-300" />
-            </button>
-            
-            <span className="font-display font-extrabold text-xl tracking-tight leading-none text-[var(--color-portal-navy-themed)] select-none">
               Clumoove
-            </span>
+            </button>
           </div>
 
           {/* User Section in Header */}
@@ -488,9 +469,9 @@ function App() {
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 aria-haspopup="menu"
                 aria-expanded={showUserMenu}
-                className="flex items-center gap-2.5 cursor-pointer select-none transition-colors bg-transparent border-0 p-0"
+                className="flex items-center gap-2 cursor-pointer bg-transparent p-0 text-sm"
               >
-                <span className="font-bold text-[var(--color-text-primary)] leading-tight">{user.display_name}</span>
+                <span className="font-medium text-[var(--color-text-primary)]">{user.display_name}</span>
                 {user.avatar ? (
                   <img 
                     src={user.avatar} 
@@ -498,16 +479,16 @@ function App() {
                     alt={user.display_name}
                   />
                 ) : (
-                  <div className="w-7 h-7 bg-portal-navy text-white rounded-full flex items-center justify-center">
-                    <UserIcon className="w-4 h-4" />
-                  </div>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-200 text-xs font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100" aria-hidden="true">
+                    {user.display_name.slice(0, 1).toUpperCase()}
+                  </span>
                 )}
               </button>
 
               {showUserMenu && (
                 <div
                   role="menu"
-                  className="absolute right-0 top-full mt-2 w-48 bg-[var(--color-bg-elevated)] backdrop-blur-md border border-[var(--color-border)] rounded-2xl shadow-xl py-1.5 z-50 animate-fade-in"
+                  className="absolute right-0 top-full z-50 mt-2 w-48 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1"
                 >
                   {user?.role === 'ADMIN' && (
                     <button
@@ -517,9 +498,8 @@ function App() {
                         navigate('admin');
                         setShowUserMenu(false);
                       }}
-                      className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
+                      className="w-full px-3 py-2 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
                     >
-                      <Shield className="w-4 h-4 text-[var(--color-text-muted)]" />
                       {t('nav.admin')}
                     </button>
                   )}
@@ -530,9 +510,8 @@ function App() {
                       navigate('settings');
                       setShowUserMenu(false);
                     }}
-                    className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer text-left font-sans"
+                    className="w-full px-3 py-2 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
                   >
-                    <SettingsIcon className="w-4 h-4 text-[var(--color-text-muted)]" />
                     {t('nav.settings')}
                   </button>
                   <button
@@ -542,9 +521,8 @@ function App() {
                       handleLogout();
                       setShowUserMenu(false);
                     }}
-                    className="w-full flex items-center gap-2 px-3.5 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50/50 transition-colors cursor-pointer text-left font-sans"
+                    className="w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
                   >
-                    <LogOut className="w-4 h-4 text-rose-450" />
                     {t('nav.logout')}
                   </button>
                 </div>
@@ -554,8 +532,7 @@ function App() {
         </div>
       </header>
 
-      {/* Main Structural Body */}
-      <main className="flex-grow flex flex-col justify-center px-6 py-8 max-w-5xl w-full mx-auto relative z-10 animate-slide-up">
+      <main className="mx-auto flex w-full max-w-5xl flex-grow flex-col justify-center px-6 py-8">
         <div className="w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />
@@ -657,8 +634,8 @@ function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-[var(--color-border)] py-4 mt-auto bg-[var(--color-glass-bg)] backdrop-blur-md relative z-40">
-        <div className="max-w-6xl mx-auto px-6 flex justify-end items-center">
+      <footer className="mt-auto border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] py-4">
+        <div className="mx-auto flex max-w-6xl items-center justify-end px-6">
           <LanguageSwitcher authenticated={Boolean(user && token)} />
         </div>
       </footer>

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CloudSync, Lock, Mail, User, Eye, EyeOff } from 'lucide-react';
 import type { User as UserType } from '../types';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
@@ -212,8 +211,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
 
           <div className="flex flex-col items-center mb-8">
-            <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
-              <Lock className="w-6 h-6 stroke-[2.5]" />
+            <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
+              <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
             <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
               {t('auth.mustChangePassword')}
@@ -291,8 +290,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
 
           <div className="flex flex-col items-center mb-8">
-            <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
-              <Lock className="w-6 h-6 stroke-[2.5]" />
+            <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
+              <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
             <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
               {t('auth.totpTitle')}
@@ -378,8 +377,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
 
           <div className="flex flex-col items-center mb-8">
-            <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
-              <CloudSync className="w-6 h-6 stroke-[2.5]" />
+            <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
+              <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
             <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
               {t('auth.forgotTitle')}
@@ -404,7 +403,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   </label>
                   <div className="relative group">
                     <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                      <Mail className="w-4 h-4" />
+                      <span aria-hidden="true">@</span>
                     </span>
                     <input
                       type="email"
@@ -519,8 +518,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
         <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
           <div className="flex flex-col items-center mb-8">
-            <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
-              <CloudSync className="w-6 h-6 stroke-[2.5]" />
+            <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
+              <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
             <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight text-center">
               {t('auth.setupAdminTitle')}
@@ -543,7 +542,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </label>
               <div className="relative group">
                 <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                  <User className="w-4 h-4" />
+                  <span aria-hidden="true">A</span>
                 </span>
                 <input
                   type="text"
@@ -562,7 +561,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </label>
               <div className="relative group">
                 <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                  <Mail className="w-4 h-4" />
+                  <span aria-hidden="true">@</span>
                 </span>
                 <input
                   type="email"
@@ -582,7 +581,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </label>
               <div className="relative group">
                 <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                  <Lock className="w-4 h-4" />
+                  <span aria-hidden="true">•</span>
                 </span>
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -598,7 +597,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-portal-navy dark:hover:text-white transition-colors"
                   aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  <span className="text-[10px]">{showPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
                 </button>
               </div>
             </div>
@@ -697,8 +696,8 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
-          <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
-            <CloudSync className="w-6 h-6 stroke-[2.5]" />
+          <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
+            <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
           </div>
           <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
             {isLogin ? t('auth.welcomeBack') : t('auth.createAccount')}
@@ -729,7 +728,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </label>
               <div className="relative group">
                 <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                  <User className="w-4 h-4" />
+                  <span aria-hidden="true">A</span>
                 </span>
                 <input
                   type="text"
@@ -750,7 +749,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             </label>
             <div className="relative group">
               <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                <Mail className="w-4 h-4" />
+                <span aria-hidden="true">@</span>
               </span>
               <input
                 type="email"
@@ -771,7 +770,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </label>
             <div className="relative group">
               <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                <Lock className="w-4 h-4" />
+                <span aria-hidden="true">•</span>
               </span>
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -788,7 +787,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                   className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  <span className="text-[10px]">{showPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
                 </button>
             </div>
           </div>
