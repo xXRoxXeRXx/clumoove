@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plug, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
 import { apiFetch } from '../utils/apiClient';
@@ -130,7 +129,6 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     <div className="space-y-6">
       <div className="glass-panel rounded-lg p-6 space-y-5">
         <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-          <Plug className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
           <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.connections.title')}</h3>
         </div>
         <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
@@ -143,7 +141,6 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
           onClick={() => { setEditing(null); setCreating(true); }}
           className={`w-full inline-flex items-center justify-center gap-2 ${primaryBtnCls}`}
         >
-          <Plus className="w-4 h-4" />
           {t('settings.connections.newProfile')}
         </button>
       </div>
@@ -189,13 +186,13 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
                     onClick={() => { setCreating(false); setEditing(p); }}
                     className={secondaryBtnCls}
                   >
-                    <span className="flex items-center gap-1.5"><Pencil className="w-3.5 h-3.5" />{t('settings.connections.edit')}</span>
+                    {t('settings.connections.edit')}
                   </button>
                   <button
                     onClick={() => handleTest(p)}
                     className={secondaryBtnCls}
                   >
-                    <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5" />{t('settings.connections.test')}</span>
+                    {t('settings.connections.test')}
                   </button>
                   {isOAuth(p.provider) && (
                     <ReauthorizeButton
@@ -210,7 +207,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
                     onClick={() => handleDelete(p)}
                     className="px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-error-border)] text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]/70 transition-all cursor-pointer"
                   >
-                    <span className="flex items-center gap-1.5"><Trash2 className="w-3.5 h-3.5" />{t('settings.connections.delete')}</span>
+                    {t('settings.connections.delete')}
                   </button>
                 </div>
               </div>
@@ -304,7 +301,7 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
 
   return (
     <button onClick={openReauth} disabled={busy} className={secondaryBtnCls}>
-      <span className="flex items-center gap-1.5"><RefreshCw className="w-3.5 h-3.5" />{t('settings.connections.reauthorize')}</span>
+      {t('settings.connections.reauthorize')}
     </button>
   );
 }
@@ -429,7 +426,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
           </h3>
           <button ref={closeRef} type="button" onClick={onClose} aria-label={t('common.cancel')} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer">
-            <X className="w-4 h-4" />
+            {t('common.cancel')}
           </button>
         </div>
 
@@ -454,7 +451,6 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
           {provider === 'local' ? (
             <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
             </div>
           ) : isOAuth ? (
@@ -471,7 +467,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
               ) : (
                 <button type="button" onClick={openOAuthPopup}
                   className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2">
-                  <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : 'Dropbox' })}
+                  {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : 'Dropbox' })}
                 </button>
               )}
               {editing && !oauthRefreshToken && (
