@@ -1,6 +1,5 @@
 import { useState, useEffect, useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ZoomIn, ZoomOut, Check, X } from 'lucide-react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface AvatarCropperProps {
@@ -178,13 +177,13 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--color-bg-inverse)]/60 backdrop-blur-sm p-4 animate-fade-in">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="glass-panel max-w-sm w-full rounded-3xl p-6 border border-[var(--color-glass-border)]/40 shadow-2xl flex flex-col items-center bg-[var(--color-bg-secondary)]/95">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="max-w-sm w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 flex flex-col items-center">
         <h3 id={titleId} className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">{t('settings.profilePicture')}</h3>
         <p id={descriptionId} className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">{t('settings.avatarCropperTitle')}</p>
 
         {/* Canvas Area */}
-        <div className="relative border border-[var(--color-border)] rounded-2xl overflow-hidden bg-[var(--color-bg-inverse)] shadow-inner group">
+        <div className="relative overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-inverse)] group">
           <canvas
             ref={canvasRef}
             width={300}
@@ -206,7 +205,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
 
         {/* Zoom Slider Control */}
         <div className="w-full flex items-center gap-3 mt-5 px-1">
-          <ZoomOut className="w-4 h-4 text-[var(--color-text-muted)]" />
+          <span className="text-xs text-[var(--color-text-muted)]" aria-hidden="true">−</span>
           <input
             aria-label={t('settings.avatarCropperTitle')}
             type="range"
@@ -217,7 +216,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             onChange={(e) => setZoom(parseFloat(e.target.value))}
             className="flex-grow accent-portal-orange h-1 bg-[var(--color-border)] rounded-lg appearance-none cursor-pointer"
           />
-          <ZoomIn className="w-4 h-4 text-[var(--color-text-muted)]" />
+          <span className="text-xs text-[var(--color-text-muted)]" aria-hidden="true">+</span>
         </div>
 
         {/* Actions Button Grid */}
@@ -226,17 +225,15 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="flex items-center justify-center gap-1.5 py-2.5 border border-[var(--color-border)] hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer shadow-xs"
+            className="rounded-md border border-[var(--color-border)] py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
           >
-            <X className="w-4 h-4" />
             {t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="flex items-center justify-center gap-1.5 py-2.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:shadow-md text-[var(--color-text-inverse)] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer"
+            className="rounded-md bg-[var(--color-bg-inverse)] py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90"
           >
-            <Check className="w-4 h-4" />
             {t('common.confirm')}
           </button>
         </div>
