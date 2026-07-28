@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Globe, Check, ChevronUp } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 
 const LANGUAGES: { code: 'de' | 'en'; label: string }[] = [
@@ -48,15 +47,14 @@ export function LanguageSwitcher({ authenticated = false }: { authenticated?: bo
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label={t('language.select')}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all text-xs font-mono font-bold uppercase tracking-wider cursor-pointer shadow-xs"
+        className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
       >
-        <Globe className="w-3.5 h-3.5 text-[var(--color-portal-orange-themed)]" />
         <span>{current === 'de' ? 'Deutsch' : 'English'}</span>
-        <ChevronUp className={`w-3.5 h-3.5 text-[var(--color-text-muted)] transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
+        <span aria-hidden="true">{open ? '▾' : '▴'}</span>
       </button>
 
       {open && (
-        <div className="absolute bottom-full right-0 mb-2 w-40 bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-2xl shadow-2xl py-1.5 z-50 animate-fade-in backdrop-blur-md">
+        <div className="absolute bottom-full right-0 z-50 mb-2 w-40 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1">
           {LANGUAGES.map((lang) => {
             const isSelected = current === lang.code;
             return (
@@ -71,7 +69,7 @@ export function LanguageSwitcher({ authenticated = false }: { authenticated?: bo
                 }`}
               >
                 <span>{lang.label}</span>
-                {isSelected && <Check className="w-3.5 h-3.5 text-[var(--color-portal-orange-themed)]" />}
+                {isSelected && <span aria-hidden="true">•</span>}
               </button>
             );
           })}
