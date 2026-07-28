@@ -71,6 +71,12 @@ type Processor struct {
 	verifyingEntities sync.Map
 }
 
+// immichOriginalFilenamePath replaces an Immich virtual asset ID with its
+// original filename while retaining the selected virtual directory structure.
+func immichOriginalFilenamePath(targetPath, filename string) string {
+	return path.Join(path.Dir(targetPath), path.Base(filename))
+}
+
 // newProvider creates a provider scoped to a single operation. Providers retain
 // their credentials internally, so retaining them in a shared cache would keep
 // decrypted credentials alive beyond the task that needs them.
@@ -554,10 +560,14 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
 		// Immich source paths are stable virtual asset IDs, not filesystem names.
 		// Its original filename is retained in task metadata during indexing.
-		if mig.TargetProvider == "immich" {
+		if mig.SourceProvider == "immich" {
 			var meta storage.FileMetadata
-			if err := json.Unmarshal(task.Metadata, &meta); err == nil && meta.CustomProps["immich_filename"] != "" {
-				targetPath = path.Clean(path.Join(mig.TargetDir, meta.CustomProps["immich_filename"]))
+			if err := json.Unmarshal(task.Metadata, &meta); err != nil {
+				log.Printf("[Immich] Warning: task %s has invalid metadata; using asset-ID target path %q", task.ID, targetPath)
+			} else if meta.CustomProps["immich_filename"] == "" {
+				log.Printf("[Immich] Warning: task %s has no immich_filename in metadata; using asset-ID target path %q", task.ID, targetPath)
+			} else {
+				targetPath = immichOriginalFilenamePath(targetPath, meta.CustomProps["immich_filename"])
 			}
 		}
 	}
