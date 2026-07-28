@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { apiFetch } from '../utils/apiClient';
@@ -87,12 +86,9 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
   if (loading || total === 0) return null;
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-[var(--color-error-border)] bg-[var(--color-error-bg)]/45 shadow-xs">
+    <section className="overflow-hidden rounded-lg border border-[var(--color-error-border)] bg-[var(--color-error-bg)]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-error-border)] px-5 py-3.5">
         <div className="flex items-center gap-2">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--color-error-border)] text-[var(--color-error-text)]">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-          </span>
           <h3 className="font-display font-bold text-xs text-[var(--color-error-text)] uppercase tracking-wider font-mono">
             {t('common.errorOverview')}
           </h3>
@@ -133,9 +129,9 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
           type="button"
           onClick={loadMore}
           disabled={loadingMore}
-          className="mb-4 ml-4 flex items-center gap-2 px-3 py-2 rounded-xl border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)] text-xs font-bold text-[var(--color-error-text)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50 cursor-pointer"
+          className="mb-4 ml-4 rounded-md border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-error-text)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
         >
-          {loadingMore && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          {loadingMore && `${t('common.loading')} `}
           {t('common.loadMoreErrors')}
         </button>
       )}
