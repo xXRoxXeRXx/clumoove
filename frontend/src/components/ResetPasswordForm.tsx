@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CloudSync, Lock, Eye, EyeOff, CheckCircle2, XCircle } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
 
@@ -78,16 +77,9 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
   if (success) {
     return (
-      <div className="max-w-md w-full mx-auto my-8 px-4 relative">
-        <div className="absolute -top-10 -left-10 w-40 h-40 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative glass-panel rounded-3xl p-8 shadow-portal border border-[var(--color-glass-border)] transition-all duration-500 text-center">
-          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-emerald-500 via-green-500 to-portal-orange" />
+      <div className="max-w-md w-full mx-auto my-8 px-4">
+        <div className="glass-panel rounded-lg p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
-            <div className="p-4 bg-emerald-500/10 rounded-2xl text-emerald-600">
-              <CheckCircle2 className="w-12 h-12" />
-            </div>
             <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
                {t('reset.changed')}
             </h2>
@@ -101,17 +93,10 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
   }
 
   return (
-    <div className="max-w-md w-full mx-auto my-8 px-4 relative">
-      <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
-
-      <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
+    <div className="max-w-md w-full mx-auto my-8 px-4">
+      <div className="glass-panel rounded-lg p-8">
 
         <div className="flex flex-col items-center mb-8">
-          <div className="p-3 bg-gradient-to-tr from-portal-orange to-orange-500 rounded-2xl text-white shadow-sm mb-4 transition-transform hover:scale-105 duration-300">
-            <CloudSync className="w-6 h-6 stroke-[2.5]" />
-          </div>
           <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
             {t('reset.title')}
           </h2>
@@ -122,7 +107,6 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
         {error && (
           <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800 flex items-center justify-center gap-2">
-            <XCircle className="w-4 h-4 shrink-0" />
             {error}
           </div>
         )}
@@ -133,9 +117,6 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
               {t('reset.title')}
             </label>
             <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                <Lock className="w-4 h-4" />
-              </span>
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
@@ -143,14 +124,14 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                className="w-full px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-sm font-mono"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
               >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                <span className="text-[10px]">{showPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
               </button>
             </div>
 
@@ -172,9 +153,6 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
               {t('settings.confirmPassword')}
             </label>
             <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
-                <Lock className="w-4 h-4" />
-              </span>
               <input
                 type={showConfirmPassword ? 'text' : 'password'}
                 required
@@ -182,14 +160,14 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
                 placeholder="••••••••"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                className="w-full px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-sm font-mono"
               />
               <button
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
               >
-                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                <span className="text-[10px]">{showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
               </button>
             </div>
           </div>
@@ -197,7 +175,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
           <button
             type="submit"
             disabled={loading || password.length < 12 || password !== confirmPassword}
-            className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+            className="mt-2 w-full rounded-md bg-[var(--color-bg-inverse)] px-4 py-2.5 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90 disabled:opacity-50"
           >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
