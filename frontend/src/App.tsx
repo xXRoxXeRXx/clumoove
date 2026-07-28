@@ -459,8 +459,9 @@ function App() {
               onClick={step !== 'login' ? goToOverview : undefined}
               disabled={step === 'login'}
               aria-label="Clumoove – go to overview"
-              className="text-lg font-semibold tracking-tight text-[var(--color-text-primary)] disabled:cursor-default"
+              className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--color-text-primary)] disabled:cursor-default"
             >
+              <img src="/clumoove_logo.png" alt="" className="h-8 w-8 object-contain" />
               Clumoove
             </button>
           </div>

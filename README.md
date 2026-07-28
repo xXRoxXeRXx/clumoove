@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="frontend/public/logo.png" width="160" alt="Clumoove logo">
+  <img src="frontend/public/clumoove_logo.png" width="160" alt="Clumoove logo">
 </div>
 
 # Clumoove
