@@ -6,6 +6,7 @@ import { apiFetch } from '../utils/apiClient';
 import { MessageBanner, type MessageState } from './MessageBanner';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import type { ApiErrBody } from './SettingsPage';
+import { LinkIcon as Plug } from '@heroicons/react/24/outline';
 
 interface ConnectionManagerProps {
   apiUrl: string;
@@ -129,6 +130,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     <div className="space-y-6">
       <div className="ui-card p-6 space-y-5">
         <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
+          <Plug className="w-4 h-4 text-[var(--color-text-muted)]" />
           <h3 className="font-display font-semibold text-sm text-[var(--color-text-primary)]">{t('settings.connections.title')}</h3>
         </div>
         <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
