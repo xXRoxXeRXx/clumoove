@@ -52,11 +52,9 @@ html {
 @keyframes ui-view-enter {
   from {
     opacity: 0;
-    transform: translateY(0.5rem);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
