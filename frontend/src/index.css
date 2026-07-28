@@ -49,6 +49,21 @@ html {
   scrollbar-gutter: stable;
 }
 
+@keyframes ui-view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ui-view-enter {
+  animation: ui-view-enter 180ms ease-out both;
+}
+
 [data-theme="dark"] {
   --color-bg-primary: #18181b;
   --color-bg-secondary: #27272a;
@@ -260,5 +275,9 @@ body {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .ui-view-enter {
+    animation: none;
   }
 }
