@@ -28,6 +28,13 @@ type ImmichProvider struct {
 	albumsLoaded bool
 }
 
+type immichDownloadStream struct {
+	io.ReadCloser
+	contentLength int64
+}
+
+func (s *immichDownloadStream) ContentLength() int64 { return s.contentLength }
+
 func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("immich API key required: %w", ErrAuth)
@@ -291,7 +298,7 @@ func (p *ImmichProvider) StreamDownload(ctx context.Context, typ, filePath strin
 		r.Body.Close()
 		return nil, immichStatus(r, "download")
 	}
-	return r.Body, nil
+	return &immichDownloadStream{ReadCloser: r.Body, contentLength: r.ContentLength}, nil
 }
 func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string, stream io.Reader, size int64) error {
 	if err := p.checkType(typ); err != nil {

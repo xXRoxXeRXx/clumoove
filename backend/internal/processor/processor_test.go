@@ -18,6 +18,13 @@ type fakeProvider struct {
 	atomicRename bool
 }
 
+type sizedTestStream struct {
+	io.ReadCloser
+	length int64
+}
+
+func (s sizedTestStream) ContentLength() int64 { return s.length }
+
 func (f *fakeProvider) Close() error { return nil }
 func (f *fakeProvider) Connect(ctx context.Context) (bool, error) {
 	panic("not implemented in test")
@@ -130,6 +137,16 @@ func TestCanSkipBySize(t *testing.T) {
 	}
 	if !canSkipBySize("nextcloud", 0, 0) {
 		t.Fatal("known empty non-Immich file should retain skip behavior")
+	}
+}
+
+func TestUploadSizeForDownload(t *testing.T) {
+	stream := sizedTestStream{ReadCloser: io.NopCloser(bytes.NewReader(nil)), length: 123}
+	if got := uploadSizeForDownload("immich", 0, stream); got != 123 {
+		t.Fatalf("Immich upload size = %d, want 123", got)
+	}
+	if got := uploadSizeForDownload("nextcloud", 0, stream); got != 0 {
+		t.Fatalf("non-Immich upload size = %d, want 0", got)
 	}
 }
 
