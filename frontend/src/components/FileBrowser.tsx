@@ -565,6 +565,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             delete_propagation: deletePropagation,
             interval_minutes: intervalMinutes,
             threads: threads,
+            bandwidth_limit_mbps: bandwidthLimit,
             target_dir: targetDir,
             selected_paths: pathsToMigrate,
           }),
@@ -905,8 +906,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       {/* Settings Strip — full width, backup-ready 3-mode layout */}
         <div className="ui-card">
-        {/* Sticky header: mode selector (left) + start button (right) */}
-        <div className="sticky top-16 z-20 -mx-px flex flex-col justify-between gap-3 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-5 py-3 sm:flex-row sm:items-center sm:px-6">
+        {/* Mode selector (left) + start button (right) */}
+        <div className="flex flex-col justify-between gap-3 border-b border-[var(--color-border-light)] px-5 py-3 sm:flex-row sm:items-center sm:px-6">
           {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
           <div className="w-full text-xs sm:w-auto">
             <div className="flex border-b border-[var(--color-border-light)]">
@@ -1010,13 +1011,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </div>
 
                 {/* Delete propagation */}
-                <div className="flex items-start gap-2 pt-1">
+                <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
                     id="deletePropagation"
                     checked={deletePropagation}
                     onChange={(e) => setDeletePropagation(e.target.checked)}
-                    className="mt-0.5 rounded accent-[var(--color-text-primary)] cursor-pointer"
+                    className="rounded accent-[var(--color-text-primary)] cursor-pointer"
                   />
                   <div className="flex flex-col">
                     <label htmlFor="deletePropagation" className="text-[11px] font-bold text-[var(--color-text-primary)] cursor-pointer">
@@ -1061,7 +1062,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <span>{t('fileBrowser.immichDuplicateDetection')}</span>
               </div>
             ) : effectiveJobType === 'sync' && direction === 'one_way' ? (
-              <div className="ui-alert ui-alert-info p-3.5 text-xs font-mono flex items-center gap-2 xl:col-span-2">
+              <div className="ui-alert ui-alert-info self-center p-3.5 text-xs font-mono flex items-center gap-2 xl:col-span-2">
                 <Info className="w-4 h-4 shrink-0" />
                 <span>{t('sync.oneWayConflictNote')}</span>
               </div>
@@ -1162,9 +1163,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               </p>
             </div>
 
-            {/* Bandwidth Limit (migration only — Sync API does not accept it) */}
-            {effectiveJobType === 'migration' && (
-              <div className="space-y-3 text-xs">
+            {/* Bandwidth limit */}
+            <div className="space-y-3 text-xs">
                 <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
                   {t('fileBrowser.bandwidth')}
                 </label>
@@ -1192,8 +1192,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     t('fileBrowser.bandwidthHint', { limit: getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited')) })
                   )}
                 </p>
-              </div>
-            )}
+            </div>
           </div>
 
           {/* Migration-only scheduling */}

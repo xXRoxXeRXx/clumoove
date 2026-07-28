@@ -593,11 +593,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
           {/* Source Host Card */}
           {subStep === 1 && (
-          <fieldset className="ui-card p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
+          <fieldset className="ui-card m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             
-            <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
+            <div className="space-y-5 text-xs text-left">
               <ProfileSelect
                 idPrefix="source"
                 profiles={profiles}
@@ -607,7 +607,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               />
 
               {sourceProfileId ? (
-                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between">
+                <div className="space-y-4 pt-2">
                   <div className="ui-alert ui-alert-success p-4.5 space-y-3">
                     <div className="flex items-center">
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">
@@ -1080,11 +1080,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
            {/* Target Host Card */}
            {subStep === 2 && (
-          <fieldset className="ui-card p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
+          <fieldset className="ui-card m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             
-            <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
+            <div className="space-y-5 text-xs text-left">
               <ProfileSelect
                 idPrefix="target"
                 profiles={profiles}
@@ -1094,7 +1094,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               />
 
               {targetProfileId ? (
-                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between">
+                <div className="space-y-4 pt-2">
                   <div className="ui-alert ui-alert-success p-4.5 space-y-3">
                     <div className="flex items-center">
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">

@@ -36,6 +36,7 @@ type createSyncRequest struct {
 	DeletePropagation    bool     `json:"delete_propagation"`
 	IntervalMinutes      int      `json:"interval_minutes"`
 	Threads              int      `json:"threads"`
+	BandwidthLimitMbps   int      `json:"bandwidth_limit_mbps"`
 	TargetDir            string   `json:"target_dir"`
 	SelectedPaths        []string `json:"selected_paths"`
 }
@@ -148,6 +149,11 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	if req.Threads <= 0 || req.Threads > 16 {
 		req.Threads = 8
 	}
+	if req.BandwidthLimitMbps < 0 {
+		req.BandwidthLimitMbps = 0
+	} else if req.BandwidthLimitMbps > 1000 {
+		req.BandwidthLimitMbps = 1000
+	}
 	if req.TargetDir == "" {
 		req.TargetDir = "/"
 	}
@@ -221,6 +227,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		DeletePropagation:           req.DeletePropagation,
 		IntervalMinutes:             req.IntervalMinutes,
 		Threads:                     req.Threads,
+		BandwidthLimitMbps:          req.BandwidthLimitMbps,
 		Status:                      "IDLE",
 		TargetDir:                   req.TargetDir,
 		SelectedPaths:               req.SelectedPaths,
