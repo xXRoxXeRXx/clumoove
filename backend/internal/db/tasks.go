@@ -256,13 +256,22 @@ func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]
 }
 
 func displayTaskName(filePath string, meta json.RawMessage) string {
-	if strings.HasPrefix(filePath, "/picker/") && len(meta) > 0 {
-		var m struct {
-			Name string `json:"name"`
-		}
-		if err := json.Unmarshal(meta, &m); err == nil && m.Name != "" {
-			return m.Name
-		}
+	if len(meta) == 0 {
+		return filePath
+	}
+
+	var m struct {
+		Name        string            `json:"name"`
+		CustomProps map[string]string `json:"custom_props"`
+	}
+	if err := json.Unmarshal(meta, &m); err != nil {
+		return filePath
+	}
+	if filename := m.CustomProps["immich_filename"]; filename != "" {
+		return filename
+	}
+	if strings.HasPrefix(filePath, "/picker/") && m.Name != "" {
+		return m.Name
 	}
 	return filePath
 }
