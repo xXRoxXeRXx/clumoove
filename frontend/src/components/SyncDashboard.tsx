@@ -11,6 +11,14 @@ import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ErrorOverview } from './ErrorOverview';
 import { BANDWIDTH_OPTIONS, bandwidthIndexToValue, getBandwidthLabel, valueToBandwidthIndex } from '../utils/bandwidth';
+import {
+  AdjustmentsHorizontalIcon,
+  ArrowsRightLeftIcon,
+  ChartBarIcon,
+  ClockIcon,
+  CloudArrowDownIcon,
+  FolderIcon,
+} from '@heroicons/react/24/outline';
 
 interface SyncDashboardProps {
   syncId: string;
@@ -399,6 +407,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <CloudArrowDownIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.source')}</h3>
             </div>
             <div className="space-y-2">
@@ -409,6 +418,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <FolderIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.target')}</h3>
             </div>
             <div className="space-y-2">
@@ -427,6 +437,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <ArrowsRightLeftIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('sync.activeTransfersTitle', { count: job.active_files?.length || 0, threads })}</h3>
             </div>
             {job.active_files?.length ? (
@@ -450,7 +461,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             )}
           </div>
           <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5"><h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.status')} & {t('dashboard.progress')}</h3></div>
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <ChartBarIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.status')} & {t('dashboard.progress')}</h3>
+            </div>
             <div className="space-y-2 font-sans text-xs text-[var(--color-text-muted)]">
               <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('dashboard.filesTotal')}</span><span className="font-bold text-[var(--color-text-primary)] font-mono">{job.total_files}</span></div>
               <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.changedFiles')}</span><span className="font-bold text-[var(--color-success-text)] font-mono">{job.changed_files}</span></div>
@@ -484,6 +498,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             return (
               <div className="ui-card p-5 space-y-4">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+                  <ClockIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
                   <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                     {t('sync.lastRun')} & {t('sync.nextRun')}
                   </h3>
@@ -524,6 +539,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           <div className="ui-card p-5 space-y-4 flex flex-col justify-between">
             <div className="space-y-4">
               <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+                <AdjustmentsHorizontalIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
                 <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                   {t('sync.conflictStrategy')} & {t('dashboard.threads')}
                 </h3>
@@ -580,7 +596,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                   threadsDraggingRef.current = false;
                   commitThreadsChange(Number((e.target as HTMLInputElement).value));
                 }}
-                className="w-full"
+                className="w-full accent-[var(--color-text-primary)]"
               />
               <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
                 {t('dashboard.threadsHint')}
@@ -614,7 +630,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                   bandwidthDraggingRef.current = false;
                   commitBandwidthChange(bandwidthIndexToValue(Number((e.target as HTMLInputElement).value)));
                 }}
-                className="w-full"
+                className="w-full accent-[var(--color-text-primary)]"
               />
               <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
                 {bandwidthLimit === 0
