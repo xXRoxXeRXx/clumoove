@@ -390,6 +390,7 @@
     },
     "about": "About",
     "version": "Version",
+    "profile": "Profile",
     "profilePicture": "Profile picture",
     "avatarHint": "Upload a new profile picture. Supported formats: PNG, JPEG, WebP, and GIF up to 2 MB.",
     "avatarCropperHint": "Drag to move | Scroll to zoom",

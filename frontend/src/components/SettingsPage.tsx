@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ComputerDesktopIcon as Monitor, EnvelopeIcon as Mail, EyeIcon as Eye, EyeSlashIcon as EyeOff, InformationCircleIcon as Info, LockClosedIcon as Lock, MoonIcon as Moon, PhotoIcon as ImageIcon, LinkIcon as Plug, SunIcon as Sun, SwatchIcon as Palette, TrashIcon as Trash2, ArrowUpTrayIcon as Upload, UserIcon as User } from '@heroicons/react/24/outline';
+import { ComputerDesktopIcon as Monitor, Cog6ToothIcon as Settings, EnvelopeIcon as Mail, EyeIcon as Eye, EyeSlashIcon as EyeOff, InformationCircleIcon as Info, LockClosedIcon as Lock, MoonIcon as Moon, LinkIcon as Plug, SunIcon as Sun, SwatchIcon as Palette, TrashIcon as Trash2, ArrowUpTrayIcon as Upload, UserIcon as User } from '@heroicons/react/24/outline';
 import { AvatarCropper } from './AvatarCropper';
 import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
@@ -43,6 +43,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
   const [tab, setTab] = useState<'account' | 'connections' | 'appearance' | 'notifications' | 'about'>('account');
   const tabs = ['account', 'connections', 'appearance', 'notifications', 'about'] as const;
+  const tabItems = [
+    ['account', User, 'settings.tabs.account'],
+    ['connections', Plug, 'settings.tabs.connections'],
+    ['appearance', Palette, 'settings.tabs.appearance'],
+    ['notifications', Mail, 'settings.tabs.notifications'],
+    ['about', Info, 'settings.tabs.about'],
+  ] as const;
 
   // Theme context
   const { preference, setPreference, systemTheme } = useThemeContext();
@@ -533,7 +540,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   };
 
   return (
-    <div className="max-w-4xl w-full mx-auto my-4 space-y-6">
+    <div className="max-w-5xl w-full mx-auto my-4 space-y-6">
       {/* Back Header */}
       <div className="flex items-center justify-between pb-4 border-b border-[var(--color-border)]/50">
         <button
@@ -543,6 +550,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           {t('settings.back')}
         </button>
         <div className="flex items-center gap-2">
+          <Settings className="w-5 h-5 text-[var(--color-text-primary)]" />
           <h2 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('settings.title')}</h2>
         </div>
       </div>
@@ -561,61 +569,21 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           document.getElementById(`settings-tab-${tabs[next]}`)?.focus();
         }}
       >
-        <button
-          onClick={() => setTab('account')}
-          id="settings-tab-account" role="tab" aria-selected={tab === 'account'} aria-controls="settings-panel-account" tabIndex={tab === 'account' ? 0 : -1}
-          className={`px-4 py-2 border font-medium text-sm ${
-            tab === 'account'
-              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
-              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
-          }`}
-        >
-          {t('settings.tabs.account')}
-        </button>
-        <button
-          onClick={() => setTab('connections')}
-          id="settings-tab-connections" role="tab" aria-selected={tab === 'connections'} aria-controls="settings-panel-connections" tabIndex={tab === 'connections' ? 0 : -1}
-          className={`px-4 py-2 border font-medium text-sm ${
-            tab === 'connections'
-              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
-              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
-          }`}
-        >
-          {t('settings.tabs.connections')}
-        </button>
-        <button
-          onClick={() => setTab('appearance')}
-          id="settings-tab-appearance" role="tab" aria-selected={tab === 'appearance'} aria-controls="settings-panel-appearance" tabIndex={tab === 'appearance' ? 0 : -1}
-          className={`px-4 py-2 border font-medium text-sm ${
-            tab === 'appearance'
-              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
-              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
-          }`}
-        >
-          {t('settings.tabs.appearance')}
-        </button>
-        <button
-          onClick={() => setTab('notifications')}
-          id="settings-tab-notifications" role="tab" aria-selected={tab === 'notifications'} aria-controls="settings-panel-notifications" tabIndex={tab === 'notifications' ? 0 : -1}
-          className={`px-4 py-2 border font-medium text-sm ${
-            tab === 'notifications'
-              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
-              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
-          }`}
-        >
-          {t('settings.tabs.notifications')}
-        </button>
-        <button
-          onClick={() => setTab('about')}
-          id="settings-tab-about" role="tab" aria-selected={tab === 'about'} aria-controls="settings-panel-about" tabIndex={tab === 'about' ? 0 : -1}
-          className={`px-4 py-2 border font-medium text-sm ${
-            tab === 'about'
-              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
-              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
-          }`}
-        >
-          {t('settings.tabs.about')}
-        </button>
+        {tabItems.map(([key, Icon, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            id={`settings-tab-${key}`} role="tab" aria-selected={tab === key} aria-controls={`settings-panel-${key}`} tabIndex={tab === key ? 0 : -1}
+            className={`flex items-center gap-1.5 px-4 py-2 border font-medium text-sm ${
+              tab === key
+                ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+                : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
+            }`}
+          >
+            <Icon className="w-4 h-4" />
+            {t(label)}
+          </button>
+        ))}
       </div>
 
       {/* Tab Content (stable height to avoid view jumping) */}
@@ -625,14 +593,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       {tab === 'account' && (
        <div className="grid md:grid-cols-2 gap-6">
         
-         {/* Left Side: Profile picture & profile details */}
+         {/* Left Side: Profile */}
          <div className="space-y-6">
-          
-          {/* Section 1: Profile picture */}
+
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <ImageIcon className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <h3 className={sectionTitleCls}>{t('settings.profilePicture')}</h3>
+              <User className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.profile')}</h3>
             </div>
 
             <MessageBanner message={avatarMessage} />
@@ -662,7 +629,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   {t('settings.avatarHint')}
                 </p>
                 <div className="flex flex-wrap gap-2.5">
-                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shadow-xs">
+                  <label className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-xs font-bold cursor-pointer hover:bg-[var(--color-bg-tertiary)]">
                     <Upload className="w-3.5 h-3.5" />
                     <span>{t('settings.selectImage')}</span>
                     <input
@@ -677,7 +644,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     <button
                       onClick={handleDeleteAvatar}
                       disabled={avatarLoading}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl hover:bg-[var(--color-error-bg)]/70 transition-all font-mono font-bold text-[10px] cursor-pointer shadow-xs"
+                      className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-xs font-bold border-[var(--color-error-border)] text-[var(--color-error-text)] cursor-pointer hover:bg-[var(--color-error-bg)] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       {t('settings.delete')}
@@ -686,13 +653,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 </div>
               </div>
             </div>
-          </div>
-
-{/* Section 2: Profile details */}
-          <div className={cardCls}>
-            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <User className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <h3 className={sectionTitleCls}>{t('settings.profileDetails')}</h3>
+            <div className="pt-2 border-t border-[var(--color-border-light)]">
+              <h4 className={sectionTitleCls}>{t('settings.profileDetails')}</h4>
             </div>
 
             <MessageBanner message={profileMessage} />
@@ -797,12 +759,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 )}
               </div>
             )}
-          </div>
-
-          <div className={cardCls}>
-            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <User className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <h3 className={sectionTitleCls}>{t('settings.displayName')}</h3>
+            <div className="pt-2 border-t border-[var(--color-border-light)]">
+              <h4 className={sectionTitleCls}>{t('settings.displayName')}</h4>
             </div>
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">

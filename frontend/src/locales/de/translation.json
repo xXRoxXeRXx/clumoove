@@ -390,6 +390,7 @@
     },
     "about": "Über",
     "version": "Version",
+    "profile": "Profil",
     "profilePicture": "Profilbild",
     "avatarHint": "Lade ein neues Profilbild hoch. Unterstützt werden PNG, JPEG, WebP und GIF bis max. 2 MB.",
     "avatarCropperHint": "Ziehen zum Bewegen | Mausrad zum Zoomen",
