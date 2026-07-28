@@ -588,7 +588,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       </div>
 
       {/* Tab Content (stable height to avoid view jumping) */}
-      <div id={`settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="min-h-[60vh]">
+      <div key={tab} id={`settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="ui-view-enter min-h-[60vh]">
 
       {/* Main Grid Layout */}
       {tab === 'account' && (

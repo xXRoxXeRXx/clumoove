@@ -593,7 +593,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
           {/* Source Host Card */}
           {subStep === 1 && (
-          <fieldset className="ui-card m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
+          <fieldset key={sourceProvider} className="ui-card ui-view-enter m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             
@@ -1080,7 +1080,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
            {/* Target Host Card */}
            {subStep === 2 && (
-          <fieldset className="ui-card m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
+          <fieldset key={targetProvider} className="ui-card ui-view-enter m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             
