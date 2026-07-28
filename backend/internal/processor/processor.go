@@ -96,6 +96,15 @@ func canSkipBySize(sourceProvider string, sourceSize, targetSize int64) bool {
 	return !(sourceProvider == "immich" && sourceSize == 0) && sourceSize == targetSize
 }
 
+func uploadSizeForDownload(sourceProvider string, indexedSize int64, stream io.ReadCloser) int64 {
+	if sourceProvider == "immich" && indexedSize == 0 {
+		if sized, ok := stream.(storage.SizedReadCloser); ok && sized.ContentLength() > 0 {
+			return sized.ContentLength()
+		}
+	}
+	return indexedSize
+}
+
 type countingReader struct {
 	io.Reader
 	bytesRead int64
@@ -733,6 +742,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return fmt.Errorf("failed to download from source: %w", err)
 	}
 	defer downloadStream.Close()
+	uploadSize := uploadSizeForDownload(mig.SourceProvider, task.FileSize, downloadStream)
 
 	// Wrap download stream with throttling (before TeeReader to limit actual network I/O)
 	throttledDownloadStream := throttle.NewThrottledReader(downloadStream, migrationThrottler, downloadCtx)
@@ -904,10 +914,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	defer uploadCancel()
 
 	// If size > chunkedUploadThreshold (50 MiB), do chunked upload
-	if task.FileSize > chunkedUploadThreshold {
+	if uploadSize > chunkedUploadThreshold {
 		// Wrap hashingReader with upload throttling
 		throttledHashingReader := throttle.NewUploadThrottledReader(hashingReader, migrationThrottler, uploadCtx)
-		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, task.FileSize, progressChan)
+		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, uploadSize, progressChan)
 	} else {
 		// Simple upload
 		// Wrap with a progress reporting reader
@@ -917,7 +927,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 		// Wrap progressReader with upload throttling
 		throttledProgressReader := throttle.NewUploadThrottledReader(progressReader, migrationThrottler, uploadCtx)
-		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, task.FileSize)
+		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, uploadSize)
 	}
 
 	if err != nil {

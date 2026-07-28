@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -34,6 +35,32 @@ func TestImmichUnsupportedOperations(t *testing.T) {
 	}
 	if err := p.DeleteFile(context.Background(), "files", "/asset"); err == nil {
 		t.Error("DeleteFile() unexpectedly succeeded")
+	}
+}
+
+func TestImmichStreamDownloadExposesResponseLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/assets/asset-id/original" || r.URL.Query().Get("edited") != "false" {
+			t.Errorf("unexpected request %s", r.URL.String())
+		}
+		_, _ = w.Write([]byte("asset bytes"))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
+	stream, err := p.StreamDownload(context.Background(), "files", "/All Assets/asset-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	sized, ok := stream.(SizedReadCloser)
+	if !ok {
+		t.Fatal("download stream does not expose content length")
+	}
+	if sized.ContentLength() != int64(len("asset bytes")) {
+		t.Fatalf("content length = %d", sized.ContentLength())
+	}
+	if body, err := io.ReadAll(stream); err != nil || string(body) != "asset bytes" {
+		t.Fatalf("body = %q, err = %v", body, err)
 	}
 }
 
