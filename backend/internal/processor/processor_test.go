@@ -116,10 +116,13 @@ func TestImmichTargetPath(t *testing.T) {
 	if got, want := immichTargetPath("/destination/Albums/album-id", "", "Holiday"), "/destination/Albums/Holiday"; got != want {
 		t.Fatalf("immichTargetPath() directory = %q, want %q", got, want)
 	}
+	if got, want := immichTargetPath("/destination/unrelated/asset-id", "photo.jpg", "Holiday"), "/destination/unrelated/photo.jpg"; got != want {
+		t.Fatalf("immichTargetPath() unexpected layout = %q, want %q", got, want)
+	}
 }
 
 func TestCountingReader(t *testing.T) {
-	reader := &countingReader{Reader: bytes.NewBufferString("asset bytes")}
+	reader := &countingReadCloser{ReadCloser: io.NopCloser(bytes.NewBufferString("asset bytes"))}
 	if _, err := io.ReadAll(reader); err != nil {
 		t.Fatal(err)
 	}
@@ -129,14 +132,17 @@ func TestCountingReader(t *testing.T) {
 }
 
 func TestCanSkipBySize(t *testing.T) {
-	if canSkipBySize("immich", 0, 0) {
+	if canSkipBySize("immich", 0, 0, true) {
 		t.Fatal("unknown Immich size must not skip upload")
 	}
-	if !canSkipBySize("immich", 123, 123) {
+	if !canSkipBySize("immich", 123, 123, true) {
 		t.Fatal("known matching Immich size should skip")
 	}
-	if !canSkipBySize("nextcloud", 0, 0) {
+	if !canSkipBySize("nextcloud", 0, 0, true) {
 		t.Fatal("known empty non-Immich file should retain skip behavior")
+	}
+	if canSkipBySize("nextcloud", 0, 0, false) {
+		t.Fatal("non-existent target must not skip upload")
 	}
 }
 

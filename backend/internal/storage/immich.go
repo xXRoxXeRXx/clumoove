@@ -264,6 +264,8 @@ func (p *ImmichProvider) InspectResource(ctx context.Context, typ, resourcePath 
 		return CloudResource{Path: resourcePath, Name: path.Base(resourcePath), IsDir: true}, nil
 	}
 	if strings.HasPrefix(resourcePath, "/Albums/") && len(strings.Split(strings.Trim(resourcePath, "/"), "/")) == 2 {
+		// Listing /Albums warms this cache during normal BFS indexing; refreshAlbums
+		// returns without I/O when it is already loaded.
 		if err := p.refreshAlbums(ctx); err != nil {
 			return CloudResource{}, err
 		}
