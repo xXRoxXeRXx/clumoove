@@ -11,6 +11,14 @@ import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBan
 import { apiFetch } from '../utils/apiClient';
 import { ErrorOverview } from './ErrorOverview';
 import { connectSseLoop } from '../utils/sse';
+import {
+  ArrowsRightLeftIcon,
+  ChartBarIcon,
+  CloudArrowDownIcon,
+  FolderIcon,
+  QueueListIcon,
+  SignalIcon,
+} from '@heroicons/react/24/outline';
 
 interface DashboardProps {
   migrationId: string;
@@ -476,6 +484,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           {/* Source Card */}
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <CloudArrowDownIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('migrations.source')}
               </h3>
@@ -495,6 +504,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           {/* Target Card */}
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <FolderIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('migrations.target')}
               </h3>
@@ -521,6 +531,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           {/* Column 1: Active Transfers */}
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <ArrowsRightLeftIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('dashboard.activeTransfers', { count: data.active_files?.length || 0, threads: threads })}
               </h3>
@@ -548,6 +559,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           {/* Column 2: Progress & Status */}
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <ChartBarIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('migrations.status')} & {t('dashboard.progress')}
               </h3>
@@ -591,6 +603,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           {/* Bandwidth Limit Box */}
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <SignalIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('dashboard.bandwidthLimit')}
               </h3>
@@ -617,7 +630,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                   const idx = Number((e.target as HTMLInputElement).value);
                   commitBandwidthChange(bandwidthIndexToValue(idx));
                 }}
-                className="w-full cursor-pointer"
+                className="w-full cursor-pointer accent-[var(--color-text-primary)]"
               />
               <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-sans">
                 {bandwidthLimit === 0 ? (
@@ -632,6 +645,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           {/* Threads / Simultaneous Transfers Box */}
           <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
+              <QueueListIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('dashboard.threads')}
               </h3>
@@ -662,7 +676,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                   threadsDraggingRef.current = false;
                   commitThreadsChange(Number((e.target as HTMLInputElement).value));
                 }}
-                className="w-full"
+                className="w-full accent-[var(--color-text-primary)]"
               />
               <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-mono">
                 {t('dashboard.threadsHint')}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { apiFetch } from '../utils/apiClient';
+import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 
 interface ErrorListItem {
   id: string;
@@ -89,6 +90,7 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
     <section className="ui-card overflow-hidden bg-[var(--color-error-bg)] border-[var(--color-error-border)]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-error-border)] px-5 py-3.5">
         <div className="flex items-center gap-2">
+          <ExclamationTriangleIcon className="h-4 w-4 text-[var(--color-error-text)]" aria-hidden="true" />
           <h3 className="font-display font-bold text-xs text-[var(--color-error-text)] uppercase tracking-wider font-mono">
             {t('common.errorOverview')}
           </h3>
