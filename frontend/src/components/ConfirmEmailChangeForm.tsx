@@ -48,10 +48,10 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
   if (loading) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4">
-        <div className="glass-panel rounded-lg p-8 text-center">
+        <div className="ui-section p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
-            <span className="animate-spin rounded-full h-12 w-12 border-2 border-portal-orange border-t-transparent" />
-            <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
+            <span className="ui-loading animate-spin rounded-full h-12 w-12 border-2 border-t-transparent" />
+            <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('confirmEmail.changing')}
             </h2>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
@@ -66,9 +66,9 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
   if (success) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4">
-        <div className="glass-panel rounded-lg p-8 text-center">
+        <div className="ui-section p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
-            <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
+            <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('confirmEmail.changed')}
             </h2>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
@@ -82,9 +82,9 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
 
   return (
     <div className="max-w-md w-full mx-auto my-8 px-4">
-      <div className="glass-panel rounded-lg p-8 text-center">
+      <div className="ui-section p-8 text-center">
         <div className="flex flex-col items-center gap-4 py-4">
-          <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
+          <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
              {t('confirmEmail.invalid')}
           </h2>
           <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">

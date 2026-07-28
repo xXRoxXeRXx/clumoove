@@ -18,9 +18,9 @@ function getPasswordStrength(password: string): { score: number; label: string; 
   if (/\d/.test(password)) score++;
   if (/[^A-Za-z0-9]/.test(password)) score++;
 
-  if (score <= 1) return { score, label: 'weak', color: 'bg-rose-500' };
-  if (score <= 3) return { score, label: 'medium', color: 'bg-amber-500' };
-  return { score, label: 'strong', color: 'bg-emerald-500' };
+  if (score <= 1) return { score, label: 'weak', color: 'ui-progress-error' };
+  if (score <= 3) return { score, label: 'medium', color: 'ui-progress-warning' };
+  return { score, label: 'strong', color: 'ui-progress-success' };
 }
 
 export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFormProps) {
@@ -78,9 +78,9 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
   if (success) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4">
-        <div className="glass-panel rounded-lg p-8 text-center">
+        <div className="ui-section p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
-            <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] tracking-tight">
+            <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('reset.changed')}
             </h2>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
@@ -94,10 +94,10 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
   return (
     <div className="max-w-md w-full mx-auto my-8 px-4">
-      <div className="glass-panel rounded-lg p-8">
+      <div className="ui-section p-8">
 
         <div className="flex flex-col items-center mb-8">
-          <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
+          <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
             {t('reset.title')}
           </h2>
           <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
@@ -106,7 +106,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
         </div>
 
         {error && (
-          <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800 flex items-center justify-center gap-2">
+          <div role="alert" className="ui-alert ui-alert-error p-3.5 text-xs mb-6 text-center font-mono leading-relaxed flex items-center justify-center gap-2">
             {error}
           </div>
         )}
@@ -124,7 +124,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-sm font-mono"
+                className="ui-input w-full px-3 py-2 text-sm font-mono"
               />
               <button
                 type="button"
@@ -137,7 +137,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
             {password.length > 0 && (
               <div className="flex items-center gap-2 mt-2">
-                <div className="flex-1 h-1.5 bg-[var(--color-border)] rounded-full overflow-hidden">
+                <div className="ui-progress flex-1 h-1.5">
                   <div
                     className={`h-full ${strength.color} transition-all duration-300`}
                     style={{ width: `${(strength.score / 5) * 100}%` }}
@@ -160,7 +160,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
                 placeholder="••••••••"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-sm font-mono"
+                className="ui-input w-full px-3 py-2 text-sm font-mono"
               />
               <button
                 type="button"
@@ -175,11 +175,11 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
           <button
             type="submit"
             disabled={loading || password.length < 12 || password !== confirmPassword}
-            className="mt-2 w-full rounded-md bg-[var(--color-bg-inverse)] px-4 py-2.5 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90 disabled:opacity-50"
+            className="ui-button-primary mt-2 w-full px-4 py-2.5 text-sm font-medium hover:opacity-90 disabled:opacity-50"
           >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-current/30 border-t-current"></span>
                   {t('common.processing')}
                 </span>
               ) : (

@@ -93,7 +93,7 @@ export function ConfirmationDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--color-bg-inverse)]/40 p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -105,7 +105,7 @@ export function ConfirmationDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={messageId}
-        className="w-full max-w-md overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)]"
+        className="ui-section w-full max-w-md overflow-hidden bg-[var(--color-bg-primary)]"
       >
         <div className="flex items-center gap-3 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-5 py-4">
           <h3
@@ -130,14 +130,14 @@ export function ConfirmationDialog({
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+            className="ui-button-secondary bg-[var(--color-bg-primary)] px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]"
           >
             {cancelLabel ?? t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white hover:bg-red-800"
+            className="ui-button-danger px-3 py-2 text-sm font-medium hover:opacity-90"
           >
             {confirmLabel ?? t('common.confirm')}
           </button>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ArchiveBoxIcon as Archive,
@@ -35,6 +35,8 @@ interface TreeNode {
   isDir: boolean;
   children: TreeNode[];
 }
+
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const getPathType = (path: string): PathType => {
   if (!path) return 'file';
@@ -143,14 +145,22 @@ const TreeItem: React.FC<{ node: TreeNode; depth: number }> = ({ node, depth }) 
   return (
     <div className="select-none font-sans text-xs">
       <div
+        role={node.isDir ? 'button' : undefined}
+        tabIndex={node.isDir ? 0 : undefined}
         className="flex items-center gap-2.5 py-1.5 px-2 hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors duration-150 rounded-lg group"
         style={{ paddingLeft: `${depth * 16 + 8}px` }}
         onClick={() => {
           if (node.isDir) setIsExpanded(!isExpanded);
         }}
+        onKeyDown={(event) => {
+          if (node.isDir && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            setIsExpanded(!isExpanded);
+          }
+        }}
       >
         {node.isDir ? (
-          <span className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-[var(--color-portal-navy-themed)] transition-colors">
+          <span className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-[var(--color-text-primary)] transition-colors">
             {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
           </span>
         ) : (
@@ -159,7 +169,7 @@ const TreeItem: React.FC<{ node: TreeNode; depth: number }> = ({ node, depth }) 
 
         <span className="shrink-0">
           {node.isDir ? (
-            isExpanded ? <FolderOpen className="w-4 h-4 text-amber-500" /> : <Folder className="w-4 h-4 text-amber-500" />
+            isExpanded ? <FolderOpen className="w-4 h-4 text-[var(--color-text-secondary)]" /> : <Folder className="w-4 h-4 text-[var(--color-text-secondary)]" />
           ) : (
             getPathIcon(type, "w-4 h-4")
           )}
@@ -192,6 +202,44 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
   const [filterType, setFilterType] = useState<'all' | 'folders' | 'files'>('all');
   const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
   const [copied, setCopied] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setIsModalOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE))
+        .filter((element) => !element.hasAttribute('disabled') && element.tabIndex !== -1);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (event.shiftKey ? active === first || !dialogRef.current.contains(active) : active === last || !dialogRef.current.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKeyDown, true);
+      if (previousFocusRef.current && document.contains(previousFocusRef.current)) previousFocusRef.current.focus();
+      previousFocusRef.current = null;
+    };
+  }, [isModalOpen]);
 
   const pathList = useMemo(() => paths || [], [paths]);
   const hasPaths = pathList.length > 0;
@@ -248,7 +296,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               return (
                 <span
                   key={idx}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-portal-navy-themed)] shadow-2xs max-w-[200px] truncate"
+                  className="ui-card inline-flex max-w-[200px] items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-primary)] truncate"
                   title={p}
                 >
                   {getPathIcon(type)}
@@ -261,16 +309,16 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               <button
                 type="button"
                 onClick={() => setIsModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[10px] font-medium text-[var(--color-portal-navy-themed)] transition-colors cursor-pointer shadow-2xs group"
+                className="ui-button-secondary inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium hover:bg-[var(--color-bg-tertiary)] group"
               >
-                <Eye className="w-3 h-3 text-[var(--color-text-secondary)] group-hover:scale-110 transition-transform" />
+                <Eye className="w-3 h-3 text-[var(--color-text-secondary)]" />
                 <span>{t('paths.moreItems', { count: hiddenCount })}</span>
               </button>
             )}
           </>
         ) : (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[10px] font-mono text-[var(--color-portal-navy-themed)] shadow-2xs">
-            <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <span className="ui-card inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-primary)]">
+            <Folder className="w-3.5 h-3.5 text-[var(--color-text-secondary)] shrink-0" />
             <span>/</span>
           </span>
         )}
@@ -279,20 +327,20 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
       {/* Modal Dialog */}
       {isModalOpen && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-inverse)]/60 p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) setIsModalOpen(false);
           }}
         >
-          <div className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
+          <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="ui-card flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden bg-[var(--color-bg-primary)]">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-[var(--color-bg-tertiary)] text-[var(--color-portal-navy-themed)]">
+                <div className="p-2 rounded-xl bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]">
                   <Layers className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-sm text-[var(--color-text-primary)]">
+                  <h3 id={titleId} className="font-bold text-sm text-[var(--color-text-primary)]">
                     {t('paths.modalTitle', { count: stats.total })}
                   </h3>
                   <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] mt-0.5 font-mono">
@@ -305,8 +353,9 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
 
               <button
                 type="button"
+                ref={closeButtonRef}
                 onClick={() => setIsModalOpen(false)}
-                className="p-1.5 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+                className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
                 aria-label={t('paths.close')}
               >
                 <X className="w-5 h-5" />
@@ -324,13 +373,14 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={t('paths.searchPlaceholder')}
-                    className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] py-2 pl-9 pr-8 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
+                    className="ui-input w-full py-2 pl-9 pr-8 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
                   />
                   {searchQuery && (
                     <button
                       type="button"
                       onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] cursor-pointer"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                      aria-label={t('paths.close')}
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -344,10 +394,11 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     onClick={() => setViewMode('tree')}
                     className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                       viewMode === 'tree'
-                        ? 'bg-portal-navy text-white shadow-2xs'
+                        ? 'ui-button-primary text-[var(--color-text-inverse)]'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                     }`}
                     title={t('paths.treeView')}
+                    aria-label={t('paths.treeView')}
                   >
                     <FolderTree className="w-4 h-4" />
                   </button>
@@ -356,10 +407,11 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     onClick={() => setViewMode('list')}
                     className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                       viewMode === 'list'
-                        ? 'bg-portal-navy text-white shadow-2xs'
+                        ? 'ui-button-primary text-[var(--color-text-inverse)]'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
                     }`}
                     title={t('paths.listView')}
+                    aria-label={t('paths.listView')}
                   >
                     <List className="w-4 h-4" />
                   </button>
@@ -374,7 +426,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     onClick={() => setFilterType('all')}
                     className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
                       filterType === 'all'
-                        ? 'bg-portal-navy text-white shadow-2xs'
+                        ? 'ui-button-primary text-[var(--color-text-inverse)]'
                         : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
                     }`}
                   >
@@ -385,7 +437,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     onClick={() => setFilterType('folders')}
                     className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
                       filterType === 'folders'
-                        ? 'bg-portal-navy text-white shadow-2xs'
+                        ? 'ui-button-primary text-[var(--color-text-inverse)]'
                         : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
                     }`}
                   >
@@ -396,7 +448,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     onClick={() => setFilterType('files')}
                     className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
                       filterType === 'files'
-                        ? 'bg-portal-navy text-white shadow-2xs'
+                        ? 'ui-button-primary text-[var(--color-text-inverse)]'
                         : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-tertiary)]'
                     }`}
                   >
@@ -407,7 +459,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
             </div>
 
             {/* List / Tree Body */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-1.5 max-h-[50vh] scrollbar-portal">
+            <div className="flex-1 overflow-y-auto p-4 space-y-1.5 max-h-[50vh]">
               {viewMode === 'tree' && !searchQuery.trim() ? (
                 treeNodes.length > 0 ? (
                   treeNodes.map((node) => (
@@ -415,7 +467,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                   ))
                 ) : (
                   <div className="py-12 text-center text-xs text-[var(--color-text-muted)] space-y-2">
-                    <Folder className="w-8 h-8 mx-auto opacity-30 text-amber-500" />
+                    <Folder className="w-8 h-8 mx-auto opacity-30 text-[var(--color-text-muted)]" />
                     <p>{t('paths.noResults')}</p>
                   </div>
                 )
@@ -437,7 +489,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                         </span>
                       </div>
 
-                      <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-md bg-black/5 dark:bg-white/10 text-[var(--color-text-muted)] shrink-0">
+                      <span className="ui-badge ui-badge-muted text-[10px] font-mono font-semibold px-2 py-0.5 shrink-0">
                         {isFold ? t('paths.folderType') : (ext || t('paths.fileType'))}
                       </span>
                     </div>
@@ -456,12 +508,12 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               <button
                 type="button"
                 onClick={handleCopy}
-                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
+                className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]"
               >
                 {copied ? (
                   <>
-                    <Check className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-emerald-600 font-semibold">{t('paths.copied')}</span>
+                    <Check className="w-3.5 h-3.5 text-[var(--color-success-text)]" />
+                    <span className="text-[var(--color-success-text)] font-semibold">{t('paths.copied')}</span>
                   </>
                 ) : (
                   <>
@@ -474,7 +526,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="rounded-md bg-[var(--color-bg-inverse)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
+                className="ui-button-primary px-4 py-2 text-sm font-medium hover:opacity-90"
               >
                 {t('paths.close')}
               </button>

@@ -177,9 +177,9 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="max-w-sm w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 flex flex-col items-center">
-        <h3 id={titleId} className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] mb-1">{t('settings.profilePicture')}</h3>
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[var(--color-bg-inverse)]/40 p-4">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="ui-section max-w-sm w-full p-6 flex flex-col items-center">
+        <h3 id={titleId} className="font-display font-extrabold text-lg text-[var(--color-text-primary)] mb-1">{t('settings.profilePicture')}</h3>
         <p id={descriptionId} className="text-[10px] text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">{t('settings.avatarCropperTitle')}</p>
 
         {/* Canvas Area */}
@@ -214,7 +214,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             step="0.01"
             value={zoom}
             onChange={(e) => setZoom(parseFloat(e.target.value))}
-            className="flex-grow accent-portal-orange h-1 bg-[var(--color-border)] rounded-lg appearance-none cursor-pointer"
+            className="flex-grow accent-[var(--color-text-primary)] h-1 bg-[var(--color-border)] rounded-lg appearance-none cursor-pointer"
           />
           <span className="text-xs text-[var(--color-text-muted)]" aria-hidden="true">+</span>
         </div>
@@ -225,14 +225,14 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="rounded-md border border-[var(--color-border)] py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+            className="ui-button-secondary py-2 text-sm hover:bg-[var(--color-bg-tertiary)]"
           >
             {t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="rounded-md bg-[var(--color-bg-inverse)] py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90"
+            className="ui-button-primary py-2 text-sm font-medium hover:opacity-90"
           >
             {t('common.confirm')}
           </button>

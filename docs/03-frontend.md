@@ -1,7 +1,8 @@
 # 03 – Frontend
 
 The frontend is a **React 19 + TypeScript** single-page application, bundled with **Vite 8** and
-styled with **Tailwind CSS v4** (via `@tailwindcss/vite`). Icons come from `lucide-react`. All user
+styled with **Tailwind CSS v4** (via `@tailwindcss/vite`). Icons come exclusively from
+`@heroicons/react`. All user
 strings are localized with `i18next` + `react-i18next` + `i18next-browser-languagedetector`.
 
 The connection wizard has an Immich branch with server URL and API-key fields (no username), a least-privilege permission hint, `/All Assets` default selection, album browsing/creation, native-duplicate `SKIP`, and migration-only mode. Sync is unavailable whenever either endpoint is Immich.
@@ -16,7 +17,7 @@ The connection wizard has an Immich branch with server URL and API-key fields (n
 | Language | TypeScript 6 (`typescript` ^5.9) |
 | Bundler / Dev server | Vite 8 (`vite` ^8) |
 | Styling | Tailwind CSS v4 (`tailwindcss` ^4, `@tailwindcss/vite`) |
-| Icons | `lucide-react` |
+| Icons | `@heroicons/react` ^2 |
 | i18n | `i18next` ^26, `react-i18next` ^17, `i18next-browser-languagedetector` ^8 |
 | Lint | ESLint 10 + `typescript-eslint` + react-hooks/refresh plugins |
 
@@ -154,9 +155,41 @@ A console warning is emitted when the API is reached over plaintext HTTP on a no
 
 ---
 
-## 8. Theming
+## 8. UI System, Theming, and Accessibility
 
-`ThemeContext` provides light/dark mode via CSS custom properties defined in `index.css` (e.g.
-`--color-bg-primary`, `--color-text-primary`, `--color-border`, `--color-glass-*`,
-`--color-portal-navy-themed`). Components reference these variables (with Tailwind's arbitrary value
-syntax) so a single theme switch restyles the entire glassmorphism UI.
+`ThemeContext` provides light/dark mode via semantic CSS custom properties in `index.css`. The visual
+language is intentionally compact and neutral: zinc surfaces, 1px borders, small radii, no decorative
+gradients, glass effects, backdrop blur, large shadows, or scale-based hover effects. Components must not
+introduce legacy `portal-*`, `glass-*`, `shadow-portal*`, or direct palette-based action/status surfaces.
+
+Use shared `ui-*` Tailwind utilities instead of reimplementing control styles in views:
+
+- Layout and controls: `ui-card`, `ui-section`, `ui-input`, `ui-select`, `ui-checkbox`, and `ui-radio`.
+- Actions: `ui-button-primary`, `ui-button-secondary`, `ui-button-danger`, `ui-button-quiet`, and
+  `ui-icon-button`. Primary actions retain visible text; icons are reserved for navigation, context, and
+  icon-only actions.
+- Feedback and data: `ui-alert` variants, `ui-badge` variants, `ui-progress`, `ui-table`, `ui-empty`,
+  `ui-loading`, and `ui-pagination`. `StatusBadge.tsx` owns application-status-to-variant mapping.
+
+Semantic theme tokens cover primary, success, information, warning, and danger in both themes. Raw Tailwind
+palette colours are allowed only for constrained file-type icon context, not for surfaces, buttons, focus
+rings, or status mappings. `prefers-reduced-motion` disables nonessential transitions and animations.
+
+Interactive requirements:
+
+- Use native `button`, `a`, `input`, `select`, and `textarea` controls whenever possible. Do not make
+  unsemantic containers clickable or nest interactive controls inside another interactive control.
+- Icon-only buttons require localized `aria-label` and `title`.
+- Tabs and menus provide their expected keyboard controls. Dialogs use `role="dialog"`, `aria-modal`, a
+  programmatic name, Escape handling, focus trap, and focus restoration. Reuse `useFocusTrap` and the
+  `ConfirmationDialog` pattern rather than bespoke modal behavior.
+- Tree and path-selection rows expose explicit keyboard-operable expand and selection controls.
+
+## 9. Frontend Validation
+
+Run the standard typecheck and lint commands from [Development §2](./09-development.md#2-code-quality--checks),
+then run `npm test` and `npm run build` for a complete frontend change. UI changes additionally require:
+
+- a search confirming no legacy visual utilities or `lucide-react` imports remain;
+- locale key-parity verification after adding visible text or accessible labels; and
+- a light/dark, narrow/wide, and keyboard review of affected controls, menus, tabs, dialogs, and trees.

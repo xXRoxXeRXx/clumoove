@@ -2,6 +2,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 
 export interface ProfileSelectProps {
+  idPrefix: string;
   profiles: { id: string; name: string; provider: string }[];
   selectedId: string;
   onSelect: (id: string) => void;
@@ -9,6 +10,7 @@ export interface ProfileSelectProps {
 }
 
 export const ProfileSelect: React.FC<ProfileSelectProps> = ({
+  idPrefix,
   profiles,
   selectedId,
   onSelect,
@@ -19,18 +21,19 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
 
   return (
     <div className="space-y-1.5">
-      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+      <label htmlFor={`connection-profile-${idPrefix}`} className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
         {t('settings.connections.useProfile')}
       </label>
       <div className="flex gap-2">
         <select
+          id={`connection-profile-${idPrefix}`}
           value={selectedId}
           onChange={(e) => {
             const val = e.target.value;
             e.target.blur();
             onSelect(val);
           }}
-          className="flex-1 px-3 py-2 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+          className="ui-input flex-1 px-3 py-2 text-xs font-sans"
         >
           <option value="">—</option>
           {profiles.map((p) => (
@@ -43,7 +46,7 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
           <button
             type="button"
             onClick={onClear}
-            className="px-3 py-2 rounded-xl text-[10px] font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer"
+            className="ui-button-secondary px-3 py-2 text-[10px] font-mono hover:bg-[var(--color-bg-tertiary)]"
           >
             {t('common.cancel')}
           </button>

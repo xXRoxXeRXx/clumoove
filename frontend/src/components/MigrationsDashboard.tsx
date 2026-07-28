@@ -258,7 +258,7 @@ export function MigrationsDashboard({
           <div className="shrink-0">
             <button
               onClick={onStartNewMigration}
-              className="bg-[var(--color-bg-inverse)] px-4 py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90"
+              className="ui-button-primary px-4 py-2 text-sm font-medium hover:opacity-90"
             >
               {t('migrations.newMigration')}
             </button>
@@ -274,7 +274,7 @@ export function MigrationsDashboard({
       {/* Stats Widgets Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Bytes */}
-        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
+        <div className="ui-card p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.dataTransferred')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -284,7 +284,7 @@ export function MigrationsDashboard({
         </div>
 
         {/* Total Migrations + Sync Jobs */}
-        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
+        <div className="ui-card p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.migrations')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -294,7 +294,7 @@ export function MigrationsDashboard({
         </div>
 
         {/* Active Transits */}
-        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
+        <div className="ui-card p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.active')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -304,7 +304,7 @@ export function MigrationsDashboard({
         </div>
 
         {/* Success Rate */}
-        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
+        <div className="ui-card p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.successRate')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -315,7 +315,7 @@ export function MigrationsDashboard({
       </div>
 
       {/* Main Section with Segmented Pill Tabs & Search Filter Bar */}
-      <div className="glass-panel rounded-lg p-6 space-y-6 min-h-[560px]">
+       <div className="ui-card p-6 space-y-6 min-h-[560px]">
         
         {/* Navigation Tabs & Controls Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 gap-4">
@@ -330,7 +330,7 @@ export function MigrationsDashboard({
               }`}
             >
               <span>{t('sync.tabMigrations')}</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'migrations' ? 'bg-white/20 text-white' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+               <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'migrations' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {migrations.length}
               </span>
             </button>
@@ -343,7 +343,7 @@ export function MigrationsDashboard({
               }`}
             >
               <span>{t('sync.tabSyncs')}</span>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === 'sync' ? 'bg-white/20 text-white' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+               <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'sync' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {syncJobs.length}
               </span>
             </button>
@@ -357,14 +357,14 @@ export function MigrationsDashboard({
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder={t('migrations.searchPlaceholder')}
-                className="h-9 w-full px-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-md text-sm text-[var(--color-text-primary)]"
+                className="ui-input h-9 w-full px-3 text-sm text-[var(--color-text-primary)]"
               />
             </div>
 
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-9 px-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs font-mono text-[var(--color-text-secondary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 transition-all cursor-pointer"
+               className="ui-input h-9 px-3 text-xs font-mono text-[var(--color-text-secondary)] cursor-pointer"
             >
               <option value="all">{t('migrations.filterAll')}</option>
               <option value="active">{t('migrations.filterActive')}</option>
@@ -418,7 +418,7 @@ export function MigrationsDashboard({
 
           if (error) {
             return (
-              <div className="p-4 bg-[var(--color-error-bg)]/80 border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl text-xs font-mono text-center">
+              <div className="ui-card p-4 bg-[var(--color-error-bg)] text-[var(--color-error-text)] border-[var(--color-error-border)] text-xs font-mono text-center">
                 {error}
               </div>
             );
@@ -426,12 +426,12 @@ export function MigrationsDashboard({
 
           if (filteredMigrations.length === 0) {
             return (
-              <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
+              <div className="ui-card text-center py-16 border-2 border-dashed bg-[var(--color-bg-tertiary)]">
                 <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('migrations.noMigrations')}</p>
                 <p className="text-xs text-[var(--color-text-muted)] mt-1 mb-5 leading-relaxed max-w-md mx-auto">{t('migrations.noMigrationsSub')}</p>
                 <button
                   onClick={onStartNewMigration}
-                  className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
+                  className="ui-button-primary px-5 py-2.5 text-xs font-bold font-mono uppercase tracking-wider hover:opacity-90"
                 >
                   {t('migrations.startFirst')}
                 </button>
@@ -440,7 +440,7 @@ export function MigrationsDashboard({
           }
 
           return (
-            <div className="overflow-x-auto scrollbar-portal">
+            <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead>
                   <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
@@ -458,8 +458,16 @@ export function MigrationsDashboard({
                   return (
                     <tr
                       key={mig.id}
-                      onClick={() => onSelectActiveMigration(mig.id)}
-                      className="hover:bg-[var(--color-bg-tertiary)]/50 transition-all duration-200 cursor-pointer group"
+                       onClick={() => onSelectActiveMigration(mig.id)}
+                       onKeyDown={(e) => {
+                         if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+                           e.preventDefault();
+                           onSelectActiveMigration(mig.id);
+                         }
+                       }}
+                       role="button"
+                       tabIndex={0}
+                       className="cursor-pointer transition-colors hover:bg-[var(--color-bg-tertiary)]"
                     >
                       {/* Date */}
                       <td className="py-4 px-4 whitespace-nowrap">
@@ -478,7 +486,7 @@ export function MigrationsDashboard({
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
                               {mig.source_url || t('migrations.oauth')}
                             </span>
-                            <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[120px] truncate block" title={mig.selected_paths?.join(', ') || '/'}>
+                            <span className="text-[10px] font-mono text-[var(--color-text-secondary)] max-w-[120px] truncate block" title={mig.selected_paths?.join(', ') || '/'}>
                               {t('sync.sourcePath')}: {mig.selected_paths?.length ? mig.selected_paths.join(', ') : '/'}
                             </span>
                           </div>
@@ -492,7 +500,7 @@ export function MigrationsDashboard({
                             <span className="text-[10px] text-[var(--color-text-muted)] max-w-[120px] truncate block">
                               {mig.target_url || t('migrations.oauth')}
                             </span>
-                            <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[120px] truncate block" title={mig.target_dir || '/'}>
+                            <span className="text-[10px] font-mono text-[var(--color-text-secondary)] max-w-[120px] truncate block" title={mig.target_dir || '/'}>
                               {t('sync.targetPath')}: {mig.target_dir || '/'}
                             </span>
                           </div>
@@ -519,16 +527,16 @@ export function MigrationsDashboard({
                           </div>
                           
                           {/* Progress bar */}
-                          <div className="w-full bg-[var(--color-bg-tertiary)] rounded-full h-1.5 overflow-hidden shadow-inner">
+                          <div className="w-full bg-[var(--color-bg-tertiary)] h-1.5 overflow-hidden">
                             <div
-                              className={`h-full rounded-full transition-all duration-500 ${
+                                className={`h-full transition-all duration-500 ${
                                 mig.status === 'FAILED'
                                   ? 'bg-[var(--color-error-bg)]'
                                   : mig.status === 'COMPLETED_WITH_ERRORS'
-                                  ? 'bg-amber-500'
+                                  ? 'bg-[var(--color-warning-border)]'
                                   : mig.status === 'COMPLETED'
-                                  ? 'bg-emerald-500'
-                                  : 'bg-portal-orange'
+                                  ? 'bg-[var(--color-success-text)]'
+                                  : 'bg-[var(--color-bg-inverse)]'
                               }`}
                               style={{
                                 width: `${
@@ -548,7 +556,7 @@ export function MigrationsDashboard({
                           <button
                             onClick={(e) => handleMigrationControl(mig, e)}
                             disabled={controlLoading === mig.id || !['RUNNING', 'INDEXING', 'PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status)}
-                            className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
+                             className="ui-button-secondary px-2 py-1 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                             title={['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? t('dashboard.resume') : t('dashboard.pause')}
                           >
                             {controlLoading === mig.id ? t('common.loading') : ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? t('dashboard.resume') : t('dashboard.pause')}
@@ -556,7 +564,7 @@ export function MigrationsDashboard({
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
                             disabled={deleteLoading === mig.id || mig.status === 'RUNNING' || mig.status === 'INDEXING'}
-                            className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
+                             className="ui-button-secondary px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
                             title={t('migrations.deleteMigration')}
                           >
                             {deleteLoading === mig.id ? t('common.loading') : t('migrations.deleteMigration')}
@@ -680,7 +688,7 @@ function SyncList({
 
   if (error) {
     return (
-      <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] text-rose-700 rounded-xl text-xs font-mono text-center">
+      <div className="ui-card p-4 bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)] text-xs font-mono text-center">
         {error}
       </div>
     );
@@ -688,12 +696,12 @@ function SyncList({
 
   if (filteredSyncJobs.length === 0) {
     return (
-      <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
+      <div className="ui-card text-center py-16 border-2 border-dashed bg-[var(--color-bg-tertiary)]">
         <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('sync.noSyncJobs')}</p>
         <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('sync.noSyncSub')}</p>
         <button
           onClick={onStartNewSync}
-          className="bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-sm px-5 py-2.5 rounded-xl text-xs font-bold font-mono uppercase tracking-wider transition-all cursor-pointer"
+          className="ui-button-primary px-5 py-2.5 text-xs font-bold font-mono uppercase tracking-wider hover:opacity-90"
         >
           {t('sync.startFirst')}
         </button>
@@ -702,7 +710,7 @@ function SyncList({
   }
 
   return (
-    <div className="overflow-x-auto scrollbar-portal">
+    <div className="overflow-x-auto">
       <table className="w-full text-left border-collapse min-w-[600px]">
         <thead>
           <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
@@ -717,8 +725,16 @@ function SyncList({
           {filteredSyncJobs.map((job) => (
             <tr
               key={job.id}
-              onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}
-              className="hover:bg-[var(--color-bg-tertiary)]/50 transition-all duration-200 cursor-pointer group"
+               onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}
+               onKeyDown={(e) => {
+                 if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && onSelectActiveSync) {
+                   e.preventDefault();
+                   onSelectActiveSync(job.id);
+                 }
+               }}
+               role={onSelectActiveSync ? 'button' : undefined}
+               tabIndex={onSelectActiveSync ? 0 : undefined}
+               className={onSelectActiveSync ? 'cursor-pointer transition-colors hover:bg-[var(--color-bg-tertiary)]' : undefined}
             >
               <td className="py-4 px-4 whitespace-nowrap">
                 <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
@@ -734,7 +750,7 @@ function SyncList({
                     <span className="text-[10px] text-[var(--color-text-muted)] max-w-[130px] truncate block">
                       {job.source_url || t('migrations.oauth')}
                     </span>
-                    <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[130px] truncate block" title={job.selected_paths?.join(', ') || '/'}>
+                    <span className="text-[10px] font-mono text-[var(--color-text-secondary)] max-w-[130px] truncate block" title={job.selected_paths?.join(', ') || '/'}>
                       {t('sync.sourcePath')}: {job.selected_paths && job.selected_paths.length > 0 ? job.selected_paths.join(', ') : '/'}
                     </span>
                   </div>
@@ -746,7 +762,7 @@ function SyncList({
                     <span className="text-[10px] text-[var(--color-text-muted)] max-w-[130px] truncate block">
                       {job.target_url || t('migrations.oauth')}
                     </span>
-                    <span className="text-[10px] font-mono text-[var(--color-portal-navy-themed)] max-w-[130px] truncate block" title={job.target_dir || '/'}>
+                    <span className="text-[10px] font-mono text-[var(--color-text-secondary)] max-w-[130px] truncate block" title={job.target_dir || '/'}>
                       {t('sync.targetPath')}: {job.target_dir || '/'}
                     </span>
                   </div>
@@ -768,15 +784,15 @@ function SyncList({
                     : job.total_files > 0
                       ? Math.min(100, Math.round((job.processed_files / job.total_files) * 100))
                       : 0;
-                  const color = job.status === 'FAILED' ? 'bg-rose-500' : job.status === 'COMPLETED_WITH_ERRORS' ? 'bg-amber-500' : progress === 100 ? 'bg-emerald-500' : 'bg-portal-orange';
+                  const color = job.status === 'FAILED' ? 'bg-[var(--color-error-text)]' : job.status === 'COMPLETED_WITH_ERRORS' ? 'bg-[var(--color-warning-border)]' : progress === 100 ? 'bg-[var(--color-success-text)]' : 'bg-[var(--color-bg-inverse)]';
                   return (
                     <div className="flex flex-col gap-1.5">
                       <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
                         <span>{t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })}</span>
                         {totalBytes > 0 && <span>{formatBytes(displayedBytes)}</span>}
                       </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-bg-tertiary)]">
-                        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${progress}%` }} />
+                      <div className="h-1.5 w-full overflow-hidden bg-[var(--color-bg-tertiary)]">
+                        <div className={`h-full transition-all duration-500 ${color}`} style={{ width: `${progress}%` }} />
                       </div>
                     </div>
                   );
@@ -787,7 +803,7 @@ function SyncList({
                   <button
                     onClick={(e) => handleSyncControl(job, e)}
                     disabled={controlLoading === job.id || !['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED'].includes(job.status)}
-                    className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
+                      className="ui-button-secondary px-2 py-1 text-xs hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                     title={job.status === 'PAUSED' ? t('sync.resume') : t('sync.pause')}
                   >
                     {controlLoading === job.id ? t('common.loading') : job.status === 'PAUSED' ? t('sync.resume') : t('sync.pause')}
@@ -795,7 +811,7 @@ function SyncList({
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
                     disabled={deleteLoading === job.id}
-                    className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
+                      className="ui-button-secondary px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
                     title={t('sync.deleteJob')}
                   >
                     {deleteLoading === job.id ? t('common.loading') : t('sync.deleteJob')}
