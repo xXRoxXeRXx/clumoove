@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, User, Image as ImageIcon, Lock, Settings, Trash2, Upload, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail, Info, Plug } from 'lucide-react';
+import { User, Image as ImageIcon, Lock, Trash2, Upload, Eye, EyeOff, Palette, Sun, Moon, Monitor, Mail, Info, Plug } from 'lucide-react';
 import { AvatarCropper } from './AvatarCropper';
 import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
@@ -532,11 +532,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={onBack}
           className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
         >
-          <ArrowLeft className="w-4 h-4" />
           {t('settings.back')}
         </button>
         <div className="flex items-center gap-2">
-          <Settings className="w-5 h-5 text-[var(--color-portal-navy-themed)]" />
           <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] leading-none">{t('settings.title')}</h2>
         </div>
       </div>
@@ -551,7 +549,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
-          <User className="w-4 h-4" />
           {t('settings.tabs.account')}
         </button>
         <button
@@ -562,7 +559,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
-          <Plug className="w-4 h-4" />
           {t('settings.tabs.connections')}
         </button>
         <button
@@ -573,7 +569,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
-          <Palette className="w-4 h-4" />
           {t('settings.tabs.appearance')}
         </button>
         <button
@@ -584,7 +579,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
-          <Mail className="w-4 h-4" />
           {t('settings.tabs.notifications')}
         </button>
         <button
@@ -595,7 +589,6 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
           }`}
         >
-          <Info className="w-4 h-4" />
           {t('settings.tabs.about')}
         </button>
       </div>
