@@ -9,6 +9,14 @@ interface AuthFormProps {
   onAuthSuccess: (token: string, user: UserType) => void;
 }
 
+const authPanelClass = 'ui-section p-8';
+const authInputClass = 'ui-input w-full px-4 py-2.5 text-sm transition-colors';
+const authButtonClass = 'ui-button-primary w-full py-3 px-4 text-xs font-bold uppercase tracking-wider font-mono cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
+const authErrorClass = 'ui-alert ui-alert-error p-3.5 text-xs mb-6 text-center font-mono leading-relaxed';
+const authSuccessClass = 'ui-alert ui-alert-success p-3.5 text-xs mb-6 text-center font-mono leading-relaxed';
+const authLinkClass = 'ui-link hover:underline cursor-pointer';
+const spinnerClass = 'animate-spin rounded-full h-4 w-4 border-2 border-current/30 border-t-current';
+
 export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 	const { t, i18n } = useTranslation();
 	const language = i18n.language?.startsWith('de') ? 'de' : 'en';
@@ -204,17 +212,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   if (mustChangeSession) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4 relative">
-        <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
+        <div className={authPanelClass}>
 
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
+            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
               {t('auth.mustChangePassword')}
             </h2>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
@@ -223,7 +227,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           </div>
 
           {mustChangeError && (
-            <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+            <div role="alert" className={authErrorClass}>
               {mustChangeError}
             </div>
           )}
@@ -242,7 +246,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                className={`${authInputClass} font-mono`}
               />
             </div>
             <div className="space-y-1.5">
@@ -257,18 +261,18 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 required
                 value={confirmNewPassword}
                 onChange={(e) => setConfirmNewPassword(e.target.value)}
-                className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                className={`${authInputClass} font-mono`}
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+              className={`${authButtonClass} mt-2`}
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  <span className={spinnerClass}></span>
                   {t('common.processing')}
                 </span>
               ) : (
@@ -284,16 +288,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   if (totpSession) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4 relative">
-        <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
+        <div className={authPanelClass}>
 
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
+            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
               {t('auth.totpTitle')}
             </h2>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
@@ -302,7 +303,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           </div>
 
           {otpError && (
-            <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+            <div role="alert" className={authErrorClass}>
               {otpError}
             </div>
           )}
@@ -321,13 +322,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   placeholder="123456"
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm tracking-[0.5em] text-center focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                  className={`${authInputClass} tracking-[0.5em] text-center font-mono`}
                 />
               </div>
             </div>
 
             {lockSeconds > 0 && (
-              <p className="text-center text-xs font-mono text-rose-700">
+              <p className="text-center text-xs font-mono text-[var(--color-error-text)]">
                 {t('auth.lockedRetry', { time: `${Math.floor(lockSeconds / 60)}:${(lockSeconds % 60).toString().padStart(2, '0')}` })}
               </p>
             )}
@@ -335,11 +336,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <button
               type="submit"
               disabled={loading || lockSeconds > 0}
-              className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+              className={`${authButtonClass} mt-2`}
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                  <span className={spinnerClass}></span>
                   {t('common.processing')}
                 </span>
               ) : (
@@ -357,7 +358,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 setOtpError('');
                 setLockSeconds(0);
               }}
-              className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
+              className={authLinkClass}
             >
                {t('common.cancel')}
             </button>
@@ -370,17 +371,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   if (forgotMode) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4 relative">
-        <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
-          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-portal-orange via-orange-500 to-portal-navy" />
+        <div className={authPanelClass}>
 
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
+            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
               {t('auth.forgotTitle')}
             </h2>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
@@ -391,7 +388,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {!resetEmailSent ? (
             <>
               {error && (
-                <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+                <div role="alert" className={authErrorClass}>
                   {error}
                 </div>
               )}
@@ -402,7 +399,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                      {t('auth.email')}
                   </label>
                   <div className="relative group">
-                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
                       <span aria-hidden="true">@</span>
                     </span>
                     <input
@@ -412,7 +409,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                       placeholder={t('auth.emailPlaceholder')}
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={`${authInputClass} pl-10 pr-4 font-sans`}
                     />
                   </div>
                 </div>
@@ -420,11 +417,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+                  className={`${authButtonClass} mt-2`}
                 >
                   {loading ? (
                     <span className="flex items-center justify-center gap-2">
-                      <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                      <span className={spinnerClass}></span>
                   {t('common.processing')}
                 </span>
               ) : (
@@ -434,7 +431,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               </form>
             </>
           ) : (
-            <div className="p-4 rounded-xl border text-xs text-center font-mono leading-relaxed bg-emerald-50/80 border-emerald-200 text-emerald-800 mb-6">
+            <div className="ui-alert ui-alert-success p-4 text-xs text-center font-mono leading-relaxed mb-6">
                {t('auth.forgotSent')}
             </div>
           )}
@@ -447,7 +444,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 setResetEmailSent(false);
                 setError('');
               }}
-              className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
+              className={authLinkClass}
             >
                    {t('auth.backToLogin')}
                  </button>
@@ -513,15 +510,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   if (needsSetup) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4 relative">
-        <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
+        <div className={authPanelClass}>
           <div className="flex flex-col items-center mb-8">
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight text-center">
+            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight text-center">
               {t('auth.setupAdminTitle')}
             </h2>
             <p className="text-xs text-[var(--color-text-muted)] font-mono tracking-wide text-center mt-2 leading-relaxed">
@@ -530,7 +524,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           </div>
 
           {error && (
-            <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+            <div role="alert" className={authErrorClass}>
               {error}
             </div>
           )}
@@ -541,7 +535,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 {t('auth.name')}
               </label>
               <div className="relative group">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
                   <span aria-hidden="true">A</span>
                 </span>
                 <input
@@ -550,7 +544,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   placeholder={t('auth.namePlaceholder')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  className={`${authInputClass} pl-10 pr-4 font-sans`}
                 />
               </div>
             </div>
@@ -560,7 +554,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 {t('auth.email')}
               </label>
               <div className="relative group">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
                   <span aria-hidden="true">@</span>
                 </span>
                 <input
@@ -570,7 +564,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   placeholder={t('auth.emailPlaceholder')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  className={`${authInputClass} pl-10 pr-4 font-sans`}
                 />
               </div>
             </div>
@@ -580,7 +574,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 {t('auth.password')}
               </label>
               <div className="relative group">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
                   <span aria-hidden="true">•</span>
                 </span>
                 <input
@@ -589,12 +583,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   placeholder={t('auth.passwordPlaceholder')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  className={`${authInputClass} pl-10 pr-10 font-sans`}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-portal-navy dark:hover:text-white transition-colors"
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
                   aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                 >
                   <span className="text-[10px]">{showPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
@@ -605,11 +599,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white text-sm font-semibold rounded-xl shadow-md hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-portal-orange/40 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono mt-6"
+              className={`${authButtonClass} text-sm mt-6`}
             >
               {loading ? (
                 <span className="inline-flex items-center justify-center gap-2">
-                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span className={spinnerClass} />
                   <span>{t('auth.createAdminAccount')}...</span>
                 </span>
               ) : (
@@ -687,19 +681,14 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
   return (
     <div className="max-w-md w-full mx-auto my-8 px-4 relative">
-      {/* Ambient background glow */}
-      <div className="absolute -top-10 -left-10 w-40 h-40 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-10 -right-10 w-40 h-40 bg-portal-navy/10 rounded-full blur-3xl pointer-events-none" />
-
-      {/* Container Card with Premium Glassmorphism */}
-      <div className="relative glass-panel rounded-3xl p-8 shadow-portal hover:shadow-portal-hover border border-[var(--color-glass-border)] transition-all duration-500 overflow-hidden">
+      <div className={authPanelClass}>
         
         {/* Brand header */}
         <div className="flex flex-col items-center mb-8">
           <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
             <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
           </div>
-          <h2 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)] tracking-tight">
+          <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
             {isLogin ? t('auth.welcomeBack') : t('auth.createAccount')}
           </h2>
           <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
@@ -708,13 +697,13 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         </div>
 
         {error && (
-          <div role="alert" className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-rose-50/80 border-rose-250 text-rose-800">
+          <div role="alert" className={authErrorClass}>
             {error}
           </div>
         )}
 
         {successMessage && (
-          <div className="p-3.5 rounded-xl border text-xs mb-6 text-center font-mono leading-relaxed animate-fade-in bg-emerald-50/80 border-emerald-200 text-emerald-800">
+          <div className={authSuccessClass}>
             {successMessage}
           </div>
         )}
@@ -727,7 +716,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 {t('auth.name')}
               </label>
               <div className="relative group">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
                   <span aria-hidden="true">A</span>
                 </span>
                 <input
@@ -736,7 +725,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   placeholder={t('auth.namePlaceholder')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  className={`${authInputClass} pl-10 pr-4 font-sans`}
                 />
               </div>
             </div>
@@ -748,7 +737,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               {t('auth.email')}
             </label>
             <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
                 <span aria-hidden="true">@</span>
               </span>
               <input
@@ -758,7 +747,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder={t('auth.emailPlaceholder')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                className={`${authInputClass} pl-10 pr-4 font-sans`}
               />
             </div>
           </div>
@@ -769,7 +758,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 {t('auth.password')}
               </label>
             <div className="relative group">
-              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+              <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
                 <span aria-hidden="true">•</span>
               </span>
               <input
@@ -779,7 +768,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                 placeholder={t('auth.passwordPlaceholder')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/50 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                className={`${authInputClass} pl-10 pr-10 font-mono`}
               />
                 <button
                   type="button"
@@ -801,7 +790,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   setForgotMode(true);
                   setError('');
                 }}
-                className="text-xs font-mono text-[var(--color-text-muted)] hover:text-portal-orange transition-colors cursor-pointer underline-offset-2 hover:underline"
+                className="ui-link text-xs font-mono underline-offset-2 hover:underline"
               >
                  {t('auth.forgotPassword')}
                </button>
@@ -812,11 +801,11 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-white hover:shadow-md hover:scale-[1.01] active:scale-[0.99] py-3 px-4 rounded-xl text-xs font-bold transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portal-orange disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider font-mono cursor-pointer mt-2"
+            className={`${authButtonClass} mt-2`}
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
-                <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></span>
+                <span className={spinnerClass}></span>
                  {t('common.processing')}
                </span>
              ) : isLogin ? (
@@ -839,7 +828,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                     setIsLogin(false);
                     setError('');
                   }}
-                  className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
+                  className={authLinkClass}
                 >
                    {t('auth.register')}
                  </button>
@@ -858,7 +847,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   setIsLogin(true);
                   setError('');
                 }}
-                className="text-portal-orange font-bold hover:underline transition-all cursor-pointer"
+                className={authLinkClass}
               >
                    {t('auth.login')}
                  </button>

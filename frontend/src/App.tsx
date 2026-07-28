@@ -75,6 +75,7 @@ function App() {
   const [emailChangeToken, setEmailChangeToken] = useState<string>(emailChangeTokenFromUrl || '');
   const [localStorageEnabled, setLocalStorageEnabled] = useState<boolean>(false);
   const [oauthProviders, setOauthProviders] = useState<Record<string, boolean>>({});
+  const userMenuButtonRef = useRef<HTMLButtonElement>(null);
 
   // Cancel any open confirm when the user leaves the view that opened it.
   useEffect(() => {
@@ -213,7 +214,10 @@ function App() {
       }
     };
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setShowUserMenu(false);
+        if (e.key === 'Escape') {
+          setShowUserMenu(false);
+          userMenuButtonRef.current?.focus();
+        }
     };
     document.addEventListener('mousedown', handleOutsideClick);
     document.addEventListener('keydown', handleKey);
@@ -465,11 +469,13 @@ function App() {
           {user && (
             <div className="relative" ref={userMenuRef}>
               <button
+                ref={userMenuButtonRef}
                 type="button"
-                onClick={() => setShowUserMenu(!showUserMenu)}
+                onClick={() => setShowUserMenu((open) => !open)}
                 aria-haspopup="menu"
                 aria-expanded={showUserMenu}
-                className="flex items-center gap-2 cursor-pointer bg-transparent p-0 text-sm"
+                aria-controls="user-menu"
+                className="flex items-center gap-2 cursor-pointer p-0 text-sm"
               >
                 <span className="font-medium text-[var(--color-text-primary)]">{user.display_name}</span>
                 {user.avatar ? (
@@ -479,7 +485,7 @@ function App() {
                     alt={user.display_name}
                   />
                 ) : (
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-200 text-xs font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-100" aria-hidden="true">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-bg-tertiary)] text-xs font-medium text-[var(--color-text-secondary)]" aria-hidden="true">
                     {user.display_name.slice(0, 1).toUpperCase()}
                   </span>
                 )}
@@ -487,8 +493,23 @@ function App() {
 
               {showUserMenu && (
                 <div
+                  id="user-menu"
                   role="menu"
-                  className="absolute right-0 top-full z-50 mt-2 w-48 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1"
+                  aria-label={user.display_name}
+                  onKeyDown={(event) => {
+                    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+                    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      const direction = event.key === 'ArrowDown' ? 1 : -1;
+                      items[(currentIndex + direction + items.length) % items.length]?.focus();
+                    }
+                    if (event.key === 'Home' || event.key === 'End') {
+                      event.preventDefault();
+                      items[event.key === 'Home' ? 0 : items.length - 1]?.focus();
+                    }
+                  }}
+                  className="absolute right-0 top-full z-50 mt-2 w-48 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1"
                 >
                   {user?.role === 'ADMIN' && (
                     <button
@@ -521,7 +542,7 @@ function App() {
                       handleLogout();
                       setShowUserMenu(false);
                     }}
-                    className="w-full px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                      className="w-full px-3 py-2 text-left text-sm text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"
                   >
                     {t('nav.logout')}
                   </button>

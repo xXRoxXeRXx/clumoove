@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, CloudIcon as CloudSync, DocumentTextIcon as ScrollText, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
+import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, CloudIcon as CloudSync, DocumentTextIcon as ScrollText, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
 import { useApiError } from '../utils/apiError';
 import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
@@ -8,6 +8,7 @@ import { useConfirm } from '../contexts/useConfirm';
 import { MessageBanner } from './MessageBanner';
 import { apiFetch } from '../utils/apiClient';
 import { Toggle } from './Toggle';
+import { StatusBadge } from './StatusBadge';
 
 type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
 
@@ -79,11 +80,14 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
       </div>
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label={t('admin.title')}>
         {tabs.map(([key, Icon, label]) => (
           <button
             key={key}
             onClick={() => setTab(key)}
+            role="tab"
+            aria-selected={tab === key}
+            aria-controls={`admin-panel-${key}`}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-md border font-medium text-sm cursor-pointer ${
               tab === key
                 ? 'bg-[var(--color-bg-inverse)] border-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
@@ -98,7 +102,7 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
 
       {message && <MessageBanner message={message} />}
 
-      <div className="min-h-[60vh]">
+      <div id={`admin-panel-${tab}`} role="tabpanel" className="min-h-[60vh]">
         {tab === 'users' && (
           <UsersTab apiUrl={apiUrl} token={token} currentUserID={user?.id} onMessage={setMessage} onError={showError} />
         )}
@@ -276,32 +280,32 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
                 <td className="px-3 py-2">{u.email}</td>
                 <td className="px-3 py-2">{u.display_name}</td>
                 <td className="px-3 py-2">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.role === 'ADMIN' ? 'bg-portal-orange/15 text-portal-orange' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]">
                     {u.role}
                   </span>
                 </td>
                 <td className="px-3 py-2">
                   {u.active
-                    ? <span className="text-emerald-600 font-semibold">{t('common.active')}</span>
-                    : <span className="text-rose-600 font-semibold">{t('admin.users.suspended')}</span>}
+                    ? <span className="ui-badge ui-badge-success">{t('common.active')}</span>
+                    : <span className="ui-badge ui-badge-error">{t('admin.users.suspended')}</span>}
                 </td>
                 <td className="px-3 py-2 text-[var(--color-text-muted)]">{u.created_at ? formatDateTime(u.created_at) : ''}</td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1.5">
                     {u.active ? (
-                      <button title={t('admin.users.suspend')} onClick={() => act(() => adminApi.suspendUser(apiUrl, token, u.id!), 'admin.users.suspendedOk')}
-                        className="p-1.5 rounded-xl border border-[var(--color-border)] text-rose-600 hover:bg-rose-50/50 cursor-pointer"><Ban className="w-3.5 h-3.5" /></button>
+                      <button type="button" aria-label={t('admin.users.suspend')} onClick={() => act(() => adminApi.suspendUser(apiUrl, token, u.id!), 'admin.users.suspendedOk')}
+                        className="ui-button-secondary p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Ban className="w-3.5 h-3.5" /></button>
                     ) : (
-                      <button title={t('admin.users.reactivate')} onClick={() => act(() => adminApi.reactivateUser(apiUrl, token, u.id!), 'admin.users.reactivatedOk')}
-                        className="p-1.5 rounded-xl border border-[var(--color-border)] text-emerald-600 hover:bg-emerald-50/50 cursor-pointer"><CheckCircle2 className="w-3.5 h-3.5" /></button>
+                      <button type="button" aria-label={t('admin.users.reactivate')} onClick={() => act(() => adminApi.reactivateUser(apiUrl, token, u.id!), 'admin.users.reactivatedOk')}
+                        className="ui-button-secondary p-1.5 text-[var(--color-success-text)] hover:bg-[var(--color-success-bg)]"><CheckCircle2 className="w-3.5 h-3.5" /></button>
                     )}
-                    <button title={t('admin.users.toggleRole')} onClick={() => act(() => adminApi.updateRole(apiUrl, token, u.id!, u.role === 'ADMIN' ? 'USER' : 'ADMIN'), 'admin.users.roleChanged')}
-                      className="p-1.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] cursor-pointer">
+                    <button type="button" aria-label={t('admin.users.toggleRole')} onClick={() => act(() => adminApi.updateRole(apiUrl, token, u.id!, u.role === 'ADMIN' ? 'USER' : 'ADMIN'), 'admin.users.roleChanged')}
+                      className="ui-button-secondary p-1.5">
                       {u.role === 'ADMIN' ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
                     </button>
                     {u.id !== currentUserID && (
-                      <button title={t('admin.users.delete')} onClick={() => { void (async () => { if (await confirm({ message: t('admin.users.deleteConfirm') })) act(() => adminApi.deleteUser(apiUrl, token, u.id!), 'admin.users.deletedOk'); })(); }}
-                        className="p-1.5 rounded-xl border border-[var(--color-border)] text-rose-600 hover:bg-rose-50/50 cursor-pointer"><Trash2 className="w-3.5 h-3.5" /></button>
+                      <button type="button" aria-label={t('admin.users.delete')} onClick={() => { void (async () => { if (await confirm({ message: t('admin.users.deleteConfirm') })) act(() => adminApi.deleteUser(apiUrl, token, u.id!), 'admin.users.deletedOk'); })(); }}
+                        className="ui-button-secondary p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Trash2 className="w-3.5 h-3.5" /></button>
                     )}
                   </div>
                 </td>
@@ -414,9 +418,7 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
               <tr key={m.id} className="border-t border-[var(--color-border)]">
                 <td className="px-3 py-2">{m.owner_email || <span className="text-[var(--color-text-muted)]">—</span>}</td>
                 <td className="px-3 py-2">
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                    m.type === 'SYNC' ? 'bg-sky-100 text-sky-700' : 'bg-purple-100 text-purple-700'
-                  }`}>
+                  <span className={`ui-badge ${m.type === 'SYNC' ? 'ui-badge-info' : 'ui-badge-muted'}`}>
                     {m.type === 'SYNC' ? t('admin.transfers.sync') : t('admin.transfers.migration')}
                   </span>
                 </td>
@@ -435,23 +437,6 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
       <Pager page={page} pages={pages} onPage={setPage} />
     </SectionCard>
   );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const { t } = useTranslation();
-  const map: Record<string, string> = {
-    COMPLETED: 'bg-emerald-100 text-emerald-700',
-    IDLE: 'bg-emerald-100 text-emerald-700',
-    FAILED: 'bg-rose-100 text-rose-700',
-    CANCELLED: 'bg-gray-100 text-gray-600',
-    RUNNING: 'bg-portal-orange/15 text-portal-orange',
-    INDEXING: 'bg-portal-orange/15 text-portal-orange',
-    PAUSED: 'bg-amber-100 text-amber-700',
-    PAUSED_CONNECTION_LOSS: 'bg-amber-100 text-amber-700',
-    SCHEDULED: 'bg-sky-100 text-sky-700',
-  };
-  const cls = map[status] || 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]';
-  return <span className={'px-2 py-0.5 rounded-full text-[10px] font-bold ' + cls}>{t('status.' + status.toLowerCase())}</span>;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +458,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
 
   const card = (label: string, value: number | string) => (
     <div className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
-      <div className="text-2xl font-display font-extrabold text-[var(--color-portal-navy-themed)]">{value}</div>
+      <div className="text-2xl font-display font-semibold text-[var(--color-text-primary)]">{value}</div>
       <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mt-1">{label}</div>
     </div>
   );
@@ -492,7 +477,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="p-4 rounded-2xl border border-[var(--color-border)]">
-          <div className="text-xs font-bold text-[var(--color-portal-navy-themed)] mb-3">{t('admin.stats.migrationsByStatus')}</div>
+          <div className="text-xs font-bold text-[var(--color-text-primary)] mb-3">{t('admin.stats.migrationsByStatus')}</div>
           <div className="space-y-1.5">
             {Object.entries(stats.migrations_by_status).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between text-xs">
@@ -504,7 +489,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
           </div>
         </div>
         <div className="p-4 rounded-2xl border border-[var(--color-border)]">
-          <div className="text-xs font-bold text-[var(--color-portal-navy-themed)] mb-3">{t('admin.stats.syncsByStatus')}</div>
+          <div className="text-xs font-bold text-[var(--color-text-primary)] mb-3">{t('admin.stats.syncsByStatus')}</div>
           <div className="space-y-1.5">
             {Object.entries(stats.syncs_by_status || {}).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between text-xs">
@@ -516,11 +501,11 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
           </div>
         </div>
         <div className="p-4 rounded-2xl border border-[var(--color-border)]">
-          <div className="text-xs font-bold text-[var(--color-portal-navy-themed)] mb-3">{t('admin.stats.tasksByStatus')}</div>
+          <div className="text-xs font-bold text-[var(--color-text-primary)] mb-3">{t('admin.stats.tasksByStatus')}</div>
           <div className="space-y-1.5">
             {Object.entries(stats.tasks_by_status).map(([k, v]) => (
               <div key={k} className="flex items-center justify-between text-xs">
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]">{k}</span>
+                <StatusBadge status={k} />
                 <span className="font-mono">{v}</span>
               </div>
             ))}
@@ -583,12 +568,12 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
           {actions.map((a) => <option key={a} value={a}>{t(`admin.audit.actions.${a}`)}</option>)}
         </select>
         <input value={userID} onChange={(e) => { setUserID(e.target.value); setPage(1); }} placeholder={t('admin.audit.userId')}
-          className="px-4 py-2.5 text-sm border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans w-44" />
+          className="ui-input w-44 px-3 py-2 text-sm font-sans" />
         <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }}
           className={selectCls} />
         <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }}
           className={selectCls} />
-        <button onClick={() => { setPage(1); }} className="p-1.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] cursor-pointer"><RefreshCw className="w-3.5 h-3.5" /></button>
+        <button type="button" aria-label={t('common.refresh')} onClick={() => { setPage(1); }} className="ui-button-secondary p-1.5"><RefreshCw className="w-3.5 h-3.5" /></button>
       </div>
 
       <div className="overflow-x-auto rounded-2xl border border-[var(--color-border)]">
@@ -712,22 +697,30 @@ function SystemTab({ apiUrl, token, onMessage }: {
 // ---------------------------------------------------------------------------
 
 function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (p: number) => void }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex items-center justify-between text-xs">
       <button
+        type="button"
+        aria-label={t('common.previousPage')}
+        title={t('common.previousPage')}
         disabled={page <= 1}
         onClick={() => onPage(page - 1)}
-        className="px-3 py-1.5 rounded-xl border border-[var(--color-border)] disabled:opacity-40 cursor-pointer hover:bg-[var(--color-bg-tertiary)] transition-all"
+        className="ui-button-secondary px-3 py-1.5 disabled:opacity-40 hover:bg-[var(--color-bg-tertiary)] transition-colors"
       >
-        ←
+        <ArrowLeft className="w-4 h-4" />
       </button>
       <span className="text-[var(--color-text-muted)] font-mono">{page} / {pages}</span>
       <button
+        type="button"
+        aria-label={t('common.nextPage')}
+        title={t('common.nextPage')}
         disabled={page >= pages}
         onClick={() => onPage(page + 1)}
-        className="px-3 py-1.5 rounded-xl border border-[var(--color-border)] disabled:opacity-40 cursor-pointer hover:bg-[var(--color-bg-tertiary)] transition-all"
+        className="ui-button-secondary px-3 py-1.5 disabled:opacity-40 hover:bg-[var(--color-bg-tertiary)] transition-colors"
       >
-        →
+        <ArrowRight className="w-4 h-4" />
       </button>
     </div>
   );

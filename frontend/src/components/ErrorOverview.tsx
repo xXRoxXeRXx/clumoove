@@ -86,19 +86,19 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
   if (loading || total === 0) return null;
 
   return (
-    <section className="overflow-hidden rounded-lg border border-[var(--color-error-border)] bg-[var(--color-error-bg)]">
+    <section className="ui-card overflow-hidden bg-[var(--color-error-bg)] border-[var(--color-error-border)]">
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-error-border)] px-5 py-3.5">
         <div className="flex items-center gap-2">
           <h3 className="font-display font-bold text-xs text-[var(--color-error-text)] uppercase tracking-wider font-mono">
             {t('common.errorOverview')}
           </h3>
         </div>
-        <span className="rounded-full border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
+        <span className="ui-card border-[var(--color-error-border)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
           {total}
         </span>
       </div>
 
-      <div className="m-4 overflow-x-auto rounded-xl border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)]">
+        <div className="ui-card m-4 overflow-x-auto border-[var(--color-error-border)]">
         <table className="w-full min-w-[680px] text-left text-xs">
           <thead className="bg-[var(--color-bg-tertiary)] text-[10px] font-mono uppercase tracking-wider text-[var(--color-error-text)]">
             <tr>
@@ -110,7 +110,7 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
           </thead>
           <tbody className="divide-y divide-[var(--color-border-light)]">
             {items.map((item) => (
-              <tr key={`${item.kind}-${item.id}`} className="transition-colors hover:bg-[var(--color-bg-tertiary)]/60">
+              <tr key={`${item.kind}-${item.id}`} className="transition-colors hover:bg-[var(--color-bg-tertiary)]">
                 <td className="max-w-[220px] px-3 py-2.5 font-mono text-[var(--color-text-primary)] break-all">{item.path}</td>
                 <td className="px-3 py-2.5 whitespace-nowrap text-[var(--color-text-secondary)]">
                   {item.kind === 'indexing' ? t('common.errorTypeIndexing') : t('common.errorTypeTransfer')}
@@ -129,7 +129,7 @@ export function ErrorOverview({ endpoint, token, refreshKey }: ErrorOverviewProp
           type="button"
           onClick={loadMore}
           disabled={loadingMore}
-          className="mb-4 ml-4 rounded-md border border-[var(--color-error-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-error-text)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
+          className="ui-button-secondary mb-4 ml-4 px-3 py-2 text-sm text-[var(--color-error-text)] border-[var(--color-error-border)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
         >
           {loadingMore && `${t('common.loading')} `}
           {t('common.loadMoreErrors')}

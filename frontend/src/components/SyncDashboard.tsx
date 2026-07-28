@@ -247,10 +247,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   if (error || !job) {
     return (
       <div className="space-y-4">
-        <button onClick={onBack} className="flex items-center gap-2 text-xs font-bold text-[var(--color-text-muted)] hover:text-[var(--color-portal-navy-themed)]">
+        <button onClick={onBack} className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)]">
           {t('common.back')}
         </button>
-        <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] text-rose-700 rounded-xl text-sm font-mono text-center">
+        <div className="ui-card p-4 bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)] text-sm font-mono text-center">
           {error || t('sync.notFound')}
         </div>
       </div>
@@ -278,14 +278,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs font-mono font-bold text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs transition-all cursor-pointer"
+          className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-mono font-bold hover:bg-[var(--color-bg-tertiary)]"
         >
           {t('common.back')}
         </button>
       </div>
 
-      {/* Main Glass Panel containing all content */}
-      <div className="glass-panel rounded-lg p-6 space-y-6">
+      <div className="ui-card p-6 space-y-6">
         {/* Top Badges Row (Above Title & Action Buttons) */}
         <div className="flex items-center justify-end gap-2.5 pb-2">
           {/* Status Info Badge */}
@@ -293,11 +292,11 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
           {/* Direction Info Badge (rechtsbündig) */}
           {job.direction === 'two_way' ? (
-            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200">
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-info-text)] px-3 py-1 bg-[var(--color-info-bg)] border border-[var(--color-info-border)]">
               <span>{t('sync.twoWay')}</span>
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-orange-700 px-3 py-1 rounded-full bg-orange-50 border border-orange-200">
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-info-text)] px-3 py-1 bg-[var(--color-info-bg)] border border-[var(--color-info-border)]">
               <span>{t('sync.oneWay')}</span>
             </span>
           )}
@@ -306,7 +305,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         {/* Title & Action Controls */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
           <div className="space-y-1">
-            <h1 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)]">
+            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)]">
               {t('sync.syncJobDetail')}
             </h1>
             <p className="text-xs text-[var(--color-text-muted)] font-mono">
@@ -318,7 +317,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             {(job.failed_files > 0 || job.last_run_status === 'PARTIAL' || job.last_run_status === 'FAILED') && (
               <button
                 onClick={handleDownloadReport}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+                className="ui-button-secondary flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"
               >
                 {t('sync.downloadReport')}
               </button>
@@ -328,7 +327,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               <button
                 onClick={handleResume}
                 disabled={actionLoading}
-                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {t('sync.resume')}
               </button>
@@ -336,7 +335,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               <button
                 onClick={handlePause}
                 disabled={actionLoading || !canPause}
-                className="flex items-center gap-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] text-[var(--color-text-primary)] px-4 py-2 rounded-xl text-xs font-bold border border-[var(--color-border)] cursor-pointer disabled:opacity-50 transition-colors"
+                className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
               >
                 {t('sync.pause')}
               </button>
@@ -345,7 +344,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             <button
               onClick={handleTriggerStart}
               disabled={actionLoading || !canStart}
-              className="flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-all"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
             >
               {actionLoading && `${t('common.loading')} `}
               {t('sync.syncNow')}
@@ -355,29 +354,27 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
         {/* Live Transfer Progress (only shown while a run is active) */}
         {(job.status === 'RUNNING' || job.status === 'INDEXING') && (
-          <div className="border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 rounded-2xl relative overflow-hidden flex flex-col">
+          <div className="ui-card p-6 flex flex-col">
               <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
                 <div>
                   <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
-                  <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
+                  <h3 className="font-display font-extrabold text-5xl text-[var(--color-text-primary)] mt-1.5 leading-none">
                     {byteProgressPercent}%
                   </h3>
                 </div>
                 <div className="text-right flex flex-col items-end">
                   <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
-                  <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
+                  <p className="text-base font-extrabold text-[var(--color-success-text)] mt-1.5 font-mono">
                     {formatBytes(speed)}/s
                   </p>
                 </div>
               </div>
 
-              {/* Glowing Rounded Progress Bar */}
-              <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
+              <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 overflow-hidden">
                 <div
-                  className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
+                  className="bg-[var(--color-bg-inverse)] h-full transition-all duration-500 ease-out"
                   style={{ width: `${byteProgressPercent}%` }}
                 >
-                  <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
                 </div>
               </div>
 
@@ -400,9 +397,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
         {/* Source & Target Connection Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('migrations.source')}</h3>
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.source')}</h3>
             </div>
             <div className="space-y-2">
               <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">{job.source_provider}</div>
@@ -410,15 +407,15 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               <SelectedPathsViewer paths={job.selected_paths} />
             </div>
           </div>
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('migrations.target')}</h3>
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.target')}</h3>
             </div>
             <div className="space-y-2">
               <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">{job.target_provider}</div>
               <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">{job.target_url || t('migrations.oauth')}</div>
               <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                <span className="ui-card inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-secondary)]">
                   <span>{job.target_dir || '/'}</span>
                 </span>
               </div>
@@ -428,18 +425,18 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
         {/* Active transfers and run status follow the migration-detail layout. */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('sync.activeTransfersTitle', { count: job.active_files?.length || 0, threads })}</h3>
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('sync.activeTransfersTitle', { count: job.active_files?.length || 0, threads })}</h3>
             </div>
             {job.active_files?.length ? (
-              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1 scrollbar-portal">
+              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1">
                 {job.active_files.map((file, i) => {
                   const fileName = file.split('/').pop() || file;
                   return (
-                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
+                    <div key={i} className="ui-card flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] font-mono text-[var(--color-text-secondary)] min-w-0">
                       <span className="truncate pr-4" title={file}>{fileName}</span>
-                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                      <span className="text-[10px] text-[var(--color-success-text)] font-semibold uppercase animate-pulse shrink-0 bg-[var(--color-success-bg)] border border-[var(--color-success-border)] px-2 py-0.5">
                         {t('dashboard.running')}
                       </span>
                     </div>
@@ -452,13 +449,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               </div>
             )}
           </div>
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5"><h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">{t('migrations.status')} & {t('dashboard.progress')}</h3></div>
+          <div className="ui-card p-5 space-y-4">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5"><h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.status')} & {t('dashboard.progress')}</h3></div>
             <div className="space-y-2 font-sans text-xs text-[var(--color-text-muted)]">
               <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('dashboard.filesTotal')}</span><span className="font-bold text-[var(--color-text-primary)] font-mono">{job.total_files}</span></div>
-              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.changedFiles')}</span><span className="font-bold text-emerald-600 font-mono">{job.changed_files}</span></div>
+              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.changedFiles')}</span><span className="font-bold text-[var(--color-success-text)] font-mono">{job.changed_files}</span></div>
               <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.deletedFiles')}</span><span className="font-bold text-[var(--color-text-primary)] font-mono">{job.deleted_files}</span></div>
-              <div className="flex justify-between items-center py-1.5"><span>{t('dashboard.failed')}</span><span className={`font-bold font-mono ${job.failed_files > 0 ? 'text-rose-600' : 'text-[var(--color-text-muted)]'}`}>{job.failed_files}</span></div>
+              <div className="flex justify-between items-center py-1.5"><span>{t('dashboard.failed')}</span><span className={`font-bold font-mono ${job.failed_files > 0 ? 'text-[var(--color-error-text)]' : 'text-[var(--color-text-muted)]'}`}>{job.failed_files}</span></div>
             </div>
           </div>
         </div>
@@ -485,17 +482,17 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             }
 
             return (
-              <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+              <div className="ui-card p-5 space-y-4">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-                  <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                  <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                     {t('sync.lastRun')} & {t('sync.nextRun')}
                   </h3>
                 </div>
 
                 <div className="space-y-3">
-                  <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                  <div className="ui-card p-3.5 bg-[var(--color-bg-primary)]">
                     <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.nextRun')}</span>
-                    <span className="font-display font-extrabold text-base text-portal-navy mt-0.5 block">
+                    <span className="font-display font-extrabold text-base text-[var(--color-text-primary)] mt-0.5 block">
                       {nextRunLabel}
                     </span>
                     <span className="text-[10px] text-[var(--color-text-secondary)] mt-0.5 block">
@@ -503,7 +500,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                     </span>
                   </div>
 
-                  <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                  <div className="ui-card p-3.5 bg-[var(--color-bg-primary)]">
                     <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.lastRun')}</span>
                     <span className="font-display font-extrabold text-xs text-[var(--color-text-primary)] mt-0.5 block">
                       {job.last_run_at ? formatDateTime(job.last_run_at) : t('sync.neverRun')}
@@ -524,16 +521,16 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           })()}
 
           {/* Column 2: Configuration Rules & Performance */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4 flex flex-col justify-between">
+          <div className="ui-card p-5 space-y-4 flex flex-col justify-between">
             <div className="space-y-4">
               <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-                <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+                <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                   {t('sync.conflictStrategy')} & {t('dashboard.threads')}
                 </h3>
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-[11px]">
-                <div className="p-3 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                <div className="ui-card p-3 bg-[var(--color-bg-primary)]">
                   <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.conflictStrategy')}</span>
                   <span className="font-bold text-[var(--color-text-primary)] mt-0.5 block truncate">
                     {job.direction === 'one_way'
@@ -548,9 +545,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                   </span>
                 </div>
 
-                <div className="p-3 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)]">
+                <div className="ui-card p-3 bg-[var(--color-bg-primary)]">
                   <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase block">{t('sync.deletePropagation')}</span>
-                  <span className={`font-bold mt-0.5 block ${job.delete_propagation ? 'text-rose-600' : 'text-emerald-600'}`}>
+                  <span className={`font-bold mt-0.5 block ${job.delete_propagation ? 'text-[var(--color-error-text)]' : 'text-[var(--color-success-text)]'}`}>
                     {job.delete_propagation ? t('common.enabled') : t('common.disabled')}
                   </span>
                 </div>
@@ -558,12 +555,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             </div>
 
             {/* Integrated Threads Slider */}
-            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2 mt-auto">
+            <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2 mt-auto">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.threads')}
                 </label>
-                <span className="text-[11px] font-bold text-portal-orange font-mono">{threads}</span>
+                <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">{threads}</span>
               </div>
               <input
                 type="range"
@@ -590,12 +587,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               </p>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2">
+            <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.bandwidthLimit')}
                 </label>
-                <span className="text-[11px] font-bold text-portal-orange font-mono">
+                <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">
                   {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
                 </span>
               </div>
@@ -635,7 +632,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         />
 
         {job.error_message && (
-          <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-xs font-mono text-[var(--color-error-text)] flex items-start gap-2">
+          <div className="ui-card p-4 bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-xs font-mono text-[var(--color-error-text)] flex items-start gap-2">
             <span>{job.error_message}</span>
           </div>
         )}

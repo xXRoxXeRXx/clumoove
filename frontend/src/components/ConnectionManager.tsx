@@ -29,10 +29,10 @@ interface ProfilePublic {
   updated_at: string;
 }
 
-const inputCls = 'w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm font-sans';
+const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
-const primaryBtnCls = 'bg-[var(--color-bg-inverse)] py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90 disabled:opacity-50';
-const secondaryBtnCls = 'rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]';
+const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50';
+const secondaryBtnCls = 'ui-button-secondary px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]';
 
 function formatExpiry(expiresAt?: string | null): string | null {
   if (!expiresAt) return null;
@@ -127,9 +127,9 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel rounded-lg p-6 space-y-5">
+      <div className="ui-card p-6 space-y-5">
         <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-          <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.connections.title')}</h3>
+          <h3 className="font-display font-semibold text-sm text-[var(--color-text-primary)]">{t('settings.connections.title')}</h3>
         </div>
         <p className="text-[11px] text-[var(--color-text-secondary)] font-sans leading-relaxed">
           {t('settings.connections.subtitle')}
@@ -149,7 +149,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
       {loading ? (
         <div className="text-center text-[11px] font-mono text-[var(--color-text-muted)] py-8">{t('common.loading')}</div>
       ) : profiles.length === 0 ? (
-        <div className="glass-panel rounded-lg p-6 text-center text-sm text-[var(--color-text-muted)] font-sans">
+        <div className="ui-card p-6 text-center text-sm text-[var(--color-text-muted)] font-sans">
           {t('settings.connections.noProfiles')}
         </div>
       ) : (
@@ -158,12 +158,12 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
             const exp = formatExpiry(p.token_expires_at);
             const provName = providerOptions.find((o) => o.id === p.provider)?.name || p.provider;
             return (
-              <div key={p.id} className="glass-panel rounded-lg p-5 space-y-3">
+              <div key={p.id} className="ui-card p-5 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)] truncate">{p.name}</span>
-                      <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-portal-orange/10 border border-portal-orange text-[var(--color-portal-orange-themed)]">
+                      <span className="font-display font-semibold text-sm text-[var(--color-text-primary)] truncate">{p.name}</span>
+                      <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
                         {provName}
                       </span>
                     </div>
@@ -205,7 +205,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
                   )}
                   <button
                     onClick={() => handleDelete(p)}
-                    className="px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-error-border)] text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]/70 transition-all cursor-pointer"
+                    className="ui-button-secondary px-3 py-2 text-sm border-[var(--color-error-border)] text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"
                   >
                     {t('settings.connections.delete')}
                   </button>
@@ -419,10 +419,10 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-inverse)]/40 p-4">
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
-          <h3 id={titleId} className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
+          <h3 id={titleId} className="font-display font-semibold text-sm text-[var(--color-text-primary)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
           </h3>
           <button ref={closeRef} type="button" onClick={onClose} aria-label={t('common.cancel')} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer">
@@ -450,23 +450,23 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
           </div>
 
           {provider === 'local' ? (
-            <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+            <div className="border border-[var(--color-info-border)] bg-[var(--color-info-bg)] p-4 text-[var(--color-info-text)] flex items-start gap-2">
               <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
             </div>
           ) : isOAuth ? (
             <div className="space-y-3">
               {oauthRefreshToken ? (
-                <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
+                <div className="border border-[var(--color-success-border)] bg-[var(--color-success-bg)] p-4 text-[var(--color-success-text)] flex items-center justify-between">
                   <div className="truncate pr-2">
-                    <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('settings.connections.oauthConnectedAs', { user: oauthUser || provider })}</p>
+                    <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('settings.connections.oauthConnectedAs', { user: oauthUser || provider })}</p>
                   </div>
-                  <button type="button" onClick={() => { setOauthRefreshToken(''); setOauthUser(''); }} className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 cursor-pointer">
+                  <button type="button" onClick={() => { setOauthRefreshToken(''); setOauthUser(''); }} className="ui-button-secondary px-3 py-1.5 text-[10px] font-mono font-bold">
                     {t('connect.disconnect')}
                   </button>
                 </div>
               ) : (
                 <button type="button" onClick={openOAuthPopup}
-                  className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2">
+                  className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider flex items-center justify-center gap-2">
                   {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : 'Dropbox' })}
                 </button>
               )}

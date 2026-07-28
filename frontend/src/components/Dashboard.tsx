@@ -71,7 +71,7 @@ const renderResourceSection = (title: string, stats: ResourceStats | undefined, 
       </div>
       <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
         <span>{t('dashboard.success')}:</span>
-        <span className="font-bold text-emerald-600 font-mono">{success}</span>
+        <span className="font-bold text-[var(--color-success-text)] font-mono">{success}</span>
       </div>
       <div className="flex justify-between items-center py-1 border-b border-[var(--color-border-light)]">
         <span>{t('dashboard.skipped')}:</span>
@@ -79,7 +79,7 @@ const renderResourceSection = (title: string, stats: ResourceStats | undefined, 
       </div>
       <div className="flex justify-between items-center py-1">
         <span>{t('dashboard.failed')}:</span>
-        <span className={`font-bold font-mono ${stats.failed > 0 ? 'text-rose-600' : 'text-[var(--color-text-secondary)]'}`}>
+        <span className={`font-bold font-mono ${stats.failed > 0 ? 'text-[var(--color-error-text)]' : 'text-[var(--color-text-secondary)]'}`}>
           {stats.failed}
         </span>
       </div>
@@ -330,7 +330,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             setServerUnreachable(false);
             setReconnectNonce((n) => n + 1);
           }}
-          className="mt-2 px-4 py-2 bg-portal-orange text-white text-xs font-bold rounded-lg hover:bg-portal-orange-hover transition-colors cursor-pointer"
+          className="ui-button-primary mt-2 px-4 py-2 text-xs font-bold hover:opacity-90"
         >
           {t('common.retry')}
         </button>
@@ -363,21 +363,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       <div className="flex items-center justify-between">
         <button
           onClick={onReset}
-          className="flex items-center gap-2 px-4 py-2 rounded-full border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs font-mono font-bold text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs transition-all cursor-pointer"
+          className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-mono font-bold hover:bg-[var(--color-bg-tertiary)]"
         >
           {t('common.back')}
         </button>
       </div>
 
-      {/* Main Glass Panel containing all content */}
-      <div className="glass-panel rounded-lg p-6 space-y-6">
+      <div className="ui-card p-6 space-y-6">
         {/* Top Badges Row (Above Title & Action Buttons) */}
         <div className="flex items-center justify-end gap-2.5 pb-2">
           {/* Status Info Badge */}
           <StatusBadge status={data.status} />
 
           {/* Direction Info Badge (rechtsbündig) */}
-          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-orange-700 px-3 py-1 rounded-full bg-orange-50 border border-orange-200">
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-[var(--color-info-text)] px-3 py-1 bg-[var(--color-info-bg)] border border-[var(--color-info-border)]">
             <span>{t('sync.oneWay')}</span>
           </span>
         </div>
@@ -385,7 +384,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Title & Action Controls */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
           <div className="space-y-1">
-            <h1 className="font-display font-extrabold text-2xl text-[var(--color-portal-navy-themed)]">
+            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)]">
               {t('migrations.migrationJobDetail')}
             </h1>
             <p className="text-xs text-[var(--color-text-muted)] font-mono">
@@ -397,7 +396,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             {data.failed_files > 0 && (
               <button
                 onClick={handleDownloadReport}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold hover:bg-rose-100 transition-colors cursor-pointer"
+                className="ui-button-secondary flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"
               >
                 {t('sync.downloadReport')}
               </button>
@@ -407,7 +406,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('resume')}
                 disabled={controlLoading !== null}
-                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {t('dashboard.resume')}
               </button>
@@ -415,7 +414,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={() => handleMigrationControl('pause')}
                 disabled={controlLoading !== null || data.status === 'COMPLETED' || data.status === 'FAILED' || data.status === 'CANCELLED'}
-                className="flex items-center gap-2 bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-border)] text-[var(--color-text-primary)] px-4 py-2 rounded-xl text-xs font-bold border border-[var(--color-border)] cursor-pointer disabled:opacity-50 transition-colors"
+                className="ui-button-secondary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
               >
                 {t('dashboard.pause')}
               </button>
@@ -425,7 +424,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               <button
                 onClick={handleRetryFailed}
                 disabled={controlLoading !== null}
-                className="flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-4 py-2 rounded-xl text-xs font-bold shadow-xs cursor-pointer disabled:opacity-50 transition-all"
+                className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {controlLoading === 'retry' && `${t('common.loading')} `}
                 {t('dashboard.retryFailed')}
@@ -436,30 +435,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
         {/* Live Transfer Progress (ONLY rendered when RUNNING or INDEXING) */}
         {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-          <div className="border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6 rounded-2xl relative overflow-hidden flex flex-col">
+          <div className="ui-card p-6 flex flex-col">
 
             <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div>
                 <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
-                <h3 className="font-display font-extrabold text-5xl text-[var(--color-portal-navy-themed)] mt-1.5 leading-none">
+                <h3 className="font-display font-extrabold text-5xl text-[var(--color-text-primary)] mt-1.5 leading-none">
                   {byteProgressPercent}%
                 </h3>
               </div>
               <div className="text-right flex flex-col items-end">
                 <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
-                <p className="text-base font-extrabold text-emerald-600 mt-1.5 font-mono">
+                <p className="text-base font-extrabold text-[var(--color-success-text)] mt-1.5 font-mono">
                   {formatBytes(speed)}/s
                 </p>
               </div>
             </div>
 
-            {/* Glowing Rounded Progress Bar */}
-            <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 rounded-full shadow-inner relative overflow-hidden">
+            <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 overflow-hidden">
               <div
-                className="bg-gradient-to-r from-portal-orange to-orange-500 h-full rounded-full transition-all duration-500 ease-out relative"
+                className="bg-[var(--color-bg-inverse)] h-full transition-all duration-500 ease-out"
                 style={{ width: `${byteProgressPercent}%` }}
               >
-                <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(255,255,255,0.15)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.15)_50%,rgba(255,255,255,0.15)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-pulse" />
               </div>
             </div>
 
@@ -477,9 +474,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Source & Target Connection Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Source Card */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('migrations.source')}
               </h3>
             </div>
@@ -496,9 +493,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           {/* Target Card */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('migrations.target')}
               </h3>
             </div>
@@ -511,7 +508,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 {data.target_url || t('migrations.oauth')}
               </div>
               <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-[var(--color-border)] text-[10px] font-mono text-portal-navy shadow-2xs">
+                <span className="ui-card inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-secondary)]">
                   <span>{data.target_dir || '/'}</span>
                 </span>
               </div>
@@ -522,21 +519,21 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Active Transfers & Status / Summary 2-Column Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
           {/* Column 1: Active Transfers */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('dashboard.activeTransfers', { count: data.active_files?.length || 0, threads: threads })}
               </h3>
             </div>
 
             {data.active_files && data.active_files.length > 0 ? (
-              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1 scrollbar-portal">
+              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1">
                 {data.active_files.map((file, i) => {
                   const fileName = file.split('/').pop() || file;
                   return (
-                    <div key={i} className="flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[var(--color-text-secondary)] min-w-0">
+                    <div key={i} className="ui-card flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] font-mono text-[var(--color-text-secondary)] min-w-0">
                       <span className="truncate pr-4" title={file}>{fileName}</span>
-                      <span className="text-[10px] text-emerald-600 font-semibold uppercase animate-pulse shrink-0 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">{t('dashboard.running')}</span>
+                      <span className="text-[10px] text-[var(--color-success-text)] font-semibold uppercase animate-pulse shrink-0 bg-[var(--color-success-bg)] border border-[var(--color-success-border)] px-2 py-0.5">{t('dashboard.running')}</span>
                     </div>
                   );
                 })}
@@ -549,9 +546,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           {/* Column 2: Progress & Status */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('migrations.status')} & {t('dashboard.progress')}
               </h3>
             </div>
@@ -571,7 +568,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                   </div>
                   <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
                     <span>{t('dashboard.success')}:</span>
-                    <span className="font-bold text-emerald-600 font-mono">{successFiles}</span>
+                    <span className="font-bold text-[var(--color-success-text)] font-mono">{successFiles}</span>
                   </div>
                   <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
                     <span>{t('dashboard.skipped')}:</span>
@@ -579,7 +576,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                   </div>
                   <div className="flex justify-between items-center py-1.5">
                     <span>{t('dashboard.failed')}:</span>
-                    <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-rose-600' : 'text-[var(--color-text-muted)]'}`}>
+                    <span className={`font-bold font-mono ${data.failed_files > 0 ? 'text-[var(--color-error-text)]' : 'text-[var(--color-text-muted)]'}`}>
                       {data.failed_files}
                     </span>
                   </div>
@@ -592,19 +589,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         {/* Performance Controls Grid: Bandwidth Limit & Threads side by side */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
           {/* Bandwidth Limit Box */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('dashboard.bandwidthLimit')}
               </h3>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2">
+            <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.bandwidthLimit')}
                 </label>
-                <span className="text-[11px] font-bold text-portal-orange font-mono">
+                <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">
                   {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
                 </span>
               </div>
@@ -633,19 +630,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           </div>
 
           {/* Threads / Simultaneous Transfers Box */}
-          <div className="p-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] space-y-4">
+          <div className="ui-card p-5 space-y-4">
             <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <h3 className="font-display font-bold text-xs text-[var(--color-portal-navy-themed)] uppercase tracking-wider font-mono">
+              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
                 {t('dashboard.threads')}
               </h3>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[var(--color-bg-primary)] border border-[var(--color-border)] space-y-2">
+            <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.threads')}
                 </label>
-                <span className="text-[11px] font-bold text-portal-orange font-mono">{threads}</span>
+                <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">{threads}</span>
               </div>
               <input
                 type="range"
@@ -681,7 +678,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         />
 
         {typeof data.error_message === 'string' && data.error_message.trim() !== '' && (
-          <div className="p-4 bg-[var(--color-error-bg)] border border-[var(--color-error-border)] rounded-2xl text-xs font-mono text-[var(--color-error-text)] flex items-start gap-2">
+          <div className="ui-card p-4 bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-xs font-mono text-[var(--color-error-text)] flex items-start gap-2">
             <span>{data.error_message}</span>
           </div>
         )}

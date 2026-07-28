@@ -33,15 +33,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {items.map((item) => {
           const styles =
             item.type === 'success'
-              ? 'bg-[var(--color-success-bg)] border-[var(--color-success-border)] text-[var(--color-success-text)]'
+              ? 'ui-alert-success'
               : item.type === 'info'
-                ? 'bg-[var(--color-info-bg)] border-[var(--color-info-border)] text-[var(--color-info-text)]'
-                : 'bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-[var(--color-error-text)]';
+                ? 'ui-alert-info'
+                : 'ui-alert-error';
           return (
             <div
               key={item.id}
               role="status"
-              className={`pointer-events-auto rounded-md border px-3 py-2 text-sm leading-relaxed ${styles}`}
+              className={`ui-alert pointer-events-auto px-3 py-2 text-sm leading-relaxed ${styles}`}
             >
               {item.text}
             </div>

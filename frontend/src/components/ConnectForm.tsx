@@ -22,6 +22,10 @@ interface ConnectFormProps {
 
 type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local' | 'immich';
 
+const formInputClass = 'ui-input w-full px-4 py-2.5 text-sm font-sans';
+const formMonoInputClass = `${formInputClass} font-mono`;
+const formTextareaClass = `${formMonoInputClass} resize-none`;
+
 export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {}, onBack }) => {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
@@ -574,7 +578,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           <button
             type="button"
             onClick={subStep === 1 ? onBack : () => { setSourceVerified(false); setSubStep(1); }}
-            className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs hover:shadow-sm shrink-0"
+            className="ui-button-secondary flex items-center gap-2 px-4 py-2 font-mono font-bold text-xs hover:bg-[var(--color-bg-tertiary)] shrink-0"
           >
             <span>{t('common.back')}</span>
           </button>
@@ -582,13 +586,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       )}
 
       {/* Wizard Step Progress Banner */}
-      <div className="flex items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-4">
+      <div className="ui-card flex items-center justify-between p-4">
         <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-8 h-8 rounded-full bg-portal-orange text-white font-mono font-bold text-xs shadow-xs">
+          <span className="flex items-center justify-center w-8 h-8 rounded-full bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] font-mono font-bold text-xs">
               {subStep}
             </span>
             <div className="flex flex-col text-left">
-              <span className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)]">
+              <span className="font-display font-extrabold text-sm text-[var(--color-text-primary)]">
                 {subStep === 1 ? t('connect.sourceTitle') : t('connect.targetTitle')}
               </span>
               <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
@@ -597,7 +601,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-portal-orange bg-portal-orange/10 px-3 py-1 rounded-full border border-portal-orange/20">
+        <div className="flex items-center gap-1.5 text-xs font-mono font-bold text-[var(--color-text-secondary)] bg-[var(--color-bg-tertiary)] px-3 py-1 rounded-full border border-[var(--color-border)]">
           <span>{t('connect.connectionsBadge')}</span>
         </div>
       </div>
@@ -606,19 +610,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
           {/* Source Host Card */}
           {subStep === 1 && (
-          <fieldset className="glass-panel rounded-lg p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
+          <fieldset className="ui-card p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div className="text-left">
-                <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">{t('connect.sourceTitle')}</h2>
+                <h2 className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-none">{t('connect.sourceTitle')}</h2>
                 <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.sourceSubtitle')}</p>
               </div>
             </div>
 
             <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
               <ProfileSelect
+                idPrefix="source"
                 profiles={profiles}
                 selectedId={sourceProfileId}
                 onSelect={(id) => applyProfile('source', id)}
@@ -626,15 +631,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               />
 
               {sourceProfileId ? (
-                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between animate-fade-in">
-                  <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
+                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between">
+                  <div className="ui-alert ui-alert-success p-4.5 space-y-3">
                     <div className="flex items-center">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">
                         {getProfile(sourceProfileId)?.provider.toUpperCase()}
                       </span>
                     </div>
                     <div>
-                      <p className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
+                      <p className="font-display font-bold text-sm text-[var(--color-text-primary)]">
                         {getProfile(sourceProfileId)?.name}
                       </p>
                       <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
@@ -648,18 +653,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <div id="source-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</div>
                 
                 {/* Visual Provider Pills */}
-                <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-labelledby="source-provider-label">
+                <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="source-provider-label">
                   {providerOptions.map(opt => (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => handleSourceProviderSelect(opt.id)}
-                      role="radio"
-                      aria-checked={sourceProvider === opt.id}
-                      className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                      aria-pressed={sourceProvider === opt.id}
+                      className={`flex-1 py-2 px-1 text-[11px] font-bold font-mono cursor-pointer ${
                         sourceProvider === opt.id
-                          ? 'bg-[var(--color-bg-inverse)] border-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
-                          : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
+                          ? 'ui-button-primary text-[var(--color-text-inverse)]'
+                          : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
                       }`}
                     >
                       {opt.name}
@@ -677,7 +681,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="192.168.1.10"
                         value={sourceSmbHost}
                         onChange={(e) => setSourceSmbHost(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -688,7 +692,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="445"
                         value={sourceSmbPort}
                         onChange={(e) => setSourceSmbPort(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -702,7 +706,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder={t('connect.sharePlaceholder')}
                         value={sourceSmbShare}
                         onChange={(e) => setSourceSmbShare(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -713,7 +717,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="WORKGROUP"
                         value={sourceSmbDomain}
                         onChange={(e) => setSourceSmbDomain(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                       />
                     </div>
                   </div>
@@ -727,7 +731,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.usernamePlaceholder')}
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -741,7 +745,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.password')}
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                      className={formMonoInputClass}
                       required
                     />
                   </div>
@@ -756,7 +760,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="192.168.1.10"
                         value={sourceSftpHost}
                         onChange={(e) => setSourceSftpHost(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -767,7 +771,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="22"
                         value={sourceSftpPort}
                         onChange={(e) => setSourceSftpPort(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -782,7 +786,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="root"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -793,10 +797,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <button
                         type="button"
                         onClick={() => setSourceSftpAuthMode('password')}
-                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                        aria-pressed={sourceSftpAuthMode === 'password'}
+                        className={`flex-1 py-2 px-3 text-[11px] font-bold font-mono cursor-pointer ${
                           sourceSftpAuthMode === 'password'
-                            ? 'bg-portal-navy border-portal-navy text-white'
-                            : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
+                            ? 'ui-button-primary text-[var(--color-text-inverse)]'
+                            : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
                         {t('connect.authPassword')}
@@ -804,10 +809,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <button
                         type="button"
                         onClick={() => setSourceSftpAuthMode('key')}
-                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                        aria-pressed={sourceSftpAuthMode === 'key'}
+                        className={`flex-1 py-2 px-3 text-[11px] font-bold font-mono cursor-pointer ${
                           sourceSftpAuthMode === 'key'
-                            ? 'bg-portal-navy border-portal-navy text-white'
-                            : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
+                            ? 'ui-button-primary text-[var(--color-text-inverse)]'
+                            : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
                         {t('connect.sshKey')}
@@ -825,7 +831,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.password')}
                       value={sourcePass}
                         onChange={(e) => setSourcePass(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                        className={formMonoInputClass}
                         required
                       />
                     </div>
@@ -837,7 +843,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         value={sourceSftpPrivateKey}
                         onChange={(e) => setSourceSftpPrivateKey(e.target.value)}
                         rows={4}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono resize-none"
+                        className={formTextareaClass}
                         required
                       />
                     </div>
@@ -853,7 +859,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder={t('connect.bucketPlaceholder')}
                         value={sourceS3Bucket}
                         onChange={(e) => setSourceS3Bucket(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -864,7 +870,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="us-east-1"
                         value={sourceS3Region}
                         onChange={(e) => setSourceS3Region(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -877,7 +883,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.s3EndpointPlaceholder')}
                       value={sourceS3Endpoint}
                       onChange={(e) => setSourceS3Endpoint(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                     />
                   </div>
 
@@ -890,7 +896,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="AKIAIOSFODNN7EXAMPLE"
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -904,7 +910,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                      className={formMonoInputClass}
                       required
                     />
                   </div>
@@ -915,7 +921,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       id="sourceS3Insecure"
                       checked={sourceS3Insecure}
                       onChange={(e) => setSourceS3Insecure(e.target.checked)}
-                      className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
+                      className="ui-checkbox"
                     />
                     <label htmlFor="sourceS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
                        {t('connect.s3AllowHttp')}
@@ -924,7 +930,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : sourceProvider === 'immich' ? (
                 <>
-                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                     <p className="text-xs font-sans leading-relaxed">{t('connect.immichPermissionHint')}</p>
                   </div>
@@ -935,7 +941,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.immichUrlPlaceholder')}
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -948,7 +954,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.immichApiKeyPlaceholder')}
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                      className={formMonoInputClass}
                       required
                     />
                   </div>
@@ -964,7 +970,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={sourceProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -978,7 +984,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.usernamePlaceholder')}
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -989,7 +995,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
-                        className="text-[10px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
+                        className="text-[10px] text-[var(--color-text-link)] hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
                       >
                          <HelpCircle className="w-3.5 h-3.5" /> {t('connect.helpGuide')}
                       </button>
@@ -1001,21 +1007,21 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="•••• •••• •••• ••••"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
                 </>
               ) : sourceProvider === 'local' ? (
                 <>
-                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                     <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
                   </div>
                 </>
               ) : sourceProvider === 'magentacloud' ? (
                 <>
-                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                     <p className="text-xs font-sans leading-relaxed">{t('connect.magentacloudInfo')}</p>
                   </div>
@@ -1029,7 +1035,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.usernamePlaceholder')}
                       value={sourceUser}
                       onChange={(e) => setSourceUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1043,7 +1049,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="•••• •••• •••• ••••"
                       value={sourcePass}
                       onChange={(e) => setSourcePass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1054,9 +1060,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                    {sourcePass ? (
-                    <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
+                    <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
                       <div className="truncate pr-2">
-                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
+                        <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('connect.connectedAs')}</p>
                         <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : sourceProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                        <button
@@ -1065,7 +1071,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                           setSourcePass('');
                           setSourceOAuthUser('');
                         }}
-                        className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
+                        className="ui-button-secondary px-3 py-1.5 text-[10px] font-mono font-bold cursor-pointer"
                       >
                          {t('connect.disconnect')}
                        </button>
@@ -1074,7 +1080,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <button
                       type="button"
                       onClick={() => startOAuth(sourceProvider, 'source')}
-                      className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
+                      className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-2"
                     >
                       <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
@@ -1098,19 +1104,20 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
            {/* Target Host Card */}
            {subStep === 2 && (
-          <fieldset className="glass-panel rounded-lg p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
+          <fieldset className="ui-card p-6 flex flex-col justify-between m-0 min-h-[300px] w-full md:w-1/2 mx-auto">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             
             <div className="flex items-center gap-3.5 mb-6 border-b border-[var(--color-border-light)] pb-4.5">
               <div className="text-left">
-                <h2 className="font-display font-extrabold text-lg text-[var(--color-portal-navy-themed)] leading-none">{t('connect.targetTitle')}</h2>
+                <h2 className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-none">{t('connect.targetTitle')}</h2>
                 <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">{t('connect.targetSubtitle')}</p>
               </div>
             </div>
 
             <div className="space-y-5 text-xs text-left flex-1 flex flex-col justify-between">
               <ProfileSelect
+                idPrefix="target"
                 profiles={profiles}
                 selectedId={targetProfileId}
                 onSelect={(id) => applyProfile('target', id)}
@@ -1118,15 +1125,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               />
 
               {targetProfileId ? (
-                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between animate-fade-in">
-                  <div className="bg-[var(--color-bg-tertiary)]/60 border border-emerald-500/30 rounded-2xl p-4.5 space-y-3 shadow-xs">
+                <div className="space-y-4 pt-2 flex-1 flex flex-col justify-between">
+                  <div className="ui-alert ui-alert-success p-4.5 space-y-3">
                     <div className="flex items-center">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">
                         {getProfile(targetProfileId)?.provider.toUpperCase()}
                       </span>
                     </div>
                     <div>
-                      <p className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
+                      <p className="font-display font-bold text-sm text-[var(--color-text-primary)]">
                         {getProfile(targetProfileId)?.name}
                       </p>
                       <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
@@ -1140,18 +1147,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <div id="target-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.provider')}</div>
                 
                 {/* Visual Provider Pills */}
-                <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-labelledby="target-provider-label">
+                <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="target-provider-label">
                   {providerOptions.map(opt => (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => handleTargetProviderSelect(opt.id)}
-                      role="radio"
-                      aria-checked={targetProvider === opt.id}
-                      className={`py-2 px-1 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                      aria-pressed={targetProvider === opt.id}
+                      className={`ui-button-secondary py-2 px-1 text-[11px] font-bold font-mono cursor-pointer ${
                         targetProvider === opt.id
-                          ? 'bg-[var(--color-bg-inverse)] border-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
-                          : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
+                          ? 'ui-button-primary text-[var(--color-text-inverse)]'
+                          : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
                       }`}
                     >
                       {opt.name}
@@ -1169,7 +1175,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="192.168.1.10"
                         value={targetSmbHost}
                         onChange={(e) => setTargetSmbHost(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -1180,7 +1186,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="445"
                         value={targetSmbPort}
                         onChange={(e) => setTargetSmbPort(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -1194,7 +1200,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder={t('connect.sharePlaceholder')}
                         value={targetSmbShare}
                         onChange={(e) => setTargetSmbShare(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -1205,7 +1211,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="WORKGROUP"
                         value={targetSmbDomain}
                         onChange={(e) => setTargetSmbDomain(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                       />
                     </div>
                   </div>
@@ -1219,7 +1225,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.usernamePlaceholder')}
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1233,7 +1239,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.password')}
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                      className={formMonoInputClass}
                       required
                     />
                   </div>
@@ -1248,7 +1254,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="192.168.1.10"
                         value={targetSftpHost}
                         onChange={(e) => setTargetSftpHost(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -1259,7 +1265,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="22"
                         value={targetSftpPort}
                         onChange={(e) => setTargetSftpPort(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -1274,7 +1280,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="root"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1285,10 +1291,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <button
                         type="button"
                         onClick={() => setTargetSftpAuthMode('password')}
-                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                        aria-pressed={targetSftpAuthMode === 'password'}
+                        className={`flex-1 py-2 px-3 text-[11px] font-bold font-mono cursor-pointer ${
                           targetSftpAuthMode === 'password'
-                            ? 'bg-portal-navy border-portal-navy text-white'
-                            : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
+                            ? 'ui-button-primary text-[var(--color-text-inverse)]'
+                            : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
                         {t('connect.authPassword')}
@@ -1296,10 +1303,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <button
                         type="button"
                         onClick={() => setTargetSftpAuthMode('key')}
-                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold font-mono transition-all duration-200 border cursor-pointer ${
+                        aria-pressed={targetSftpAuthMode === 'key'}
+                        className={`flex-1 py-2 px-3 text-[11px] font-bold font-mono cursor-pointer ${
                           targetSftpAuthMode === 'key'
-                            ? 'bg-portal-navy border-portal-navy text-white'
-                            : 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
+                            ? 'ui-button-primary text-[var(--color-text-inverse)]'
+                            : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'
                         }`}
                       >
                         {t('connect.sshKey')}
@@ -1317,7 +1325,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.password')}
                       value={targetPass}
                         onChange={(e) => setTargetPass(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                        className={formMonoInputClass}
                         required
                       />
                     </div>
@@ -1329,7 +1337,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         value={targetSftpPrivateKey}
                         onChange={(e) => setTargetSftpPrivateKey(e.target.value)}
                         rows={4}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono resize-none"
+                        className={formTextareaClass}
                         required
                       />
                     </div>
@@ -1345,7 +1353,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder={t('connect.bucketPlaceholder')}
                         value={targetS3Bucket}
                         onChange={(e) => setTargetS3Bucket(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -1356,7 +1364,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         placeholder="us-east-1"
                         value={targetS3Region}
                         onChange={(e) => setTargetS3Region(e.target.value)}
-                        className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                        className={formInputClass}
                         required
                       />
                     </div>
@@ -1369,7 +1377,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.s3EndpointPlaceholder')}
                       value={targetS3Endpoint}
                       onChange={(e) => setTargetS3Endpoint(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                     />
                   </div>
 
@@ -1382,7 +1390,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="AKIAIOSFODNN7EXAMPLE"
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1396,7 +1404,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                      className={formMonoInputClass}
                       required
                     />
                   </div>
@@ -1407,7 +1415,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       id="targetS3Insecure"
                       checked={targetS3Insecure}
                       onChange={(e) => setTargetS3Insecure(e.target.checked)}
-                      className="rounded border-[var(--color-border)] text-portal-orange focus:ring-portal-orange"
+                      className="ui-checkbox"
                     />
                     <label htmlFor="targetS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
                        {t('connect.s3AllowHttp')}
@@ -1416,7 +1424,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : targetProvider === 'immich' ? (
                 <>
-                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                     <p className="text-xs font-sans leading-relaxed">{t('connect.immichPermissionHint')}</p>
                   </div>
@@ -1427,7 +1435,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.immichUrlPlaceholder')}
                       value={targetUrl}
                       onChange={(e) => setTargetUrl(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1440,7 +1448,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.immichApiKeyPlaceholder')}
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                      className={formMonoInputClass}
                       required
                     />
                   </div>
@@ -1456,7 +1464,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={targetProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={targetUrl}
                       onChange={(e) => setTargetUrl(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1470,7 +1478,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.usernamePlaceholder')}
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1481,7 +1489,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
-                        className="text-[10px] text-portal-orange hover:text-portal-orange-hover hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
+                        className="text-[10px] text-[var(--color-text-link)] hover:underline font-bold uppercase tracking-wider flex items-center gap-1 cursor-pointer font-mono"
                       >
                          <HelpCircle className="w-3.5 h-3.5" /> {t('connect.helpGuide')}
                       </button>
@@ -1493,21 +1501,21 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="•••• •••• •••• ••••"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
                 </>
               ) : targetProvider === 'local' ? (
                 <>
-                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                     <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
                   </div>
                 </>
               ) : targetProvider === 'magentacloud' ? (
                 <>
-                  <div className="bg-blue-50/80 border border-blue-200 text-blue-800 rounded-2xl p-4 flex items-start gap-2 shadow-xs">
+                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
                     <p className="text-xs font-sans leading-relaxed">{t('connect.magentacloudInfo')}</p>
                   </div>
@@ -1521,7 +1529,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder={t('connect.usernamePlaceholder')}
                       value={targetUser}
                       onChange={(e) => setTargetUser(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1535,7 +1543,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       placeholder="•••• •••• •••• ••••"
                       value={targetPass}
                       onChange={(e) => setTargetPass(e.target.value)}
-                      className="w-full bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] rounded-xl py-2.5 px-4 text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={formInputClass}
                       required
                     />
                   </div>
@@ -1546,9 +1554,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                   {targetPass ? (
-                    <div className="bg-emerald-50/80 border border-emerald-200 text-emerald-800 rounded-2xl p-4 flex items-center justify-between shadow-xs">
+                    <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
                       <div className="truncate pr-2">
-                        <p className="font-bold text-[9px] uppercase tracking-wider text-emerald-650 font-mono">{t('connect.connectedAs')}</p>
+                        <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('connect.connectedAs')}</p>
                         <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : targetProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                       <button
@@ -1557,7 +1565,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                           setTargetPass('');
                           setTargetOAuthUser('');
                         }}
-                        className="px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-emerald-250 text-emerald-750 text-[10px] font-mono font-bold rounded-xl shadow-xs hover:bg-emerald-100 active:scale-97 transition-all cursor-pointer"
+                        className="ui-button-secondary px-3 py-1.5 text-[10px] font-mono font-bold cursor-pointer"
                       >
                          {t('connect.disconnect')}
                        </button>
@@ -1566,7 +1574,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <button
                       type="button"
                       onClick={() => startOAuth(targetProvider, 'target')}
-                      className="w-full py-3 px-4 bg-portal-navy hover:bg-portal-navy-light text-white font-mono font-bold text-[11px] uppercase tracking-wider rounded-xl shadow-xs hover:shadow-sm hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer flex items-center justify-center gap-2"
+                      className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-2"
                     >
                       <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
@@ -1590,9 +1598,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
         {/* Helpful Info Guide Box */}
         {showHelp && (
-          <div className="bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)] p-6 rounded-2xl max-w-2xl mx-auto shadow-xs text-xs leading-relaxed text-[var(--color-text-secondary)] text-left animate-slide-up">
-            <h4 className="font-display font-extrabold text-sm text-[var(--color-portal-navy-themed)] mb-3 flex items-center gap-1.5">
-              <HelpCircle className="w-4 h-4 text-portal-orange shrink-0" />
+          <div className="ui-card bg-[var(--color-bg-tertiary)] p-6 max-w-2xl mx-auto text-xs leading-relaxed text-[var(--color-text-secondary)] text-left">
+            <h4 className="font-display font-extrabold text-sm text-[var(--color-text-primary)] mb-3 flex items-center gap-1.5">
+              <HelpCircle className="w-4 h-4 text-[var(--color-text-link)] shrink-0" />
               <span>{t('connect.appPassword.title')}</span>
             </h4>
             <ol className="list-decimal list-inside space-y-2 text-[var(--color-text-secondary)] pl-1">
@@ -1607,9 +1615,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         )}
 
         {error && (
-          <div role="alert" className="p-4 bg-rose-50/85 border border-rose-250 rounded-2xl flex items-start gap-3 max-w-xl mx-auto text-left animate-fade-in">
-            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-            <div className="text-xs font-semibold text-rose-800 leading-normal">{error}</div>
+          <div role="alert" className="ui-alert ui-alert-error p-4 flex items-start gap-3 max-w-xl mx-auto text-left">
+            <AlertCircle className="w-5 h-5 text-[var(--color-error-text)] shrink-0 mt-0.5" />
+            <div className="text-xs font-semibold text-[var(--color-error-text)] leading-normal">{error}</div>
           </div>
         )}
 
@@ -1620,11 +1628,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               type="button"
               onClick={() => verifyAndAdvance()}
               disabled={loading}
-              className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="ui-button-primary flex items-center gap-2.5 px-8 py-3.5 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <RefreshCw className="w-4 h-4" />
                   <span>{t('connect.testing')}</span>
                 </>
                 ) : (
@@ -1639,11 +1647,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             <button
               type="submit"
               disabled={loading}
-                className="flex items-center gap-2.5 px-8 py-3.5 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white font-mono text-xs font-bold uppercase tracking-wider rounded-xl shadow-xs hover:shadow-md hover:scale-[1.01] hover:-translate-y-0.5 active:translate-y-0 active:scale-99 transition-all cursor-pointer duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="ui-button-primary flex items-center gap-2.5 px-8 py-3.5 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? (
                   <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <RefreshCw className="w-4 h-4" />
                     <span>{t('connect.testing')}</span>
                   </>
                 ) : (

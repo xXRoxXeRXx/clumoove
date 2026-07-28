@@ -8,8 +8,15 @@ import { useConfirm } from '../contexts/useConfirm';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
 import { MessageBanner, type MessageState } from './MessageBanner';
+import { Toggle } from './Toggle';
 
 export type ApiErrBody = { error_code?: string };
+
+const cardCls = 'ui-card p-6 space-y-5';
+const inputCls = 'ui-input w-full px-4 py-2.5 text-sm font-sans';
+const primaryBtnCls = 'ui-button-primary py-2.5 text-xs font-bold font-mono disabled:opacity-50 disabled:cursor-not-allowed';
+const secondaryBtnCls = 'ui-button-secondary px-4 py-2.5 text-xs font-bold font-mono';
+const sectionTitleCls = 'font-display font-semibold text-sm text-[var(--color-text-primary)]';
 
 interface SettingsUser {
   id?: string;
@@ -35,6 +42,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const confirm = useConfirm();
 
   const [tab, setTab] = useState<'account' | 'connections' | 'appearance' | 'notifications' | 'about'>('account');
+  const tabs = ['account', 'connections', 'appearance', 'notifications', 'about'] as const;
 
   // Theme context
   const { preference, setPreference, systemTheme } = useThemeContext();
@@ -357,13 +365,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   };
 
   const renderPushChannel = (type: PushChannel, fields: Array<{ key: string; label: string; secret?: boolean; placeholder?: string }>) => (
-    <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-4" key={type}>
+    <div className="ui-card p-6 space-y-4" key={type}>
       <div className="flex items-center justify-between gap-3 pb-3 border-b border-[var(--color-border-light)]">
-        <div className="flex items-center gap-2"><Plug className="w-4 h-4 text-[var(--color-portal-orange-themed)]" /><h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{type === 'ntfy' ? 'ntfy' : type[0].toUpperCase() + type.slice(1)}</h3></div>
+        <div className="flex items-center gap-2"><Plug className="w-4 h-4 text-[var(--color-text-muted)]" /><h3 className={sectionTitleCls}>{type === 'ntfy' ? 'ntfy' : type[0].toUpperCase() + type.slice(1)}</h3></div>
         <label className="flex items-center gap-2 text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono"><input type="checkbox" checked={pushEnabled[type]} onChange={(e) => setPushEnabled((current) => ({ ...current, [type]: e.target.checked }))} /> {t('settings.notificationEnabled')}</label>
       </div>
-      {fields.map((field) => <div className="space-y-1.5" key={field.key}><label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{field.label}</label><input type={field.secret ? 'password' : 'text'} value={pushConfigs[type][field.key] || ''} placeholder={field.placeholder || (field.secret ? t('settings.notificationSecretHint') : '')} onChange={(e) => setPushConfigs((current) => ({ ...current, [type]: { ...current[type], [field.key]: e.target.value } }))} className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30" /></div>)}
-      <div className="flex gap-2.5"><button type="button" onClick={() => savePushChannel(type)} disabled={pushLoading !== null} className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] py-2.5 rounded-xl text-xs font-bold font-mono disabled:opacity-50">{pushLoading === type ? t('settings.saving') : t('settings.notificationSave')}</button><button type="button" onClick={() => savePushChannel(type, true)} disabled={pushLoading !== null} className="px-4 py-2.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl font-mono font-bold text-[10px]">{t('settings.notificationTest')}</button></div>
+      {fields.map((field) => <div className="space-y-1.5" key={field.key}><label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{field.label}</label><input type={field.secret ? 'password' : 'text'} value={pushConfigs[type][field.key] || ''} placeholder={field.placeholder || (field.secret ? t('settings.notificationSecretHint') : '')} onChange={(e) => setPushConfigs((current) => ({ ...current, [type]: { ...current[type], [field.key]: e.target.value } }))} className={inputCls} /></div>)}
+      <div className="flex gap-2.5"><button type="button" onClick={() => savePushChannel(type)} disabled={pushLoading !== null} className={`flex-1 ${primaryBtnCls}`}>{pushLoading === type ? t('settings.saving') : t('settings.notificationSave')}</button><button type="button" onClick={() => savePushChannel(type, true)} disabled={pushLoading !== null} className={secondaryBtnCls}>{t('settings.notificationTest')}</button></div>
     </div>
   );
 
@@ -530,63 +538,80 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       <div className="flex items-center justify-between pb-4 border-b border-[var(--color-border)]/50">
         <button
           onClick={onBack}
-          className="flex items-center gap-2 px-4 py-2 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-full hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-xs cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
+          className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
         >
           {t('settings.back')}
         </button>
         <div className="flex items-center gap-2">
-          <h2 className="font-display font-extrabold text-xl text-[var(--color-portal-navy-themed)] leading-none">{t('settings.title')}</h2>
+          <h2 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('settings.title')}</h2>
         </div>
       </div>
 
       {/* Settings Tabs */}
-      <div className="flex flex-wrap gap-2">
+      <div
+        className="flex flex-wrap gap-2"
+        role="tablist"
+        aria-label={t('settings.title')}
+        onKeyDown={(event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const current = tabs.indexOf(tab);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+          setTab(tabs[next]);
+          document.getElementById(`settings-tab-${tabs[next]}`)?.focus();
+        }}
+      >
         <button
           onClick={() => setTab('account')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+          id="settings-tab-account" role="tab" aria-selected={tab === 'account'} aria-controls="settings-panel-account" tabIndex={tab === 'account' ? 0 : -1}
+          className={`px-4 py-2 border font-medium text-sm ${
             tab === 'account'
-              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
-              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           {t('settings.tabs.account')}
         </button>
         <button
           onClick={() => setTab('connections')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+          id="settings-tab-connections" role="tab" aria-selected={tab === 'connections'} aria-controls="settings-panel-connections" tabIndex={tab === 'connections' ? 0 : -1}
+          className={`px-4 py-2 border font-medium text-sm ${
             tab === 'connections'
-              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
-              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           {t('settings.tabs.connections')}
         </button>
         <button
           onClick={() => setTab('appearance')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+          id="settings-tab-appearance" role="tab" aria-selected={tab === 'appearance'} aria-controls="settings-panel-appearance" tabIndex={tab === 'appearance' ? 0 : -1}
+          className={`px-4 py-2 border font-medium text-sm ${
             tab === 'appearance'
-              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
-              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           {t('settings.tabs.appearance')}
         </button>
         <button
           onClick={() => setTab('notifications')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+          id="settings-tab-notifications" role="tab" aria-selected={tab === 'notifications'} aria-controls="settings-panel-notifications" tabIndex={tab === 'notifications' ? 0 : -1}
+          className={`px-4 py-2 border font-medium text-sm ${
             tab === 'notifications'
-              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
-              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           {t('settings.tabs.notifications')}
         </button>
         <button
           onClick={() => setTab('about')}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-full border font-mono font-bold text-xs transition-all cursor-pointer ${
+          id="settings-tab-about" role="tab" aria-selected={tab === 'about'} aria-controls="settings-panel-about" tabIndex={tab === 'about' ? 0 : -1}
+          className={`px-4 py-2 border font-medium text-sm ${
             tab === 'about'
-              ? 'bg-portal-orange border-portal-orange text-white shadow-xs'
-              : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] hover:bg-[var(--color-bg-tertiary)] shadow-xs'
+              ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+              : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
           }`}
         >
           {t('settings.tabs.about')}
@@ -594,7 +619,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       </div>
 
       {/* Tab Content (stable height to avoid view jumping) */}
-      <div className="min-h-[60vh]">
+      <div id={`settings-panel-${tab}`} role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="min-h-[60vh]">
 
       {/* Main Grid Layout */}
       {tab === 'account' && (
@@ -604,10 +629,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
          <div className="space-y-6">
           
           {/* Section 1: Profile picture */}
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <ImageIcon className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.profilePicture')}</h3>
+              <ImageIcon className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.profilePicture')}</h3>
             </div>
 
             <MessageBanner message={avatarMessage} />
@@ -621,13 +646,13 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     className="w-20 h-20 shrink-0 rounded-full object-cover border border-[var(--color-border)] shadow-xs"
                   />
                 ) : (
-                  <div className="w-20 h-20 shrink-0 bg-portal-navy text-[var(--color-text-inverse)] rounded-full flex items-center justify-center border border-[var(--color-border)] shadow-xs">
+                  <div className="w-20 h-20 shrink-0 bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] rounded-full flex items-center justify-center border border-[var(--color-border)]">
                     <User className="w-10 h-10" />
                   </div>
                 )}
                 {avatarLoading && (
                   <div className="absolute inset-0 bg-[var(--color-bg-inverse)]/40 rounded-full flex items-center justify-center">
-                    <span className="animate-spin rounded-full h-5 w-5 border-2 border-[var(--color-glass-border)] border-t-transparent"></span>
+                    <span className="animate-spin rounded-full h-5 w-5 border-2 border-[var(--color-border)] border-t-transparent"></span>
                   </div>
                 )}
               </div>
@@ -637,7 +662,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   {t('settings.avatarHint')}
                 </p>
                 <div className="flex flex-wrap gap-2.5">
-                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs">
+                  <label className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shadow-xs">
                     <Upload className="w-3.5 h-3.5" />
                     <span>{t('settings.selectImage')}</span>
                     <input
@@ -652,7 +677,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     <button
                       onClick={handleDeleteAvatar}
                       disabled={avatarLoading}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl hover:bg-[var(--color-error-bg)]/70 hover:border-rose-350 transition-all font-mono font-bold text-[10px] cursor-pointer shadow-xs"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-[var(--color-bg-secondary)] border border-[var(--color-error-border)] text-[var(--color-error-text)] rounded-xl hover:bg-[var(--color-error-bg)]/70 transition-all font-mono font-bold text-[10px] cursor-pointer shadow-xs"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                       {t('settings.delete')}
@@ -664,10 +689,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           </div>
 
 {/* Section 2: Profile details */}
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.profileDetails')}</h3>
+              <User className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.profileDetails')}</h3>
             </div>
 
             <MessageBanner message={profileMessage} />
@@ -731,7 +756,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     {t('settings.newEmail')}
                   </label>
                   <div className="relative group">
-                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-portal-orange transition-colors">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-[var(--color-text-primary)] transition-colors">
                       <Mail className="w-4 h-4" />
                     </span>
                     <input
@@ -739,7 +764,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                       value={newEmail}
                       onChange={(e) => setNewEmail(e.target.value)}
                       placeholder={t('settings.newEmailPlaceholder')}
-                      className="w-full pl-10 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                      className={`${inputCls} pl-10 pr-4`}
                     />
                   </div>
                 </div>
@@ -749,7 +774,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <button
                   type="submit"
                   disabled={emailChangeLoading || newEmail.trim() === ''}
-                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  className={`w-full ${primaryBtnCls}`}
                 >
                   {emailChangeLoading ? t('settings.saving') : t('settings.requestLink')}
                 </button>
@@ -774,10 +799,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
             )}
           </div>
 
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <User className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.displayName')}</h3>
+              <User className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.displayName')}</h3>
             </div>
 
             <form onSubmit={handleUpdateProfile} className="space-y-4">
@@ -791,14 +816,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder={t('auth.namePlaceholder')}
-                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  className={inputCls}
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={profileLoading || displayName.trim() === '' || displayName.trim() === user?.display_name}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                className={`w-full ${primaryBtnCls}`}
               >
                 {profileLoading ? t('settings.saving') : t('settings.saveChanges')}
               </button>
@@ -808,10 +833,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
         {/* Right Side: Password & 2FA */}
         <div className="space-y-6">
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.changePassword')}</h3>
+              <Lock className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.changePassword')}</h3>
             </div>
 
             <MessageBanner message={passwordMessage} />
@@ -830,7 +855,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={currentPassword}
                     onChange={(e) => setCurrentPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                    className={`${inputCls} pr-10 font-mono`}
                   />
                   <button
                     type="button"
@@ -856,7 +881,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                    className={`${inputCls} pr-10 font-mono`}
                   />
                   <button
                     type="button"
@@ -882,7 +907,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full px-4 pr-10 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                    className={`${inputCls} pr-10 font-mono`}
                   />
                   <button
                     type="button"
@@ -898,7 +923,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               <button
                 type="submit"
                 disabled={passwordLoading || !currentPassword || !newPassword || !confirmPassword}
-                className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                className={`w-full ${primaryBtnCls}`}
               >
                 {passwordLoading ? t('settings.changing') : t('settings.changePassword')}
               </button>
@@ -906,16 +931,16 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           </div>
 
           {/* 2FA Section */}
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <div className="flex items-center gap-2">
-                <Lock className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-                <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.twoFactor')}</h3>
+                <Lock className="w-4 h-4 text-[var(--color-text-muted)]" />
+                <h3 className={sectionTitleCls}>{t('settings.twoFactor')}</h3>
               </div>
               {totpStatusLoading ? (
                 <span className="text-[10px] font-mono text-[var(--color-text-muted)]">…</span>
               ) : totpEnabled ? (
-                <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">{t('settings.active')}</span>
+                <span className="ui-badge ui-badge-success">{t('settings.active')}</span>
               ) : (
                 <span className="text-[10px] font-mono font-bold text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-2 py-0.5 rounded-full">{t('settings.inactive')}</span>
               )}
@@ -930,7 +955,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 </p>
                 <div className="grid grid-cols-2 gap-2">
                   {backupCodes.map((code) => (
-                    <div key={code} className="px-3 py-2 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-lg text-center font-mono text-sm tracking-widest text-[var(--color-portal-navy-themed)]">
+                    <div key={code} className="px-3 py-2 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-lg text-center font-mono text-sm tracking-widest text-[var(--color-text-primary)]">
                       {code}
                     </div>
                   ))}
@@ -938,7 +963,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <button
                   type="button"
                   onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')).catch(() => {}); setTotpMessage({ text: t('settings.copied'), type: 'success' }); }}
-                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer"
+                  className={`w-full ${primaryBtnCls}`}
                 >
                   {t('settings.copyCodes')}
                 </button>
@@ -947,9 +972,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               <form onSubmit={handle2FAEnable} className="space-y-4">
                 <div className="flex flex-col items-center gap-3">
                   {setupData.qr_png.startsWith('data:image/') ? (
-                    <img src={setupData.qr_png} alt={t('settings.qrCodeAlt')} className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2 [image-rendering:pixelated]" />
+                    <img src={setupData.qr_png} alt={t('settings.qrCodeAlt')} className="w-44 h-44 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2 [image-rendering:pixelated]" />
                   ) : (
-                    <div className="w-44 h-44 rounded-xl border border-[var(--color-border)] bg-white p-2 flex items-center justify-center text-[10px] text-[var(--color-text-muted)] text-center font-mono">
+                    <div className="w-44 h-44 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2 flex items-center justify-center text-[10px] text-[var(--color-text-muted)] text-center font-mono">
                       {t('settings.messages.qrInvalid')}
                     </div>
                   )}
@@ -968,14 +993,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={enableCode}
                     onChange={(e) => setEnableCode(e.target.value)}
                     placeholder="123456"
-                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm tracking-[0.4em] text-center focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                    className={`${inputCls} tracking-[0.4em] text-center font-mono`}
                   />
                 </div>
                 <div className="flex gap-2">
                   <button
                     type="submit"
                     disabled={enableLoading || !enableCode}
-                    className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                    className={`flex-1 ${primaryBtnCls}`}
                   >
                     {enableLoading ? t('settings.activating') : t('settings.activate')}
                   </button>
@@ -1006,7 +1031,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={disableCode}
                     onChange={(e) => setDisableCode(e.target.value)}
                     placeholder="123456"
-                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-mono"
+                    className={`${inputCls} font-mono`}
                   />
                 </div>
                 <button
@@ -1026,7 +1051,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   type="button"
                   onClick={handle2FASetup}
                   disabled={setupLoading}
-                  className="w-full bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  className={`w-full ${primaryBtnCls}`}
                 >
                   {setupLoading ? t('settings.preparing') : t('settings.setup')}
               </button>
@@ -1040,10 +1065,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       {/* Appearance Tab */}
       {tab === 'appearance' && (
         <div className="grid md:grid-cols-2 gap-6">
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Palette className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.appearance')}</h3>
+              <Palette className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.appearance')}</h3>
             </div>
 
             <p className="text-[10px] text-[var(--color-text-muted)] font-sans leading-relaxed">
@@ -1058,12 +1083,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 aria-pressed={preference === 'light'}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
                   preference === 'light'
-                    ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
+                    ? 'border-[var(--color-text-primary)] bg-[var(--color-bg-tertiary)]'
                     : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
                 }`}
               >
-                <Sun className={`w-6 h-6 ${preference === 'light' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
-                <span className={`text-xs font-bold font-mono ${preference === 'light' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
+                <Sun className={`w-6 h-6 ${preference === 'light' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} />
+                <span className={`text-xs font-bold font-mono ${preference === 'light' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                   {t('settings.light')}
                 </span>
               </button>
@@ -1075,12 +1100,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 aria-pressed={preference === 'dark'}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
                   preference === 'dark'
-                    ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
+                    ? 'border-[var(--color-text-primary)] bg-[var(--color-bg-tertiary)]'
                     : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
                 }`}
               >
-                <Moon className={`w-6 h-6 ${preference === 'dark' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
-                <span className={`text-xs font-bold font-mono ${preference === 'dark' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
+                <Moon className={`w-6 h-6 ${preference === 'dark' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} />
+                <span className={`text-xs font-bold font-mono ${preference === 'dark' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                   {t('settings.dark')}
                 </span>
               </button>
@@ -1092,12 +1117,12 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 aria-pressed={preference === 'auto'}
                 className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all cursor-pointer ${
                   preference === 'auto'
-                    ? 'border-portal-orange bg-portal-orange/10 shadow-sm'
+                    ? 'border-[var(--color-text-primary)] bg-[var(--color-bg-tertiary)]'
                     : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
                 }`}
               >
-                <Monitor className={`w-6 h-6 ${preference === 'auto' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-muted)]'}`} />
-                <span className={`text-xs font-bold font-mono ${preference === 'auto' ? 'text-[var(--color-portal-orange-themed)]' : 'text-[var(--color-text-secondary)]'}`}>
+                <Monitor className={`w-6 h-6 ${preference === 'auto' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} />
+                <span className={`text-xs font-bold font-mono ${preference === 'auto' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                   {t('settings.auto')}
                 </span>
               </button>
@@ -1115,10 +1140,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       {/* Notifications Tab (SMTP) */}
       {tab === 'notifications' && (
         <div className="grid md:grid-cols-2 gap-6">
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Mail className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.emailNotifications')}</h3>
+              <Mail className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.emailNotifications')}</h3>
             </div>
 
             <MessageBanner message={smtpMessage} />
@@ -1135,7 +1160,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={smtpHost}
                     onChange={(e) => setSmtpHost(e.target.value)}
                     placeholder="smtp.example.com"
-                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                    className={inputCls}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -1149,7 +1174,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     max={65535}
                     value={smtpPort}
                     onChange={(e) => setSmtpPort(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                    className={inputCls}
                   />
                 </div>
               </div>
@@ -1164,7 +1189,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   value={smtpUsername}
                   onChange={(e) => setSmtpUsername(e.target.value)}
                   placeholder="user@example.com"
-                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  className={inputCls}
                 />
               </div>
 
@@ -1181,7 +1206,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={smtpPassword}
                     onChange={(e) => setSmtpPassword(e.target.value)}
                     placeholder={smtpHasConfig ? `•••••••• ${t('settings.smtpPasswordUnchanged')}` : '••••••••'}
-                    className="w-full px-4 pr-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans font-mono"
+                    className={`${inputCls} font-mono`}
                   />
                 </div>
                 {smtpHasConfig && (
@@ -1202,7 +1227,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={smtpFromEmail}
                     onChange={(e) => setSmtpFromEmail(e.target.value)}
                     placeholder="noreply@example.com"
-                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                    className={inputCls}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -1214,7 +1239,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     value={smtpFromName}
                     onChange={(e) => setSmtpFromName(e.target.value)}
                     placeholder="Clumoove"
-                    className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                    className={inputCls}
                   />
                 </div>
               </div>
@@ -1226,7 +1251,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <select
                   value={smtpEncryption}
                   onChange={(e) => setSmtpEncryption(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans"
+                  className={inputCls}
                 >
                   <option value="tls">TLS (Implicit)</option>
                   <option value="starttls">STARTTLS</option>
@@ -1241,23 +1266,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     {t('settings.smtpNotifyHint')}
                   </p>
                 </div>
-                <label className="relative inline-flex items-center cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    aria-label={t('settings.smtpNotify')}
-                    checked={smtpNotify}
-                    onChange={(e) => setSmtpNotify(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div aria-hidden="true" className="w-10 h-6 bg-[var(--color-border)] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[var(--color-glass-border)] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[var(--color-bg-secondary)] after:border-[var(--color-border)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-portal-orange"></div>
-                </label>
+                <Toggle checked={smtpNotify} onChange={setSmtpNotify} label={t('settings.smtpNotify')} />
               </div>
 
               <div className="flex flex-wrap gap-2.5">
                 <button
                   type="submit"
                   disabled={smtpLoading || !smtpHost || !smtpUsername || !smtpFromEmail}
-                  className="flex-1 bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  className={`flex-1 ${primaryBtnCls}`}
                 >
                   {smtpLoading ? t('settings.saving') : t('settings.saveSmtp')}
                 </button>
@@ -1265,7 +1281,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   type="button"
                   onClick={handleTestSMTP}
                   disabled={smtpLoading}
-                  className="px-4 py-2.5 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)] transition-all font-mono font-bold text-[10px] cursor-pointer text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)] shadow-xs"
+                  className={secondaryBtnCls}
                 >
                   {t('settings.testSmtp')}
                 </button>
@@ -1298,28 +1314,28 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       {/* About Tab */}
       {tab === 'about' && (
         <div className="grid md:grid-cols-2 gap-6">
-          <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Info className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
-              <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.about')}</h3>
+              <Info className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <h3 className={sectionTitleCls}>{t('settings.about')}</h3>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('settings.name')}
               </span>
-              <span className="text-sm font-mono text-[var(--color-portal-navy-themed)]">{t('settings.appName')}</span>
+              <span className="text-sm font-mono text-[var(--color-text-primary)]">{t('settings.appName')}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('settings.version')}
               </span>
-              <span className="text-sm font-mono text-[var(--color-portal-navy-themed)]">v{__APP_VERSION__}</span>
+              <span className="text-sm font-mono text-[var(--color-text-primary)]">v{__APP_VERSION__}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('settings.license')}
               </span>
-              <span className="text-sm font-mono text-[var(--color-portal-navy-themed)]">{t('settings.licenseName')}</span>
+              <span className="text-sm font-mono text-[var(--color-text-primary)]">{t('settings.licenseName')}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
@@ -1329,7 +1345,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 href="https://github.com/xXRoxXeRXx/clumoove"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-sm font-mono text-[var(--color-portal-orange-themed)] hover:underline"
+                className="text-sm font-mono text-[var(--color-text-primary)] hover:underline"
               >
                 github.com/xXRoxXeRXx/clumoove
               </a>

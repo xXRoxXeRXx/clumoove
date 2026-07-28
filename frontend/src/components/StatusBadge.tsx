@@ -3,12 +3,12 @@ import { useTranslation } from 'react-i18next';
 type BadgeVariant = 'success' | 'error' | 'warning' | 'info' | 'muted' | 'cyan';
 
 const variantCls: Record<BadgeVariant, string> = {
-  success: 'bg-[var(--color-success-bg)] text-[var(--color-success-text)] border-[var(--color-success-border)]',
-  error: 'bg-[var(--color-error-bg)] text-[var(--color-error-text)] border-[var(--color-error-border)]',
-  warning: 'bg-[var(--color-warning-bg)] text-[var(--color-text-primary)] border-[var(--color-warning-border)]',
-  info: 'bg-[var(--color-info-bg)] text-[var(--color-info-text)] border-[var(--color-info-border)]',
-  muted: 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border-[var(--color-border)]',
-  cyan: 'bg-[var(--color-info-bg)] text-[var(--color-info-text)] border-[var(--color-info-border)]',
+  success: 'ui-badge-success',
+  error: 'ui-badge-error',
+  warning: 'ui-badge-warning',
+  info: 'ui-badge-info',
+  muted: 'ui-badge-muted',
+  cyan: 'ui-badge-info',
 };
 
 function Badge({
@@ -25,7 +25,7 @@ function Badge({
   const sizeCls = size === 'sm' ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs';
   return (
     <span
-      className={`inline-flex items-center rounded-md font-medium border ${variantCls[variant]} ${sizeCls} ${pulse ? 'animate-pulse' : ''}`}
+      className={`ui-badge inline-flex items-center font-medium ${variantCls[variant]} ${sizeCls} ${pulse ? 'animate-pulse' : ''}`}
     >
       {label}
     </span>

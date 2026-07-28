@@ -47,14 +47,14 @@ export function LanguageSwitcher({ authenticated = false }: { authenticated?: bo
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label={t('language.select')}
-        className="flex items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-1.5 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+        className="ui-button-secondary flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-[var(--color-bg-tertiary)]"
       >
         <span>{current === 'de' ? 'Deutsch' : 'English'}</span>
         <span aria-hidden="true">{open ? '▾' : '▴'}</span>
       </button>
 
       {open && (
-        <div className="absolute bottom-full right-0 z-50 mb-2 w-40 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1">
+        <div className="ui-section absolute bottom-full right-0 z-50 mb-2 w-40 bg-[var(--color-bg-elevated)] py-1">
           {LANGUAGES.map((lang) => {
             const isSelected = current === lang.code;
             return (
@@ -64,7 +64,7 @@ export function LanguageSwitcher({ authenticated = false }: { authenticated?: bo
                 onClick={() => select(lang.code)}
                 className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 text-xs font-semibold transition-colors cursor-pointer text-left font-sans ${
                   isSelected
-                    ? 'text-[var(--color-portal-orange-themed)] bg-[var(--color-bg-tertiary)]'
+                    ? 'text-[var(--color-text-primary)] bg-[var(--color-bg-tertiary)]'
                     : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
                 }`}
               >

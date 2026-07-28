@@ -153,6 +153,16 @@ File-scoped commands referenced in `AGENTS.md`:
 - Use `utils/format.ts` (`formatBytes`, `formatDate`, `formatDateTime`, `useFormat`) for locale-aware
   formatting.
 
+### Frontend UI
+- Use the semantic `ui-*` utilities and light/dark tokens from `frontend/src/index.css` for cards, fields,
+  buttons, feedback, status badges, progress, empty/loading states, and pagination. Do not reintroduce
+  `portal-*`, `glass-*`, `shadow-portal*`, decorative gradients, blur, large shadows, or scale hover effects.
+- `@heroicons/react` is the sole icon library. Icon-only actions need localized `aria-label` and `title`.
+- Prefer native controls. Tabs, menus, dialogs, and tree controls must be keyboard operable; dialogs require
+  a name, modal semantics, Escape handling, focus trapping, and focus restoration.
+- For frontend changes, run the typecheck and lint commands above, plus `(cd frontend && npm test)` and
+  `(cd frontend && npm run build)`. Confirm locale key parity whenever translation files change.
+
 ### Threads & parallelism
 - `threads` per migration or sync job are capped at 1–16. The worker respects this via the
   dequeue query (`COUNT(*) < m.threads`). Sync jobs also persist a 0–1000 Mbps bandwidth limit (0 is unlimited),
