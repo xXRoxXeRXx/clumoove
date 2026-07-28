@@ -713,17 +713,14 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('auth.name')}
               </label>
-              <div className="relative group">
-                <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)]">
-                  <span aria-hidden="true">A</span>
-                </span>
+              <div>
                 <input
                   type="text"
                   required
                   placeholder={t('auth.namePlaceholder')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  className={`${authInputClass} pl-10 pr-4 font-sans`}
+                  className={`${authInputClass} font-sans`}
                 />
               </div>
             </div>
