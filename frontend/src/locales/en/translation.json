@@ -105,6 +105,8 @@
     "targetTitle": "Target (Copy data to here)",
     "targetSubtitle": "Target directory for transfer",
     "provider": "Provider",
+    "sourceProvider": "Source data provider",
+    "targetProvider": "Target data provider",
     "serverHost": "Server address (IP)",
     "port": "Connection port",
     "share": "Name of the share",

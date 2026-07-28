@@ -823,13 +823,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   return (
     <div className="w-full max-w-5xl mx-auto py-2 text-left space-y-6">
       
-      {/* Top Bar with Back Button */}
+      {/* Wizard navigation */}
       {onBack && (
-        <div className="flex items-center justify-between pb-1">
+        <div className="border-b border-[var(--color-border-light)] pb-4">
           <button
             type="button"
             onClick={onBack}
-            className="ui-button-secondary flex items-center gap-2 px-4 py-2 font-mono font-bold text-xs hover:bg-[var(--color-bg-tertiary)] shrink-0"
+            className="ui-button-secondary inline-flex items-center gap-2 px-4 py-2 font-mono font-bold text-xs hover:bg-[var(--color-bg-tertiary)]"
           >
             <ArrowLeft className="w-4 h-4 stroke-[2.5]" />
             <span>{t('common.back')}</span>
@@ -837,43 +837,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
       )}
 
-      {/* Wizard Step Progress Banner */}
-      <div className="ui-section flex items-center justify-between p-4">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-8 h-8 rounded-full bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] font-mono font-bold text-xs shadow-xs">
-            3
-          </span>
-          <div className="flex flex-col text-left">
-            <span className="font-display font-extrabold text-sm text-[var(--color-text-primary)]">
-              {t('fileBrowser.title')}
-            </span>
-            <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
-              {t('fileBrowser.wizardStep')}
-            </span>
-          </div>
-        </div>
-
-        <div className="ui-badge ui-badge-muted flex items-center gap-1.5 text-xs font-mono font-bold px-3 py-1 rounded-full">
-          <Folder className="w-3.5 h-3.5" />
-          <span>{t('fileBrowser.selectionBadge')}</span>
-        </div>
-      </div>
-
-      {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-border-light)] pb-5">
-        <div>
-          <h1 className="font-display font-extrabold text-2xl md:text-3xl text-[var(--color-text-primary)] tracking-tight">
-            {t('fileBrowser.title')}
-          </h1>
-          <p className="text-[10px] font-mono text-[var(--color-text-muted)] mt-1 uppercase tracking-wider">
-            {t('fileBrowser.subtitle')}
-          </p>
-        </div>
-        <div className="flex items-center">
-          <span className="ui-badge ui-badge-muted inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider shrink-0">
-            {effectiveJobType === 'sync' ? t('sync.modeSync') : t('sync.modeMigration')}
-          </span>
-        </div>
+      <div>
+        <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">
+          {t('fileBrowser.wizardStep')}
+        </h1>
       </div>
 
       {/* Source & Target Connection Cards Grid */}
@@ -944,14 +911,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         {/* Sticky header: mode selector (left) + start button (right) */}
         <div className="sticky top-16 z-20 -mx-px flex flex-col justify-between gap-3 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-5 py-3 sm:flex-row sm:items-center sm:px-6">
           {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
-          <div className="text-xs w-full sm:w-auto">
-            <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] p-1 rounded-full border border-[var(--color-border)]">
+          <div className="w-full text-xs sm:w-auto">
+            <div className="flex border-b border-[var(--color-border-light)]">
               <button
                 type="button"
                 onClick={() => setJobType('migration')}
-                className={`flex items-center px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
+                className={`px-3 py-2 text-sm ${
                   effectiveJobType === 'migration'
-                    ? 'ui-button-primary shadow-xs'
+                    ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
                     : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
                 }`}
               >
@@ -961,9 +928,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={() => setJobType('sync')}
-                  className={`flex items-center px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
+                  className={`px-3 py-2 text-sm ${
                     effectiveJobType === 'sync'
-                      ? 'ui-button-primary shadow-xs'
+                      ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
                       : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
                   }`}
                 >
@@ -977,7 +944,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <button
             onClick={handleStartMigration}
             disabled={starting}
-            className="ui-button-primary w-full shrink-0 px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 sm:w-auto"
+            className="ui-button-primary inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 sm:w-auto"
           >
             {starting ? (
               <>
@@ -1082,7 +1049,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   onClick={openTargetBrowser}
                   className="ui-button-primary shrink-0 px-3 py-2.5 text-[11px] font-bold font-mono uppercase tracking-wider hover:opacity-90 flex items-center gap-1.5"
                 >
-                  <FolderOpen className="w-4 h-4" />
                   <span>{t('common.edit')}</span>
                 </button>
               </div>
