@@ -224,10 +224,12 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 		return out, nil
 	}
 	var albumID string
-	all := dir == "/All Assets"
-	if !all && strings.HasPrefix(dir, "/Albums/") && len(strings.Split(strings.Trim(dir, "/"), "/")) == 2 {
+	switch {
+	case dir == "/All Assets":
+		// All assets is a valid virtual directory without an album filter.
+	case strings.HasPrefix(dir, "/Albums/") && len(strings.Split(strings.Trim(dir, "/"), "/")) == 2:
 		albumID = path.Base(dir)
-	} else {
+	default:
 		return nil, fmt.Errorf("invalid Immich virtual path")
 	}
 	assets, err := p.search(ctx, albumID)
