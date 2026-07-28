@@ -554,7 +554,7 @@ function App() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-grow flex-col justify-center px-4 py-6 sm:px-6 sm:py-8">
+      <main className={`mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'connect' ? 'justify-start' : 'justify-center'}`}>
         <div className="w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />

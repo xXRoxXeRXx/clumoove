@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeftIcon as ArrowLeft, ComputerDesktopIcon as Monitor, Cog6ToothIcon as Settings, EnvelopeIcon as Mail, EyeIcon as Eye, EyeSlashIcon as EyeOff, InformationCircleIcon as Info, LockClosedIcon as Lock, MoonIcon as Moon, LinkIcon as Plug, SunIcon as Sun, SwatchIcon as Palette, TrashIcon as Trash2, ArrowUpTrayIcon as Upload, UserIcon as User } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon as ArrowLeft, ComputerDesktopIcon as Monitor, Cog6ToothIcon as Settings, EnvelopeIcon as Mail, EyeIcon as Eye, EyeSlashIcon as EyeOff, InformationCircleIcon as Info, LockClosedIcon as Lock, MoonIcon as Moon, LinkIcon as Plug, ShieldCheckIcon as ShieldCheck, SunIcon as Sun, SwatchIcon as Palette, TrashIcon as Trash2, ArrowUpTrayIcon as Upload, UserIcon as User } from '@heroicons/react/24/outline';
 import { AvatarCropper } from './AvatarCropper';
 import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';
@@ -893,7 +893,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           <div className={cardCls}>
             <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <div className="flex items-center gap-2">
-                <Lock className="w-4 h-4 text-[var(--color-text-muted)]" />
+                <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
                 <h3 className={sectionTitleCls}>{t('settings.twoFactor')}</h3>
               </div>
               {totpStatusLoading ? (
