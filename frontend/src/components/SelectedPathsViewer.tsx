@@ -279,12 +279,12 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
       {/* Modal Dialog */}
       {isModalOpen && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) setIsModalOpen(false);
           }}
         >
-          <div className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-w-xl w-full flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-150">
+          <div className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)]">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]">
               <div className="flex items-center gap-2.5">
@@ -324,7 +324,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={t('paths.searchPlaceholder')}
-                    className="w-full pl-9 pr-8 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-portal-navy/30 transition-all placeholder:text-[var(--color-text-muted)]"
+                    className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] py-2 pl-9 pr-8 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
                   />
                   {searchQuery && (
                     <button
@@ -456,7 +456,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               <button
                 type="button"
                 onClick={handleCopy}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] hover:bg-[var(--color-bg-tertiary)] text-xs font-medium text-[var(--color-text-primary)] transition-colors cursor-pointer shadow-2xs"
+                className="inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
               >
                 {copied ? (
                   <>
@@ -474,7 +474,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="px-4 py-1.5 rounded-xl bg-portal-navy hover:bg-portal-navy/90 text-white text-xs font-medium transition-colors cursor-pointer shadow-2xs"
+                className="rounded-md bg-[var(--color-bg-inverse)] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
               >
                 {t('paths.close')}
               </button>
