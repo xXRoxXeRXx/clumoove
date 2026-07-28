@@ -121,3 +121,36 @@ func TestImmichAssetVirtualPathIsNotDirectory(t *testing.T) {
 		t.Error("GetDirectoryListing() unexpectedly accepted an album asset path")
 	}
 }
+
+func TestImmichAlbumListingPreservesAssetMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/search/metadata" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			return
+		}
+		if got := r.Header.Get("x-api-key"); got != "test-key" {
+			t.Errorf("x-api-key = %q, want test-key", got)
+		}
+		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-id","originalFileName":"photo.jpg","originalMimeType":"image/jpeg","exifInfo":{"fileSizeInByte":12345}}]}}`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{
+		BaseURL: server.URL + "/api", APIKey: "test-key", HTTPClient: server.Client(),
+		albums: map[string]string{"album-id": "Holiday"}, albumIDs: map[string]string{"Holiday": "album-id"},
+	}
+
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/Albums/album-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.Path != "/Albums/album-id/asset-id" || item.Name != "photo.jpg" || item.Size != 12345 {
+		t.Errorf("item = %#v", item)
+	}
+	if item.Metadata.CustomProps["immich_filename"] != "photo.jpg" {
+		t.Errorf("immich_filename = %q", item.Metadata.CustomProps["immich_filename"])
+	}
+}

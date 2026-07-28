@@ -65,10 +65,10 @@ func TestUseTempThenRename(t *testing.T) {
 	noRename := &fakeProvider{atomicRename: false}
 
 	cases := []struct {
-		name             string
-		target           storage.StorageProvider
+		name              string
+		target            storage.StorageProvider
 		deleteAfterUpload bool
-		want             bool
+		want              bool
 	}{
 		{"renameable + overwrite", renameable, true, true},
 		{"renameable + no overwrite", renameable, false, false},
@@ -79,6 +79,23 @@ func TestUseTempThenRename(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			if got := useTempThenRename(c.target, c.deleteAfterUpload); got != c.want {
 				t.Fatalf("useTempThenRename(...)=%v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestImmichOriginalFilenamePath(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		filename string
+		want     string
+	}{
+		{"original filename", "photo.jpg", "/destination/Albums/album-id/photo.jpg"},
+		{"path traversal filename", "../photo.jpg", "/destination/Albums/album-id/photo.jpg"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := immichOriginalFilenamePath("/destination/Albums/album-id/asset-id", test.filename); got != test.want {
+				t.Fatalf("immichOriginalFilenamePath(..., %q) = %q, want %q", test.filename, got, test.want)
 			}
 		})
 	}
@@ -132,7 +149,7 @@ func TestTransferTimeoutDeterministic(t *testing.T) {
 
 func TestConnLossCounts(t *testing.T) {
 	p := &Processor{
-		connLossCounts:      sync.Map{},
+		connLossCounts:       sync.Map{},
 		connLossTaskAttempts: sync.Map{},
 	}
 
