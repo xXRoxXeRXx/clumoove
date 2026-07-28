@@ -461,7 +461,7 @@ function App() {
               aria-label="Clumoove – go to overview"
               className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--color-text-primary)] disabled:cursor-default"
             >
-              <img src="/clumoove_logo.png" alt="" className="h-8 w-8 object-contain" />
+              <img src="/clumoove_logo.svg" alt="" className="h-8 w-8 object-contain" />
               Clumoove
             </button>
           </div>
