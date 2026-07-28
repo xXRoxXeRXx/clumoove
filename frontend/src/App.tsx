@@ -445,10 +445,10 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans selection:bg-portal-orange selection:text-white relative">
+    <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans relative">
       
       <header className="sticky top-0 z-50 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <div>
             <button
               type="button"
@@ -488,7 +488,7 @@ function App() {
               {showUserMenu && (
                 <div
                   role="menu"
-                  className="absolute right-0 top-full z-50 mt-2 w-48 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1"
+                  className="absolute right-0 top-full z-50 mt-2 w-48 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1"
                 >
                   {user?.role === 'ADMIN' && (
                     <button
@@ -532,7 +532,7 @@ function App() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-5xl flex-grow flex-col justify-center px-6 py-8">
+      <main className="mx-auto flex w-full max-w-6xl flex-grow flex-col justify-center px-4 py-6 sm:px-6 sm:py-8">
         <div className="w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />

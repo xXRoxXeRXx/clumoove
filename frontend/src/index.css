@@ -5,7 +5,6 @@
   --font-display: 'Poppins', system-ui, -apple-system, sans-serif;
   --font-sans: 'Open Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'Open Sans', system-ui, -apple-system, sans-serif;
-  --color-orange-500: #18181b;
   --radius-sm: 0.125rem;
   --radius-md: 0.25rem;
   --radius-lg: 0.375rem;
@@ -17,8 +16,8 @@
   --shadow-lg: none;
   --shadow-xl: none;
   --shadow-2xl: none;
-  --color-primary: #18181b;
-  --color-primary-hover: #3f3f46;
+  --color-primary: #27272a;
+  --color-primary-hover: #18181b;
 }
 
 :root {
@@ -87,8 +86,32 @@
   --color-info-text: #bfdbfe;
 }
 
-/* Compatibility helpers: existing screens keep their layout while losing glass,
-   glow and hover elevation. New UI should use ordinary Tailwind classes. */
+@utility ui-card {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+@utility ui-input {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+@utility ui-button-primary {
+  background-color: var(--color-bg-inverse);
+  border-radius: var(--radius-md);
+  color: var(--color-text-inverse);
+}
+
+@utility ui-button-secondary {
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+}
+
+/* Legacy aliases retain neutral rendering while screens are migrated to ui-* utilities. */
 @utility glass-panel {
   background-color: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
@@ -106,7 +129,7 @@ body {
 }
 
 :where(button, a[href], input, select, textarea, [role="button"], [role="radio"]):focus-visible {
-  outline: 2px solid currentColor;
+  outline: 2px solid var(--color-text-primary);
   outline-offset: 2px;
 }
 

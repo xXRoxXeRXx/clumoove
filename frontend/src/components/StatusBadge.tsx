@@ -3,12 +3,12 @@ import { useTranslation } from 'react-i18next';
 type BadgeVariant = 'success' | 'error' | 'warning' | 'info' | 'muted' | 'cyan';
 
 const variantCls: Record<BadgeVariant, string> = {
-  success: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  error: 'bg-[var(--color-error-bg)] text-rose-700 border-[var(--color-error-border)]',
-  warning: 'bg-amber-50 text-amber-700 border-amber-200',
-  info: 'bg-[var(--color-info-bg)] text-blue-700 border-[var(--color-info-border)]',
+  success: 'bg-[var(--color-success-bg)] text-[var(--color-success-text)] border-[var(--color-success-border)]',
+  error: 'bg-[var(--color-error-bg)] text-[var(--color-error-text)] border-[var(--color-error-border)]',
+  warning: 'bg-[var(--color-warning-bg)] text-[var(--color-text-primary)] border-[var(--color-warning-border)]',
+  info: 'bg-[var(--color-info-bg)] text-[var(--color-info-text)] border-[var(--color-info-border)]',
   muted: 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)] border-[var(--color-border)]',
-  cyan: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+  cyan: 'bg-[var(--color-info-bg)] text-[var(--color-info-text)] border-[var(--color-info-border)]',
 };
 
 function Badge({
@@ -22,10 +22,10 @@ function Badge({
   label: string;
   size?: 'sm' | 'md';
 }) {
-  const sizeCls = size === 'sm' ? 'px-2.5 py-1 text-[11px] gap-1.5' : 'px-3 py-1 text-xs gap-1.5';
+  const sizeCls = size === 'sm' ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs';
   return (
     <span
-      className={`inline-flex items-center rounded-full font-bold border ${variantCls[variant]} ${sizeCls} ${pulse ? 'animate-pulse' : ''}`}
+      className={`inline-flex items-center rounded-md font-medium border ${variantCls[variant]} ${sizeCls} ${pulse ? 'animate-pulse' : ''}`}
     >
       {label}
     </span>

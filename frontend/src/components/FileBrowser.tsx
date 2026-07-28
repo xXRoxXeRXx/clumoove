@@ -1,27 +1,27 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { 
-  Folder, 
-  FolderOpen, 
-  File, 
-  FileText, 
-  Image as ImageIcon, 
-  Film, 
-  Music, 
-  FileCode, 
-  Archive,
-  ChevronRight, 
-  ChevronDown, 
-  Check, 
-  Play, 
-  ArrowLeft, 
-  RefreshCw, 
-  AlertTriangle, 
-  Calendar, 
-  BookOpen, 
-  FolderPlus, 
-  X, 
-  Info 
-} from 'lucide-react';
+import {
+  ArchiveBoxIcon as Archive,
+  ArrowLeftIcon as ArrowLeft,
+  ArrowPathIcon as RefreshCw,
+  BookOpenIcon as BookOpen,
+  CalendarDaysIcon as Calendar,
+  CheckIcon as Check,
+  ChevronDownIcon as ChevronDown,
+  ChevronRightIcon as ChevronRight,
+  CodeBracketIcon as FileCode,
+  DocumentIcon as File,
+  DocumentTextIcon as FileText,
+  ExclamationTriangleIcon as AlertTriangle,
+  FilmIcon as Film,
+  FolderIcon as Folder,
+  FolderOpenIcon as FolderOpen,
+  FolderPlusIcon as FolderPlus,
+  InformationCircleIcon as Info,
+  MusicalNoteIcon as Music,
+  PhotoIcon as ImageIcon,
+  PlayIcon as Play,
+  XMarkIcon as X,
+} from '@heroicons/react/24/outline';
 import type { CloudFile, MigrationConfig } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
