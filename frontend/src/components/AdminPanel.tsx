@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, Users as UsersIcon, Activity, BarChart3, ScrollText, UserPlus, Ban, CheckCircle2, Trash2, ShieldCheck, ShieldOff, RefreshCw, CloudSync, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Users as UsersIcon, Activity, BarChart3, ScrollText, Ban, CheckCircle2, Trash2, ShieldCheck, ShieldOff, RefreshCw, CloudSync, SlidersHorizontal } from 'lucide-react';
 import { useApiError } from '../utils/apiError';
 import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
@@ -20,15 +20,14 @@ interface AdminPanelProps {
 
 const LIMIT = 20;
 
-function SectionCard({ icon: Icon, title, children }: {
+function SectionCard({ icon: _Icon, title, children }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+    <div className="glass-panel rounded-lg p-6 space-y-5">
       <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-        <Icon className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
         <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{title}</h3>
       </div>
       {children}
@@ -36,10 +35,10 @@ function SectionCard({ icon: Icon, title, children }: {
   );
 }
 
-const inputCls = 'w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans';
-const selectCls = 'px-3 py-1.5 text-xs bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans';
-const primaryBtnCls = 'bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer';
-const secondaryBtnCls = 'px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all cursor-pointer';
+const inputCls = 'w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm font-sans';
+const selectCls = 'rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm font-sans';
+const primaryBtnCls = 'rounded-md bg-[var(--color-bg-inverse)] py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90';
+const secondaryBtnCls = 'rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]';
 
 export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
   const { t } = useTranslation();
@@ -229,8 +228,8 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
           <option value="false">{t('admin.users.suspended')}</option>
         </select>
         <button onClick={() => setShowCreate((v) => !v)}
-          className="ml-auto flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md transition-all cursor-pointer">
-          <UserPlus className="w-4 h-4" /> {t('admin.users.create')}
+          className="ml-auto rounded-md bg-[var(--color-bg-inverse)] px-3 py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90">
+          {t('admin.users.create')}
         </button>
       </div>
 
