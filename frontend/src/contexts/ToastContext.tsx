@@ -41,7 +41,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <div
               key={item.id}
               role="status"
-              className={`pointer-events-auto px-3.5 py-2.5 rounded-xl border shadow-lg text-xs font-mono leading-relaxed animate-fade-in ${styles}`}
+              className={`pointer-events-auto rounded-md border px-3 py-2 text-sm leading-relaxed ${styles}`}
             >
               {item.text}
             </div>

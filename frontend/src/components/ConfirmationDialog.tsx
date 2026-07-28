@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef } from 'react';
-import { AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 export interface ConfirmationDialogProps {
@@ -94,7 +93,7 @@ export function ConfirmationDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -106,12 +105,9 @@ export function ConfirmationDialog({
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={messageId}
-        className="bg-[var(--color-bg-primary)] border border-[var(--color-border)] rounded-2xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-150"
+        className="w-full max-w-md overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)]"
       >
-        <div className="px-5 py-4 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] flex items-center gap-3">
-          <div className="p-2 rounded-xl bg-rose-500/10 text-rose-600 shrink-0">
-            <AlertTriangle className="w-5 h-5" />
-          </div>
+        <div className="flex items-center gap-3 border-b border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] px-5 py-4">
           <h3
             id={titleId}
             className="font-display font-bold text-sm text-[var(--color-text-primary)]"
@@ -134,14 +130,14 @@ export function ConfirmationDialog({
             ref={cancelRef}
             type="button"
             onClick={onCancel}
-            className="px-3.5 py-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] text-xs font-bold text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] transition-colors cursor-pointer"
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
           >
             {cancelLabel ?? t('common.cancel')}
           </button>
           <button
             type="button"
             onClick={onConfirm}
-            className="px-3.5 py-2 rounded-xl bg-rose-600 text-white text-xs font-bold hover:bg-rose-700 transition-colors cursor-pointer shadow-sm"
+            className="rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white hover:bg-red-800"
           >
             {confirmLabel ?? t('common.confirm')}
           </button>
