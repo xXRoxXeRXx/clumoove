@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, Pause, Trash2, ArrowRight, RefreshCw, Layers, Calendar, HardDrive, CheckCircle2, Loader2, Search } from 'lucide-react';
 import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -242,49 +241,40 @@ export function MigrationsDashboard({
     + syncJobs.reduce((acc, s) => acc + (s.processed_bytes || 0), 0);
 
   return (
-    <div className="w-full space-y-6 animate-fade-in">
+    <div className="w-full space-y-6">
       
       {/* Welcome Banner */}
-      <div className="relative rounded-3xl p-8 bg-gradient-to-r from-portal-navy via-slate-900 to-portal-navy-dark text-[var(--color-text-inverse)] overflow-hidden shadow-md">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,102,0,0.15),transparent_60%)] pointer-events-none" />
-        <div className="absolute -right-20 -bottom-20 w-80 h-80 bg-portal-orange/10 rounded-full blur-3xl pointer-events-none" />
-        
-        <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+      <section className="border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6">
+        <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
           <div className="space-y-2">
-            <p className="text-[9px] font-mono tracking-widest text-[var(--color-portal-orange-themed)] font-bold uppercase">{t('migrations.tagline')}</p>
-            <h1 className="font-display font-extrabold text-3xl tracking-tight">
+            <p className="text-xs font-medium text-[var(--color-text-muted)]">{t('migrations.tagline')}</p>
+            <h1 className="font-display text-2xl font-semibold tracking-tight text-[var(--color-text-primary)]">
               {t('migrations.welcome', { name: user?.display_name || t('common.user') })}
             </h1>
-            <p className="text-sm text-[var(--color-text-muted)] max-w-xl">
+            <p className="max-w-xl text-sm text-[var(--color-text-secondary)]">
               {t('migrations.welcomeSub')}
             </p>
           </div>
-          
-          <div className="shrink-0 flex items-center justify-end md:self-center">
+          <div className="shrink-0">
             <button
               onClick={onStartNewMigration}
-              className="group flex items-center gap-2 bg-gradient-to-r from-portal-orange to-orange-500 hover:from-orange-500 hover:to-portal-orange text-white px-5 py-3 rounded-2xl text-xs font-mono font-bold tracking-wider uppercase transition-all duration-300 shadow-sm hover:shadow-md hover:-translate-y-0.5 active:translate-y-0 cursor-pointer shrink-0"
+              className="bg-[var(--color-bg-inverse)] px-4 py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90"
             >
-              <Play className="w-4 h-4 fill-white group-hover:scale-110 transition-transform" />
-              <span>{t('migrations.newMigration')}</span>
+              {t('migrations.newMigration')}
             </button>
           </div>
         </div>
-      </div>
+      </section>
 
       {initialDataLoading ? (
         <div className="flex flex-col items-center justify-center py-20 gap-4" aria-live="polite">
-          <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
           <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
         </div>
       ) : <>
       {/* Stats Widgets Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Bytes */}
-        <div className="glass-panel border border-[var(--color-glass-border)]/50 rounded-2xl p-4.5 shadow-portal flex items-center gap-4">
-          <div className="p-3 bg-[var(--color-info-bg)] text-[var(--color-portal-navy-themed)] rounded-xl">
-            <HardDrive className="w-5 h-5 stroke-[2]" />
-          </div>
+        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.dataTransferred')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -294,10 +284,7 @@ export function MigrationsDashboard({
         </div>
 
         {/* Total Migrations + Sync Jobs */}
-        <div className="glass-panel border border-[var(--color-glass-border)]/50 rounded-2xl p-4.5 shadow-portal flex items-center gap-4">
-          <div className="p-3 bg-purple-50 text-brand-violet rounded-xl">
-            <Layers className="w-5 h-5 stroke-[2]" />
-          </div>
+        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.migrations')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -307,10 +294,7 @@ export function MigrationsDashboard({
         </div>
 
         {/* Active Transits */}
-        <div className="glass-panel border border-[var(--color-glass-border)]/50 rounded-2xl p-4.5 shadow-portal flex items-center gap-4 relative overflow-hidden">
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
-            <RefreshCw className={`w-5 h-5 stroke-[2] ${activeTotal > 0 ? 'animate-spin' : ''}`} />
-          </div>
+        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.active')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -320,10 +304,7 @@ export function MigrationsDashboard({
         </div>
 
         {/* Success Rate */}
-        <div className="glass-panel border border-[var(--color-glass-border)]/50 rounded-2xl p-4.5 shadow-portal flex items-center gap-4">
-          <div className="p-3 bg-amber-50 text-[var(--color-portal-orange-themed)] rounded-xl">
-            <CheckCircle2 className="w-5 h-5 stroke-[2]" />
-          </div>
+        <div className="glass-panel rounded-lg p-4 flex items-center gap-4">
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.successRate')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
@@ -334,18 +315,18 @@ export function MigrationsDashboard({
       </div>
 
       {/* Main Section with Segmented Pill Tabs & Search Filter Bar */}
-      <div className="glass-panel rounded-3xl border border-[var(--color-glass-border)]/50 shadow-portal p-6 space-y-6 min-h-[560px]">
+      <div className="glass-panel rounded-lg p-6 space-y-6 min-h-[560px]">
         
         {/* Navigation Tabs & Controls Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 gap-4">
           {/* Segmented Pill Tabs */}
-          <div className="flex items-center gap-2 bg-[var(--color-bg-secondary)] p-1 rounded-full border border-[var(--color-border)]">
+          <div className="flex items-center gap-1 border-b border-[var(--color-border)]">
             <button
               onClick={() => setActiveTab('migrations')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'migrations'
-                  ? 'bg-portal-orange text-white shadow-xs'
-                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
+                  ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`}
             >
               <span>{t('sync.tabMigrations')}</span>
@@ -355,10 +336,10 @@ export function MigrationsDashboard({
             </button>
             <button
               onClick={() => setActiveTab('sync')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full font-mono font-bold text-xs transition-all cursor-pointer ${
+              className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'sync'
-                  ? 'bg-portal-orange text-white shadow-xs'
-                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-portal-navy-themed)]'
+                  ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`}
             >
               <span>{t('sync.tabSyncs')}</span>
@@ -371,13 +352,12 @@ export function MigrationsDashboard({
           {/* Search Input & Status Filter Dropdown */}
           <div className="flex items-center gap-2.5 w-full sm:w-auto">
             <div className="relative flex-1 sm:w-64">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]" />
               <input
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder={t('migrations.searchPlaceholder')}
-                className="h-9 w-full pl-9 pr-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-xl text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange transition-all font-sans"
+                className="h-9 w-full px-3 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-md text-sm text-[var(--color-text-primary)]"
               />
             </div>
 
@@ -431,7 +411,6 @@ export function MigrationsDashboard({
           if (loading) {
             return (
               <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
                 <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
               </div>
             );
@@ -448,7 +427,6 @@ export function MigrationsDashboard({
           if (filteredMigrations.length === 0) {
             return (
               <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
-                <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
                 <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('migrations.noMigrations')}</p>
                 <p className="text-xs text-[var(--color-text-muted)] mt-1 mb-5 leading-relaxed max-w-md mx-auto">{t('migrations.noMigrationsSub')}</p>
                 <button
@@ -486,7 +464,6 @@ export function MigrationsDashboard({
                       {/* Date */}
                       <td className="py-4 px-4 whitespace-nowrap">
                         <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
-                          <Calendar className="w-3.5 h-3.5 text-[var(--color-text-muted)] group-hover:text-[var(--color-portal-orange-themed)] transition-colors" />
                           {createdDate}
                         </div>
                       </td>
@@ -506,7 +483,7 @@ export function MigrationsDashboard({
                             </span>
                           </div>
                           
-                          <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0 group-hover:translate-x-0.5 transition-transform" />
+                          <span className="text-[var(--color-text-muted)]" aria-hidden="true">→</span>
                           
                           <div className="flex flex-col text-left">
                             <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize leading-snug">
@@ -571,22 +548,18 @@ export function MigrationsDashboard({
                           <button
                             onClick={(e) => handleMigrationControl(mig, e)}
                             disabled={controlLoading === mig.id || !['RUNNING', 'INDEXING', 'PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status)}
-                            className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+                            className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                             title={['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? t('dashboard.resume') : t('dashboard.pause')}
                           >
-                            {controlLoading === mig.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
+                            {controlLoading === mig.id ? t('common.loading') : ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status) ? t('dashboard.resume') : t('dashboard.pause')}
                           </button>
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
                             disabled={deleteLoading === mig.id || mig.status === 'RUNNING' || mig.status === 'INDEXING'}
-                            className="p-1.5 bg-[var(--color-bg-tertiary)] border border-transparent rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-error-text)] hover:border-rose-100 hover:bg-[var(--color-error-bg)]/50 transition-all focus:outline-none disabled:opacity-30 disabled:pointer-events-none cursor-pointer"
+                            className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
                             title={t('migrations.deleteMigration')}
                           >
-                            {deleteLoading === mig.id ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
+                            {deleteLoading === mig.id ? t('common.loading') : t('migrations.deleteMigration')}
                           </button>
                         </div>
                       </td>
@@ -700,7 +673,6 @@ function SyncList({
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <Loader2 className="w-8 h-8 text-[var(--color-portal-orange-themed)] animate-spin" />
         <p className="text-xs font-mono text-[var(--color-text-muted)]">{t('common.loading')}</p>
       </div>
     );
@@ -717,7 +689,6 @@ function SyncList({
   if (filteredSyncJobs.length === 0) {
     return (
       <div className="text-center py-16 border-2 border-dashed border-[var(--color-border)] rounded-2xl bg-[var(--color-bg-tertiary)]/30">
-        <Layers className="w-10 h-10 text-[var(--color-text-muted)] mx-auto mb-4" />
         <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('sync.noSyncJobs')}</p>
         <p className="text-[10px] text-[var(--color-text-muted)] font-mono mt-1 mb-5">{t('sync.noSyncSub')}</p>
         <button
@@ -751,7 +722,6 @@ function SyncList({
             >
               <td className="py-4 px-4 whitespace-nowrap">
                 <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
-                  <Calendar className="w-3.5 h-3.5 text-[var(--color-text-muted)] group-hover:text-[var(--color-portal-orange-themed)] transition-colors" />
                   {formatDateTime(job.created_at)}
                 </div>
               </td>
@@ -768,7 +738,7 @@ function SyncList({
                       {t('sync.sourcePath')}: {job.selected_paths && job.selected_paths.length > 0 ? job.selected_paths.join(', ') : '/'}
                     </span>
                   </div>
-                  <ArrowRight className="w-3 h-3 text-[var(--color-text-muted)] shrink-0" />
+                  <span className="text-[var(--color-text-muted)]" aria-hidden="true">→</span>
                   <div className="flex flex-col text-left min-w-0">
                     <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize">
                       {job.target_provider}
@@ -817,18 +787,18 @@ function SyncList({
                   <button
                     onClick={(e) => handleSyncControl(job, e)}
                     disabled={controlLoading === job.id || !['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED'].includes(job.status)}
-                    className="p-1.5 bg-[var(--color-bg-tertiary)] hover:bg-portal-navy hover:text-[var(--color-text-inverse)] rounded-lg text-[var(--color-text-muted)] transition-all cursor-pointer disabled:opacity-30 disabled:pointer-events-none"
+                    className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
                     title={job.status === 'PAUSED' ? t('sync.resume') : t('sync.pause')}
                   >
-                    {controlLoading === job.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : job.status === 'PAUSED' ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
+                    {controlLoading === job.id ? t('common.loading') : job.status === 'PAUSED' ? t('sync.resume') : t('sync.pause')}
                   </button>
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
                     disabled={deleteLoading === job.id}
-                    className="p-1.5 bg-[var(--color-bg-tertiary)] rounded-lg text-[var(--color-text-muted)] hover:text-rose-700 hover:bg-rose-50 transition-all disabled:opacity-30 cursor-pointer"
+                    className="border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
                     title={t('sync.deleteJob')}
                   >
-                    {deleteLoading === job.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    {deleteLoading === job.id ? t('common.loading') : t('sync.deleteJob')}
                   </button>
                 </div>
               </td>
