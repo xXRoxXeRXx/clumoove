@@ -30,10 +30,10 @@ interface ProfilePublic {
   updated_at: string;
 }
 
-const inputCls = 'w-full px-4 py-2.5 bg-[var(--color-bg-secondary)]/55 border border-[var(--color-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-portal-orange/30 focus:border-portal-orange focus:bg-[var(--color-bg-secondary)] transition-all font-sans';
+const inputCls = 'w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
-const primaryBtnCls = 'bg-gradient-to-r from-portal-orange to-orange-500 text-[var(--color-text-inverse)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all uppercase tracking-wider cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
-const secondaryBtnCls = 'px-4 py-2.5 rounded-xl text-xs font-mono border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-portal-navy-themed)] transition-all cursor-pointer';
+const primaryBtnCls = 'bg-[var(--color-bg-inverse)] py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90 disabled:opacity-50';
+const secondaryBtnCls = 'rounded-md border border-[var(--color-border)] px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]';
 
 function formatExpiry(expiresAt?: string | null): string | null {
   if (!expiresAt) return null;
@@ -128,7 +128,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 
   return (
     <div className="space-y-6">
-      <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal space-y-5">
+      <div className="glass-panel rounded-lg p-6 space-y-5">
         <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
           <Plug className="w-4 h-4 text-[var(--color-portal-orange-themed)]" />
           <h3 className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">{t('settings.connections.title')}</h3>
@@ -152,7 +152,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
       {loading ? (
         <div className="text-center text-[11px] font-mono text-[var(--color-text-muted)] py-8">{t('common.loading')}</div>
       ) : profiles.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-6 border border-[var(--color-glass-border)]/50 shadow-portal text-center text-[11px] text-[var(--color-text-muted)] font-sans">
+        <div className="glass-panel rounded-lg p-6 text-center text-sm text-[var(--color-text-muted)] font-sans">
           {t('settings.connections.noProfiles')}
         </div>
       ) : (
@@ -161,7 +161,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
             const exp = formatExpiry(p.token_expires_at);
             const provName = providerOptions.find((o) => o.id === p.provider)?.name || p.provider;
             return (
-              <div key={p.id} className="glass-panel rounded-2xl p-5 border border-[var(--color-glass-border)]/50 shadow-portal space-y-3">
+              <div key={p.id} className="glass-panel rounded-lg p-5 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -422,8 +422,8 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-900/40 backdrop-blur-sm p-4">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-lg bg-[var(--color-bg-primary)] rounded-2xl p-6 border border-[var(--color-border)] shadow-portal space-y-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
           <h3 id={titleId} className="font-display font-bold text-sm text-[var(--color-portal-navy-themed)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
