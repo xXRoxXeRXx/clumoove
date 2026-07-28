@@ -217,6 +217,11 @@ func UpdateTaskFilePath(db *sql.DB, taskID, newFilePath string) error {
 	return err
 }
 
+func UpdateTaskFileSize(db *sql.DB, taskID string, fileSize int64) error {
+	_, err := db.Exec(`UPDATE tasks SET file_size = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, fileSize, taskID)
+	return err
+}
+
 func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (string, error) {
 	paths, err := GetActiveTaskPaths(db, ctx, migrationID)
 	if err != nil || len(paths) == 0 {

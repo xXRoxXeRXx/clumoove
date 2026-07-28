@@ -77,6 +77,36 @@ func immichOriginalFilenamePath(targetPath, filename string) string {
 	return path.Join(path.Dir(targetPath), path.Base(filename))
 }
 
+func immichTargetPath(targetPath, filename, albumName string) string {
+	if filename != "" {
+		targetPath = immichOriginalFilenamePath(targetPath, filename)
+	}
+	if albumName != "" {
+		if filename == "" {
+			return path.Join(path.Dir(targetPath), albumName)
+		}
+		targetPath = path.Join(path.Dir(path.Dir(targetPath)), albumName, path.Base(targetPath))
+	}
+	return targetPath
+}
+
+func canSkipBySize(sourceProvider string, sourceSize, targetSize int64) bool {
+	// Immich may omit fileSizeInByte. A zero then means unknown rather than an
+	// empty file, so it cannot prove an existing target is identical.
+	return !(sourceProvider == "immich" && sourceSize == 0) && sourceSize == targetSize
+}
+
+type countingReader struct {
+	io.Reader
+	bytesRead int64
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
+}
+
 // newProvider creates a provider scoped to a single operation. Providers retain
 // their credentials internally, so retaining them in a shared cache would keep
 // decrypted credentials alive beyond the task that needs them.
@@ -513,6 +543,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		targetPath := task.FilePath
 		if task.ResourceType == "files" {
 			targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
+			if mig.SourceProvider == "immich" {
+				if albumName, _ := taskMeta["immich_album_name"].(string); albumName != "" {
+					targetPath = immichTargetPath(targetPath, "", albumName)
+				}
+			}
 
 			// Sanitize directory name (same logic as files)
 			dirName := path.Base(targetPath)
@@ -567,7 +602,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			} else if meta.CustomProps["immich_filename"] == "" {
 				log.Printf("[Immich] Warning: task %s has no immich_filename in metadata; using asset-ID target path %q", task.ID, targetPath)
 			} else {
-				targetPath = immichOriginalFilenamePath(targetPath, meta.CustomProps["immich_filename"])
+				targetPath = immichTargetPath(targetPath, meta.CustomProps["immich_filename"], meta.CustomProps["immich_album_name"])
 			}
 		}
 	}
@@ -637,7 +672,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				case "SKIP":
 					if task.Attempts > 0 {
 						deleteAfterUpload = true
-					} else if exists && existingSize == task.FileSize {
+					} else if canSkipBySize(mig.SourceProvider, task.FileSize, existingSize) {
 						task.Status = "SKIPPED"
 						task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 						_ = db.UpdateTaskStatus(p.db, task)
@@ -851,7 +886,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}()
 
 	// io.TeeReader writes all data read from the download stream to the hasher in-memory
-	hashingReader := io.TeeReader(throttledDownloadStream, activeWriter)
+	countedDownloadStream := &countingReader{Reader: throttledDownloadStream}
+	hashingReader := io.TeeReader(countedDownloadStream, activeWriter)
 
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
 	// Use the same file-size-scaled deadline as the download phase so neither
@@ -902,6 +938,25 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			return nil
 		}
 		return fmt.Errorf("upload to target failed: %w", err)
+	}
+
+	if mig.SourceProvider == "immich" && task.FileSize == 0 && countedDownloadStream.bytesRead > 0 {
+		task.FileSize = countedDownloadStream.bytesRead
+		if err := db.UpdateTaskFileSize(p.db, task.ID, task.FileSize); err != nil {
+			return fmt.Errorf("failed to record streamed Immich file size: %w", err)
+		}
+		if err := db.AddMigrationTotalBytes(p.db, ctx, mig.ID, task.FileSize); err != nil {
+			return fmt.Errorf("failed to update migration total size: %w", err)
+		}
+	}
+	if mig.SourceProvider == "immich" && task.FileSize > 0 {
+		exists, targetSize, sizeErr := targetClient.FileExists(ctx, task.ResourceType, targetPath)
+		if sizeErr != nil {
+			return fmt.Errorf("failed to validate uploaded Immich file size: %w", sizeErr)
+		}
+		if !exists || targetSize != task.FileSize {
+			return fmt.Errorf("uploaded Immich file size mismatch")
+		}
 	}
 
 	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.

@@ -130,7 +130,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				dirKey := fmt.Sprintf("dir:files:%s", p)
 				if !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
-					mkdirMeta, _ := json.Marshal(map[string]interface{}{"action": "mkdir"})
+					mkdirMeta, _ := json.Marshal(directoryTaskMetadata(res.Metadata))
 					mkdirTask := &db.Task{
 						MigrationID:  migID,
 						ResourceType: "files",
@@ -320,6 +320,14 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 }
 
+func directoryTaskMetadata(metadata storage.FileMetadata) map[string]interface{} {
+	result := map[string]interface{}{"action": "mkdir"}
+	if albumName := metadata.CustomProps["immich_album_name"]; albumName != "" {
+		result["immich_album_name"] = albumName
+	}
+	return result
+}
+
 // ensureFreshSourceToken refreshes an OAuth source access token if it is expired
 // or near expiry (mirroring the worker's inline refresh). It returns the freshly
 // decrypted access token and persists the new token pair atomically.
@@ -359,7 +367,6 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 	return tokenResp.AccessToken, nil
 }
 
-//
 // Resilient indexing: a failure to list a single folder (e.g. a slow/stalled
 // WebDAV PROPFIND that hits the per-request timeout) is recorded in indexErrors
 // and skipped, so the rest of the tree keeps being indexed instead of aborting
@@ -426,7 +433,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 				dirKey := fmt.Sprintf("dir:%s:%s", resourceType, file.Path)
 				if targetProvider != "immich" && !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
-					mkdirMeta, _ := json.Marshal(map[string]interface{}{"action": "mkdir"})
+					mkdirMeta, _ := json.Marshal(directoryTaskMetadata(file.Metadata))
 					taskBatch = append(taskBatch, &db.Task{
 						MigrationID:  migID,
 						ResourceType: resourceType,
