@@ -5,228 +5,109 @@
   --font-display: 'Poppins', system-ui, -apple-system, sans-serif;
   --font-sans: 'Open Sans', system-ui, -apple-system, sans-serif;
   --font-mono: 'Open Sans', system-ui, -apple-system, sans-serif;
-
-  /* Scale down global border radii slightly */
-  --radius-xs: 0.125rem;   /* 2px */
-  --radius-sm: 0.1875rem;  /* 3px */
-  --radius-md: 0.25rem;    /* 4px */
-  --radius-lg: 0.375rem;   /* 6px */
-  --radius-xl: 0.5rem;     /* 8px */
-  --radius-2xl: 0.75rem;   /* 12px */
-  --radius-3xl: 1rem;      /* 16px */
-  
-  --color-portal-navy: #002f6c;
-  --color-portal-navy-dark: #001f4d;
-  --color-portal-navy-light: #0d47a1;
-  /* Dark enough for white text (AA contrast) and for focus indicators. */
-  --color-portal-orange: #a94300;
-  --color-portal-orange-hover: #853500;
-  /* AA-compliant orange used as the other half of primary gradients. */
-  --color-orange-500: #a94300;
-  --color-portal-bg: #f8fafc;
-  --color-portal-border: #e2e8f0;
-  
-  /* Additional UI Palette */
-  --color-brand-indigo: #4f46e5;
-  --color-brand-violet: #7c3aed;
-  --color-brand-pink: #db2777;
-  
-  /* Transitions */
-  --transition-spring: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  
-  /* Animations */
-  --animate-fade-in: fade-in 0.3s ease-out;
-  --animate-slide-up: slide-up 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-  --animate-pulse-glow: pulse-glow 2s infinite ease-in-out;
-  --animate-float: float 4s ease-in-out infinite;
-
-  @keyframes fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-  @keyframes slide-up {
-    from { transform: translateY(16px); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
-  }
-  @keyframes pulse-glow {
-    0%, 100% { transform: scale(1); opacity: 0.9; box-shadow: 0 0 0 0px rgba(255, 102, 0, 0.4); }
-    50% { transform: scale(1.03); opacity: 1; box-shadow: 0 0 12px 4px rgba(255, 102, 0, 0.2); }
-  }
-  @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
-  }
+  --color-orange-500: #18181b;
+  --radius-sm: 0.125rem;
+  --radius-md: 0.25rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.5rem;
+  --radius-3xl: 0.5rem;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-2xl: none;
+  --color-primary: #18181b;
+  --color-primary-hover: #3f3f46;
 }
 
-/* Theme Variables - Light Mode (Default) */
 :root {
-  --color-bg-primary: #f8fafc;
+  --color-bg-primary: #fafafa;
   --color-bg-secondary: #ffffff;
-  --color-bg-tertiary: #f1f5f9;
+  --color-bg-tertiary: #f4f4f5;
   --color-bg-elevated: #ffffff;
-  --color-text-primary: #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-muted: #64748b;
+  --color-bg-inverse: #18181b;
+  --color-text-primary: #18181b;
+  --color-text-secondary: #52525b;
+  --color-text-muted: #71717a;
   --color-text-inverse: #ffffff;
-  --color-border: #e2e8f0;
-  --color-border-light: #f1f5f9;
-  --color-shadow: rgba(0, 47, 108, 0.04);
-  --color-shadow-dark: rgba(0, 0, 0, 0.02);
-  --color-portal-orange-themed: #a94300;
-  --color-portal-navy-themed: #002f6c;
-  --color-glass-bg: rgba(255, 255, 255, 0.75);
-  --color-glass-border: rgba(255, 255, 255, 0.4);
+  --color-border: #e4e4e7;
+  --color-border-light: #f4f4f5;
+  --color-portal-orange-themed: #18181b;
+  --color-portal-navy-themed: #18181b;
+  --color-portal-orange: #18181b;
+  --color-portal-navy: #18181b;
+  --color-portal-navy-dark: #09090b;
+  --color-portal-navy-light: #3f3f46;
+  --color-glass-bg: #ffffff;
+  --color-glass-border: #e4e4e7;
   --color-error-bg: #fef2f2;
-  --color-error-border: #fecdd3;
-  --color-error-text: #9f1239;
-  --color-warning-bg: #fff7ed;
-  --color-warning-border: #fed7aa;
+  --color-error-border: #fecaca;
+  --color-error-text: #b91c1c;
+  --color-warning-bg: #fffbeb;
+  --color-warning-border: #fde68a;
   --color-success-bg: #f0fdf4;
   --color-success-border: #bbf7d0;
-  --color-success-text: #166534;
+  --color-success-text: #15803d;
   --color-info-bg: #eff6ff;
   --color-info-border: #bfdbfe;
-  --color-info-text: #1e40af;
-  --color-bg-inverse: #0f172a;
+  --color-info-text: #1d4ed8;
 }
 
-/* Theme Variables - Dark Mode */
 [data-theme="dark"] {
-  /* Neutral charcoal palette: dark mode should not inherit the blue brand surface. */
-  --color-bg-primary: #121212;
-  --color-bg-secondary: #1b1b1b;
-  --color-bg-tertiary: #262626;
-  --color-bg-elevated: #202020;
-  --color-text-primary: #f5f5f5;
-  --color-text-secondary: #d4d4d4;
-  --color-text-muted: #a3a3a3;
+  --color-bg-primary: #18181b;
+  --color-bg-secondary: #27272a;
+  --color-bg-tertiary: #3f3f46;
+  --color-bg-elevated: #27272a;
+  --color-bg-inverse: #09090b;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #d4d4d8;
+  --color-text-muted: #a1a1aa;
   --color-text-inverse: #ffffff;
-  --color-border: #383838;
-  --color-border-light: #262626;
-  --color-shadow: rgba(0, 0, 0, 0.3);
-  --color-shadow-dark: rgba(0, 0, 0, 0.5);
-  /* Used as foreground/focus colour in dark mode; remains AA on charcoal. */
-  --color-portal-orange-themed: #e76f00;
-  --color-portal-navy-themed: #f5f5f5;
-  --color-portal-navy: #262626;
-  --color-portal-navy-dark: #0a0a0a;
-  --color-portal-navy-light: #404040;
-  --color-glass-bg: rgba(27, 27, 27, 0.8);
-  --color-glass-border: rgba(255, 255, 255, 0.05);
+  --color-border: #3f3f46;
+  --color-border-light: #27272a;
+  --color-portal-orange-themed: #fafafa;
+  --color-portal-navy-themed: #fafafa;
+  --color-portal-orange: #fafafa;
+  --color-portal-navy: #fafafa;
+  --color-portal-navy-dark: #d4d4d8;
+  --color-portal-navy-light: #e4e4e7;
+  --color-glass-bg: #27272a;
+  --color-glass-border: #3f3f46;
   --color-error-bg: #450a0a;
   --color-error-border: #7f1d1d;
   --color-error-text: #fecaca;
-  --color-warning-bg: #431407;
-  --color-warning-border: #7c2d12;
+  --color-warning-bg: #451a03;
+  --color-warning-border: #92400e;
   --color-success-bg: #052e16;
-  --color-success-border: #14532d;
+  --color-success-border: #166534;
   --color-success-text: #bbf7d0;
-  --color-info-bg: #262626;
-  --color-info-border: #404040;
-  --color-info-text: #e5e5e5;
-  --color-bg-inverse: #000000;
+  --color-info-bg: #172554;
+  --color-info-border: #1e3a8a;
+  --color-info-text: #bfdbfe;
 }
 
-/* Theme Transition - scoped to major layout containers to avoid layout thrashing */
-@media (prefers-reduced-motion: no-preference) {
-  body,
-  .glass-panel,
-  .theme-transition,
-  header,
-  footer,
-  main,
-  nav,
-  aside,
-  section,
-  article,
-  button,
-  input,
-  select,
-  textarea {
-    transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
-  }
-}
-
-/* Glassmorphism Panel styles - Theme-aware */
+/* Compatibility helpers: existing screens keep their layout while losing glass,
+   glow and hover elevation. New UI should use ordinary Tailwind classes. */
 @utility glass-panel {
-  background-color: var(--color-glass-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--color-glass-border);
+  background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
 }
 
-@utility glass-panel-dark {
-  background-color: rgba(23, 23, 23, 0.8);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-}
+@utility shadow-portal { box-shadow: none; }
+@utility shadow-portal-hover { box-shadow: none; }
 
-@utility shadow-portal {
-  box-shadow: 0 4px 20px -2px var(--color-shadow), 0 2px 6px -1px var(--color-shadow-dark);
-}
-
-@utility shadow-portal-hover {
-  box-shadow: 0 16px 32px -4px var(--color-shadow), 0 6px 12px -2px var(--color-shadow-dark);
-}
-
-@utility scrollbar-portal {
-  &::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  &::-webkit-scrollbar-track {
-    background: var(--color-bg-tertiary);
-  }
-  &::-webkit-scrollbar-thumb {
-    background: var(--color-text-muted);
-    border-radius: 9999px;
-    &:hover {
-      background: var(--color-text-secondary);
-    }
-  }
-}
-
-/* Custom global styles - Theme-aware */
 body {
-  background-color: var(--color-bg-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: var(--color-bg-primary);
   color: var(--color-text-primary);
   font-family: var(--font-sans);
-  overflow-x: hidden;
-  position: relative;
-  min-height: 100vh;
 }
 
-/* Do not rely on low-contrast border-only focus states. This also protects
-   controls that intentionally use `focus:outline-none` in component classes. */
 :where(button, a[href], input, select, textarea, [role="button"], [role="radio"]):focus-visible {
-  outline: 3px solid var(--color-portal-orange-themed);
-  outline-offset: 3px;
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
-/* Custom scrollbars for main window - Theme-aware */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg-primary);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-text-muted);
-  border-radius: 9999px;
-  border: 2px solid var(--color-bg-primary);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-secondary);
-}
-
-/* Selection overlay */
-::selection {
-  background-color: rgba(255, 102, 0, 0.2);
-  color: #e05300;
-}
-
+::selection { background: #d4d4d8; color: #18181b; }
