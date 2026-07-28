@@ -87,7 +87,8 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 		}
 		atomic.AddInt32(&pages, 1)
 		var request struct {
-			Page int `json:"page"`
+			Page    int    `json:"page"`
+			AlbumID string `json:"albumId"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
@@ -96,11 +97,14 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-1","originalFileName":"one.jpg"}],"nextPage":"2"}}`))
 			return
 		}
+		if request.AlbumID != "album-id" {
+			t.Errorf("albumId = %q, want album-id", request.AlbumID)
+		}
 		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-2","originalFileName":"two.jpg"}],"nextPage":null}}`))
 	}))
 	defer server.Close()
 	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "key", HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
-	assets, err := p.search(context.Background(), "")
+	assets, err := p.search(context.Background(), "album-id")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +113,27 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&pages); got != 2 {
 		t.Errorf("search requests = %d, want 2", got)
+	}
+}
+
+func TestImmichAllAssetsSearchOmitsEmptyAlbumID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := request["albumId"]; ok {
+			t.Error("all-assets search unexpectedly sent albumId")
+		}
+		if request["withArchived"] != false || request["withDeleted"] != false {
+			t.Errorf("archive filters = withArchived:%v withDeleted:%v, want false", request["withArchived"], request["withDeleted"])
+		}
+		_, _ = w.Write([]byte(`{"assets":{"items":[]}}`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
+	if _, err := p.search(context.Background(), ""); err != nil {
+		t.Fatal(err)
 	}
 }
 

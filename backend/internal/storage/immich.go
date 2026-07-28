@@ -125,7 +125,14 @@ func resourceForAsset(a immichAsset, virtualPath, albumID, albumName string) Clo
 func (p *ImmichProvider) search(ctx context.Context, albumID string) ([]immichAsset, error) {
 	var all []immichAsset
 	for page := 1; page <= 10000; page++ {
-		body, _ := json.Marshal(map[string]any{"page": page, "size": 500, "albumId": albumID, "withArchived": false, "withDeleted": false})
+		query := map[string]any{"page": page, "size": 500, "withArchived": false, "withDeleted": false}
+		if albumID != "" {
+			query["albumId"] = albumID
+		}
+		body, err := json.Marshal(query)
+		if err != nil {
+			return nil, err
+		}
 		r, err := p.requestJSON(ctx, "POST", "/search/metadata", body)
 		if err != nil {
 			return nil, err
