@@ -376,8 +376,8 @@ function App() {
         } else {
           handleLogout();
         }
-      } catch (e) {
-        console.error('Failed silent refresh:', e);
+      } catch {
+        handleLogout();
       }
     }, 14 * 60 * 1000); // 14 minutes
 

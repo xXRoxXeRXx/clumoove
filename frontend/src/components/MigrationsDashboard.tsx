@@ -383,7 +383,12 @@ export function MigrationsDashboard({
         </div>
 
         {/* Filtered Data Rendering */}
-        <div className="min-h-[360px]">
+        <div
+          id={activeTab === 'sync' ? 'sync-panel' : 'migrations-panel'}
+          role="tabpanel"
+          aria-labelledby={activeTab === 'sync' ? 'sync-tab' : 'migrations-tab'}
+          className="min-h-[360px]"
+        >
         {(() => {
           const filteredMigrations = migrations.filter((m) => {
             const matchSearch = !searchTerm || [m.id, m.source_provider, m.target_provider, m.source_url, m.target_url]
@@ -677,9 +682,11 @@ function SyncList({
         const body = await response.json().catch(() => ({}));
         throw new Error(body?.error_code ? translateApiError(body.error_code) : t('dashboard.actionFailedMsg', { action }));
       }
-      setSyncJobs((current) => current.map((item) => item.id === job.id
-        ? { ...item, status: action === 'pause' ? 'PAUSED' : 'RUNNING' }
-        : item));
+      if (action === 'pause') {
+        setSyncJobs((current) => current.map((item) => item.id === job.id
+          ? { ...item, status: 'PAUSED' }
+          : item));
+      }
     } catch (err) {
       toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }));
     } finally {

@@ -32,11 +32,11 @@ export function LanguageSwitcher({ authenticated = false }: { authenticated?: bo
     }
     void i18n.changeLanguage(code);
 	    if (authenticated) {
-	      void apiFetch('/api/auth/me/language', {
-	        method: 'PUT',
-	        headers: { 'Content-Type': 'application/json' },
-	        body: JSON.stringify({ language: code }),
-	      });
+      void apiFetch('/api/auth/me/language', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: code }),
+      }).catch(() => undefined);
 	    }
     setOpen(false);
   };

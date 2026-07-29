@@ -105,6 +105,7 @@ export interface SyncJob {
   failed_files: number;
   active_files?: string[];
   last_run_at: string | null;
+  next_run_at?: string | null;
   last_run_status: string | null;
   error_message: string | null;
   created_at: string;

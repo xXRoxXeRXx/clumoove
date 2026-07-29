@@ -74,4 +74,19 @@ describe('apiFetch', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(onAuthFailure).not.toHaveBeenCalled();
   });
+
+  it('does not log out when another request has refreshed the token', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockRejectedValueOnce(new Error('network unavailable'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const request = apiFetch(`${apiUrl}/api/migration`);
+    accessToken = 'tok-2';
+
+    const res = await request;
+    expect(res.status).toBe(401);
+    expect(onAuthFailure).not.toHaveBeenCalled();
+  });
 });
