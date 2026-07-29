@@ -874,8 +874,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		close(heartbeatStop)
 	}()
 
+	// Enforce the indexed size before hashing. A clean early EOF must fail instead
+	// of becoming a valid hash for a truncated source stream.
+	sizedReader := newExpectedSizeReader(throttledDownloadStream, task.FileSize)
 	// io.TeeReader writes all data read from the download stream to the hasher in-memory
-	hashingReader := io.TeeReader(throttledDownloadStream, activeWriter)
+	hashingReader := io.TeeReader(sizedReader, activeWriter)
 
 	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
 	// Use the same file-size-scaled deadline as the download phase so neither
@@ -927,6 +930,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 		return fmt.Errorf("upload to target failed: %w", err)
 	}
+	if err := sizedReader.VerifyComplete(); err != nil {
+		return err
+	}
 
 	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
 	// If the upload succeeded but rename/metadata fails, the .tmp file must be cleaned up so it
@@ -959,6 +965,16 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, meta); err != nil {
 				log.Printf("Warning: failed to apply metadata for %s: %v", targetPath, err)
 			}
+		}
+	}
+
+	if task.ResourceType == "files" {
+		exists, targetSize, err := verifyTargetSize(ctx, targetClient, task.ResourceType, targetPath)
+		if err != nil {
+			return fmt.Errorf("failed to verify target size: %w", err)
+		}
+		if !exists || targetSize != task.FileSize {
+			return fmt.Errorf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize)
 		}
 	}
 
@@ -1323,7 +1339,11 @@ func verifyTargetSize(ctx context.Context, client storage.StorageProvider, resou
 			return exists, size, nil
 		}
 		if attempt < 2 {
-			time.Sleep(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				return exists, size, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
 		}
 	}
 	return exists, size, err

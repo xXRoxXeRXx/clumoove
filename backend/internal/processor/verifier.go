@@ -28,8 +28,9 @@ func isCryptographicHash(algo string) bool {
 }
 
 // bestSourceHash selects the best available source hash for checksum verification.
-// It prefers a cryptographic WorkerHash (computed on the fly during streaming download)
-// over SourceHash (from provider metadata). Non-cryptographic ETags are used as fallback.
+// Provider metadata describes the indexed source object, while WorkerHash only
+// describes bytes observed during the transfer; therefore a cryptographic
+// SourceHash is the stronger reference when both are available.
 func bestSourceHash(task *db.Task) string {
 	workerHash := ""
 	if task.WorkerHash.Valid {
@@ -40,19 +41,23 @@ func bestSourceHash(task *db.Task) string {
 		sourceHash = task.SourceHash.String
 	}
 
-	// 1. Prefer cryptographic WorkerHash
-	if workerHash != "" && !strings.HasPrefix(strings.ToUpper(workerHash), "ETAG:") {
-		return workerHash
-	}
-	// 2. Fall back to cryptographic SourceHash
+	// 1. Prefer cryptographic SourceHash
 	if sourceHash != "" && !strings.HasPrefix(strings.ToUpper(sourceHash), "ETAG:") {
 		return sourceHash
 	}
-	// 3. Fall back to ETag (preferring WorkerHash ETag)
+	// 2. Fall back to cryptographic WorkerHash
+	if workerHash != "" && !strings.HasPrefix(strings.ToUpper(workerHash), "ETAG:") {
+		return workerHash
+	}
+	// 3. Fall back to the source ETag, which is tied to the indexed object.
+	if sourceHash != "" {
+		return sourceHash
+	}
+	// 4. Finally fall back to WorkerHash ETag.
 	if workerHash != "" {
 		return workerHash
 	}
-	return sourceHash
+	return ""
 }
 
 // RunChecksumVerifier periodically checks for migrations and sync jobs in VERIFYING state
@@ -125,7 +130,6 @@ type verificationPassConfig struct {
 	TargetDir         string
 	Threads           int
 	GetTasks          func(ctx context.Context) ([]*db.Task, error)
-	MarkAllVerified   func(ctx context.Context) error
 	OnVerified        func(task *db.Task, targetPath string, targetHash string)
 	ReconcileProgress func() error
 	MarkVerified      func(ctx context.Context, task *db.Task, targetHash string) (bool, error)
@@ -207,6 +211,23 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		}
 		return db.MarkTaskChecksumVerified(p.db, passCtx, task.ID, targetHash) == nil
 	}
+	markMismatch := func(task db.Task, message string) {
+		task.Status = "FAILED"
+		task.ErrorMessage = sql.NullString{String: message, Valid: true}
+		if !canWrite() {
+			return
+		}
+		if cfg.MarkMismatch != nil {
+			// A sync pass is being finalized by the engine; do not create new
+			// runnable work during that finalization.
+			task.NextRetryAt = sql.NullTime{}
+			_, _ = cfg.MarkMismatch(passCtx, &task)
+			return
+		}
+		// Migrations keep their established automatic re-copy behavior.
+		task.NextRetryAt = sql.NullTime{Time: time.Now(), Valid: true}
+		_ = db.UpdateTaskStatus(p.db, &task)
+	}
 
 	unverifiedTasks, err := cfg.GetTasks(passCtx)
 	if err != nil {
@@ -222,13 +243,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	}
 
 	if cfg.TargetProvider == "webdav" {
-		log.Printf("[VERIFIER] WebDAV target does not support checksums — accepting size verification for %d tasks in %s %s\n", total, cfg.EntityType, cfg.EntityID)
-		if !canWrite() {
-			return
-		}
-		_ = cfg.MarkAllVerified(passCtx)
-		_ = cfg.ReconcileProgress()
-		return
+		log.Printf("[VERIFIER] WebDAV target has no checksum API; validating each target size.\n")
 	}
 
 	passCtx = storage.WithLocalUserScope(passCtx, cfg.UserID)
@@ -286,6 +301,23 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					}
 				}
 
+				// Check size immediately before committing verification. This covers
+				// checksum-unavailable and differing-algorithm fallbacks without an
+				// extra provider round trip before the hash lookup.
+				markVerifiedForFile := func(targetHash string) bool {
+					exists, targetSize, sizeErr := verifyTargetSize(passCtx, targetClient, task.ResourceType, targetPath)
+					if sizeErr != nil {
+						log.Printf("[VERIFIER] Cannot recheck target size for %s: %v\n", targetPath, sizeErr)
+						return false
+					}
+					if !exists || targetSize != task.FileSize {
+						log.Printf("[VERIFIER] [SIZE_MISMATCH] %s | Got: %d | Expected: %d\n", targetPath, targetSize, task.FileSize)
+						markMismatch(*task, fmt.Sprintf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize))
+						return false
+					}
+					return markVerified(task, targetHash)
+				}
+
 				var targetHash string
 				var errHash error
 				for attempt := 0; attempt < 3; attempt++ {
@@ -315,47 +347,30 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						if isCryptographicHash(sourceAlgo) && isCryptographicHash(targetAlgo) && sourceAlgo == targetAlgo {
 							if cleanSource == cleanTarget {
 								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
-								if markVerified(task, targetHash) && cfg.OnVerified != nil {
+								if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
 									cfg.OnVerified(task, targetPath, targetHash)
 								}
 							} else {
 								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
-								task.Status = "FAILED"
-								task.ErrorMessage = sql.NullString{
-									String: fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget),
-									Valid:  true,
-								}
-								if canWrite() {
-									if cfg.MarkMismatch != nil {
-										// A sync pass is being finalized by the engine; do not
-										// create new runnable work during that finalization.
-										task.NextRetryAt = sql.NullTime{}
-										_, _ = cfg.MarkMismatch(passCtx, task)
-									} else {
-										// Migrations keep their established automatic re-copy
-										// behavior after a checksum mismatch.
-										task.NextRetryAt = sql.NullTime{Time: time.Now(), Valid: true}
-										_ = db.UpdateTaskStatus(p.db, task)
-									}
-								}
+								markMismatch(*task, fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget))
 							}
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
 							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
 								targetPath, sourceAlgo, cleanSource, cleanTarget, task.FileSize)
-							if markVerified(task, targetHash) && cfg.OnVerified != nil {
+							if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
 								cfg.OnVerified(task, targetPath, targetHash)
 							}
 						} else {
 							log.Printf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — size (%d bytes) verified\n",
 								targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget, task.FileSize)
-							if markVerified(task, targetHash) && cfg.OnVerified != nil {
+							if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
 								cfg.OnVerified(task, targetPath, targetHash)
 							}
 						}
 					} else {
 						log.Printf("[VERIFIER] [NO_SOURCE_HASH] %s | Target (%s): %s — registered target hash\n", targetPath, targetAlgo, cleanTarget)
-						if markVerified(task, targetHash) && cfg.OnVerified != nil {
+						if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
 							cfg.OnVerified(task, targetPath, targetHash)
 						}
 					}
@@ -372,7 +387,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Reason: %s — falling back to size verification (%d bytes)\n",
 							targetPath, reason, task.FileSize)
 					}
-					if !markVerified(task, "") {
+					if !markVerifiedForFile("") {
 						return
 					}
 				}
@@ -427,9 +442,6 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
 			return db.GetUnverifiedCompletedTasks(p.db, ctx, migrationID)
 		},
-		MarkAllVerified: func(ctx context.Context) error {
-			return db.MarkAllMigrationTasksVerified(p.db, ctx, migrationID)
-		},
 		OnVerified: nil,
 		ReconcileProgress: func() error {
 			return db.ReconcileMigrationProgress(p.db, migrationID)
@@ -470,9 +482,6 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		Threads:        job.Threads,
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
 			return db.GetUnverifiedCompletedSyncTasks(p.db, ctx, syncJobID)
-		},
-		MarkAllVerified: func(ctx context.Context) error {
-			return db.MarkAllSyncTasksVerified(p.db, ctx, syncJobID)
 		},
 		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
 			return db.MarkSyncTaskChecksumVerifiedWhileVerifying(p.db, ctx, task.ID, targetHash)
