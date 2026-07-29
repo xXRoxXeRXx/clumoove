@@ -200,22 +200,34 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const handlePause = async () => {
     setActionLoading(true);
     try {
-      await apiFetch(`${apiUrl}/api/sync/${syncId}/pause`, {
+      const res = await apiFetch(`${apiUrl}/api/sync/${syncId}/pause`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-    } catch { /* ignore */ }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(body.error_code ? translateApiError(body.error_code) : t('sync.pauseFailed'));
+      }
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : t('sync.pauseFailed'));
+    }
     finally { setActionLoading(false); }
   };
 
   const handleResume = async () => {
     setActionLoading(true);
     try {
-      await apiFetch(`${apiUrl}/api/sync/${syncId}/resume`, {
+      const res = await apiFetch(`${apiUrl}/api/sync/${syncId}/resume`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-    } catch { /* ignore */ }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({} as { error_code?: string }));
+        throw new Error(body.error_code ? translateApiError(body.error_code) : t('sync.resumeFailed'));
+      }
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : t('sync.resumeFailed'));
+    }
     finally { setActionLoading(false); }
   };
 
@@ -341,9 +353,8 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             let nextRunLabel = t('sync.neverRun');
             if (job.status === 'PAUSED') {
               nextRunLabel = t('sync.statusPaused');
-            } else if (job.last_run_at && job.interval_minutes > 0) {
-              const lastRunMs = new Date(job.last_run_at).getTime();
-              const nextRunMs = lastRunMs + job.interval_minutes * 60 * 1000;
+            } else if (job.next_run_at) {
+              const nextRunMs = new Date(job.next_run_at).getTime();
               const diffMs = nextRunMs - now;
 
               if (diffMs <= 0) {

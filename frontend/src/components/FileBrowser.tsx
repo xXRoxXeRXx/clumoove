@@ -577,13 +577,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           throw new Error(b.error_code ? translateApiError(b.error_code) : t('sync.createFailed'));
         }
 
-        const data = await response.json();
+        const data = await response.json() as { id?: string };
         if (data.id) {
           // Trigger first pass immediately
-          await apiFetch(`${apiUrl}/api/sync/${data.id}/start`, {
+          const startResponse = await apiFetch(`${apiUrl}/api/sync/${data.id}/start`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}` },
           });
+          if (!startResponse.ok) {
+            const body = await startResponse.json().catch(() => ({} as { error_code?: string }));
+            throw new Error(body.error_code ? translateApiError(body.error_code) : t('sync.startFailed'));
+          }
           onStartSuccess(data.id, true);
         } else {
           setError(t('sync.createFailed'));

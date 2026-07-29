@@ -131,12 +131,16 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
       headers: retryHeaders,
       credentials: init.credentials ?? 'include',
     });
-    if (retry.status === 401) {
+    if (retry.status === 401 && cfg.getAccessToken() === newToken) {
       cfg.onAuthFailure();
     }
     return retry;
   } catch {
-    cfg.onAuthFailure();
+    // A different request may have refreshed the session while this request
+    // was in flight. Only clear the session if this request still owns its token.
+    if (cfg.getAccessToken() === token) {
+      cfg.onAuthFailure();
+    }
     return response;
   }
 }

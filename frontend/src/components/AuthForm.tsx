@@ -311,11 +311,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
           <form onSubmit={handleOTPSubmit} className="space-y-5">
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+              <label htmlFor="totp-code" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                 {t('auth.authenticatorCode')}
               </label>
               <div className="relative group">
                 <input
+                  id="totp-code"
                   type="text"
                   inputMode="numeric"
                   autoFocus

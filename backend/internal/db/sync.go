@@ -37,6 +37,7 @@ type SyncJob struct {
 	TargetDir                   string         `json:"target_dir"`
 	SelectedPaths               StringArray    `json:"selected_paths,omitempty"`
 	LastRunAt                   sql.NullTime   `json:"last_run_at,omitempty"`
+	NextRunAt                   sql.NullTime   `json:"next_run_at,omitempty"`
 	LastRunStatus               sql.NullString `json:"last_run_status,omitempty"`
 	ErrorMessage                sql.NullString `json:"error_message,omitempty"`
 	TotalFiles                  int            `json:"total_files"`
@@ -62,6 +63,7 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 		LastRunStatus string  `json:"last_run_status,omitempty"`
 		ErrorMessage  string  `json:"error_message,omitempty"`
 		LastRunAt     *string `json:"last_run_at,omitempty"`
+		NextRunAt     *string `json:"next_run_at,omitempty"`
 	}{
 		alias: (*alias)(&s),
 	}
@@ -74,6 +76,10 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 	if s.LastRunAt.Valid {
 		iso := s.LastRunAt.Time.Format(time.RFC3339)
 		aux.LastRunAt = &iso
+	}
+	if s.NextRunAt.Valid {
+		iso := s.NextRunAt.Time.Format(time.RFC3339)
+		aux.NextRunAt = &iso
 	}
 	return json.Marshal(aux)
 }
@@ -179,6 +185,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		       source_provider, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
+		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs WHERE id = $1
@@ -191,7 +198,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt,
 		&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.TargetDir,
-		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
+		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
 		&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 		&s.CreatedAt, &s.UpdatedAt,
 	)
@@ -221,6 +228,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 		       target_url, target_username, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
+		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs
@@ -240,7 +248,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 			&s.ID, &s.UserID, &s.SourceURL, &s.SourceUsername, &s.SourceProvider,
 			&s.TargetURL, &s.TargetUsername, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.TargetDir,
-			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
+			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
 			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 			&s.CreatedAt, &s.UpdatedAt,
 		)
