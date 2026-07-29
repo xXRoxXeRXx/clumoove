@@ -38,7 +38,7 @@ cache, and migration workers. Every migration is tied to a user account and isol
        ▼      ▼
 ┌──────────────┐   ┌──────────────┐
 │  Source Store │   │ Target Store  │  (Nextcloud, WebDAV, Dropbox, Google,
-└──────────────┘   └──────────────┘   S3, SMB, SFTP, MagentaCLOUD, Local)
+└──────────────┘   └──────────────┘   S3, SMB, SFTP, MagentaCLOUD, Local, Immich)
 ```
 
 > **Important:** The task queue runs **natively in PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`).
