@@ -32,6 +32,28 @@
   --color-text-inverse: #ffffff;
   --color-border: #e4e4e7;
   --color-border-light: #f4f4f5;
+  --color-focus: #2563eb;
+  --color-hover: #f4f4f5;
+  --color-disabled: #a1a1aa;
+  --color-selected-bg: #e4e4e7;
+  --color-table-header: #f4f4f5;
+  --color-placeholder: #71717a;
+  --color-progress-track: #e4e4e7;
+  --color-progress-success: #15803d;
+  --color-progress-warning: #a16207;
+  --color-progress-error: #b91c1c;
+  --color-overlay: rgb(24 24 27 / 0.55);
+  --layer-sticky: 20;
+  --layer-menu: 30;
+  --layer-dialog: 40;
+  --layer-toast: 50;
+  --color-file-folder: #a16207;
+  --color-file-image: #7e22ce;
+  --color-file-video: #1d4ed8;
+  --color-file-audio: #be123c;
+  --color-file-document: #047857;
+  --color-file-archive: #c2410c;
+  --color-file-default: #71717a;
   --color-error-bg: #fef2f2;
   --color-error-border: #fecaca;
   --color-error-text: #b91c1c;
@@ -75,20 +97,34 @@ html {
   --color-border: #3f3f46;
   --color-border-light: #27272a;
   --color-error-bg: #450a0a;
-  --color-error-border: #7f1d1d;
+  --color-error-border: #f87171;
   --color-error-text: #fecaca;
   --color-warning-bg: #451a03;
-  --color-warning-border: #92400e;
+  --color-warning-border: #fbbf24;
   --color-success-bg: #052e16;
-  --color-success-border: #166534;
+  --color-success-border: #4ade80;
   --color-success-text: #bbf7d0;
   --color-info-bg: #172554;
-  --color-info-border: #1e3a8a;
+  --color-info-border: #60a5fa;
   --color-info-text: #bfdbfe;
-}
-
-[data-theme="dark"] .ui-brand-logo {
-  filter: invert(1);
+  --color-focus: #93c5fd;
+  --color-hover: #3f3f46;
+  --color-disabled: #71717a;
+  --color-selected-bg: #3f3f46;
+  --color-table-header: #3f3f46;
+  --color-placeholder: #a1a1aa;
+  --color-progress-track: #3f3f46;
+  --color-progress-success: #4ade80;
+  --color-progress-warning: #fbbf24;
+  --color-progress-error: #f87171;
+  --color-overlay: rgb(9 9 11 / 0.72);
+  --color-file-folder: #fbbf24;
+  --color-file-image: #d8b4fe;
+  --color-file-video: #93c5fd;
+  --color-file-audio: #fda4af;
+  --color-file-document: #6ee7b7;
+  --color-file-archive: #fdba74;
+  --color-file-default: #d4d4d8;
 }
 
 @utility ui-card {
@@ -98,7 +134,7 @@ html {
 }
 
 @utility ui-section {
-  background-color: var(--color-bg-secondary);
+  background-color: var(--color-bg-primary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
 }
@@ -109,6 +145,8 @@ html {
   border-radius: var(--radius-md);
   color: var(--color-text-primary);
 }
+
+.ui-input::placeholder { color: var(--color-placeholder); opacity: 1; }
 
 @utility ui-select {
   background-color: var(--color-bg-secondary);
@@ -131,12 +169,18 @@ html {
   color: var(--color-text-inverse);
 }
 
+.ui-button-primary:hover { background-color: var(--color-primary-hover); }
+.ui-button-primary:disabled { cursor: not-allowed; opacity: 0.55; }
+
 @utility ui-button-secondary {
   background-color: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
 }
+
+.ui-button-secondary:hover { background-color: var(--color-hover); color: var(--color-text-primary); }
+.ui-button-secondary:disabled { cursor: not-allowed; opacity: 0.55; }
 
 @utility ui-button-danger {
   background-color: var(--color-error-text);
@@ -219,14 +263,14 @@ html {
 }
 
 @utility ui-progress {
-  background-color: var(--color-border);
+  background-color: var(--color-progress-track);
   border-radius: 9999px;
   overflow: hidden;
 }
 
-@utility ui-progress-success { background-color: var(--color-success-text); }
-@utility ui-progress-warning { background-color: var(--color-warning-border); }
-@utility ui-progress-error { background-color: var(--color-error-text); }
+@utility ui-progress-success { background-color: var(--color-progress-success); }
+@utility ui-progress-warning { background-color: var(--color-progress-warning); }
+@utility ui-progress-error { background-color: var(--color-progress-error); }
 
 @utility ui-empty {
   color: var(--color-text-muted);
@@ -256,6 +300,14 @@ html {
 
 @utility ui-toggle-checked { background-color: var(--color-bg-inverse); }
 
+@utility ui-file-folder { color: var(--color-file-folder); }
+@utility ui-file-image { color: var(--color-file-image); }
+@utility ui-file-video { color: var(--color-file-video); }
+@utility ui-file-audio { color: var(--color-file-audio); }
+@utility ui-file-document { color: var(--color-file-document); }
+@utility ui-file-archive { color: var(--color-file-archive); }
+@utility ui-file-default { color: var(--color-file-default); }
+
 body {
   min-height: 100vh;
   overflow-x: hidden;
@@ -265,8 +317,13 @@ body {
 }
 
 :where(button, a[href], input, select, textarea, [role="button"], [role="radio"]):focus-visible {
-  outline: 2px solid var(--color-text-primary);
+  outline: 2px solid var(--color-focus);
   outline-offset: 2px;
+}
+
+.ui-brand-logo {
+  mask: url('/clumoove_logo.svg') center / contain no-repeat;
+  -webkit-mask: url('/clumoove_logo.svg') center / contain no-repeat;
 }
 
 ::selection { background: #d4d4d8; color: #18181b; }

@@ -16,7 +16,7 @@ export function Toggle({ checked, disabled, onChange, label }: ToggleProps) {
         onChange={(e) => onChange(e.target.checked)}
         className="sr-only peer"
       />
-      <div aria-hidden="true" className="ui-toggle peer h-5 w-9 rounded-full after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-[var(--color-bg-secondary)] after:content-[''] peer-checked:ui-toggle-checked peer-checked:after:translate-x-4"></div>
+      <div aria-hidden="true" className="ui-toggle peer h-5 w-9 rounded-full after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-[var(--color-bg-secondary)] after:content-[''] peer-checked:ui-toggle-checked peer-checked:after:translate-x-4 peer-focus-visible:outline-2 peer-focus-visible:outline-[var(--color-focus)] peer-focus-visible:outline-offset-2 peer-disabled:cursor-not-allowed peer-disabled:opacity-55"></div>
     </label>
   );
 }

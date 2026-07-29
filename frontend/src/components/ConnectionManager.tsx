@@ -421,13 +421,13 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-inverse)]/40 p-4">
+    <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
           <h3 id={titleId} className="font-display font-semibold text-sm text-[var(--color-text-primary)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
           </h3>
-          <button ref={closeRef} type="button" onClick={onClose} aria-label={t('common.cancel')} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer">
+          <button ref={closeRef} type="button" onClick={onClose} disabled={saving} aria-label={t('common.cancel')} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-55">
             {t('common.cancel')}
           </button>
         </div>
@@ -509,7 +509,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
             <button type="submit" disabled={saving} className={`flex-1 ${primaryBtnCls}`}>
               {saving ? t('settings.saving') : (editing ? t('settings.connections.edit') : t('settings.connections.saveProfile'))}
             </button>
-            <button type="button" onClick={onClose} className={secondaryBtnCls}>{t('common.cancel')}</button>
+            <button type="button" onClick={onClose} disabled={saving} className={secondaryBtnCls}>{t('common.cancel')}</button>
           </div>
         </form>
       </div>

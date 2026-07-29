@@ -63,34 +63,34 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
 };
 
 const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
-  if (!fileName) return <File className={`${className} text-slate-400`} />;
-  if (fileName.endsWith('/')) return <Folder className={`${className} text-amber-500`} />;
+  if (!fileName) return <File className={`${className} ui-file-default`} />;
+  if (fileName.endsWith('/')) return <Folder className={`${className} ui-file-folder`} />;
 
   const lastSegment = fileName.split('/').pop() || '';
-  if (!lastSegment.includes('.')) return <File className={`${className} text-slate-400`} />;
+  if (!lastSegment.includes('.')) return <File className={`${className} ui-file-default`} />;
 
   const ext = lastSegment.split('.').pop()?.toLowerCase() || '';
 
   if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'heic', 'raw', 'psd', 'ai'].includes(ext)) {
-    return <ImageIcon className={`${className} text-purple-500`} />;
+    return <ImageIcon className={`${className} ui-file-image`} />;
   }
   if (['mp4', 'mkv', 'avi', 'mov', 'webm', 'm4v', 'flv', 'wmv', 'mpeg', '3gp'].includes(ext)) {
-    return <Film className={`${className} text-blue-500`} />;
+    return <Film className={`${className} ui-file-video`} />;
   }
   if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'alac'].includes(ext)) {
-    return <Music className={`${className} text-rose-500`} />;
+    return <Music className={`${className} ui-file-audio`} />;
   }
   if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'odp', 'rtf', 'txt', 'csv', 'md'].includes(ext)) {
-    return <FileText className={`${className} text-emerald-500`} />;
+    return <FileText className={`${className} ui-file-document`} />;
   }
   if (['js', 'ts', 'jsx', 'tsx', 'json', 'xml', 'html', 'css', 'scss', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'sh', 'yaml', 'yml', 'sql', 'env'].includes(ext)) {
-    return <FileCode className={`${className} text-amber-500`} />;
+    return <FileCode className={`${className} ui-file-folder`} />;
   }
   if (['zip', 'tar', 'gz', '7z', 'rar', 'bz2', 'xz', 'iso', 'dmg'].includes(ext)) {
-    return <Archive className={`${className} text-orange-500`} />;
+    return <Archive className={`${className} ui-file-archive`} />;
   }
 
-  return <File className={`${className} text-slate-400`} />;
+  return <File className={`${className} ui-file-default`} />;
 };
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -1074,7 +1074,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   <button
                     type="button"
                     onClick={() => setConflictStrategy('OVERWRITE')}
-                    className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
+                    aria-pressed={conflictStrategy === 'OVERWRITE'}
+                    className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
                       conflictStrategy === 'OVERWRITE'
                         ? 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs'
                         : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
@@ -1086,7 +1087,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       </span>
                       {conflictStrategy === 'OVERWRITE' && <Check className="w-4 h-4 text-[var(--color-text-primary)] stroke-[3]" />}
                     </div>
-                    <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'OVERWRITE' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
+                    <p className={`text-xs mt-1 leading-normal font-normal ${conflictStrategy === 'OVERWRITE' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
                       {t('fileBrowser.overwriteDesc')}
                     </p>
                   </button>
@@ -1095,7 +1096,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   <button
                     type="button"
                     onClick={() => setConflictStrategy('RENAME')}
-                    className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
+                    aria-pressed={conflictStrategy === 'RENAME'}
+                    className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
                       conflictStrategy === 'RENAME'
                         ? 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs'
                         : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
@@ -1107,7 +1109,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       </span>
                       {conflictStrategy === 'RENAME' && <Check className="w-4 h-4 text-[var(--color-text-primary)] stroke-[3]" />}
                     </div>
-                    <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'RENAME' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
+                    <p className={`text-xs mt-1 leading-normal font-normal ${conflictStrategy === 'RENAME' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
                       {t('fileBrowser.renameDesc')}
                     </p>
                   </button>
@@ -1116,7 +1118,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   <button
                     type="button"
                     onClick={() => setConflictStrategy('SKIP')}
-                    className={`w-full text-left p-3.5 rounded-2xl border transition-all duration-200 cursor-pointer ${
+                    aria-pressed={conflictStrategy === 'SKIP'}
+                    className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
                       conflictStrategy === 'SKIP'
                         ? 'bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs'
                         : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30'
@@ -1128,7 +1131,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       </span>
                       {conflictStrategy === 'SKIP' && <Check className="w-4 h-4 text-[var(--color-text-primary)] stroke-[3]" />}
                     </div>
-                    <p className={`text-[10px] mt-1 leading-normal font-normal ${conflictStrategy === 'SKIP' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
+                    <p className={`text-xs mt-1 leading-normal font-normal ${conflictStrategy === 'SKIP' ? 'text-[var(--color-text-secondary)]' : 'text-[var(--color-text-muted)]'}`}>
                       {t('fileBrowser.skipDesc')}
                     </p>
                   </button>
@@ -1154,7 +1157,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   {threads}
                 </span>
               </div>
-              <p className="text-[9.5px] text-[var(--color-text-muted)] leading-relaxed font-sans">
+              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-sans">
                 {threads > 8 ? (
                   <span className="text-[var(--color-text-primary)] font-semibold">{t('fileBrowser.threadsHighWarn')}</span>
                 ) : (
@@ -1185,7 +1188,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     {getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited'))}
                   </span>
                 </div>
-                <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
+                <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
                   {bandwidthLimit === 0 ? (
                     t('fileBrowser.bandwidthUnlimited')
                   ) : (
@@ -1225,7 +1228,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     min={minScheduledTime}
                     className="ui-input w-full py-2.5 px-4 text-sm transition-all font-sans"
                   />
-                  <p className="text-[9.5px] text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
+                  <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
                     {t('fileBrowser.scheduleHint')}
                   </p>
                 </div>
@@ -1246,7 +1249,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         <div className="ui-card flex flex-col p-5">
         {/* Tab Switcher */}
         <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4 mb-4 gap-4">
-          <div className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-2xl flex-grow max-w-md">
+          <div className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-lg flex-grow max-w-md">
             <button
               onClick={() => handleTabChange('files')}
               className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
@@ -1307,14 +1310,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </div>
         </div>
 
-        <div className="flex-grow overflow-y-auto rounded-3xl">
+        <div className="flex-grow overflow-y-auto rounded-lg">
           {activeTab === 'files' && (
             directoryContents['/']?.length > 0 ? (
               directoryContents['/'].map((file) => renderNode(file, 0))
             ) : (
               <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
                 <Folder className="w-10 h-10 text-[var(--color-text-muted)]" />
-                <p className="font-mono text-[10px] italic text-[var(--color-text-muted)]">{t('fileBrowser.noFiles')}</p>
+                <p className="font-mono text-xs italic text-[var(--color-text-muted)]">{t('fileBrowser.noFiles')}</p>
               </div>
             )
           )}
@@ -1323,14 +1326,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             loadingCalendars ? (
               <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
                 <RefreshCw className="w-8 h-8 text-[var(--color-text-primary)] animate-spin" />
-                 <p className="font-mono text-[10px] italic">{t('fileBrowser.loadingCalendars')}</p>
+                  <p className="font-mono text-xs italic">{t('fileBrowser.loadingCalendars')}</p>
               </div>
             ) : calendars.length > 0 ? (
               <div className="space-y-2">
                 {calendars.map((cal) => (
                   <div
                     key={cal.path}
-                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
+                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-lg cursor-pointer transition-all duration-250 ${
                       selectedCalendars[cal.path] 
                         ? 'bg-[var(--color-bg-tertiary)] border-[var(--color-text-primary)] shadow-xs font-semibold'
                         : 'bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]'
@@ -1354,7 +1357,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : (
               <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
                 <Calendar className="w-10 h-10 text-[var(--color-text-muted)]" />
-                 <p className="font-mono text-[10px] italic">{t('fileBrowser.noCalendars')}</p>
+                  <p className="font-mono text-xs italic">{t('fileBrowser.noCalendars')}</p>
               </div>
             )
           )}
@@ -1370,7 +1373,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 {contacts.map((addr) => (
                   <div
                     key={addr.path}
-                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-2xl cursor-pointer transition-all duration-250 ${
+                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-lg cursor-pointer transition-all duration-250 ${
                       selectedContacts[addr.path] 
                         ? 'bg-[var(--color-bg-tertiary)] border-[var(--color-text-primary)] shadow-xs font-semibold'
                         : 'bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]'
@@ -1394,7 +1397,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : (
               <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
                 <BookOpen className="w-10 h-10 text-[var(--color-text-muted)]" />
-                 <p className="font-mono text-[10px] italic">{t('fileBrowser.noContacts')}</p>
+                  <p className="font-mono text-xs italic">{t('fileBrowser.noContacts')}</p>
               </div>
             )
           )}
@@ -1403,7 +1406,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       {/* Target Directory Browser Modal */}
       {isTargetBrowserOpen && (
-        <div className="fixed inset-0 bg-[var(--color-bg-inverse)]/60 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-[var(--color-overlay)] z-[var(--layer-dialog)] flex items-center justify-center p-4">
           <div ref={targetDialogRef} role="dialog" aria-modal="true" aria-labelledby={targetDialogTitleId} className="ui-card max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden text-left">
             
             {/* Modal Header */}
@@ -1412,7 +1415,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <h3 id={targetDialogTitleId} className="font-display font-extrabold text-lg text-[var(--color-text-primary)] tracking-tight">
                   {isImmichTarget ? t('fileBrowser.targetAlbumSelectTitle') : t('fileBrowser.targetSelectTitle')}
                 </h3>
-                <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5 uppercase tracking-wider font-mono">
+                <p className="text-xs text-[var(--color-text-muted)] mt-0.5 uppercase tracking-wider font-mono">
                   {isImmichTarget ? t('fileBrowser.targetAlbumSelectSubtitle') : t('fileBrowser.targetSelectSubtitle')}
                 </p>
               </div>
@@ -1436,7 +1439,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </div>
               )}
 
-              <div className="border border-[var(--color-border)]/60 rounded-2xl bg-[var(--color-bg-tertiary)]/30 p-2 overflow-x-auto max-h-[350px]">
+              <div className="border border-[var(--color-border)]/60 rounded-lg bg-[var(--color-bg-tertiary)]/30 p-2 overflow-x-auto max-h-[350px]">
                 {/* Root Directory Node */}
                 <div className="select-none font-sans text-xs">
                   <div
@@ -1516,7 +1519,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 className="p-4 border-t border-[var(--color-border-light)] bg-[var(--color-bg-tertiary)]/50 flex items-center gap-3 text-left"
               >
                 <div className="flex-grow space-y-1">
-                  <label className="block text-[9px] font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-widest">
+                  <label className="block text-xs font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-wider">
                     {isImmichTarget ? t('fileBrowser.createAlbumIn', { path: targetDir }) : t('fileBrowser.mkdirIn', { path: targetDir })}
                   </label>
                   <input
@@ -1553,7 +1556,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             {/* Modal Footer */}
             <div className="p-4 border-t border-[var(--color-border-light)] flex items-center justify-between bg-[var(--color-bg-tertiary)]/50">
               <div className="text-left max-w-[200px] md:max-w-[240px] space-y-0.5">
-                <p className="text-[9px] text-[var(--color-text-muted)] font-bold font-mono uppercase tracking-wider">{t('fileBrowser.selectionLabel')}</p>
+                <p className="text-xs text-[var(--color-text-muted)] font-bold font-mono uppercase tracking-wider">{t('fileBrowser.selectionLabel')}</p>
                 <p className="font-mono text-[11px] text-[var(--color-text-primary)] truncate font-semibold">{targetDir}</p>
               </div>
               <div className="flex items-center gap-2">

@@ -245,7 +245,7 @@ export function MigrationsDashboard({
     <div className="w-full space-y-6">
       
       {/* Welcome Banner */}
-      <section className="border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6">
+      <section className="ui-section p-6">
         <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
           <div className="space-y-2">
             <p className="text-xs font-medium text-[var(--color-text-muted)]">{t('migrations.tagline')}</p>
@@ -321,9 +321,11 @@ export function MigrationsDashboard({
         {/* Navigation Tabs & Controls Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 gap-4">
           {/* Segmented Pill Tabs */}
-          <div className="flex items-center gap-1 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-1 border-b border-[var(--color-border)]" role="tablist" aria-label={t('migrations.title')}>
             <button
               onClick={() => setActiveTab('migrations')}
+              role="tab"
+              aria-selected={activeTab === 'migrations'}
               className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'migrations'
                   ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
@@ -337,6 +339,8 @@ export function MigrationsDashboard({
             </button>
             <button
               onClick={() => setActiveTab('sync')}
+              role="tab"
+              aria-selected={activeTab === 'sync'}
               className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'sync'
                   ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
@@ -442,7 +446,7 @@ export function MigrationsDashboard({
 
           return (
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse min-w-[600px]">
+              <table className="ui-responsive-table w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold text-[var(--color-text-muted)] uppercase font-mono tracking-wider">
                     <th className="py-4.5 px-4 font-semibold">{t('migrations.createdAt')}</th>
@@ -471,7 +475,7 @@ export function MigrationsDashboard({
                        className="cursor-pointer transition-colors hover:bg-[var(--color-bg-tertiary)]"
                     >
                       {/* Date */}
-                      <td className="py-4 px-4 whitespace-nowrap">
+                      <td data-label={t('migrations.createdAt')} className="py-4 px-4 whitespace-nowrap">
                         <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
                           <CalendarDaysIcon className="size-4 text-[var(--color-text-muted)]" aria-hidden="true" />
                           {createdDate}
@@ -479,7 +483,7 @@ export function MigrationsDashboard({
                       </td>
 
                       {/* Providers */}
-                      <td className="py-4 px-4">
+                      <td data-label={t('migrations.sourceTarget')} className="py-4 px-4">
                         <div className="flex items-center gap-2.5">
                           <div className="flex flex-col text-left">
                             <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize leading-snug">
@@ -510,12 +514,12 @@ export function MigrationsDashboard({
                       </td>
 
                       {/* Status */}
-                      <td className="py-4 px-4 whitespace-nowrap">
+                      <td data-label={t('migrations.status')} className="py-4 px-4 whitespace-nowrap">
                         <StatusBadge status={mig.status} size="sm" />
                       </td>
 
                       {/* Progress */}
-                      <td className="py-4 px-4">
+                      <td data-label={t('migrations.progress')} className="py-4 px-4">
                         <div className="flex flex-col gap-1.5 min-w-[120px]">
                           <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
                             <span>
@@ -533,11 +537,11 @@ export function MigrationsDashboard({
                             <div
                                 className={`h-full transition-all duration-500 ${
                                 mig.status === 'FAILED'
-                                  ? 'bg-[var(--color-error-bg)]'
+                                  ? 'ui-progress-error'
                                   : mig.status === 'COMPLETED_WITH_ERRORS'
-                                  ? 'bg-[var(--color-warning-border)]'
+                                  ? 'ui-progress-warning'
                                   : mig.status === 'COMPLETED'
-                                  ? 'bg-[var(--color-success-text)]'
+                                  ? 'ui-progress-success'
                                   : 'bg-[var(--color-bg-inverse)]'
                               }`}
                               style={{
@@ -553,7 +557,7 @@ export function MigrationsDashboard({
                       </td>
 
                       {/* Actions */}
-                      <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                      <td data-label={t('migrations.actions')} className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end items-center gap-2">
                           {(() => {
                             const isPaused = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status);

@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 
-type BadgeVariant = 'success' | 'error' | 'warning' | 'info' | 'muted' | 'cyan';
+type BadgeVariant = 'success' | 'error' | 'warning' | 'info' | 'muted';
 
 const variantCls: Record<BadgeVariant, string> = {
   success: 'ui-badge-success',
@@ -8,7 +8,6 @@ const variantCls: Record<BadgeVariant, string> = {
   warning: 'ui-badge-warning',
   info: 'ui-badge-info',
   muted: 'ui-badge-muted',
-  cyan: 'ui-badge-info',
 };
 
 export function Badge({
@@ -70,7 +69,7 @@ export function StatusBadge({
       return (
         <Badge
           size={size}
-          variant="cyan"
+          variant="info"
           pulse
           label={t('status.verifying')}
         />

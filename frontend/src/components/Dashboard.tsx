@@ -10,9 +10,10 @@ import { Badge, StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 import { apiFetch } from '../utils/apiClient';
 import { ErrorOverview } from './ErrorOverview';
+import { LoadingIndicator } from './LoadingIndicator';
+import { TransferDetailHeader } from './TransferDetailHeader';
 import { connectSseLoop } from '../utils/sse';
 import {
-  ArrowLeftIcon,
   ArrowsRightLeftIcon,
   ChartBarIcon,
   CloudArrowDownIcon,
@@ -350,7 +351,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   if (!data) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <p className="text-xs font-mono text-[var(--color-text-muted)]">{t('common.loading')}</p>
+        <LoadingIndicator label={t('common.loading')} />
       </div>
     );
   }
@@ -368,30 +369,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
   return (
     <div className="w-full space-y-6">
-      {/* Back Button Header */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={onReset}
-          className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
-        >
-          <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
-          {t('common.back')}
-        </button>
-      </div>
-
       <div className="ui-card p-6 space-y-6">
-        {/* Title & Action Controls */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
-          <div className="space-y-1">
-            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)]">
-              {t('migrations.migrationJobDetail')}
-            </h1>
-            <p className="text-xs text-[var(--color-text-muted)] font-mono">
-              ID: {data.id}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 w-full md:w-auto justify-start md:justify-end flex-wrap">
+        <TransferDetailHeader backLabel={t('common.back')} onBack={onReset} title={t('migrations.migrationJobDetail')} id={data.id} actions={
+          <>
             {data.status === 'PAUSED' || data.status === 'PAUSED_CONNECTION_LOSS' ? (
               <button
                 onClick={() => handleMigrationControl('resume')}
@@ -420,8 +400,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 {t('dashboard.retryFailed')}
               </button>
             )}
-          </div>
-        </div>
+          </>
+        } />
 
         <div className="flex items-center gap-2.5">
           <StatusBadge status={data.status} />
@@ -619,7 +599,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 }}
                 className="w-full cursor-pointer accent-[var(--color-text-primary)]"
               />
-              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-sans">
+              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-sans">
                 {bandwidthLimit === 0 ? (
                   t('fileBrowser.bandwidthUnlimited')
                 ) : (
@@ -665,7 +645,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 }}
                 className="w-full accent-[var(--color-text-primary)]"
               />
-              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed font-mono">
+              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-mono">
                 {t('dashboard.threadsHint')}
               </p>
             </div>

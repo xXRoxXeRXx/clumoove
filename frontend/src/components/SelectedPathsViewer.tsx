@@ -71,21 +71,21 @@ const getPathType = (path: string): PathType => {
 const getPathIcon = (type: PathType, className = "w-3.5 h-3.5 shrink-0") => {
   switch (type) {
     case 'folder':
-      return <Folder className={`${className} text-amber-500`} />;
+      return <Folder className={`${className} ui-file-folder`} />;
     case 'image':
-      return <ImageIcon className={`${className} text-purple-500`} />;
+      return <ImageIcon className={`${className} ui-file-image`} />;
     case 'video':
-      return <Film className={`${className} text-blue-500`} />;
+      return <Film className={`${className} ui-file-video`} />;
     case 'audio':
-      return <Music className={`${className} text-rose-500`} />;
+      return <Music className={`${className} ui-file-audio`} />;
     case 'document':
-      return <FileText className={`${className} text-emerald-500`} />;
+      return <FileText className={`${className} ui-file-document`} />;
     case 'code':
-      return <FileCode className={`${className} text-amber-500`} />;
+      return <FileCode className={`${className} ui-file-folder`} />;
     case 'archive':
-      return <Archive className={`${className} text-orange-500`} />;
+      return <Archive className={`${className} ui-file-archive`} />;
     default:
-      return <File className={`${className} text-slate-400`} />;
+      return <File className={`${className} ui-file-default`} />;
   }
 };
 
@@ -327,7 +327,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
       {/* Modal Dialog */}
       {isModalOpen && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--color-bg-inverse)]/60 p-4"
+          className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4"
           onClick={(e) => {
             if (e.target === e.currentTarget) setIsModalOpen(false);
           }}
@@ -392,6 +392,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                   <button
                     type="button"
                     onClick={() => setViewMode('tree')}
+                    aria-pressed={viewMode === 'list'}
                     className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                       viewMode === 'tree'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'
@@ -424,6 +425,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                   <button
                     type="button"
                     onClick={() => setFilterType('all')}
+                    aria-pressed={filterType === 'all'}
                     className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
                       filterType === 'all'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'
@@ -435,6 +437,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                   <button
                     type="button"
                     onClick={() => setFilterType('folders')}
+                    aria-pressed={filterType === 'folders'}
                     className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
                       filterType === 'folders'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'
@@ -446,6 +449,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                   <button
                     type="button"
                     onClick={() => setFilterType('files')}
+                    aria-pressed={filterType === 'files'}
                     className={`px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
                       filterType === 'files'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'

@@ -626,17 +626,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </div>
               ) : (
               <>
-                <div id="source-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.sourceProvider')}</div>
+                <div id="source-provider-label" className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider font-mono mb-2">{t('connect.sourceProvider')}</div>
                 
                 {/* Visual Provider Pills */}
-                <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="source-provider-label">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-labelledby="source-provider-label">
                   {providerOptions.map(opt => (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => handleSourceProviderSelect(opt.id)}
                       aria-pressed={sourceProvider === opt.id}
-                      className={`flex-1 py-2 px-1 text-[11px] font-bold font-mono cursor-pointer ${
+                      className={`min-h-10 px-2 py-2 text-xs font-bold font-mono cursor-pointer ${
                         sourceProvider === opt.id
                           ? 'ui-button-primary text-[var(--color-text-inverse)]'
                           : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
@@ -1113,17 +1113,17 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </div>
               ) : (
               <>
-                <div id="target-provider-label" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.targetProvider')}</div>
+                <div id="target-provider-label" className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider font-mono mb-2">{t('connect.targetProvider')}</div>
                 
                 {/* Visual Provider Pills */}
-                <div className="grid grid-cols-3 gap-2" role="group" aria-labelledby="target-provider-label">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-labelledby="target-provider-label">
                   {providerOptions.map(opt => (
                     <button
                       key={opt.id}
                       type="button"
                       onClick={() => handleTargetProviderSelect(opt.id)}
                       aria-pressed={targetProvider === opt.id}
-                      className={`ui-button-secondary py-2 px-1 text-[11px] font-bold font-mono cursor-pointer ${
+                      className={`min-h-10 px-2 py-2 text-xs font-bold font-mono cursor-pointer ${
                         targetProvider === opt.id
                           ? 'ui-button-primary text-[var(--color-text-inverse)]'
                           : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'

@@ -112,9 +112,9 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
         </div>
       </div>
 
-        <div className="ui-card m-4 overflow-x-auto border-[var(--color-error-border)]">
-        <table className="w-full min-w-[680px] text-left text-xs">
-          <thead className="bg-[var(--color-bg-tertiary)] text-[10px] font-mono uppercase tracking-wider text-[var(--color-error-text)]">
+        <div className="m-4 overflow-x-auto border border-[var(--color-error-border)] bg-[var(--color-error-bg)]">
+        <table className="ui-responsive-table w-full text-left text-xs">
+          <thead className="bg-[var(--color-error-bg)] text-[11px] font-mono uppercase tracking-wider text-[var(--color-error-text)]">
             <tr>
               <th className="px-3 py-2.5 font-bold">{t('common.errorPath')}</th>
               <th className="px-3 py-2.5 font-bold">{t('common.errorType')}</th>
@@ -124,14 +124,14 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
           </thead>
           <tbody className="divide-y divide-[var(--color-border-light)]">
             {items.map((item) => (
-              <tr key={`${item.kind}-${item.id}`} className="transition-colors hover:bg-[var(--color-bg-tertiary)]">
-                <td className="max-w-[220px] px-3 py-2.5 font-mono text-[var(--color-text-primary)] break-all">{item.path}</td>
-                <td className="px-3 py-2.5 whitespace-nowrap text-[var(--color-text-secondary)]">
+              <tr key={`${item.kind}-${item.id}`} className="transition-colors hover:bg-[var(--color-bg-secondary)]/40">
+                <td data-label={t('common.errorPath')} className="max-w-[220px] px-3 py-2.5 font-mono text-[var(--color-text-primary)] break-all">{item.path}</td>
+                <td data-label={t('common.errorType')} className="px-3 py-2.5 whitespace-nowrap text-[var(--color-text-secondary)]">
                   {item.kind === 'indexing' ? t('common.errorTypeIndexing') : t('common.errorTypeTransfer')}
                   {item.attempts > 0 ? ` / ${t('common.errorAttempts', { count: item.attempts })}` : ''}
                 </td>
-                <td className="max-w-[360px] px-3 py-2.5 text-[var(--color-error-text)] break-words">{item.error_message || t('common.errorNoMessage')}</td>
-                <td className="px-3 py-2.5 whitespace-nowrap text-[var(--color-text-muted)]">{formatDateTime(item.occurred_at)}</td>
+                <td data-label={t('common.errorMessage')} className="max-w-[360px] px-3 py-2.5 text-[var(--color-error-text)] break-words">{item.error_message || t('common.errorNoMessage')}</td>
+                <td data-label={t('common.errorOccurredAt')} className="px-3 py-2.5 whitespace-nowrap text-[var(--color-text-muted)]">{formatDateTime(item.occurred_at)}</td>
               </tr>
             ))}
           </tbody>
