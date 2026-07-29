@@ -387,9 +387,10 @@ func (p *Processor) Start(ctx context.Context) {
 // "upload to <path>.tmp then atomically rename" overwrite pattern for the
 // given target. It is only safe when (a) an overwrite/retry actually requires
 // the temp file and (b) the target provider supports a rename operation.
-// Providers without atomic-rename support (e.g. Google Photos) write the file
-// to its final name during upload, so the temp-file + rename dance must be
-// skipped — otherwise the always-failing RenameFile would abort the upload.
+// Providers without atomic-rename support write the file directly to its final
+// name during upload. This includes S3, whose copy-and-delete "rename" would
+// otherwise require deleting an existing object before a potentially failing
+// copy completes.
 func useTempThenRename(target storage.StorageProvider, deleteAfterUpload bool) bool {
 	return deleteAfterUpload && target.SupportsAtomicRename()
 }
@@ -701,7 +702,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}
 
 	// 4. Download and Upload stream
-	// Providers without atomic-rename support (e.g. Google Photos) write the
+	// Providers without atomic-rename support (e.g. S3, Immich) write the
 	// file to its final name during upload, so the ".tmp" suffix must never be
 	// applied — otherwise the provider has to strip it itself and the rename
 	// step below is skipped anyway. Centralising this here avoids leaking the
@@ -938,10 +939,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// If the upload succeeded but rename/metadata fails, the .tmp file must be cleaned up so it
 	// does not leak on the target and is not mistaken for a partial upload on the next retry.
 	//
-	// Providers without atomic-rename support (e.g. Google Photos: no rename/delete
-	// operation) write the file to its final name during upload (the processor's
-	// ".tmp" suffix is stripped by the provider itself), so the rename step must be
-	// skipped entirely — attempting it would always fail the upload.
+	// Providers without atomic-rename support (e.g. S3, Immich) write the file
+	// directly to its final name during upload. S3 rename is copy-and-delete, so
+	// the rename step must be skipped entirely to avoid copy-and-delete loss.
 	if useTempThenRename(targetClient, deleteAfterUpload) {
 		// Attempt to delete original. Ignore not found error if it's already gone.
 		_ = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
