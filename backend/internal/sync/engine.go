@@ -162,6 +162,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 		log.Printf("[SyncEngine] Refusing pass for %s: failed to load claimed job: %v\n", syncJobID, err)
 		return
 	}
+	indexCtx = storage.WithLocalUserScope(indexCtx, job.UserID)
 	if job.Status != "INDEXING" {
 		log.Printf("[SyncEngine] Refusing pass for %s: expected INDEXING, got %s\n", syncJobID, job.Status)
 		return

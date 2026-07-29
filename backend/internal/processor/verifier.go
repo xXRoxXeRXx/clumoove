@@ -117,6 +117,7 @@ func (p *Processor) processVerifyingSyncJobs(ctx context.Context) {
 type verificationPassConfig struct {
 	EntityType        string // "Migration" or "Sync job"
 	EntityID          string
+	UserID            string
 	TargetProvider    string
 	TargetURL         string
 	TargetUsername    string
@@ -230,6 +231,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		return
 	}
 
+	passCtx = storage.WithLocalUserScope(passCtx, cfg.UserID)
 	targetClient, err := newProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
 	if err != nil {
 		log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
@@ -415,6 +417,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 	cfg := verificationPassConfig{
 		EntityType:     "Migration",
 		EntityID:       migrationID,
+		UserID:         mig.UserID.String,
 		TargetProvider: mig.TargetProvider,
 		TargetURL:      mig.TargetURL,
 		TargetUsername: mig.TargetUsername,
@@ -458,6 +461,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	cfg := verificationPassConfig{
 		EntityType:     "Sync job",
 		EntityID:       syncJobID,
+		UserID:         job.UserID,
 		TargetProvider: job.TargetProvider,
 		TargetURL:      job.TargetURL,
 		TargetUsername: job.TargetUsername,

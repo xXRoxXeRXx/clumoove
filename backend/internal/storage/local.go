@@ -6,42 +6,51 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// LocalProvider implements StorageProvider for a server-wide sandbox directory
-// defined by the LOCAL_STORAGE_ROOT env var. It supports only "files" and
-// carries no credentials. All access is rooted at LOCAL_STORAGE_ROOT; relative
-// paths supplied by the user are joined to the root and verified to stay within
-// it (rejecting ".." traversal and symlink-based escapes).
+// LocalProvider implements StorageProvider for one tenant's sandbox directory
+// at LOCAL_STORAGE_ROOT/users/<user-id>. It supports only "files" and carries
+// no credentials. Relative paths supplied by the user are joined to that
+// tenant root and verified to stay within it (rejecting ".." traversal and
+// symlink-based escapes).
 type LocalProvider struct {
 	root string
 }
 
 var _ StorageProvider = (*LocalProvider)(nil)
 
-func NewLocalProvider() (*LocalProvider, error) {
+func NewLocalProvider(userID string) (*LocalProvider, error) {
+	if userID == "" || userID == "." || filepath.Base(userID) != userID || strings.Contains(userID, "..") {
+		log.Printf("local provider creation rejected: missing or invalid user scope")
+		return nil, fmt.Errorf("local provider requires an authenticated user scope")
+	}
 	root := os.Getenv("LOCAL_STORAGE_ROOT")
 	if root == "" {
 		return nil, fmt.Errorf("LOCAL_STORAGE_ROOT is not configured")
 	}
-	abs, err := filepath.Abs(root)
+	// The server-wide root is only a container. Each tenant is restricted to an
+	// immutable, server-derived directory below it; callers must never be able
+	// to choose this component through a request path or a connection profile.
+	container, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve LOCAL_STORAGE_ROOT: %w", err)
 	}
 	// Canonicalize the root so that later EvalSymlinks results (which always
 	// return a canonical path) compare cleanly against it via string prefix.
-	if canon, cerr := filepath.EvalSymlinks(abs); cerr == nil {
-		abs = canon
+	if canon, cerr := filepath.EvalSymlinks(container); cerr == nil {
+		container = canon
+	}
+	abs := filepath.Join(container, "users", userID)
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, fmt.Errorf("local user storage is not accessible: %w", err)
 	}
 	info, err := os.Stat(abs)
-	if err != nil {
-		return nil, fmt.Errorf("LOCAL_STORAGE_ROOT is not accessible: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("LOCAL_STORAGE_ROOT is not a directory: %s", abs)
+	if err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("local user storage is not a directory")
 	}
 	return &LocalProvider{root: abs}, nil
 }

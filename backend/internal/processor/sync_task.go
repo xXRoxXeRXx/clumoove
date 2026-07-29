@@ -43,6 +43,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	if err != nil {
 		return fmt.Errorf("failed to fetch sync job: %w", err)
 	}
+	ctx = storage.WithLocalUserScope(ctx, job.UserID)
 
 	// Re-route or requeue if paused or connection loss
 	if job.Status == "PAUSED_CONNECTION_LOSS" || job.Status == "PAUSED" {
@@ -561,7 +562,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 // recoverPausedSyncJobs checks connection-loss paused sync jobs and restores connection.
 func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 	query := `
-		SELECT id, source_url, source_username, source_password_encrypted,
+		SELECT id, user_id, source_url, source_username, source_password_encrypted,
 		       target_url, target_username, target_password_encrypted,
 		       source_provider, target_provider
 		FROM sync_jobs
@@ -574,8 +575,8 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
-		if err := rows.Scan(&id, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
+		var id, userID, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
+		if err := rows.Scan(&id, &userID, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
 			continue
 		}
 
@@ -596,11 +597,12 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 			continue
 		}
 
-		sClient, err := storage.NewProvider(ctx, sProv, sURL, sUser, sPass)
+		userCtx := storage.WithLocalUserScope(ctx, userID)
+		sClient, err := storage.NewProvider(userCtx, sProv, sURL, sUser, sPass)
 		if err != nil {
 			continue
 		}
-		tClient, err := storage.NewProvider(ctx, tProv, tURL, tUser, tPass)
+		tClient, err := storage.NewProvider(userCtx, tProv, tURL, tUser, tPass)
 		if err != nil {
 			sClient.Close()
 			continue

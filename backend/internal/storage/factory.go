@@ -6,6 +6,19 @@ import (
 	"net/url"
 )
 
+type localUserContextKey struct{}
+
+// WithLocalUserScope attaches a server-derived user ID to a provider context.
+// It is intentionally separate from provider credentials and request paths.
+func WithLocalUserScope(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, localUserContextKey{}, userID)
+}
+
+func localUserID(ctx context.Context) string {
+	userID, _ := ctx.Value(localUserContextKey{}).(string)
+	return userID
+}
+
 // ValidProviders is the canonical list of supported storage providers. It is
 // the single source of truth shared by the NewProvider switch below and any
 // request-time whitelist checks (e.g. main.go handleConnect), so adding a
@@ -102,7 +115,7 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	case "local":
 		// Local reads/writes files inside LOCAL_STORAGE_ROOT. It takes no URL,
 		// username, or password and performs no network egress (SSRF guard skipped).
-		return NewLocalProvider()
+		return NewLocalProvider(localUserID(ctx))
 	case "sftp":
 		return NewSFTPProvider(urlStr, username, password)
 	case "immich":
