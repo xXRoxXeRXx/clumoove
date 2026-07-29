@@ -10,7 +10,6 @@ import { apiFetch } from '../utils/apiClient';
 import { Toggle } from './Toggle';
 import { Badge, StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
-import { Tabs } from './Tabs';
 
 type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
 
@@ -81,17 +80,46 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
         </div>
       </div>
 
-      {/* Tabs */}
-       {message && <MessageBanner message={message} />}
+      {message && <MessageBanner message={message} />}
 
-       <Tabs
-         label={t('admin.title')}
-         value={tab}
-         onChange={(next) => setTab(next as Tab)}
-         className="flex flex-wrap gap-2"
-         items={tabs.map(([value, Icon, label]) => ({ value, label: <><Icon className="w-4 h-4" aria-hidden="true" />{t(label)}</> }))}
-       >
-       <div className="min-h-[60vh]">
+      {/* Administration tabs */}
+      <div
+        className="flex flex-wrap gap-2"
+        role="tablist"
+        aria-label={t('admin.title')}
+        onKeyDown={(event) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const current = tabs.findIndex(([value]) => value === tab);
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+          const nextTab = tabs[next][0];
+          setTab(nextTab);
+          document.getElementById(`admin-tab-${nextTab}`)?.focus();
+        }}
+      >
+        {tabs.map(([value, Icon, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTab(value)}
+            id={`admin-tab-${value}`}
+            role="tab"
+            aria-selected={tab === value}
+            aria-controls={`admin-panel-${value}`}
+            tabIndex={tab === value ? 0 : -1}
+            className={`flex items-center gap-1.5 px-4 py-2 border font-medium text-sm ${
+              tab === value
+                ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+                : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
+            }`}
+          >
+            <Icon className="w-4 h-4" aria-hidden="true" />
+            {t(label)}
+          </button>
+        ))}
+      </div>
+
+      <div id={`admin-panel-${tab}`} role="tabpanel" aria-labelledby={`admin-tab-${tab}`} className="min-h-[60vh]">
         {tab === 'users' && (
           <UsersTab apiUrl={apiUrl} token={token} currentUserID={user?.id} onMessage={setMessage} onError={showError} />
         )}
@@ -99,8 +127,7 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
         {tab === 'stats' && <StatsTab apiUrl={apiUrl} token={token} />}
         {tab === 'audit' && <AuditTab apiUrl={apiUrl} token={token} formatDateTime={formatDateTime} />}
         {tab === 'system' && <SystemTab apiUrl={apiUrl} token={token} onMessage={setMessage} />}
-       </div>
-       </Tabs>
+      </div>
     </div>
   );
 }
