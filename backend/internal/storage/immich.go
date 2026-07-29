@@ -407,9 +407,6 @@ func (p *ImmichProvider) assignTargetAlbum(ctx context.Context, dir, assetID str
 	return nil
 }
 func (p *ImmichProvider) StreamUploadChunked(ctx context.Context, t, filePath string, stream io.Reader, size int64, progress chan<- int64) error {
-	if progress != nil {
-		defer close(progress)
-	}
 	return p.StreamUpload(ctx, t, filePath, &ProgressReader{Reader: stream, ProgressChan: progress}, size)
 }
 func (p *ImmichProvider) FileExists(context.Context, string, string) (bool, int64, error) {

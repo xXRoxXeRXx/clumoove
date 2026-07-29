@@ -90,6 +90,8 @@ type StorageProvider interface {
 	InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error)
 	StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error)
 	StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error
+	// StreamUploadChunked reports progress through progressChan (which may be nil) but must not close it;
+	// the caller owns the channel lifecycle.
 	StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error
 	FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error)
 	DeleteFile(ctx context.Context, resourceType, filePath string) error

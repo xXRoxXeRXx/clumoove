@@ -401,14 +401,7 @@ func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePa
 
 func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
 	if err := p.validateResourceType(resourceType); err != nil {
-		if progressChan != nil {
-			close(progressChan)
-		}
 		return err
-	}
-
-	if progressChan != nil {
-		defer close(progressChan)
 	}
 
 	const chunkSize int64 = 50 * 1024 * 1024 // 50 MB per chunk
@@ -491,7 +484,7 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		chunkIndex++
 
 		if progressChan != nil {
-			progressChan <- uploaded
+			progressChan <- chunkSizeActual
 		}
 
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
