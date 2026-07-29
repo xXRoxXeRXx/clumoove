@@ -1,3 +1,5 @@
+//go:build !windows
+
 package storage
 
 import (
@@ -10,7 +12,7 @@ import (
 	"testing"
 )
 
-func newTestLocalProvider(t *testing.T) (*LocalProvider, func()) {
+func newTestLocalProvider(t *testing.T) *LocalProvider {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("LOCAL_STORAGE_ROOT", root)
@@ -18,11 +20,12 @@ func newTestLocalProvider(t *testing.T) (*LocalProvider, func()) {
 	if err != nil {
 		t.Fatalf("NewLocalProvider: %v", err)
 	}
-	return p, func() {}
+	t.Cleanup(func() { _ = p.Close() })
+	return p
 }
 
 func TestLocalProviderTraversalRejected(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	if _, err := p.resolve("../escape"); err == nil {
 		t.Fatalf("expected traversal rejection, got nil")
 	}
@@ -32,7 +35,7 @@ func TestLocalProviderTraversalRejected(t *testing.T) {
 }
 
 func TestLocalProviderUploadDownloadRoundtrip(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	ctx := context.Background()
 	content := []byte("hello local provider")
 	if err := p.StreamUpload(ctx, "files", "sub/dir/file.txt", bytes.NewReader(content), int64(len(content))); err != nil {
@@ -64,7 +67,7 @@ func TestLocalProviderUploadDownloadRoundtrip(t *testing.T) {
 }
 
 func TestLocalProviderListingExistsDeleteRenameMkdir(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	ctx := context.Background()
 
 	if err := p.CreateDirectory(ctx, "files", "docs"); err != nil {
@@ -114,7 +117,7 @@ func TestLocalProviderListingExistsDeleteRenameMkdir(t *testing.T) {
 }
 
 func TestLocalProviderNonFilesRejected(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	ctx := context.Background()
 	if _, err := p.GetDirectoryListing(ctx, "calendars", ""); err == nil {
 		t.Fatalf("expected calendars rejection")
@@ -167,8 +170,29 @@ func TestNewLocalProviderRejectsUnsafeUserScope(t *testing.T) {
 	}
 }
 
+func TestLocalProviderRejectsSymlinkedWriteParent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LOCAL_STORAGE_ROOT", root)
+	p, err := NewLocalProvider("user-a")
+	if err != nil {
+		t.Fatalf("NewLocalProvider: %v", err)
+	}
+	defer p.Close()
+
+	escape := t.TempDir()
+	if err := os.Symlink(escape, filepath.Join(p.root, "swapped")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	if err := p.StreamUpload(context.Background(), "files", "swapped/outside.txt", bytes.NewReader([]byte("x")), 1); err == nil {
+		t.Fatal("StreamUpload unexpectedly followed a symlinked parent")
+	}
+	if _, err := os.Stat(filepath.Join(escape, "outside.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write escaped local storage root: %v", err)
+	}
+}
+
 func TestLocalProviderSymlinkEscapeRejected(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	outside := t.TempDir()
 	linkPath := filepath.Join(p.root, "link")
 	if err := os.Symlink(outside, linkPath); err != nil {
@@ -180,7 +204,7 @@ func TestLocalProviderSymlinkEscapeRejected(t *testing.T) {
 }
 
 func TestLocalProviderSymlinkInsideRootAllowed(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	// Create a subdir, symlink it from the root, write a file via the symlink.
 	sub := filepath.Join(p.root, "real")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
@@ -196,7 +220,7 @@ func TestLocalProviderSymlinkInsideRootAllowed(t *testing.T) {
 }
 
 func TestLocalProviderRootListing(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	ctx := context.Background()
 	if err := p.StreamUpload(ctx, "files", "rootfile.txt", bytes.NewReader([]byte("x")), 1); err != nil {
 		t.Fatalf("upload to root: %v", err)
@@ -211,7 +235,7 @@ func TestLocalProviderRootListing(t *testing.T) {
 }
 
 func TestLocalProviderCreateParentDirectories(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	ctx := context.Background()
 	if err := p.CreateParentDirectories(ctx, "files", "a/b/c/file.txt"); err != nil {
 		t.Fatalf("CreateParentDirectories: %v", err)
@@ -222,7 +246,7 @@ func TestLocalProviderCreateParentDirectories(t *testing.T) {
 }
 
 func TestLocalProviderDeleteRootRejected(t *testing.T) {
-	p, _ := newTestLocalProvider(t)
+	p := newTestLocalProvider(t)
 	ctx := context.Background()
 	if err := p.DeleteFile(ctx, "files", ""); err == nil {
 		t.Fatalf("expected root deletion rejection")

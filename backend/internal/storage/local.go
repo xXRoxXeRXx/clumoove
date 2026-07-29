@@ -19,6 +19,9 @@ import (
 // symlink-based escapes).
 type LocalProvider struct {
 	root string
+	// rootHandle keeps an open descriptor for the tenant root. Mutating
+	// operations are resolved relative to it, never by re-opening p.root.
+	rootHandle *localRoot
 }
 
 var _ StorageProvider = (*LocalProvider)(nil)
@@ -45,18 +48,17 @@ func NewLocalProvider(userID string) (*LocalProvider, error) {
 		container = canon
 	}
 	abs := filepath.Join(container, "users", userID)
-	if err := os.MkdirAll(abs, 0o700); err != nil {
+	rootHandle, err := ensureLocalRoot(container, userID)
+	if err != nil {
 		return nil, fmt.Errorf("local user storage is not accessible: %w", err)
 	}
-	info, err := os.Stat(abs)
-	if err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("local user storage is not a directory")
-	}
-	return &LocalProvider{root: abs}, nil
+	return &LocalProvider{root: abs, rootHandle: rootHandle}, nil
 }
 
-// resolve joins a user-supplied relative path to the storage root and verifies
-// it stays within the root. It rejects ".." traversal and symlink escapes.
+// resolve is used only for read-only operations (listing, download, hash, and
+// stat). Mutating operations use localPathComponents and rootHandle to avoid
+// TOCTOU races. It joins a user-supplied relative path to the storage root and
+// rejects ".." traversal and symlink escapes.
 func (p *LocalProvider) resolve(rel string) (string, error) {
 	// Reject any explicit parent-directory references up front.
 	if strings.Contains(rel, "..") {
@@ -124,10 +126,20 @@ func (p *LocalProvider) secureResolve(rel string) (string, error) {
 	return joined, nil
 }
 
-func (p *LocalProvider) Close() error { return nil }
+func (p *LocalProvider) Close() error {
+	if p.rootHandle == nil {
+		return nil
+	}
+	err := p.rootHandle.close()
+	p.rootHandle = nil
+	return err
+}
 
 func (p *LocalProvider) Connect(ctx context.Context) (bool, error) {
-	if _, err := os.Stat(p.root); err != nil {
+	if p.rootHandle == nil {
+		return false, fmt.Errorf("local provider is closed")
+	}
+	if err := p.rootHandle.healthy(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -218,75 +230,22 @@ func (p *LocalProvider) StreamUpload(ctx context.Context, resourceType, filePath
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.resolve(filePath)
+	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
-		return err
-	}
-	tmp := resolved + ".tmp"
-	out, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, stream); err != nil {
-		out.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, resolved)
+	return p.rootHandle.upload(parts, stream, nil)
 }
 
 func (p *LocalProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.resolve(filePath)
+	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
-		return err
-	}
-	tmp := resolved + ".tmp"
-	out, err := os.Create(tmp)
-	if err != nil {
-		return err
-	}
-	buf := make([]byte, 32*1024)
-	var written int64
-	for {
-		n, rerr := stream.Read(buf)
-		if n > 0 {
-			if _, werr := out.Write(buf[:n]); werr != nil {
-				out.Close()
-				os.Remove(tmp)
-				return werr
-			}
-			written += int64(n)
-			if progressChan != nil {
-				progressChan <- int64(n)
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			out.Close()
-			os.Remove(tmp)
-			return rerr
-		}
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, resolved)
+	return p.rootHandle.upload(parts, stream, progressChan)
 }
 
 func (p *LocalProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
@@ -311,17 +270,14 @@ func (p *LocalProvider) DeleteFile(ctx context.Context, resourceType, filePath s
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.resolve(filePath)
+	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
 	}
-	if resolved == p.root {
+	if len(parts) == 0 {
 		return fmt.Errorf("cannot delete the storage root")
 	}
-	if err := os.Remove(resolved); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return p.rootHandle.remove(parts)
 }
 
 func (p *LocalProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
@@ -343,53 +299,71 @@ func (p *LocalProvider) CreateParentDirectories(ctx context.Context, resourceTyp
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.resolve(filePath)
+	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(resolved)
-	if dir == p.root {
+	if len(parts) < 2 {
 		return nil
 	}
-	return os.MkdirAll(dir, 0o755)
+	return p.rootHandle.mkdirAll(parts[:len(parts)-1])
 }
 
 func (p *LocalProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.resolve(dirPath)
+	parts, err := localPathComponents(dirPath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(resolved, 0o755); err != nil && !os.IsExist(err) {
-		return err
-	}
-	return nil
+	return p.rootHandle.mkdirAll(parts)
 }
 
 func (p *LocalProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	oldResolved, err := p.resolve(oldPath)
+	oldParts, err := localPathComponents(oldPath)
 	if err != nil {
 		return err
 	}
-	if oldResolved == p.root {
+	if len(oldParts) == 0 {
 		return fmt.Errorf("cannot rename the storage root")
 	}
-	newResolved, err := p.resolve(newPath)
+	newParts, err := localPathComponents(newPath)
 	if err != nil {
 		return err
 	}
-	if newResolved == p.root {
+	if len(newParts) == 0 {
 		return fmt.Errorf("cannot rename into the storage root")
 	}
-	if err := os.MkdirAll(filepath.Dir(newResolved), 0o755); err != nil {
-		return err
+	return p.rootHandle.rename(oldParts, newParts)
+}
+
+// localPathComponents accepts only a relative path and returns components for
+// descriptor-relative operations. Unlike resolve, it never returns a pathname
+// that a caller could later re-resolve through a swapped symlink. On Unix,
+// filepath.Clean output uses '/', matching os.PathSeparator; Windows mutations
+// are unavailable until they can use an equivalent handle-relative API.
+func localPathComponents(rel string) ([]string, error) {
+	if strings.Contains(rel, "..") {
+		return nil, fmt.Errorf("path escapes storage root")
 	}
-	return os.Rename(oldResolved, newResolved)
+	clean := filepath.Clean(strings.TrimPrefix(rel, "/"))
+	if clean == "." || clean == string(os.PathSeparator) {
+		return nil, nil
+	}
+	if filepath.IsAbs(clean) {
+		return nil, fmt.Errorf("path escapes storage root")
+	}
+	parts := strings.Split(clean, string(os.PathSeparator))
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return nil, fmt.Errorf("path escapes storage root")
+		}
+	}
+	return parts, nil
 }
 
 // SupportsAtomicRename is true: the local provider can rename files.
