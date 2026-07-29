@@ -17,8 +17,8 @@ func TestNewS3ProviderValidURL(t *testing.T) {
 	if p.bucket != "my-bucket" {
 		t.Errorf("expected bucket my-bucket, got %s", p.bucket)
 	}
-	if !p.SupportsAtomicRename() {
-		t.Error("expected SupportsAtomicRename() = true")
+	if p.SupportsAtomicRename() {
+		t.Error("expected SupportsAtomicRename() = false: S3 rename is copy-and-delete")
 	}
 	if err := p.Close(); err != nil {
 		t.Errorf("Close returned error: %v", err)

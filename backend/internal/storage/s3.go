@@ -478,6 +478,9 @@ func (p *S3Provider) GetFileHash(ctx context.Context, resourceType, filePath str
 	return "", fmt.Errorf("checksum not available")
 }
 
+// RenameFile copies oldPath to newPath, then deletes oldPath. It is not atomic:
+// a partial failure can leave both objects present. Callers must not use it for
+// OVERWRITE semantics; upload directly to the destination instead.
 func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by S3 provider", resourceType)
@@ -536,9 +539,12 @@ func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newP
 	return nil
 }
 
-// SupportsAtomicRename is true: S3 copy+delete rename is supported.
+// SupportsAtomicRename reports false because S3 "rename" is a copy followed by
+// a delete, not an atomic replacement.  Returning false makes OVERWRITE upload
+// directly to the destination; S3 then atomically replaces the existing object
+// only after the upload succeeds.
 func (p *S3Provider) SupportsAtomicRename() bool {
-	return true
+	return false
 }
 
 func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, size int64) error {

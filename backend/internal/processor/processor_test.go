@@ -121,8 +121,9 @@ func (f *fakeProvider) SupportsAtomicRename() bool { return f.atomicRename }
 
 // TestUseTempThenRename verifies the overwrite/retry decision: the temp-file +
 // rename pattern must only be used when BOTH an overwrite is requested AND the
-// target provider supports renaming. This is what keeps Google Photos (no
-// rename) uploads from failing when the conflict strategy is OVERWRITE.
+// target provider supports renaming. This is what keeps providers without an
+// atomic rename (e.g. S3, Immich) from leaking .tmp objects when the conflict
+// strategy is OVERWRITE.
 func TestUseTempThenRename(t *testing.T) {
 	renameable := &fakeProvider{atomicRename: true}
 	noRename := &fakeProvider{atomicRename: false}
