@@ -22,7 +22,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 
 ## Features
 
-- **Ten storage providers** as any source/target combination: Nextcloud, MagentaCLOUD, generic WebDAV, Dropbox, Google Drive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, and Local server sandbox.
+- **Eleven storage providers** as any source/target combination: Nextcloud, MagentaCLOUD, generic WebDAV, Dropbox, Google Drive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, Local server sandbox, and Immich (files-only one-time migrations).
 - **Sync Engine & Migration Engine** — full support for one-shot/scheduled migrations as well as recurring one-way and two-way folder synchronizations.
 - **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations and sync jobs.
 - **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic worker-recovery, exponential backoff, and connection-loss auto-pause.
@@ -46,6 +46,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 | **SMB / CIFS** | SMB2/SMB3 | User / password | Files |
 | **SFTP** | SSH SFTP | User / password (or key) | Files |
 | **Local Storage** | Server filesystem sandbox | None (server path) | Files |
+| **Immich** | Stable v2 API | Server URL + API key | Files (one-time migrations) |
 
 See [`docs/05-storage-providers.md`](./docs/05-storage-providers.md) for the provider interface, factory and SSRF
 protection details.

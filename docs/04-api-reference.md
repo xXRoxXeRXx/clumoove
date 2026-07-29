@@ -17,7 +17,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 - `JWT` — requires `Authorization: Bearer <access_token>`.
 - `admin` — JWT + `role == ADMIN` (enforced inside the handler).
 
-Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`.
+Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Immich endpoints use a server URL and API key supplied in the password field; no username is required.
 
 ---
 
@@ -191,8 +191,9 @@ Immich validation: migration start rejects calendar/contact selections when eith
 Validation rules applied server-side:
 - At least one of `paths`/`calendars`/`contacts` required.
 - Provider values must be in the whitelist (`nextcloud`, `webdav`, `dropbox`, `google`, `hidrive`, `smb`, `s3`,
-  `sftp`, `magentacloud`, `local`).
-- `magentacloud`, `hidrive`, and `local` are files-only (reject calendars/contacts on source or target).
+  `sftp`, `magentacloud`, `local`, `immich`).
+- `magentacloud`, `hidrive`, `local`, and `immich` are files-only (reject calendars/contacts on source or target).
+- An Immich target requires `conflict_strategy: "SKIP"`; Immich relies on native duplicate detection and does not support overwrite or rename. Immich can be used only for one-time migrations, not sync jobs.
 - Per-user cap of `maxActiveMigrations` (10) simultaneous active migrations.
 - `threads` clamped to 1–16; `bandwidth_limit_mbps` clamped to 0–1000.
 - `scheduled_time`, when present, must parse as RFC3339 and be in the future.

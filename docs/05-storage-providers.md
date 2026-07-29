@@ -36,9 +36,9 @@ type StorageProvider interface {
 > - Return `true` for providers that support an atomic "upload to `<path>.tmp` then rename to `<path>`"
 >   overwrite pattern (all standard file providers: Nextcloud/WebDAV, S3, SMB, SFTP, Dropbox, Google
 >   Drive, Local).
-> - Return `false` for providers that **cannot** rename or delete (e.g. `googlephotos`: the Google
->   Photos Library API has no rename/delete operation and writes the media item to its final
->   album + filename during upload). The processor then skips the temp-file + rename step entirely.
+> - Return `false` for providers that **cannot** rename or delete (for example, `immich`, which writes
+>   an asset directly and relies on its native duplicate handling). The processor then skips the
+>   temp-file + rename step entirely.
 
 Optional capability interface:
 
@@ -97,7 +97,9 @@ contacted). `GetFileHash` returns a `SHA1:` hash, enabling the standard 3-way ha
 
 ### Immich
 
-Immich uses a server URL and API key sent as `x-api-key`; the key uses the encrypted password field and is never logged. It uses the stable v2 endpoint subset for API-key validation, asset search/download/upload, and album operations. Source browsing exposes `/All Assets` and `/Albums`, retaining asset UUID metadata for deduplication. It is files-only and migration-only: calendars, contacts, and sync jobs are rejected. Immich target conflicts must use native duplicate `SKIP`; overwrite, rename, delete, and atomic rename are unsupported. Only supported image, video, and RAW extensions are indexed for an Immich target; rejected files are recorded as indexing errors.
+Immich uses a server URL and API key sent as `x-api-key`; the key is stored in the encrypted password field and is never logged. No username is needed. The supplied URL may include the `/api` suffix; the provider normalizes it to the API base URL. It uses the stable v2 endpoint subset for API-key validation, asset search/download/upload, and album operations. Source browsing exposes virtual `/All Assets` and `/Albums` locations, retaining asset UUID, original filename, timestamps, MIME type, and album metadata. Asset IDs, rather than filenames, identify source assets.
+
+Immich is files-only and supports one-time migrations only: calendars, contacts, and sync jobs are rejected. An Immich target requires the native-duplicate `SKIP` conflict strategy; overwrite, rename, filename deletion, and atomic rename are unsupported. Uploaded files at the target root remain unassigned; a single target directory name creates or reuses an Immich album and assigns uploaded assets to it. Nested target directories are unsupported because Immich albums cannot be nested. Only supported image, video, and RAW extensions are indexed for an Immich target; rejected files are recorded as indexing errors.
 
 `NewProvider(ctx, providerType, urlStr, username, password)`:
 
@@ -155,7 +157,7 @@ computes a second (target) hasher when algorithms differ (CPU optimization).
    it produces a compile error `does not implement storage.StorageProvider (missing method
    SupportsAtomicRename)` for *every* implementer, including test mocks — so add it together with the other
    methods. Return `true` when the provider supports an atomic "upload to `<path>.tmp` then rename"
-   overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Google Photos).
+   overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Immich).
 3. Add the provider value to the whitelist in `internal/storage/factory.go` (`ValidProviders`) **and** the frontend
    provider selector.
 4. Register it in `NewProvider` (`factory.go`), including any SSRF egress validation for
