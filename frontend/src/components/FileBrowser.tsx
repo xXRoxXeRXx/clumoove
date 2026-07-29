@@ -28,6 +28,7 @@ import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
+import { Button } from './Button';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 
 
@@ -827,14 +828,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       {/* Wizard header */}
       <div className="flex items-center justify-between border-b border-[var(--color-border)]/50 pb-4">
         {onBack ? (
-          <button
+          <Button
             type="button"
             onClick={onBack}
-            className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>{t('common.back')}</span>
-          </button>
+          </Button>
         ) : <span />}
         <h2 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
           {t('fileBrowser.wizardStep')}
@@ -1034,23 +1034,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
           {/* Common + mode-specific settings grid (full width) */}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start">
-            {/* Target folder (readonly mirror of the Target card primary action) */}
+            {/* Target folder is configured from the target summary above. */}
             <div className="space-y-2 text-xs md:col-span-2 xl:col-span-1">
               <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{isImmichTarget ? t('fileBrowser.targetAlbum') : t('fileBrowser.targetDir')}</label>
               <div className="flex items-center gap-2">
-                <span className="flex-grow flex items-center gap-2 px-3 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-[11px] text-[var(--color-text-secondary)] truncate">
+                <span className="flex-grow flex items-center gap-2 px-3 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-xs text-[var(--color-text-secondary)] truncate">
                   <Folder className="w-3.5 h-3.5 text-[var(--color-text-secondary)] shrink-0" />
                   <span className="truncate">{targetDir || '/'}</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={openTargetBrowser}
-                  className="ui-button-primary shrink-0 px-3 py-2.5 text-[11px] font-bold font-mono uppercase tracking-wider hover:opacity-90 flex items-center gap-1.5"
-                >
-                  <span>{t('common.edit')}</span>
-                </button>
               </div>
-              <p className="text-[10px] text-[var(--color-text-muted)] leading-relaxed font-sans">
+              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-sans">
                 {isImmichTarget ? t('fileBrowser.targetAlbumCopied') : t('fileBrowser.targetCopied')}
               </p>
             </div>

@@ -5,19 +5,17 @@ import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
-import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { Badge, StatusBadge } from './StatusBadge';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 import { apiFetch } from '../utils/apiClient';
 import { ErrorOverview } from './ErrorOverview';
 import { LoadingIndicator } from './LoadingIndicator';
 import { TransferDetailHeader } from './TransferDetailHeader';
+import { TransferProgress } from './TransferProgress';
+import { TransferEndpoints } from './TransferEndpoints';
+import { ActiveTransfersPanel, TransferStatusPanel } from './TransferRunSummary';
 import { connectSseLoop } from '../utils/sse';
 import {
-  ArrowsRightLeftIcon,
-  ChartBarIcon,
-  CloudArrowDownIcon,
-  CloudArrowUpIcon,
   QueueListIcon,
   SignalIcon,
 } from '@heroicons/react/24/outline';
@@ -409,129 +407,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         </div>
 
         {/* Live Transfer Progress (ONLY rendered when RUNNING or INDEXING) */}
-        {(data.status === 'RUNNING' || data.status === 'INDEXING') && (
-          <div className="ui-card p-6 flex flex-col">
+        {(data.status === 'RUNNING' || data.status === 'INDEXING') && <TransferProgress progress={byteProgressPercent} rate={`${formatBytes(speed)}/s`} transferred={`${formatBytes(effectiveBytesDisplay)} / ${formatBytes(data.total_bytes)}`} remaining={eta} labels={{ progress: t('dashboard.progress'), transferRate: t('dashboard.transferRate'), transferred: t('dashboard.transferred'), remaining: t('dashboard.remaining') }} />}
 
-            <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-              <div>
-                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
-                <h3 className="font-display font-extrabold text-5xl text-[var(--color-text-primary)] mt-1.5 leading-none">
-                  {byteProgressPercent}%
-                </h3>
-              </div>
-              <div className="text-right flex flex-col items-end">
-                <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
-                <p className="text-base font-extrabold text-[var(--color-success-text)] mt-1.5 font-mono">
-                  {formatBytes(speed)}/s
-                </p>
-              </div>
-            </div>
-
-            <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 overflow-hidden">
-              <div
-                className="bg-[var(--color-bg-inverse)] h-full transition-all duration-500 ease-out"
-                style={{ width: `${byteProgressPercent}%` }}
-              >
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-              <div className="flex items-center gap-2">
-                <span>{t('dashboard.transferred')}: <strong className="text-[var(--color-text-primary)]">{formatBytes(effectiveBytesDisplay)}</strong> / {formatBytes(data.total_bytes)}</span>
-              </div>
-              <div className="flex items-center gap-2 justify-end">
-                <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Source & Target Connection Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Source Card */}
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <CloudArrowDownIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
-                {t('migrations.source')}
-              </h3>
-            </div>
-            
-            <div className="space-y-2">
-              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
-                {data.source_provider || 'nextcloud'}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
-                {data.source_url || t('migrations.oauth')}
-              </div>
-              <SelectedPathsViewer paths={data.selected_paths} />
-            </div>
-          </div>
-
-          {/* Target Card */}
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <CloudArrowUpIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
-                {t('migrations.target')}
-              </h3>
-            </div>
-
-            <div className="space-y-2">
-              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
-                {data.target_provider || 'nextcloud'}
-              </div>
-              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
-                {data.target_url || t('migrations.oauth')}
-              </div>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="ui-card inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-secondary)]">
-                  <span>{data.target_dir || '/'}</span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <TransferEndpoints sourceLabel={t('migrations.source')} targetLabel={t('migrations.target')} oauthLabel={t('migrations.oauth')} sourceProvider={data.source_provider} sourceUrl={data.source_url} selectedPaths={data.selected_paths} targetProvider={data.target_provider} targetUrl={data.target_url} targetDir={data.target_dir} />
 
         {/* Active Transfers & Status / Summary 2-Column Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-          {/* Column 1: Active Transfers */}
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <ArrowsRightLeftIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
-                {t('dashboard.activeTransfers', { count: data.active_files?.length || 0, threads: threads })}
-              </h3>
-            </div>
-
-            {data.active_files && data.active_files.length > 0 ? (
-              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1">
-                {data.active_files.map((file, i) => {
-                  const fileName = file.split('/').pop() || file;
-                  return (
-                    <div key={i} className="ui-card flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] font-mono text-[var(--color-text-secondary)] min-w-0">
-                      <span className="truncate pr-4" title={file}>{fileName}</span>
-                      <span className="text-[10px] text-[var(--color-success-text)] font-semibold uppercase animate-pulse shrink-0 bg-[var(--color-success-bg)] border border-[var(--color-success-border)] px-2 py-0.5">{t('dashboard.running')}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="py-4 text-xs text-[var(--color-text-muted)] font-mono">
-                {t('dashboard.noActiveTransfers')}
-              </div>
-            )}
-          </div>
-
-          {/* Column 2: Progress & Status */}
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <ChartBarIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">
-                {t('migrations.status')} & {t('dashboard.progress')}
-              </h3>
-            </div>
-
+        <div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">
+          <ActiveTransfersPanel title={t('dashboard.activeTransfers', { count: data.active_files?.length || 0, threads })} activeFiles={data.active_files} runningLabel={t('dashboard.running')} emptyLabel={t('dashboard.noActiveTransfers')} />
+          <TransferStatusPanel title={`${t('migrations.status')} & ${t('dashboard.progress')}`}>
             <div className="space-y-2 font-sans text-xs text-[var(--color-text-muted)]">
               {data.resource_stats ? (
                 <>
@@ -562,7 +445,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 </>
               )}
             </div>
-          </div>
+          </TransferStatusPanel>
         </div>
 
         {/* Performance Controls Grid: Bandwidth Limit & Threads side by side */}

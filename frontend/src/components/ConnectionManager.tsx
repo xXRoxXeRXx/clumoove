@@ -4,6 +4,7 @@ import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
 import { apiFetch } from '../utils/apiClient';
 import { MessageBanner, type MessageState } from './MessageBanner';
+import { LoadingIndicator } from './LoadingIndicator';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import type { ApiErrBody } from './SettingsPage';
 import { LinkIcon as Plug } from '@heroicons/react/24/outline';
@@ -149,7 +150,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 
       {/* Profile list */}
       {loading ? (
-        <div className="text-center text-[11px] font-mono text-[var(--color-text-muted)] py-8">{t('common.loading')}</div>
+        <div className="flex justify-center py-8"><LoadingIndicator label={t('common.loading')} /></div>
       ) : profiles.length === 0 ? (
         <div className="ui-card p-6 text-center text-sm text-[var(--color-text-muted)] font-sans">
           {t('settings.connections.noProfiles')}

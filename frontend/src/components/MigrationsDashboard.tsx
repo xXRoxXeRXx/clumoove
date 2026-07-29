@@ -6,6 +6,7 @@ import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
 import { useToast } from '../contexts/useToast';
 import { StatusBadge } from './StatusBadge';
+import { LoadingIndicator } from './LoadingIndicator';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ArrowPathIcon, CalendarDaysIcon, PauseIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
@@ -269,7 +270,7 @@ export function MigrationsDashboard({
 
       {initialDataLoading ? (
         <div className="flex flex-col items-center justify-center py-20 gap-4" aria-live="polite">
-          <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
+          <LoadingIndicator label={t('migrations.loadingData')} />
         </div>
       ) : <>
       {/* Stats Widgets Grid */}
@@ -416,7 +417,7 @@ export function MigrationsDashboard({
           if (loading) {
             return (
               <div className="flex flex-col items-center justify-center py-20 gap-4">
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] tracking-wider">{t('migrations.loadingData')}</p>
+                <LoadingIndicator label={t('migrations.loadingData')} />
               </div>
             );
           }

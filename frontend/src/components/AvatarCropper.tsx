@@ -75,8 +75,9 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
     ctx.drawImage(image, x, y, drawW, drawH);
     ctx.restore();
 
-    // Draw dark transparent overlay outside the crop box
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+    const tokens = getComputedStyle(document.documentElement);
+    // Keep canvas rendering aligned with the application theme tokens.
+    ctx.fillStyle = tokens.getPropertyValue('--color-avatar-canvas-overlay').trim();
     
     // Top overlay
     ctx.fillRect(0, 0, 300, 50);
@@ -88,14 +89,14 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
     ctx.fillRect(250, 50, 50, 200);
 
     // Draw a circular outline for cropping preview
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.strokeStyle = tokens.getPropertyValue('--color-avatar-canvas-stroke').trim();
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.arc(150, 150, 100, 0, 2 * Math.PI);
     ctx.stroke();
 
     // Draw thin crop boundary helper
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.strokeStyle = tokens.getPropertyValue('--color-avatar-canvas-boundary').trim();
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.strokeRect(50, 50, 200, 200);

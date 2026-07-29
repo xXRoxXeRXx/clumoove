@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { Button } from './Button';
 
 interface TransferDetailHeaderProps {
   backLabel: string;
@@ -13,10 +14,10 @@ export function TransferDetailHeader({ backLabel, onBack, title, id, actions }: 
   return (
     <>
       <div className="flex items-center justify-between">
-        <button onClick={onBack} className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium">
+        <Button onClick={onBack}>
           <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
           {backLabel}
-        </button>
+        </Button>
       </div>
       <div className="flex flex-col items-start justify-between gap-4 border-b border-[var(--color-border)] pb-6 md:flex-row md:items-center">
         <div className="space-y-1">

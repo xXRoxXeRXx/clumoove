@@ -9,6 +9,7 @@ import { MessageBanner } from './MessageBanner';
 import { apiFetch } from '../utils/apiClient';
 import { Toggle } from './Toggle';
 import { Badge, StatusBadge } from './StatusBadge';
+import { LoadingIndicator } from './LoadingIndicator';
 
 type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
 
@@ -444,7 +445,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
     })();
   }, [apiUrl, token]);
 
-  if (!stats) return <div className="py-8 text-center text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>;
+  if (!stats) return <div className="flex justify-center py-8"><LoadingIndicator label={t('common.loading')} /></div>;
 
   const card = (label: string, value: number | string) => (
     <div className="p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
