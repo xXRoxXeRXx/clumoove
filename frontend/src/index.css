@@ -149,6 +149,11 @@ html {
   border-radius: var(--radius-lg);
 }
 
+.ui-section.p-6,
+.ui-section.p-8 {
+  background-color: #ffffff;
+}
+
 @utility ui-input {
   background-color: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
