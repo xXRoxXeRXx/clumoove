@@ -2,6 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -19,11 +22,12 @@ import (
 )
 
 type SFTPProvider struct {
-	Host       string
-	Port       string
-	Username   string
-	Password   string
-	PrivateKey string
+	Host        string
+	Port        string
+	Username    string
+	Password    string
+	PrivateKey  string
+	hostKeyHash [sha256.Size]byte
 
 	mu         sync.Mutex
 	sshClient  *ssh.Client
@@ -52,6 +56,11 @@ func NewSFTPProvider(rawURL, username, password string) (*SFTPProvider, error) {
 		port = "22"
 	}
 
+	hostKeyHash, err := parseSFTPHostKeyFingerprint(u.Query().Get("host_key"))
+	if err != nil {
+		return nil, err
+	}
+
 	var privateKey string
 	trimmedPassword := strings.TrimSpace(password)
 	if strings.HasPrefix(trimmedPassword, "-----BEGIN") {
@@ -60,12 +69,41 @@ func NewSFTPProvider(rawURL, username, password string) (*SFTPProvider, error) {
 	}
 
 	return &SFTPProvider{
-		Host:       host,
-		Port:       port,
-		Username:   username,
-		Password:   password,
-		PrivateKey: privateKey,
+		Host:        host,
+		Port:        port,
+		Username:    username,
+		Password:    password,
+		PrivateKey:  privateKey,
+		hostKeyHash: hostKeyHash,
 	}, nil
+}
+
+// parseSFTPHostKeyFingerprint accepts the SHA-256 fingerprint format emitted
+// by ssh-keygen (for example, SHA256:AbCd...). The fingerprint must be
+// obtained from a trusted administrator or server console before configuring
+// the connection; accepting a key learned from the network would permit MITM.
+func parseSFTPHostKeyFingerprint(fingerprint string) ([sha256.Size]byte, error) {
+	var expected [sha256.Size]byte
+	encoded, ok := strings.CutPrefix(strings.TrimSpace(fingerprint), "SHA256:")
+	if !ok || encoded == "" {
+		return expected, fmt.Errorf("SFTP host_key must be a SHA256 SSH host key fingerprint")
+	}
+
+	// ssh-keygen emits the SHA-256 fingerprint as unpadded Base64.
+	decoded, err := base64.RawStdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) != sha256.Size {
+		return expected, fmt.Errorf("invalid SFTP host_key fingerprint")
+	}
+	copy(expected[:], decoded)
+	return expected, nil
+}
+
+func (p *SFTPProvider) verifyHostKey(hostname string, remote net.Addr, key ssh.PublicKey) error {
+	actual := sha256.Sum256(key.Marshal())
+	if subtle.ConstantTimeCompare(actual[:], p.hostKeyHash[:]) != 1 {
+		return fmt.Errorf("SFTP host key mismatch for %s (remote %v, key type %s)", hostname, remote, key.Type())
+	}
+	return nil
 }
 
 func (p *SFTPProvider) cleanPath(filePath string) string {
@@ -125,7 +163,7 @@ func (p *SFTPProvider) ensureConnected() error {
 	config := &ssh.ClientConfig{
 		User:            p.Username,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: p.verifyHostKey,
 		Timeout:         15 * time.Second,
 	}
 

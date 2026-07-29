@@ -2,12 +2,16 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"testing"
 )
 
+const testSFTPHostKeyFingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
 func TestNewSFTPProviderValid(t *testing.T) {
-	p, err := NewSFTPProvider("sftp://example.com:2222/", "user", "pass")
+	p, err := NewSFTPProvider("sftp://example.com:2222/?host_key="+testSFTPHostKeyFingerprint, "user", "pass")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -26,7 +30,7 @@ func TestNewSFTPProviderValid(t *testing.T) {
 }
 
 func TestNewSFTPProviderDefaultPort(t *testing.T) {
-	p, err := NewSFTPProvider("sftp://10.0.0.1/", "user", "pass")
+	p, err := NewSFTPProvider("sftp://10.0.0.1/?host_key="+testSFTPHostKeyFingerprint, "user", "pass")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -37,7 +41,7 @@ func TestNewSFTPProviderDefaultPort(t *testing.T) {
 
 func TestNewSFTPProviderPrivateKey(t *testing.T) {
 	mockKey := "-----BEGIN OPENSSH PRIVATE KEY-----\nmock\n-----END OPENSSH PRIVATE KEY-----"
-	p, err := NewSFTPProvider("sftp://example.com/", "user", mockKey)
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", mockKey)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -46,6 +50,31 @@ func TestNewSFTPProviderPrivateKey(t *testing.T) {
 	}
 	if p.Password != "" {
 		t.Errorf("expected Password to be emptied when PrivateKey is provided")
+	}
+}
+
+func TestNewSFTPProviderRequiresValidHostKeyFingerprint(t *testing.T) {
+	for _, rawURL := range []string{
+		"sftp://example.com/",
+		"sftp://example.com/?host_key=SHA256:not-base64",
+		"sftp://example.com/?host_key=SHA256:abc",
+		"sftp://example.com/?host_key=MD5:aa:bb",
+	} {
+		if _, err := NewSFTPProvider(rawURL, "user", "pass"); err == nil {
+			t.Errorf("NewSFTPProvider(%q) succeeded without a valid fingerprint", rawURL)
+		}
+	}
+}
+
+func TestParseSFTPHostKeyFingerprint(t *testing.T) {
+	want := sha256.Sum256([]byte("host key"))
+	fingerprint := "SHA256:" + base64.RawStdEncoding.EncodeToString(want[:])
+	got, err := parseSFTPHostKeyFingerprint(fingerprint)
+	if err != nil {
+		t.Fatalf("parseSFTPHostKeyFingerprint returned error: %v", err)
+	}
+	if got != want {
+		t.Errorf("parsed fingerprint = %x, want %x", got, want)
 	}
 }
 
@@ -68,7 +97,7 @@ func TestIsSFTPAuthError(t *testing.T) {
 }
 
 func TestSFTPProviderNonFilesRejected(t *testing.T) {
-	p, err := NewSFTPProvider("sftp://example.com/", "user", "pass")
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", "pass")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
