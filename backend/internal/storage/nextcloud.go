@@ -124,9 +124,8 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 	} else {
 		baseURL = baseURL + "/remote.php/dav"
 	}
-
-	// Extract the host for the egress dialer (validates the resolved IP on
-	// every connection to defeat DNS rebinding).
+	// Preserve the configured host so the dialer revalidates DNS on every
+	// connection and recognizes redirect destinations as distinct egress.
 	host := rawURL
 	if parsed, err := url.Parse(rawURL); err == nil && parsed.Hostname() != "" {
 		host = parsed.Hostname()
@@ -138,12 +137,13 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 			Username: username,
 			Password: password,
 			HTTPClient: &http.Client{
-				Transport: newLoggingTransport(newDAVTransport(host)),
-				Timeout:   0,
+				Transport:     newLoggingTransport(newDAVTransport(host)),
+				Timeout:       0,
+				CheckRedirect: validateEgressRedirect,
 			},
-			Threads:   8,
-			UserAgent: "Nextcloud-Migration-Worker/1.0",
-			pb:        nextcloudPaths{},
+			Threads:                8,
+			UserAgent:              "Nextcloud-Migration-Worker/1.0",
+			pb:                     nextcloudPaths{},
 			supportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
 		},
 	}, nil

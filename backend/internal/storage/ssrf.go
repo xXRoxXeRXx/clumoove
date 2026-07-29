@@ -72,7 +72,12 @@ func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
 	}
 	transport := base.Clone()
 	transport.DialContext = egressDialer(u.Hostname())
-	return &http.Client{Transport: transport, Timeout: 15 * time.Second}, nil
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: validateEgressRedirect}, nil
+}
+
+// validateEgressRedirect applies the egress policy to every redirect target.
+func validateEgressRedirect(req *http.Request, _ []*http.Request) error {
+	return validateEgressURL(req.URL.String())
 }
 
 // egressDialer returns a DialContext that pins egress to a validated address.
@@ -87,18 +92,25 @@ func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
 // Because the transport derives ServerName from the request URL's host — not from
 // the address we dial — certificate verification still targets the real hostname
 // while the TCP connection goes to the validated IP.
-func egressDialer(host string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+func egressDialer(configuredHost string) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
-		// Literal IP: already validated at construction; dial directly.
-		if net.ParseIP(host) != nil {
-			var d net.Dialer
-			return d.DialContext(ctx, network, addr)
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("egress: invalid dial address %q: %w", addr, err)
 		}
 
-		_, port, err := net.SplitHostPort(addr)
-		if err != nil {
-			// addr unexpectedly lacked a port; fall back to the host directly.
-			port = ""
+		// A literal initial endpoint was checked by provider construction. Retain
+		// that behaviour, but only for that exact host; a redirect destination
+		// must be independently validated before it can be dialled.
+		if ip := net.ParseIP(host); ip != nil {
+			configuredIP := net.ParseIP(configuredHost)
+			if configuredIP == nil || !configuredIP.Equal(ip) {
+				if blocked, reason := isBlockedIP(ip); blocked {
+					return nil, fmt.Errorf("egress to %s is not allowed (%s)", host, reason)
+				}
+			}
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
 		}
 
 		ips, err := resolveEgressIPs(ctx, host)
