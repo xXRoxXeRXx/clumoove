@@ -584,9 +584,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             <span>{t('common.back')}</span>
           </button>
         ) : <span />}
-        <h2 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
+        <h1 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
           {subStep === 1 ? t('connect.wizardStepSource') : t('connect.wizardStepTarget')}
-        </h2>
+        </h1>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -649,8 +649,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
               {sourceProvider === 'smb' ? (
                 <>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2 space-y-1">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-1 sm:col-span-2">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
@@ -674,7 +674,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
@@ -728,8 +728,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : sourceProvider === 'sftp' ? (
                 <>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2 space-y-1">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-1 sm:col-span-2">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
@@ -827,7 +827,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : sourceProvider === 's3' ? (
                 <>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input
@@ -1136,8 +1136,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
               {targetProvider === 'smb' ? (
                 <>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2 space-y-1">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-1 sm:col-span-2">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
@@ -1161,7 +1161,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
@@ -1215,8 +1215,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : targetProvider === 'sftp' ? (
                 <>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="col-span-2 space-y-1">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-1 sm:col-span-2">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
                         type="text"
@@ -1314,7 +1314,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : targetProvider === 's3' ? (
                 <>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input

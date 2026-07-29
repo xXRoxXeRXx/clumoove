@@ -52,9 +52,9 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
         <div className="ui-section p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
             <LoadingIndicator label={t('confirmEmail.pleaseWait')} />
-            <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
+            <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('confirmEmail.changing')}
-            </h2>
+            </h1>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
                {t('confirmEmail.pleaseWait')}
             </p>
@@ -69,9 +69,9 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
       <div className="max-w-md w-full mx-auto my-8 px-4">
         <div className="ui-section p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
-            <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
+            <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('confirmEmail.changed')}
-            </h2>
+            </h1>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
                {t('reset.redirecting')}
             </p>
@@ -85,9 +85,9 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
     <div className="max-w-md w-full mx-auto my-8 px-4">
       <div className="ui-section p-8 text-center">
         <div className="flex flex-col items-center gap-4 py-4">
-          <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
+          <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
              {t('confirmEmail.invalid')}
-          </h2>
+          </h1>
           <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
               {error || t('confirmEmail.invalidDefault')}
           </p>

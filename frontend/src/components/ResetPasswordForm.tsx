@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
+import { ProgressBar } from './ProgressBar';
 
 interface ResetPasswordFormProps {
   apiUrl: string;
@@ -80,9 +81,9 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
       <div className="max-w-md w-full mx-auto my-8 px-4">
         <div className="ui-section p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
-            <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
+            <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('reset.changed')}
-            </h2>
+            </h1>
             <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
                {t('reset.redirecting')}
             </p>
@@ -97,9 +98,9 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
       <div className="ui-section p-8">
 
         <div className="flex flex-col items-center mb-8">
-          <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
+          <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
             {t('reset.title')}
-          </h2>
+          </h1>
           <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
              {t('reset.portal')}
           </p>
@@ -113,11 +114,12 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+            <label htmlFor="reset-password" className="ui-field-label">
               {t('reset.title')}
             </label>
             <div className="relative group">
               <input
+                id="reset-password"
                 type={showPassword ? 'text' : 'password'}
                 required
                 autoComplete="new-password"
@@ -130,6 +132,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
               >
                 <span className="text-[10px]">{showPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
               </button>
@@ -137,23 +140,19 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
             {password.length > 0 && (
               <div className="flex items-center gap-2 mt-2">
-                <div className="ui-progress flex-1 h-1.5">
-                  <div
-                    className={`h-full ${strength.color} transition-all duration-300`}
-                    style={{ width: `${(strength.score / 5) * 100}%` }}
-                  />
-                </div>
+                <ProgressBar label={t('reset.title')} value={(strength.score / 5) * 100} className="flex-1 h-1.5" indicatorClassName={strength.color} />
                  <span className="text-[9px] font-mono text-[var(--color-text-muted)] uppercase">{t(`reset.strength.${strength.label}`)}</span>
               </div>
             )}
           </div>
 
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+            <label htmlFor="reset-confirm-password" className="ui-field-label">
               {t('settings.confirmPassword')}
             </label>
             <div className="relative group">
               <input
+                id="reset-confirm-password"
                 type={showConfirmPassword ? 'text' : 'password'}
                 required
                 autoComplete="new-password"
@@ -166,6 +165,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
                 type="button"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                aria-label={showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')}
               >
                 <span className="text-[10px]">{showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
               </button>

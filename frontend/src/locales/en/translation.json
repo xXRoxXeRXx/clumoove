@@ -44,10 +44,18 @@
   "nav": {
     "settings": "Settings",
     "admin": "Admin",
-    "logout": "Log out"
+    "logout": "Log out",
+    "overview": "Go to overview"
   },
   "language": {
     "select": "Select language"
+  },
+  "format": {
+    "duration": {
+      "seconds": "{{count}} sec",
+      "minutes": "{{count}} min",
+      "hours": "{{count}} hr"
+    }
   },
   "delivery": {
     "notification": { "subject": "Clumoove notification", "kind": { "migration": "Migration", "sync": "Sync", "test": "Test" }, "status": "Status", "processed": "Processed", "failed": "Failed", "skipped": "Skipped" },
@@ -144,7 +152,6 @@
     "bucketPlaceholder": "my-bucket",
     "sharePlaceholder": "projects",
     "magentacloudInfo": "Connects to magentacloud.de (WebDAV). Use the dedicated WebDAV password from your MagentaCLOUD account settings — NOT your regular account password.",
-    "localInfo": "Local storage. Files are read from and written to the server-configured LOCAL_STORAGE_ROOT directory. Enter only a relative path inside that directory — no URL, username, or password is required.",
     "localInfo": "Reads and writes files directly on the server inside the configured LOCAL_STORAGE_ROOT directory. No credentials are required — only enter a relative path within that sandbox (no absolute paths or \"..\" traversal).",
     "googleConnect": "Google Connection",
     "dropboxConnect": "Dropbox Connection",
@@ -390,8 +397,6 @@
       "oauthConnectedAs": "Connected as {{user}}",
       "tokenExpiresIn": "Token expires in {{days}} days"
     },
-    "about": "About",
-    "version": "Version",
     "profile": "Profile",
     "profilePicture": "Profile picture",
     "avatarHint": "Upload a new profile picture. Supported formats: PNG, JPEG, WebP, and GIF up to 2 MB.",

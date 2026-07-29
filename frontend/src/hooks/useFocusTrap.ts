@@ -15,10 +15,14 @@ export function useFocusTrap(
   containerRef: RefObject<HTMLElement | null>,
   initialFocusRef: RefObject<HTMLElement | null>,
   onEscape: () => void,
+  enabled = true,
 ) {
   useLayoutEffect(() => {
+    if (!enabled) return;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    initialFocusRef.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => initialFocusRef.current?.focus(), 0);
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -49,8 +53,10 @@ export function useFocusTrap(
 
     document.addEventListener('keydown', onKeyDown, true);
     return () => {
+      window.clearTimeout(focusTimer);
       document.removeEventListener('keydown', onKeyDown, true);
+      document.body.style.overflow = previousOverflow;
       if (previousFocus && document.contains(previousFocus)) previousFocus.focus();
     };
-  }, [containerRef, initialFocusRef, onEscape]);
+  }, [containerRef, initialFocusRef, onEscape, enabled]);
 }

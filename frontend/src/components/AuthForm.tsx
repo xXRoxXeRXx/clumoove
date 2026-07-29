@@ -219,9 +219,9 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
+            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
               {t('auth.mustChangePassword')}
-            </h2>
+            </h1>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
               {t('auth.setNewPassword')}
             </p>
@@ -295,9 +295,9 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
+            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
               {t('auth.totpTitle')}
-            </h2>
+            </h1>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
               {t('auth.totpEnterCode')}
             </p>
@@ -379,9 +379,9 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
+            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
               {t('auth.forgotTitle')}
-            </h2>
+            </h1>
             <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
               {t('auth.portalLogin')}
             </p>
@@ -397,7 +397,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
               <form onSubmit={handleForgotPassword} className="space-y-5">
                 <div className="space-y-1.5">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                  <label htmlFor="forgot-email" className="ui-field-label">
                      {t('auth.email')}
                   </label>
                   <div className="relative group">
@@ -405,6 +405,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                       <span aria-hidden="true">@</span>
                     </span>
                     <input
+                      id="forgot-email"
                       type="email"
                       required
                       autoComplete="email"
@@ -517,9 +518,9 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
               <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
             </div>
-            <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight text-center">
+            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight text-center">
               {t('auth.setupAdminTitle')}
-            </h2>
+            </h1>
             <p className="text-xs text-[var(--color-text-muted)] font-mono tracking-wide text-center mt-2 leading-relaxed">
               {t('auth.setupAdminSubtitle')}
             </p>
@@ -533,11 +534,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
           <form onSubmit={handleSetupAdminSubmit} className="space-y-5">
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+              <label htmlFor="setup-name" className="ui-field-label">
                 {t('auth.name')}
               </label>
               <div>
                 <input
+                  id="setup-name"
                   type="text"
                   required
                   placeholder={t('auth.namePlaceholder')}
@@ -549,7 +551,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+              <label htmlFor="setup-email" className="ui-field-label">
                 {t('auth.email')}
               </label>
               <div className="relative group">
@@ -557,6 +559,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   <span aria-hidden="true">@</span>
                 </span>
                 <input
+                  id="setup-email"
                   type="email"
                   required
                   autoComplete="email"
@@ -569,7 +572,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
             </div>
 
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+              <label htmlFor="setup-password" className="ui-field-label">
                 {t('auth.password')}
               </label>
               <div className="relative group">
@@ -577,6 +580,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   <span aria-hidden="true">•</span>
                 </span>
                 <input
+                  id="setup-password"
                   type={showPassword ? 'text' : 'password'}
                   required
                   placeholder={t('auth.passwordPlaceholder')}
@@ -687,9 +691,9 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           <div className="mb-4 text-sm font-semibold text-[var(--color-text-secondary)]">
             <span className="text-sm font-semibold" aria-hidden="true">Clumoove</span>
           </div>
-          <h2 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
+          <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">
             {isLogin ? t('auth.welcomeBack') : t('auth.createAccount')}
-          </h2>
+          </h1>
           <p className="text-[9px] text-[var(--color-text-muted)] font-mono tracking-widest uppercase mt-1">
             {isLogin ? t('auth.portalLogin') : t('auth.portalRegister')}
           </p>
@@ -711,11 +715,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
           {/* Display Name - only for registration */}
           {!isLogin && (
             <div className="space-y-1.5">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+              <label htmlFor="auth-name" className="ui-field-label">
                 {t('auth.name')}
               </label>
               <div>
                 <input
+                  id="auth-name"
                   type="text"
                   required
                   placeholder={t('auth.namePlaceholder')}
@@ -729,11 +734,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
           {/* Email input */}
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+            <label htmlFor="auth-email" className="ui-field-label">
               {t('auth.email')}
             </label>
             <div>
               <input
+                id="auth-email"
                 type="email"
                 required
                 autoComplete="email"
@@ -747,11 +753,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
 
           {/* Password input */}
           <div className="space-y-1.5">
-            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+            <label htmlFor="auth-password" className="ui-field-label">
                 {t('auth.password')}
               </label>
             <div className="relative group">
               <input
+                id="auth-password"
                 type={showPassword ? 'text' : 'password'}
                 required
                 autoComplete={isLogin ? 'current-password' : 'new-password'}

@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
+    "locale:check": "node scripts/check-locales.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
