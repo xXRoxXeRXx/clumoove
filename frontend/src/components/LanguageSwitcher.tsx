@@ -54,7 +54,7 @@ export function LanguageSwitcher({ authenticated = false }: { authenticated?: bo
       </button>
 
       {open && (
-        <div className="ui-section absolute bottom-full right-0 z-50 mb-2 w-40 bg-[var(--color-bg-elevated)] py-1">
+        <div className="ui-section absolute bottom-full right-0 z-[var(--layer-menu)] mb-2 w-40 bg-[var(--color-bg-elevated)] py-1">
           {LANGUAGES.map((lang) => {
             const isSelected = current === lang.code;
             return (

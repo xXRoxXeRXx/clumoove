@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { LoadingIndicator } from './LoadingIndicator';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
 interface ConfirmEmailChangeFormProps {
@@ -50,7 +51,7 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
       <div className="max-w-md w-full mx-auto my-8 px-4">
         <div className="ui-section p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
-            <span className="ui-loading animate-spin rounded-full h-12 w-12 border-2 border-t-transparent" />
+            <LoadingIndicator label={t('confirmEmail.pleaseWait')} />
             <h2 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('confirmEmail.changing')}
             </h2>

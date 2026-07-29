@@ -39,8 +39,8 @@ function SectionCard({ icon: Icon, title, children }: {
 
 const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
 const selectCls = 'ui-input px-3 py-2 text-sm font-sans';
-const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium hover:opacity-90';
-const secondaryBtnCls = 'ui-button-secondary px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]';
+const primaryBtnCls = 'ui-button-primary px-3 py-2 text-sm font-medium';
+const secondaryBtnCls = 'ui-button-secondary px-3 py-2 text-sm';
 
 export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
   const { t } = useTranslation();
@@ -214,43 +214,37 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
   return (
     <SectionCard icon={UsersIcon} title={t('admin.tabs.users')}>
       <div className="flex flex-wrap items-center gap-2">
-        <input
+          <input
           value={qInput}
           onChange={(e) => setQInput(e.target.value)}
-          placeholder={t('common.search')}
+            placeholder={t('common.search')}
+            aria-label={t('common.search')}
           className={inputCls}
         />
-        <select value={roleFilter} onChange={(e) => { setRoleFilter(e.target.value); setPage(1); }}
+        <select value={roleFilter} aria-label={t('admin.users.allRoles')} onChange={(e) => { setRoleFilter(e.target.value); setPage(1); }}
           className={selectCls}>
           <option value="">{t('admin.users.allRoles')}</option>
           <option value="USER">USER</option>
           <option value="ADMIN">ADMIN</option>
         </select>
-        <select value={activeFilter} onChange={(e) => { setActiveFilter(e.target.value); setPage(1); }}
+        <select value={activeFilter} aria-label={t('admin.users.allStates')} onChange={(e) => { setActiveFilter(e.target.value); setPage(1); }}
           className={selectCls}>
           <option value="">{t('admin.users.allStates')}</option>
           <option value="true">{t('common.active')}</option>
           <option value="false">{t('admin.users.suspended')}</option>
         </select>
         <button onClick={() => setShowCreate((v) => !v)}
-          className="ml-auto rounded-md bg-[var(--color-bg-inverse)] px-3 py-2 text-sm font-medium text-[var(--color-text-inverse)] hover:opacity-90">
+          className="ui-button-primary ml-auto px-3 py-2 text-sm font-medium">
           {t('admin.users.create')}
         </button>
       </div>
 
       {showCreate && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
-          <input type="email" autoComplete="email" name="email" placeholder={t('auth.emailPlaceholder')} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}
-            className={inputCls} />
-          <input type="text" autoComplete="name" name="display_name" placeholder={t('auth.namePlaceholder')} value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })}
-            className={inputCls} />
-          <input type="password" autoComplete="new-password" name="password" placeholder={t('auth.passwordPlaceholder')} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })}
-            className={inputCls} />
-          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}
-            className={selectCls}>
-            <option value="USER">USER</option>
-            <option value="ADMIN">ADMIN</option>
-          </select>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
+          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.email')}</span><input type="email" autoComplete="email" name="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} /></label>
+          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.name')}</span><input type="text" autoComplete="name" name="display_name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} className={inputCls} /></label>
+          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.password')}</span><input type="password" autoComplete="new-password" name="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} /></label>
+          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('admin.users.role')}</span><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={selectCls}><option value="USER">USER</option><option value="ADMIN">ADMIN</option></select></label>
           <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] md:col-span-2">
             <input type="checkbox" checked={form.must_change_password} onChange={(e) => setForm({ ...form, must_change_password: e.target.checked })} />
             {t('admin.users.forcePasswordChange')}
@@ -262,8 +256,8 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
         </div>
       )}
 
-      <div className="overflow-x-auto rounded-2xl border border-[var(--color-border)]">
-        <table className="w-full text-xs">
+      <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+        <table className="ui-responsive-table w-full text-xs">
           <thead className="bg-[var(--color-bg-tertiary)]/60 text-[var(--color-text-muted)]">
             <tr>
               <th className="text-left px-3 py-2 font-semibold">{t('auth.email')}</th>
@@ -277,18 +271,18 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
           <tbody>
             {users.map((u) => (
               <tr key={u.id} className="border-t border-[var(--color-border)]">
-                <td className="px-3 py-2">{u.email}</td>
-                <td className="px-3 py-2">{u.display_name}</td>
-                <td className="px-3 py-2">
+                <td data-label={t('auth.email')} className="px-3 py-2">{u.email}</td>
+                <td data-label={t('auth.name')} className="px-3 py-2">{u.display_name}</td>
+                <td data-label={t('admin.users.role')} className="px-3 py-2">
                   <Badge size="sm" variant="muted" label={u.role} />
                 </td>
-                <td className="px-3 py-2">
+                <td data-label={t('common.active')} className="px-3 py-2">
                   {u.active
                     ? <Badge size="sm" variant="success" label={t('common.active')} />
                     : <Badge size="sm" variant="error" label={t('admin.users.suspended')} />}
                 </td>
-                <td className="px-3 py-2 text-[var(--color-text-muted)]">{u.created_at ? formatDateTime(u.created_at) : ''}</td>
-                <td className="px-3 py-2">
+                <td data-label={t('admin.users.createdAt')} className="px-3 py-2 text-[var(--color-text-muted)]">{u.created_at ? formatDateTime(u.created_at) : ''}</td>
+                <td data-label={t('migrations.actions')} className="px-3 py-2">
                   <div className="flex justify-end gap-1.5">
                     {u.active ? (
                       <button type="button" aria-label={t('admin.users.suspend')} onClick={() => act(() => adminApi.suspendUser(apiUrl, token, u.id!), 'admin.users.suspendedOk')}
@@ -399,8 +393,8 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
 
   return (
     <SectionCard icon={Activity} title={t('admin.tabs.migrations')}>
-      <div className="overflow-x-auto rounded-2xl border border-[var(--color-border)]">
-        <table className="w-full text-xs">
+      <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+        <table className="ui-responsive-table w-full text-xs">
           <thead className="bg-[var(--color-bg-tertiary)]/60 text-[var(--color-text-muted)]">
             <tr>
               <th className="text-left px-3 py-2 font-semibold">{t('admin.migrations.owner')}</th>
@@ -414,14 +408,14 @@ function MigrationsTab({ apiUrl, token, formatBytes, formatDateTime }: {
           <tbody>
             {items.map((m) => (
               <tr key={m.id} className="border-t border-[var(--color-border)]">
-                <td className="px-3 py-2">{m.owner_email || <span className="text-[var(--color-text-muted)]">—</span>}</td>
-                <td className="px-3 py-2">
+                <td data-label={t('admin.migrations.owner')} className="px-3 py-2">{m.owner_email || <span className="text-[var(--color-text-muted)]">—</span>}</td>
+                <td data-label={t('admin.transfers.type')} className="px-3 py-2">
                   <Badge size="sm" variant={m.type === 'SYNC' ? 'info' : 'muted'} label={m.type === 'SYNC' ? t('admin.transfers.sync') : t('admin.transfers.migration')} />
                 </td>
-                <td className="px-3 py-2"><StatusBadge status={m.status} size="sm" /></td>
-                <td className="px-3 py-2">{m.source_provider} → {m.target_provider}</td>
-                <td className="px-3 py-2">{m.processed_files}/{m.total_files} · {formatBytes(m.processed_bytes)}</td>
-                <td className="px-3 py-2 text-[var(--color-text-muted)]">{formatDateTime(m.created_at)}</td>
+                <td data-label={t('migrations.status')} className="px-3 py-2"><StatusBadge status={m.status} size="sm" /></td>
+                <td data-label={t('admin.migrations.sourceTarget')} className="px-3 py-2">{m.source_provider} → {m.target_provider}</td>
+                <td data-label={t('dashboard.progress')} className="px-3 py-2">{m.processed_files}/{m.total_files} · {formatBytes(m.processed_bytes)}</td>
+                <td data-label={t('admin.migrations.created')} className="px-3 py-2 text-[var(--color-text-muted)]">{formatDateTime(m.created_at)}</td>
               </tr>
             ))}
             {!loading && items.length === 0 && (
@@ -453,9 +447,9 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
   if (!stats) return <div className="py-8 text-center text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>;
 
   const card = (label: string, value: number | string) => (
-    <div className="p-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
+    <div className="p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
       <div className="text-2xl font-display font-semibold text-[var(--color-text-primary)]">{value}</div>
-      <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mt-1">{label}</div>
+      <div className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] mt-1">{label}</div>
     </div>
   );
 
@@ -472,7 +466,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="p-4 rounded-2xl border border-[var(--color-border)]">
+        <div className="p-4 rounded-lg border border-[var(--color-border)]">
           <div className="text-xs font-bold text-[var(--color-text-primary)] mb-3">{t('admin.stats.migrationsByStatus')}</div>
           <div className="space-y-1.5">
             {Object.entries(stats.migrations_by_status).map(([k, v]) => (
@@ -484,7 +478,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
             {Object.keys(stats.migrations_by_status).length === 0 && <div className="text-[var(--color-text-muted)]">—</div>}
           </div>
         </div>
-        <div className="p-4 rounded-2xl border border-[var(--color-border)]">
+        <div className="p-4 rounded-lg border border-[var(--color-border)]">
           <div className="text-xs font-bold text-[var(--color-text-primary)] mb-3">{t('admin.stats.syncsByStatus')}</div>
           <div className="space-y-1.5">
             {Object.entries(stats.syncs_by_status || {}).map(([k, v]) => (
@@ -496,7 +490,7 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
             {Object.keys(stats.syncs_by_status || {}).length === 0 && <div className="text-[var(--color-text-muted)]">—</div>}
           </div>
         </div>
-        <div className="p-4 rounded-2xl border border-[var(--color-border)]">
+        <div className="p-4 rounded-lg border border-[var(--color-border)]">
           <div className="text-xs font-bold text-[var(--color-text-primary)] mb-3">{t('admin.stats.tasksByStatus')}</div>
           <div className="space-y-1.5">
             {Object.entries(stats.tasks_by_status).map(([k, v]) => (
@@ -558,22 +552,22 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
   return (
     <SectionCard icon={ScrollText} title={t('admin.tabs.audit')}>
       <div className="flex flex-wrap items-center gap-2">
-        <select value={action} onChange={(e) => { setAction(e.target.value); setPage(1); }}
+        <select value={action} aria-label={t('admin.audit.allActions')} onChange={(e) => { setAction(e.target.value); setPage(1); }}
           className={selectCls}>
           <option value="">{t('admin.audit.allActions')}</option>
           {actions.map((a) => <option key={a} value={a}>{t(`admin.audit.actions.${a}`)}</option>)}
         </select>
-        <input value={userID} onChange={(e) => { setUserID(e.target.value); setPage(1); }} placeholder={t('admin.audit.userId')}
+        <input value={userID} aria-label={t('admin.audit.userId')} onChange={(e) => { setUserID(e.target.value); setPage(1); }} placeholder={t('admin.audit.userId')}
           className="ui-input w-44 px-3 py-2 text-sm font-sans" />
-        <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }}
+        <input type="date" aria-label={t('admin.audit.when')} value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }}
           className={selectCls} />
-        <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }}
+        <input type="date" aria-label={t('admin.audit.when')} value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }}
           className={selectCls} />
         <button type="button" aria-label={t('common.refresh')} onClick={() => { setPage(1); }} className="ui-button-secondary p-1.5"><RefreshCw className="w-3.5 h-3.5" /></button>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-[var(--color-border)]">
-        <table className="w-full text-xs">
+      <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
+        <table className="ui-responsive-table w-full text-xs">
           <thead className="bg-[var(--color-bg-tertiary)]/60 text-[var(--color-text-muted)]">
             <tr>
               <th className="text-left px-3 py-2 font-semibold">{t('admin.audit.when')}</th>
@@ -586,11 +580,11 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
           <tbody>
             {entries.map((e) => (
               <tr key={e.id} className="border-t border-[var(--color-border)]">
-                <td className="px-3 py-2 text-[var(--color-text-muted)] whitespace-nowrap">{formatDateTime(e.created_at)}</td>
-                <td className="px-3 py-2"><Badge size="sm" variant="muted" label={t(`admin.audit.actions.${e.action}`)} /></td>
-                <td className="px-3 py-2 font-mono text-[10px]">{e.user_id ? e.user_id.slice(0, 8) : '—'}</td>
-                <td className="px-3 py-2 font-mono text-[10px] max-w-[160px] truncate" title={e.target}>{e.target || '—'}</td>
-                <td className="px-3 py-2 font-mono text-[10px]">{e.ip || '—'}</td>
+                <td data-label={t('admin.audit.when')} className="px-3 py-2 text-[var(--color-text-muted)] whitespace-nowrap">{formatDateTime(e.created_at)}</td>
+                <td data-label={t('admin.audit.action')} className="px-3 py-2"><Badge size="sm" variant="muted" label={t(`admin.audit.actions.${e.action}`)} /></td>
+                <td data-label={t('admin.audit.actor')} className="px-3 py-2 font-mono text-xs">{e.user_id ? e.user_id.slice(0, 8) : '—'}</td>
+                <td data-label={t('admin.audit.target')} className="px-3 py-2 font-mono text-xs max-w-[160px] truncate" title={e.target}>{e.target || '—'}</td>
+                <td data-label={t('admin.audit.ip')} className="px-3 py-2 font-mono text-xs">{e.ip || '—'}</td>
               </tr>
             ))}
             {!loading && entries.length === 0 && (
@@ -670,7 +664,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
     <SectionCard icon={SlidersHorizontal} title={t('admin.system.title')}>
       <MessageBanner message={message} />
 
-      <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
+      <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-lg">
         <div className="text-left space-y-1 pr-4">
           <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.allowRegistrations')}</h4>
           <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">

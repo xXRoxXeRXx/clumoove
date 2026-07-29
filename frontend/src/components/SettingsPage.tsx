@@ -605,7 +605,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
             <MessageBanner message={avatarMessage} />
 
-            <div className="flex flex-col items-center sm:flex-row gap-5 p-2 bg-[var(--color-bg-tertiary)]/50 rounded-2xl border border-[var(--color-border)]/50">
+            <div className="flex flex-col items-center sm:flex-row gap-5 p-2 bg-[var(--color-bg-tertiary)]/50 rounded-lg border border-[var(--color-border)]/50">
               <div className="relative shrink-0">
                 {user?.avatar ? (
                   <img
@@ -626,7 +626,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               </div>
 
               <div className="flex-grow space-y-2.5">
-                <p className="text-[10px] text-[var(--color-text-muted)] font-sans leading-relaxed">
+                <p className="text-xs text-[var(--color-text-muted)] font-sans leading-relaxed">
                   {t('settings.avatarHint')}
                 </p>
                 <div className="flex flex-wrap gap-2.5">
@@ -1169,7 +1169,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   />
                 </div>
                 {smtpHasConfig && (
-                  <p className="text-[9px] text-[var(--color-text-muted)] font-mono leading-relaxed">
+                  <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
                     {t('settings.smtpPasswordHint')}
                   </p>
                 )}
@@ -1218,7 +1218,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 </select>
               </div>
 
-              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-2xl">
+              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-lg">
                 <div className="text-left space-y-1 pr-4">
                   <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.smtpNotify')}</h4>
                   <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">

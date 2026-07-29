@@ -10,6 +10,7 @@ import { Badge, StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ErrorOverview } from './ErrorOverview';
+import { TransferDetailHeader } from './TransferDetailHeader';
 import { BANDWIDTH_OPTIONS, bandwidthIndexToValue, getBandwidthLabel, valueToBandwidthIndex } from '../utils/bandwidth';
 import {
   AdjustmentsHorizontalIcon,
@@ -284,30 +285,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
   return (
     <div className="w-full space-y-6">
-      {/* Back Button Header */}
-      <div className="flex items-center justify-between">
-        <button
-          onClick={onBack}
-          className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
-        >
-          <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
-          {t('common.back')}
-        </button>
-      </div>
-
       <div className="ui-card p-6 space-y-6">
-        {/* Title & Action Controls */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[var(--color-border)] pb-6">
-          <div className="space-y-1">
-            <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)]">
-              {t('sync.syncJobDetail')}
-            </h1>
-            <p className="text-xs text-[var(--color-text-muted)] font-mono">
-              ID: {job.id}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 w-full md:w-auto justify-start md:justify-end flex-wrap">
+        <TransferDetailHeader backLabel={t('common.back')} onBack={onBack} title={t('sync.syncJobDetail')} id={job.id} actions={
+          <>
             {job.status === 'PAUSED' ? (
               <button
                 onClick={handleResume}
@@ -316,7 +296,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               >
                 {t('sync.resume')}
               </button>
-            ) : (
+            ) : canPause ? (
               <button
                 onClick={handlePause}
                 disabled={actionLoading || !canPause}
@@ -324,7 +304,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               >
                 {t('sync.pause')}
               </button>
-            )}
+            ) : null}
 
             {canStart && (
               <button
@@ -336,8 +316,8 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 {t('sync.syncNow')}
               </button>
             )}
-          </div>
-        </div>
+          </>
+        } />
 
         <div className="flex items-center gap-2.5">
           <StatusBadge status={job.status} />
@@ -582,7 +562,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 }}
                 className="w-full accent-[var(--color-text-primary)]"
               />
-              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
+              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
                 {t('dashboard.threadsHint')}
               </p>
             </div>
@@ -616,7 +596,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 }}
                 className="w-full accent-[var(--color-text-primary)]"
               />
-              <p className="text-[9px] text-[var(--color-text-muted)] leading-relaxed">
+              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
                 {bandwidthLimit === 0
                   ? t('fileBrowser.bandwidthUnlimited')
                   : t('fileBrowser.bandwidthHint', { limit: getBandwidthLabel(bandwidthLimit, t('dashboard.unlimited')) })}

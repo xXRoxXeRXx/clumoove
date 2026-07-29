@@ -451,9 +451,9 @@ function App() {
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans relative">
       
-      <header className="sticky top-0 z-50 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+      <header className="sticky top-0 z-[var(--layer-sticky)] border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
           <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <div>
+          <div className="min-w-0">
             <button
               type="button"
               onClick={step !== 'login' ? goToOverview : undefined}
@@ -461,7 +461,7 @@ function App() {
               aria-label="Clumoove – go to overview"
               className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--color-text-primary)] disabled:cursor-default"
             >
-              <img src="/clumoove_logo.svg" alt="" className="ui-brand-logo h-8 w-8 object-contain" />
+              <span aria-hidden="true" className="ui-brand-logo h-8 w-8 bg-[var(--color-text-primary)]" />
               Clumoove
             </button>
           </div>
@@ -478,7 +478,7 @@ function App() {
                 aria-controls="user-menu"
                 className="flex items-center gap-2 cursor-pointer p-0 text-sm"
               >
-                <span className="font-medium text-[var(--color-text-primary)]">{user.display_name}</span>
+                <span className="min-w-0 max-w-36 truncate font-medium text-[var(--color-text-primary)] sm:max-w-56">{user.display_name}</span>
                 {user.avatar ? (
                   <img 
                     src={user.avatar} 
@@ -510,7 +510,7 @@ function App() {
                       items[event.key === 'Home' ? 0 : items.length - 1]?.focus();
                     }
                   }}
-                  className="absolute right-0 top-full z-50 mt-2 w-48 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1"
+                  className="absolute right-0 top-full z-[var(--layer-menu)] mt-2 w-48 border border-[var(--color-border)] bg-[var(--color-bg-elevated)] py-1"
                 >
                   {user?.role === 'ADMIN' && (
                     <button
@@ -657,7 +657,7 @@ function App() {
 
       {/* Footer */}
       <footer className="mt-auto border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)] py-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-end px-6">
+        <div className="mx-auto flex max-w-6xl items-center justify-end px-4 sm:px-6">
           <LanguageSwitcher authenticated={Boolean(user && token)} />
         </div>
       </footer>
