@@ -18,13 +18,13 @@ func TestBestSourceHash(t *testing.T) {
 		want       string
 	}{
 		{
-			name:       "prefer cryptographic worker hash over source hash",
+			name:       "prefer cryptographic source hash over worker hash",
 			workerHash: sql.NullString{String: "SHA1:abc123456789", Valid: true},
 			sourceHash: sql.NullString{String: "SHA1:def987654321", Valid: true},
-			want:       "SHA1:abc123456789",
+			want:       "SHA1:def987654321",
 		},
 		{
-			name:       "fallback to cryptographic source hash if worker hash is etag",
+			name:       "prefer cryptographic source hash if worker hash is etag",
 			workerHash: sql.NullString{String: "ETAG:\"etag123\"", Valid: true},
 			sourceHash: sql.NullString{String: "SHA256:fedcba9876543210", Valid: true},
 			want:       "SHA256:fedcba9876543210",
@@ -36,10 +36,10 @@ func TestBestSourceHash(t *testing.T) {
 			want:       "MD5:0123456789abcdef",
 		},
 		{
-			name:       "fallback to worker etag if both are etags",
+			name:       "prefer source etag if both are etags",
 			workerHash: sql.NullString{String: "ETAG:\"worker-etag\"", Valid: true},
 			sourceHash: sql.NullString{String: "ETAG:\"source-etag\"", Valid: true},
-			want:       "ETAG:\"worker-etag\"",
+			want:       "ETAG:\"source-etag\"",
 		},
 		{
 			name:       "fallback to source etag if worker hash is invalid",

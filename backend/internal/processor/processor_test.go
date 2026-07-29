@@ -1,7 +1,9 @@
 package processor
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"sync"
 	"testing"
@@ -9,6 +11,67 @@ import (
 
 	"backend/internal/storage"
 )
+
+type sizeRetryProvider struct{ fakeProvider }
+
+func (*sizeRetryProvider) FileExists(context.Context, string, string) (bool, int64, error) {
+	return false, 0, errors.New("transient target error")
+}
+
+func TestExpectedSizeReader(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		expected int64
+		wantErr  bool
+	}{
+		{name: "exact size", input: "data", expected: 4},
+		{name: "clean early eof", input: "dat", expected: 4, wantErr: true},
+		{name: "source grew", input: "data!", expected: 4, wantErr: true},
+		{name: "empty exact size", input: "", expected: 0},
+		{name: "non-empty source indexed as zero", input: "data", expected: 0, wantErr: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := newExpectedSizeReader(bytes.NewBufferString(tc.input), tc.expected)
+			_, readErr := io.ReadAll(reader)
+			verifyErr := reader.VerifyComplete()
+			if (readErr != nil || verifyErr != nil) != tc.wantErr {
+				t.Fatalf("ReadAll error = %v, VerifyComplete error = %v, want error=%v", readErr, verifyErr, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestExpectedSizeReaderVerifyCompleteWithoutRead(t *testing.T) {
+	nonEmpty := newExpectedSizeReader(bytes.NewBufferString("data"), 0)
+	if err := nonEmpty.VerifyComplete(); err == nil {
+		t.Fatal("VerifyComplete() without Read accepted a non-empty source indexed as zero")
+	}
+
+	empty := newExpectedSizeReader(bytes.NewBuffer(nil), 0)
+	if err := empty.VerifyComplete(); err != nil {
+		t.Fatalf("VerifyComplete() without Read for an empty source: %v", err)
+	}
+	if err := empty.VerifyComplete(); err != nil {
+		t.Fatalf("successful VerifyComplete() is not idempotent: %v", err)
+	}
+}
+
+func TestVerifyTargetSizeStopsWhenContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	started := time.Now()
+	_, _, err := verifyTargetSize(ctx, &sizeRetryProvider{}, "files", "/file")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("verifyTargetSize() error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(started); elapsed > 100*time.Millisecond {
+		t.Fatalf("verifyTargetSize() waited %v after cancellation", elapsed)
+	}
+}
 
 // fakeProvider is a minimal StorageProvider used to exercise transfer-decision
 // helpers without any network. Only SupportsAtomicRename is meaningful here;

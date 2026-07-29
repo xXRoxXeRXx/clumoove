@@ -399,7 +399,8 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		close(heartbeatStop)
 	}()
 
-	hashingReader := io.TeeReader(throttledDownloadStream, activeWriter)
+	sizedReader := newExpectedSizeReader(throttledDownloadStream, task.FileSize)
+	hashingReader := io.TeeReader(sizedReader, activeWriter)
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
 	if sourceHashStr != "" && sourceAlgo != "ETAG" {
 		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
@@ -421,6 +422,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	if err != nil {
 		return fmt.Errorf("failed to upload: %w", err)
 	}
+	if err := sizedReader.VerifyComplete(); err != nil {
+		return err
+	}
 
 	// Rename temp file if necessary
 	if tgtClient.SupportsAtomicRename() {
@@ -440,6 +444,16 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 				ModifiedTime: srcRes.LastModified,
 			})
 			metaCancel()
+		}
+	}
+
+	if task.ResourceType == "files" {
+		exists, targetSize, err := verifyTargetSize(ctx, tgtClient, task.ResourceType, tgtPath)
+		if err != nil {
+			return fmt.Errorf("failed to verify target size: %w", err)
+		}
+		if !exists || targetSize != task.FileSize {
+			return fmt.Errorf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize)
 		}
 	}
 
