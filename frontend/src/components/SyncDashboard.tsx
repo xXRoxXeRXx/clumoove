@@ -5,21 +5,20 @@ import { useFormat, formatBytes, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
-import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { Badge, StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ErrorOverview } from './ErrorOverview';
 import { TransferDetailHeader } from './TransferDetailHeader';
+import { TransferProgress } from './TransferProgress';
+import { TransferEndpoints } from './TransferEndpoints';
+import { ActiveTransfersPanel, TransferStatusPanel } from './TransferRunSummary';
+import { LoadingIndicator } from './LoadingIndicator';
 import { BANDWIDTH_OPTIONS, bandwidthIndexToValue, getBandwidthLabel, valueToBandwidthIndex } from '../utils/bandwidth';
 import {
   AdjustmentsHorizontalIcon,
   ArrowLeftIcon,
-  ArrowsRightLeftIcon,
-  ChartBarIcon,
   ClockIcon,
-  CloudArrowDownIcon,
-  CloudArrowUpIcon,
 } from '@heroicons/react/24/outline';
 
 interface SyncDashboardProps {
@@ -249,7 +248,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <p className="text-xs font-mono text-[var(--color-text-muted)]">{t('common.loading')}</p>
+        <LoadingIndicator label={t('common.loading')} />
       </div>
     );
   }
@@ -325,117 +324,14 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         </div>
 
         {/* Live Transfer Progress (only shown while a run is active) */}
-        {(job.status === 'RUNNING' || job.status === 'INDEXING') && (
-          <div className="ui-card p-6 flex flex-col">
-              <div className="flex items-end justify-between mb-6 border-b border-[var(--color-border-light)] pb-4.5">
-                <div>
-                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.progress')}</span>
-                  <h3 className="font-display font-extrabold text-5xl text-[var(--color-text-primary)] mt-1.5 leading-none">
-                    {byteProgressPercent}%
-                  </h3>
-                </div>
-                <div className="text-right flex flex-col items-end">
-                  <span className="text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('dashboard.transferRate')}</span>
-                  <p className="text-base font-extrabold text-[var(--color-success-text)] mt-1.5 font-mono">
-                    {formatBytes(speed)}/s
-                  </p>
-                </div>
-              </div>
+        {(job.status === 'RUNNING' || job.status === 'INDEXING') && <TransferProgress progress={byteProgressPercent} rate={`${formatBytes(speed)}/s`} transferred={totalBytes > 0 ? `${formatBytes(effectiveBytesDisplay)} / ${formatBytes(totalBytes)}` : `${job.processed_files} / ${job.total_files}`} remaining={eta} labels={{ progress: t('dashboard.progress'), transferRate: t('dashboard.transferRate'), transferred: t('dashboard.transferred'), remaining: t('dashboard.remaining') }} />}
 
-              <div className="w-full bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] h-5 p-0.5 mb-6 overflow-hidden">
-                <div
-                  className="bg-[var(--color-bg-inverse)] h-full transition-all duration-500 ease-out"
-                  style={{ width: `${byteProgressPercent}%` }}
-                >
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 text-[10px] font-mono font-bold text-[var(--color-text-muted)] uppercase tracking-wider">
-                <div className="flex items-center gap-2">
-                  <span>
-                    {t('dashboard.transferred')}:{' '}
-                    <strong className="text-[var(--color-text-primary)]">
-                      {totalBytes > 0 ? formatBytes(effectiveBytesDisplay) : `${job.processed_files}`}
-                    </strong>
-                    {totalBytes > 0 ? ` / ${formatBytes(totalBytes)}` : ` / ${job.total_files}`}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 justify-end">
-                  <span>{t('dashboard.remaining')}: <strong className="text-[var(--color-text-primary)]">{eta}</strong></span>
-                </div>
-              </div>
-          </div>
-        )}
-
-        {/* Source & Target Connection Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <CloudArrowDownIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.source')}</h3>
-            </div>
-            <div className="space-y-2">
-              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">{job.source_provider}</div>
-              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">{job.source_url || t('migrations.oauth')}</div>
-              <SelectedPathsViewer paths={job.selected_paths} />
-            </div>
-          </div>
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <CloudArrowUpIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.target')}</h3>
-            </div>
-            <div className="space-y-2">
-              <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">{job.target_provider}</div>
-              <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">{job.target_url || t('migrations.oauth')}</div>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="ui-card inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-secondary)]">
-                  <span>{job.target_dir || '/'}</span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <TransferEndpoints sourceLabel={t('migrations.source')} targetLabel={t('migrations.target')} oauthLabel={t('migrations.oauth')} sourceProvider={job.source_provider} sourceUrl={job.source_url} selectedPaths={job.selected_paths} targetProvider={job.target_provider} targetUrl={job.target_url} targetDir={job.target_dir} />
 
         {/* Active transfers and run status follow the migration-detail layout. */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <ArrowsRightLeftIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('sync.activeTransfersTitle', { count: job.active_files?.length || 0, threads })}</h3>
-            </div>
-            {job.active_files?.length ? (
-              <div className="space-y-2 max-h-[465px] overflow-y-auto pr-1">
-                {job.active_files.map((file, i) => {
-                  const fileName = file.split('/').pop() || file;
-                  return (
-                    <div key={i} className="ui-card flex items-center justify-between text-xs py-2.5 px-3.5 bg-[var(--color-bg-tertiary)] font-mono text-[var(--color-text-secondary)] min-w-0">
-                      <span className="truncate pr-4" title={file}>{fileName}</span>
-                      <span className="text-[10px] text-[var(--color-success-text)] font-semibold uppercase animate-pulse shrink-0 bg-[var(--color-success-bg)] border border-[var(--color-success-border)] px-2 py-0.5">
-                        {t('dashboard.running')}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="py-4 text-xs text-[var(--color-text-muted)] font-mono">
-                {t('dashboard.noActiveTransfers')}
-              </div>
-            )}
-          </div>
-          <div className="ui-card p-5 space-y-4">
-            <div className="flex items-center gap-2 border-b border-[var(--color-border-light)] pb-2.5">
-              <ChartBarIcon className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
-              <h3 className="font-display font-bold text-xs text-[var(--color-text-primary)] uppercase tracking-wider font-mono">{t('migrations.status')} & {t('dashboard.progress')}</h3>
-            </div>
-            <div className="space-y-2 font-sans text-xs text-[var(--color-text-muted)]">
-              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('dashboard.filesTotal')}</span><span className="font-bold text-[var(--color-text-primary)] font-mono">{job.total_files}</span></div>
-              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.changedFiles')}</span><span className="font-bold text-[var(--color-success-text)] font-mono">{job.changed_files}</span></div>
-              <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]"><span>{t('sync.deletedFiles')}</span><span className="font-bold text-[var(--color-text-primary)] font-mono">{job.deleted_files}</span></div>
-              <div className="flex justify-between items-center py-1.5"><span>{t('dashboard.failed')}</span><span className={`font-bold font-mono ${job.failed_files > 0 ? 'text-[var(--color-error-text)]' : 'text-[var(--color-text-muted)]'}`}>{job.failed_files}</span></div>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">
+          <ActiveTransfersPanel title={t('sync.activeTransfersTitle', { count: job.active_files?.length || 0, threads })} activeFiles={job.active_files} runningLabel={t('dashboard.running')} emptyLabel={t('dashboard.noActiveTransfers')} />
+          <TransferStatusPanel title={`${t('migrations.status')} & ${t('dashboard.progress')}`} rows={[{ label: t('dashboard.filesTotal'), value: job.total_files }, { label: t('sync.changedFiles'), value: job.changed_files, tone: 'success' }, { label: t('sync.deletedFiles'), value: job.deleted_files }, { label: t('dashboard.failed'), value: job.failed_files, tone: job.failed_files > 0 ? 'error' : 'default' }]} />
         </div>
 
         {/* Timing, Schedule & Configuration Grid */}

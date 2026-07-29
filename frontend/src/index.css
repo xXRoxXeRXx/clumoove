@@ -54,6 +54,11 @@
   --color-file-document: #047857;
   --color-file-archive: #c2410c;
   --color-file-default: #71717a;
+  --color-selection-bg: #d4d4d8;
+  --color-selection-text: #18181b;
+  --color-avatar-canvas-overlay: rgb(24 24 27 / 0.58);
+  --color-avatar-canvas-stroke: #ffffff;
+  --color-avatar-canvas-boundary: rgb(255 255 255 / 0.35);
   --color-error-bg: #fef2f2;
   --color-error-border: #fecaca;
   --color-error-text: #b91c1c;
@@ -125,6 +130,11 @@ html {
   --color-file-document: #6ee7b7;
   --color-file-archive: #fdba74;
   --color-file-default: #d4d4d8;
+  --color-selection-bg: #3f3f46;
+  --color-selection-text: #fafafa;
+  --color-avatar-canvas-overlay: rgb(9 9 11 / 0.72);
+  --color-avatar-canvas-stroke: #fafafa;
+  --color-avatar-canvas-boundary: rgb(250 250 250 / 0.4);
 }
 
 @utility ui-card {
@@ -300,6 +310,17 @@ html {
 
 @utility ui-toggle-checked { background-color: var(--color-bg-inverse); }
 
+@utility ui-label {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+@utility ui-meta { color: var(--color-text-muted); font-size: 0.75rem; }
+
 @utility ui-file-folder { color: var(--color-file-folder); }
 @utility ui-file-image { color: var(--color-file-image); }
 @utility ui-file-video { color: var(--color-file-video); }
@@ -326,7 +347,12 @@ body {
   -webkit-mask: url('/clumoove_logo.svg') center / contain no-repeat;
 }
 
-::selection { background: #d4d4d8; color: #18181b; }
+::selection { background: var(--color-selection-bg); color: var(--color-selection-text); }
+
+/* Compact legacy metadata remains readable at the product-wide 12px minimum. */
+:where([class*="text-[9px]"], [class*="text-[9.5px]"], [class*="text-[10px]"], [class*="text-[11px]"]) {
+  font-size: 0.75rem;
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
