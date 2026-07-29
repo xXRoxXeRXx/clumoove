@@ -552,7 +552,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
         </button>
         <div className="flex items-center gap-2">
           <Settings className="w-5 h-5 text-[var(--color-text-primary)]" />
-          <h2 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('settings.title')}</h2>
+          <h1 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('settings.title')}</h1>
         </div>
       </div>
 
@@ -1108,8 +1108,8 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
             <MessageBanner message={smtpMessage} />
 
             <form onSubmit={handleSaveSMTP} className="space-y-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div className="col-span-2 space-y-1.5">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <div className="space-y-1.5 sm:col-span-2">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                     {t('settings.smtpHost')}
                   </label>
@@ -1175,7 +1175,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                     {t('settings.smtpFromEmail')}

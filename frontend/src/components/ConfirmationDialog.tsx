@@ -35,6 +35,8 @@ export function ConfirmationDialog({
 
     previousFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
 
     const focusCancel = () => {
       cancelRef.current?.focus();
@@ -81,6 +83,7 @@ export function ConfirmationDialog({
     return () => {
       window.clearTimeout(focusTimer);
       document.removeEventListener('keydown', onKeyDown, true);
+      document.body.style.overflow = previousOverflow;
       const prev = previousFocusRef.current;
       if (prev && document.contains(prev)) {
         prev.focus();
@@ -94,9 +97,6 @@ export function ConfirmationDialog({
   return (
     <div
       className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
       role="presentation"
     >
       <div

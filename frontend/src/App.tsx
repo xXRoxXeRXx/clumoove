@@ -41,6 +41,18 @@ const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
+// Provider-specific fields mount dynamically; retain native label semantics
+// without duplicating IDs across every provider branch.
+function associateUnlinkedFormLabels(root: ParentNode = document) {
+  root.querySelectorAll<HTMLLabelElement>('label:not([for])').forEach((label, index) => {
+    if (label.control || label.closest('[role="group"], [role="radiogroup"]')) return;
+    const control = label.parentElement?.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input:not([type="hidden"]), select, textarea');
+    if (!control) return;
+    if (!control.id) control.id = `ui-field-${index}-${Math.random().toString(36).slice(2, 8)}`;
+    label.htmlFor = control.id;
+  });
+}
+
 // Security: warn when the API is reached over plaintext HTTP on a non-loopback
 // host, since access tokens and connection credentials would then transit in clear (A04).
 if (API_URL.startsWith('http://') && !/(localhost|127\.0\.0\.1)/.test(new URL(API_URL).hostname)) {
@@ -50,6 +62,12 @@ if (API_URL.startsWith('http://') && !/(localhost|127\.0\.0\.1)/.test(new URL(AP
 function App() {
   const { t, i18n } = useTranslation();
   const dismissConfirm = useDismissConfirm();
+  useEffect(() => {
+    associateUnlinkedFormLabels();
+    const observer = new MutationObserver(() => associateUnlinkedFormLabels());
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
   const resetTokenFromUrl = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('reset-token')
     : null;
@@ -454,16 +472,22 @@ function App() {
       <header className="sticky top-0 z-[var(--layer-sticky)] border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
           <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <div className="min-w-0">
+            {step !== 'login' ? (
             <button
               type="button"
-              onClick={step !== 'login' ? goToOverview : undefined}
-              disabled={step === 'login'}
-              aria-label="Clumoove – go to overview"
-              className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--color-text-primary)] disabled:cursor-default"
+              onClick={goToOverview}
+              aria-label={t('nav.overview')}
+              className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--color-text-primary)]"
             >
               <span aria-hidden="true" className="ui-brand-logo h-8 w-8 bg-[var(--color-text-primary)]" />
               Clumoove
             </button>
+            ) : (
+              <div className="flex items-center gap-2 text-lg font-semibold tracking-tight text-[var(--color-text-primary)]">
+                <span aria-hidden="true" className="ui-brand-logo h-8 w-8 bg-[var(--color-text-primary)]" />
+                Clumoove
+              </div>
+            )}
           </div>
 
           {/* User Section in Header */}

@@ -10,6 +10,7 @@ import { apiFetch } from '../utils/apiClient';
 import { Toggle } from './Toggle';
 import { Badge, StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
+import { Tabs } from './Tabs';
 
 type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
 
@@ -76,34 +77,21 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
         </button>
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-5 h-5 text-[var(--color-text-primary)]" />
-          <h2 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('admin.title')}</h2>
+          <h1 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('admin.title')}</h1>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label={t('admin.title')}>
-        {tabs.map(([key, Icon, label]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            role="tab"
-            aria-selected={tab === key}
-            aria-controls={`admin-panel-${key}`}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-md border font-medium text-sm cursor-pointer ${
-              tab === key
-                ? 'bg-[var(--color-bg-inverse)] border-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
-                : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]'
-            }`}
-          >
-            <Icon className="w-4 h-4" />
-            {t(label)}
-          </button>
-        ))}
-      </div>
+       {message && <MessageBanner message={message} />}
 
-      {message && <MessageBanner message={message} />}
-
-      <div id={`admin-panel-${tab}`} role="tabpanel" className="min-h-[60vh]">
+       <Tabs
+         label={t('admin.title')}
+         value={tab}
+         onChange={(next) => setTab(next as Tab)}
+         className="flex flex-wrap gap-2"
+         items={tabs.map(([value, Icon, label]) => ({ value, label: <><Icon className="w-4 h-4" aria-hidden="true" />{t(label)}</> }))}
+       >
+       <div className="min-h-[60vh]">
         {tab === 'users' && (
           <UsersTab apiUrl={apiUrl} token={token} currentUserID={user?.id} onMessage={setMessage} onError={showError} />
         )}
@@ -111,7 +99,8 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
         {tab === 'stats' && <StatsTab apiUrl={apiUrl} token={token} />}
         {tab === 'audit' && <AuditTab apiUrl={apiUrl} token={token} formatDateTime={formatDateTime} />}
         {tab === 'system' && <SystemTab apiUrl={apiUrl} token={token} onMessage={setMessage} />}
-      </div>
+       </div>
+       </Tabs>
     </div>
   );
 }
@@ -241,20 +230,20 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
       </div>
 
       {showCreate && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
-          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.email')}</span><input type="email" autoComplete="email" name="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} /></label>
-          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.name')}</span><input type="text" autoComplete="name" name="display_name" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} className={inputCls} /></label>
-          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.password')}</span><input type="password" autoComplete="new-password" name="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} /></label>
+        <form onSubmit={(event) => { event.preventDefault(); void create(); }} className="grid grid-cols-1 md:grid-cols-2 gap-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/40">
+          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.email')}</span><input type="email" autoComplete="email" name="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} /></label>
+          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.name')}</span><input type="text" autoComplete="name" name="display_name" required value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} className={inputCls} /></label>
+          <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('auth.password')}</span><input type="password" autoComplete="new-password" name="password" minLength={12} required value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={inputCls} /></label>
           <label className="space-y-1 text-sm text-[var(--color-text-secondary)]"><span>{t('admin.users.role')}</span><select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={selectCls}><option value="USER">USER</option><option value="ADMIN">ADMIN</option></select></label>
           <label className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)] md:col-span-2">
             <input type="checkbox" checked={form.must_change_password} onChange={(e) => setForm({ ...form, must_change_password: e.target.checked })} />
             {t('admin.users.forcePasswordChange')}
           </label>
           <div className="md:col-span-2 flex justify-end gap-2">
-            <button onClick={() => setShowCreate(false)} className={secondaryBtnCls}>{t('common.cancel')}</button>
-            <button onClick={create} className={primaryBtnCls}>{t('common.save')}</button>
-          </div>
-        </div>
+             <button type="button" onClick={() => setShowCreate(false)} className={secondaryBtnCls}>{t('common.cancel')}</button>
+             <button type="submit" className={primaryBtnCls}>{t('common.save')}</button>
+           </div>
+         </form>
       )}
 
       <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
@@ -689,6 +678,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
 
 function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (p: number) => void }) {
   const { t } = useTranslation();
+  const { formatNumber } = useFormat();
 
   return (
     <div className="flex items-center justify-between text-xs">
@@ -702,7 +692,7 @@ function Pager({ page, pages, onPage }: { page: number; pages: number; onPage: (
       >
         <ArrowLeft className="w-4 h-4" />
       </button>
-      <span className="text-[var(--color-text-muted)] font-mono">{page} / {pages}</span>
+      <span className="text-[var(--color-text-muted)] font-mono">{formatNumber(page)} / {formatNumber(pages)}</span>
       <button
         type="button"
         aria-label={t('common.nextPage')}

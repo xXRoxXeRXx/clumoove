@@ -36,7 +36,7 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState(false);
   const { t } = useTranslation();
-  const { formatDateTime } = useFormat();
+  const { formatDateTime, formatNumber } = useFormat();
 
   useEffect(() => {
     let cancelled = false;
@@ -107,7 +107,7 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
             </button>
           )}
           <span className="ui-card border-[var(--color-error-border)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
-            {total}
+            {formatNumber(total)}
           </span>
         </div>
       </div>

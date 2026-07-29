@@ -10,6 +10,7 @@ import { LoadingIndicator } from './LoadingIndicator';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ArrowPathIcon, CalendarDaysIcon, PauseIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ProgressBar } from './ProgressBar';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -323,10 +324,14 @@ export function MigrationsDashboard({
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 gap-4">
           {/* Segmented Pill Tabs */}
           <div className="flex items-center gap-1 border-b border-[var(--color-border)]" role="tablist" aria-label={t('migrations.title')}>
-            <button
-              onClick={() => setActiveTab('migrations')}
-              role="tab"
-              aria-selected={activeTab === 'migrations'}
+             <button
+               id="migrations-tab"
+               onClick={() => setActiveTab('migrations')}
+               role="tab"
+               aria-selected={activeTab === 'migrations'}
+               aria-controls="migrations-panel"
+               tabIndex={activeTab === 'migrations' ? 0 : -1}
+               onKeyDown={(event) => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'Home' || event.key === 'End') { event.preventDefault(); setActiveTab('sync'); } }}
               className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'migrations'
                   ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
@@ -338,10 +343,14 @@ export function MigrationsDashboard({
                 {migrations.length}
               </span>
             </button>
-            <button
-              onClick={() => setActiveTab('sync')}
-              role="tab"
-              aria-selected={activeTab === 'sync'}
+             <button
+               id="sync-tab"
+               onClick={() => setActiveTab('sync')}
+               role="tab"
+               aria-selected={activeTab === 'sync'}
+               aria-controls="sync-panel"
+               tabIndex={activeTab === 'sync' ? 0 : -1}
+               onKeyDown={(event) => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'Home' || event.key === 'End') { event.preventDefault(); setActiveTab('migrations'); } }}
               className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'sync'
                   ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
@@ -467,19 +476,7 @@ export function MigrationsDashboard({
                     const createdDate = formatDateTime(mig.created_at);
 
                   return (
-                    <tr
-                      key={mig.id}
-                       onClick={() => onSelectActiveMigration(mig.id)}
-                       onKeyDown={(e) => {
-                         if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
-                           e.preventDefault();
-                           onSelectActiveMigration(mig.id);
-                         }
-                       }}
-                       role="button"
-                       tabIndex={0}
-                       className="cursor-pointer transition-colors hover:bg-[var(--color-bg-tertiary)]"
-                    >
+                     <tr key={mig.id} className="transition-colors hover:bg-[var(--color-bg-tertiary)]">
                       {/* Date */}
                       <td data-label={t('migrations.createdAt')} className="py-4 px-4 whitespace-nowrap">
                         <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
@@ -490,7 +487,7 @@ export function MigrationsDashboard({
 
                       {/* Providers */}
                       <td data-label={t('migrations.sourceTarget')} className="py-4 px-4">
-                        <div className="flex items-center gap-2.5">
+                         <button type="button" onClick={() => onSelectActiveMigration(mig.id)} className="flex w-full items-center gap-2.5 text-left" aria-label={t('migrations.sourceTarget')}>
                           <div className="flex flex-col text-left">
                             <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize leading-snug">
                               {mig.source_provider}
@@ -502,8 +499,8 @@ export function MigrationsDashboard({
                               {t('sync.sourcePath')}: {mig.selected_paths?.length ? mig.selected_paths.join(', ') : '/'}
                             </span>
                           </div>
-                          
-                          <span className="text-[var(--color-text-muted)]" aria-hidden="true">→</span>
+                           
+                           <span className="text-[var(--color-text-muted)]" aria-hidden="true">→</span>
                           
                           <div className="flex flex-col text-left">
                             <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize leading-snug">
@@ -516,7 +513,7 @@ export function MigrationsDashboard({
                               {t('sync.targetPath')}: {mig.target_dir || '/'}
                             </span>
                           </div>
-                        </div>
+                        </button>
                       </td>
 
                       {/* Status */}
@@ -539,31 +536,26 @@ export function MigrationsDashboard({
                           </div>
                           
                           {/* Progress bar */}
-                          <div className="w-full bg-[var(--color-bg-tertiary)] h-1.5 overflow-hidden">
-                            <div
-                                className={`h-full transition-all duration-500 ${
+                           <ProgressBar
+                             label={t('migrations.progress')}
+                             valueText={t('migrations.filesCount', { processed: mig.processed_files, total: mig.total_files })}
+                             className="h-1.5"
+                             value={mig.total_files > 0 ? (mig.processed_files / mig.total_files) * 100 : 0}
+                              indicatorClassName={
                                 mig.status === 'FAILED'
                                   ? 'ui-progress-error'
                                   : mig.status === 'COMPLETED_WITH_ERRORS'
-                                  ? 'ui-progress-warning'
-                                  : mig.status === 'COMPLETED'
-                                  ? 'ui-progress-success'
-                                  : 'bg-[var(--color-bg-inverse)]'
-                              }`}
-                              style={{
-                                width: `${
-                                  mig.total_files > 0
-                                    ? (mig.processed_files / mig.total_files) * 100
-                                    : 0
-                                }%`,
-                              }}
-                            />
-                          </div>
+                                    ? 'ui-progress-warning'
+                                    : mig.status === 'COMPLETED'
+                                      ? 'ui-progress-success'
+                                      : 'bg-[var(--color-bg-inverse)]'
+                              }
+                           />
                         </div>
                       </td>
 
                       {/* Actions */}
-                      <td data-label={t('migrations.actions')} className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                       <td data-label={t('migrations.actions')} className="py-4 px-4 text-right whitespace-nowrap">
                         <div className="flex justify-end items-center gap-2">
                           {(() => {
                             const isPaused = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(mig.status);
@@ -580,7 +572,7 @@ export function MigrationsDashboard({
                               ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
                               : isPaused
                                 ? <PlayIcon className="size-4" aria-hidden="true" />
-                                : <PauseIcon className="size-4" aria-hidden="true" />}
+                              : <PauseIcon className="size-4" aria-hidden="true" />}
                           </button>
                             );
                           })()}
@@ -751,19 +743,7 @@ function SyncList({
         </thead>
         <tbody className="divide-y divide-[var(--color-border-light)]">
           {filteredSyncJobs.map((job) => (
-            <tr
-              key={job.id}
-               onClick={() => onSelectActiveSync && onSelectActiveSync(job.id)}
-               onKeyDown={(e) => {
-                 if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget && onSelectActiveSync) {
-                   e.preventDefault();
-                   onSelectActiveSync(job.id);
-                 }
-               }}
-               role={onSelectActiveSync ? 'button' : undefined}
-               tabIndex={onSelectActiveSync ? 0 : undefined}
-               className={onSelectActiveSync ? 'cursor-pointer transition-colors hover:bg-[var(--color-bg-tertiary)]' : undefined}
-            >
+             <tr key={job.id} className="transition-colors hover:bg-[var(--color-bg-tertiary)]">
               <td className="py-4 px-4 whitespace-nowrap">
                 <div className="flex items-center gap-2 text-xs font-mono text-[var(--color-text-secondary)]">
                   <CalendarDaysIcon className="size-4 text-[var(--color-text-muted)]" aria-hidden="true" />
@@ -771,7 +751,7 @@ function SyncList({
                 </div>
               </td>
               <td className="py-4 px-4">
-                <div className="flex items-center gap-2.5">
+                 <button type="button" onClick={() => onSelectActiveSync?.(job.id)} className="flex w-full items-center gap-2.5 text-left" aria-label={t('migrations.sourceTarget')}>
                   <div className="flex flex-col text-left min-w-0">
                     <span className="text-xs font-bold text-[var(--color-text-primary)] capitalize">
                       {job.source_provider}
@@ -795,7 +775,7 @@ function SyncList({
                       {t('sync.targetPath')}: {job.target_dir || '/'}
                     </span>
                   </div>
-                </div>
+                </button>
               </td>
               <td className="py-4 px-4 whitespace-nowrap">
                 <StatusBadge status={job.status} size="sm" />
@@ -820,14 +800,12 @@ function SyncList({
                         <span>{t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })}</span>
                         {totalBytes > 0 && <span>{formatBytes(displayedBytes)}</span>}
                       </div>
-                      <div className="h-1.5 w-full overflow-hidden bg-[var(--color-bg-tertiary)]">
-                        <div className={`h-full transition-all duration-500 ${color}`} style={{ width: `${progress}%` }} />
-                      </div>
+                      <ProgressBar label={t('migrations.progress')} value={progress} valueText={t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })} className="h-1.5" indicatorClassName={color} />
                     </div>
                   );
                 })()}
               </td>
-              <td className="py-4 px-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+              <td className="py-4 px-4 text-right whitespace-nowrap">
                 <div className="flex justify-end items-center gap-2">
                   {(() => {
                     const isPaused = job.status === 'PAUSED';

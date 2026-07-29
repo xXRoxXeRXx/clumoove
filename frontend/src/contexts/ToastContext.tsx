@@ -28,7 +28,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         className="fixed bottom-4 right-4 z-[var(--layer-toast)] flex flex-col gap-2 max-w-sm w-[min(100%-2rem,24rem)] pointer-events-none"
-        aria-live="polite"
+        aria-live="off"
       >
         {items.map((item) => {
           const styles =
@@ -40,7 +40,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           return (
             <div
               key={item.id}
-              role="status"
+              role={item.type === 'error' ? 'alert' : 'status'}
               className={`ui-alert pointer-events-auto px-3 py-2 text-sm leading-relaxed ${styles}`}
             >
               {item.text}

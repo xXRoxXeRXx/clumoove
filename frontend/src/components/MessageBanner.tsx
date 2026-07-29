@@ -10,7 +10,7 @@ export function MessageBanner({ message }: { message: MessageState }) {
         : 'ui-alert-error';
   return (
     <div
-      role="status"
+      role={message.type === 'error' ? 'alert' : 'status'}
       className={`ui-alert px-3 py-2 text-sm text-center leading-relaxed ${styles}`}
     >
       {message.text}

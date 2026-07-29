@@ -29,6 +29,7 @@ import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { Button } from './Button';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { BANDWIDTH_OPTIONS, valueToBandwidthIndex, bandwidthIndexToValue, getBandwidthLabel } from '../utils/bandwidth';
 
 
@@ -94,7 +95,6 @@ const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
   return <File className={`${className} ui-file-default`} />;
 };
 
-const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export const FileBrowser: React.FC<FileBrowserProps> = ({
   initialFiles,
@@ -146,7 +146,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [error, setError] = useState<string | null>(null);
   const targetDialogRef = useRef<HTMLDivElement>(null);
   const targetCloseButtonRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
   const targetDialogTitleId = useId();
 
   // Job type: a third mode (e.g. 'backup') can be added later as a third
@@ -165,45 +164,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [scheduledTime, setScheduledTime] = useState('');
   const [bandwidthLimit, setBandwidthLimit] = useState(0);
 
-  const closeTargetBrowser = () => {
+  const closeTargetBrowser = useCallback(() => {
     setIsTargetBrowserOpen(false);
     setIsCreatingFolder(false);
     setNewFolderName('');
-  };
+  }, []);
 
-  useEffect(() => {
-    if (!isTargetBrowserOpen) return;
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const focusTimer = window.setTimeout(() => targetCloseButtonRef.current?.focus(), 0);
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeTargetBrowser();
-        return;
-      }
-      if (event.key !== 'Tab' || !targetDialogRef.current) return;
-      const focusable = Array.from(targetDialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE))
-        .filter((element) => !element.hasAttribute('disabled') && element.tabIndex !== -1);
-      if (focusable.length === 0) {
-        event.preventDefault();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (event.shiftKey ? active === first || !targetDialogRef.current.contains(active) : active === last || !targetDialogRef.current.contains(active)) {
-        event.preventDefault();
-        (event.shiftKey ? last : first).focus();
-      }
-    };
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => {
-      window.clearTimeout(focusTimer);
-      document.removeEventListener('keydown', onKeyDown, true);
-      if (previousFocusRef.current && document.contains(previousFocusRef.current)) previousFocusRef.current.focus();
-      previousFocusRef.current = null;
-    };
-  }, [isTargetBrowserOpen]);
+  useFocusTrap(targetDialogRef, targetCloseButtonRef, closeTargetBrowser, isTargetBrowserOpen);
 
   const pathsToMigrate = useMemo(
     () => Object.keys(selectedPaths).filter((p) => selectedPaths[p]),
@@ -840,9 +807,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             <span>{t('common.back')}</span>
           </Button>
         ) : <span />}
-        <h2 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
+        <h1 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
           {t('fileBrowser.wizardStep')}
-        </h2>
+        </h1>
       </div>
 
       {/* Source & Target Connection Cards Grid */}

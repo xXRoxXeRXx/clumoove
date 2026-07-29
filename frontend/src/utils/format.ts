@@ -44,14 +44,20 @@ export type TFunc = (key: string, options?: Record<string, unknown>) => string;
 
 export const formatDuration = (seconds: number, t: TFunc): string => {
   if (seconds === Infinity || isNaN(seconds)) return t('dashboard.eta.computing');
-  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 60) return t('format.duration.seconds', { count: Math.round(seconds) });
   const mins = Math.floor(seconds / 60);
   const secs = Math.round(seconds % 60);
-  if (mins < 60) return `${mins}m ${secs}s`;
+  if (mins < 60) return `${t('format.duration.minutes', { count: mins })} ${t('format.duration.seconds', { count: secs })}`;
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
-  return `${hrs}h ${remMins}m`;
+  return `${t('format.duration.hours', { count: hrs })} ${t('format.duration.minutes', { count: remMins })}`;
 };
+
+export const formatNumber = (value: number, lng?: string): string =>
+  new Intl.NumberFormat(intlLocale(lng)).format(value);
+
+export const formatPercent = (value: number, lng?: string): string =>
+  new Intl.NumberFormat(intlLocale(lng), { style: 'percent', maximumFractionDigits: 0 }).format(value / 100);
 
 export const useFormat = () => {
   const { i18n } = useTranslation();
@@ -59,6 +65,8 @@ export const useFormat = () => {
   return {
     lng,
     formatBytes: (bytes: number) => formatBytes(bytes, lng),
+    formatNumber: (value: number) => formatNumber(value, lng),
+    formatPercent: (value: number) => formatPercent(value, lng),
     formatDate: (iso: string) => formatDate(iso, lng),
     formatDateTime: (iso: string) => formatDateTime(iso, lng),
   };

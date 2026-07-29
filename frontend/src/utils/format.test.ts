@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatBytes, formatDate, formatDateTime } from './format';
+import { formatBytes, formatDate, formatDateTime, formatDuration, formatNumber, formatPercent } from './format';
 
 describe('formatBytes', () => {
   it('returns 0 B for zero/negative/invalid', () => {
@@ -64,5 +64,22 @@ describe('formatDateTime', () => {
     const out = formatDateTime('2024-03-05T14:30:00Z', 'en');
     expect(out).toContain('2024');
     expect(out).toMatch(/14|02/); // hour present (locale-dependent 12/24h)
+  });
+});
+
+describe('formatDuration', () => {
+  const en = (key: string, options?: Record<string, unknown>) => `${options?.count ?? ''} ${key.split('.').at(-1)}`;
+
+  it('delegates unit labels to translations', () => {
+    expect(formatDuration(61, en)).toBe('1 minutes 1 seconds');
+    expect(formatDuration(Infinity, (key) => key)).toBe('dashboard.eta.computing');
+  });
+});
+
+describe('number formatting', () => {
+  it('uses the selected locale for numbers and percentages', () => {
+    expect(formatNumber(1234.5, 'en')).toContain(',');
+    expect(formatNumber(1234.5, 'de')).toContain('.');
+    expect(formatPercent(50, 'en')).toBe('50%');
   });
 });
