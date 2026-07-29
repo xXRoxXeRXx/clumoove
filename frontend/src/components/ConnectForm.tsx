@@ -22,6 +22,8 @@ interface ConnectFormProps {
 
 type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local' | 'immich';
 
+const sftpHostKeyFingerprintPattern = /^SHA256:[A-Za-z0-9+/]{43}$/;
+
 const formInputClass = 'ui-input w-full px-4 py-2.5 text-sm font-sans';
 const formMonoInputClass = `${formInputClass} font-mono`;
 const formTextareaClass = `${formMonoInputClass} resize-none`;
@@ -65,11 +67,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const [sourceSftpHost, setSourceSftpHost] = useState('');
   const [sourceSftpPort, setSourceSftpPort] = useState('22');
+	const [sourceSftpHostKey, setSourceSftpHostKey] = useState('');
   const [sourceSftpAuthMode, setSourceSftpAuthMode] = useState<'password' | 'key'>('password');
   const [sourceSftpPrivateKey, setSourceSftpPrivateKey] = useState('');
 
   const [targetSftpHost, setTargetSftpHost] = useState('');
   const [targetSftpPort, setTargetSftpPort] = useState('22');
+	const [targetSftpHostKey, setTargetSftpHostKey] = useState('');
   const [targetSftpAuthMode, setTargetSftpAuthMode] = useState<'password' | 'key'>('password');
   const [targetSftpPrivateKey, setTargetSftpPrivateKey] = useState('');
 
@@ -143,7 +147,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     : sourceProvider === 's3'
     ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
     : sourceProvider === 'sftp'
-    ? `sftp://${sourceSftpHost}:${sourceSftpPort}`
+    ? `sftp://${sourceSftpHost}:${sourceSftpPort}?host_key=${encodeURIComponent(sourceSftpHostKey.trim())}`
     : sourceProvider === 'magentacloud' || sourceProvider === 'local'
     ? ''
     : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive') ? `https://api.${sourceProvider}.com` : sourceUrl));
@@ -154,7 +158,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     : targetProvider === 's3'
     ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
     : targetProvider === 'sftp'
-    ? `sftp://${targetSftpHost}:${targetSftpPort}`
+    ? `sftp://${targetSftpHost}:${targetSftpPort}?host_key=${encodeURIComponent(targetSftpHostKey.trim())}`
     : targetProvider === 'magentacloud' || targetProvider === 'local'
     ? ''
     : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? `https://api.${targetProvider}.com` : targetUrl));
@@ -263,6 +267,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         setError(t('connect.errors.sourceSftpHost'));
         return;
       }
+      if (!sftpHostKeyFingerprintPattern.test(sourceSftpHostKey.trim())) {
+        setError(t('connect.errors.sourceSftpHostKey'));
+        return;
+      }
       if (sourceSftpAuthMode === 'key' && !sourceSftpPrivateKey.trim()) {
         setError(t('connect.errors.sourceSftpKey'));
         return;
@@ -271,6 +279,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     if (targetProvider === 'sftp' && !targetProfileSelected) {
       if (!targetSftpHost.trim()) {
         setError(t('connect.errors.targetSftpHost'));
+        return;
+      }
+      if (!sftpHostKeyFingerprintPattern.test(targetSftpHostKey.trim())) {
+        setError(t('connect.errors.targetSftpHostKey'));
         return;
       }
       if (targetSftpAuthMode === 'key' && !targetSftpPrivateKey.trim()) {
@@ -406,6 +418,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         setError(t('connect.errors.sourceSftpHost'));
         return;
       }
+      if (!sftpHostKeyFingerprintPattern.test(sourceSftpHostKey.trim())) {
+        setError(t('connect.errors.sourceSftpHostKey'));
+        return;
+      }
       if (sourceSftpAuthMode === 'key' && !sourceSftpPrivateKey.trim()) {
         setError(t('connect.errors.sourceSftpKey'));
         return;
@@ -500,6 +516,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setSourcePass('');
       setSourceSftpHost('');
       setSourceSftpPort('22');
+		setSourceSftpHostKey('');
       setSourceSftpAuthMode('password');
       setSourceSftpPrivateKey('');
     } else if (val === 'local') {
@@ -542,6 +559,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setTargetPass('');
       setTargetSftpHost('');
       setTargetSftpPort('22');
+		setTargetSftpHostKey('');
       setTargetSftpAuthMode('password');
       setTargetSftpPrivateKey('');
     } else if (val === 'local') {
@@ -623,6 +641,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       </p>
                     </div>
                   </div>
+
                 </div>
               ) : (
               <>
@@ -751,6 +770,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         required
                       />
                     </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sftpHostKey')}</label>
+                    <input type="text" placeholder="SHA256:..." value={sourceSftpHostKey} onChange={(e) => setSourceSftpHostKey(e.target.value)} className={formMonoInputClass} required />
+                    <p className="text-xs text-[var(--color-text-muted)]">{t('connect.sftpHostKeyHint')}</p>
                   </div>
 
                   <div className="space-y-1">
@@ -1238,6 +1263,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                         required
                       />
                     </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sftpHostKey')}</label>
+                    <input type="text" placeholder="SHA256:..." value={targetSftpHostKey} onChange={(e) => setTargetSftpHostKey(e.target.value)} className={formMonoInputClass} required />
+                    <p className="text-xs text-[var(--color-text-muted)]">{t('connect.sftpHostKeyHint')}</p>
                   </div>
 
                   <div className="space-y-1">
