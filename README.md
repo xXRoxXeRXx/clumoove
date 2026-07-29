@@ -28,9 +28,31 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 - **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic worker-recovery, exponential backoff, and connection-loss auto-pause.
 - **Data integrity** verified by a 3-way hash check (source / in-memory / target) on every transferred file.
 - **Scheduler engine** for one-shot (deferred) and recurring (`cron`) migrations and syncs, with overlap protection and multi-instance safety.
-- **Live control** — pause, resume, cancel, adjust thread count and bandwidth limit, and watch progress over a token-secured WebSocket feed.
+- **Live control** — pause, resume, cancel, adjust thread count and bandwidth limit, and watch progress over an authenticated SSE feed.
 - **Multi-tenancy & security** — per-user isolation, TOTP 2FA, AES-256-GCM credential encryption, JWT key segregation, CORS whitelist, refresh-token rotation and rate limiting.
 - **i18n** — the frontend is localized (`de` fallback, `en`) via `i18next`/`react-i18next`.
+
+## How Clumoove differs from rclone
+
+rclone is an excellent, mature command-line tool for moving and managing cloud files. It supports substantially more
+storage backends than Clumoove, and it also provides a web GUI, a remote-control API, one-way `sync`, and two-way
+`bisync`. Clumoove does not aim to be a replacement for rclone's universal CLI, mount/serve capabilities, or backend
+coverage. Instead, it is a self-hosted application for operating selected migration and synchronization workflows as
+durable, multi-user jobs.
+
+| Area | Clumoove | rclone's documented model |
+| :--- | :--- | :--- |
+| **Primary interface and scope** | Browser-based, account-scoped migration platform with a guided connection, browse, selection, configuration, and execution workflow. | A command-line program for managing cloud storage; its bundled GUI controls a locally running rclone process. |
+| **Identity and tenant boundaries** | Separate user accounts, ownership checks on jobs and schedules, roles, TOTP 2FA, JWT sessions, audit log, and encrypted reusable connection profiles. | A configured rclone process operates with the permissions of its host user. Its RC API explicitly has all-or-nothing access and is equivalent to shell access for that user. |
+| **Durable execution** | A PostgreSQL task queue persists individual transfer tasks, progress, errors, schedules, and reports. Multiple workers can claim work atomically; liveness, retry, orphan recovery, and connection-loss recovery are built in. | Commands and RC jobs run in a process. The RC documentation describes finished asynchronous jobs as retained for 60 seconds; longer-running automation is normally composed around rclone. |
+| **Scheduling and operations** | Deferred and recurring migrations plus interval-based syncs are first-class persisted jobs, with overlap protection, distributed schedule locks, live authenticated progress, downloadable CSV reports, and durable completion notifications. | rclone supports the transfer commands and `bisync`; its `bisync` guide recommends configuring cron for recurring runs. |
+| **Migration semantics** | Purpose-built conflict choices (`SKIP`, `OVERWRITE`, `RENAME`), pre-transfer inventory, case-collision handling, selected-path workflows, and a provider-aware three-way source/in-memory/target hash check with safe fallbacks. | Flexible commands and flags support copy, sync, bisync, checksums, filters, metadata, and backend-specific behaviour; verification depends on command options and the capabilities shared by the chosen backends. |
+| **Supported data** | Eleven selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
+
+This comparison describes product scope rather than claiming that rclone lacks a GUI, API, checksums, or bidirectional
+sync. Consult the [rclone usage documentation](https://rclone.org/docs/), [GUI documentation](https://rclone.org/gui/),
+[Remote Control API security model](https://rclone.org/rc/#security), and
+[bisync guide](https://rclone.org/bisync/) for its current capabilities and operational guidance.
 
 ## Supported providers
 
