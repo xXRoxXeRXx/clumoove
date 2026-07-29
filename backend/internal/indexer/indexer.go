@@ -61,6 +61,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to fetch migration: %v", err))
 		return
 	}
+	ctx = storage.WithLocalUserScope(ctx, mig.UserID.String)
 
 	// Decrypt source credentials at the last moment (Zero Plaintext rule).
 	// The plaintext is scoped to this block and zeroed immediately after the

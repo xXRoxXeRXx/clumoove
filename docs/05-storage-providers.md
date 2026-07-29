@@ -81,11 +81,14 @@ time, description, tags, etc.) after a successful upload.
 
 ## 2.1. Local Storage Provider (`local`)
 
-`local` reads and writes files directly from a server-side sandbox directory defined by the
+`local` reads and writes files from a server-side, tenant-isolated sandbox defined by the
 `LOCAL_STORAGE_ROOT` environment variable. It carries **no credentials** (no URL, no username, no
-password). All access is rooted at `LOCAL_STORAGE_ROOT`; user-supplied relative paths are joined to the
-root and verified to stay within it — `..` traversal and symlinked intermediate directories that escape
-the root are rejected. It supports only the `files` resource type; calendars/contacts are not applicable.
+password). Each provider instance is rooted at `LOCAL_STORAGE_ROOT/users/<user-id>`, where the user ID is
+derived server-side from authenticated JWT claims (API paths) or the persisted migration/sync owner
+(background paths). It is never supplied by the request or profile. User-supplied relative paths are joined
+to that tenant root and verified to stay within it — `..` traversal and symlinked intermediate directories
+that escape the root are rejected. Creating a local provider without a valid user scope fails. It supports
+only the `files` resource type; calendars/contacts are not applicable.
 
 The `Local` option appears in the UI **only** when `LOCAL_STORAGE_ROOT` is configured (`local_storage_enabled`
 in `GET /api/settings`). `NewProvider("local")` returns an error if the variable is unset or not a

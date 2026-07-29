@@ -426,6 +426,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		time.Sleep(2 * time.Second)
 		return nil
 	}
+	ctx = storage.WithLocalUserScope(ctx, mig.UserID.String)
 
 	// If migration is in a terminal state (COMPLETED, COMPLETED_WITH_ERRORS or FAILED), mark task as skipped/failed
 	if mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" {

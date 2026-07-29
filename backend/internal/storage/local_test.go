@@ -14,7 +14,7 @@ func newTestLocalProvider(t *testing.T) (*LocalProvider, func()) {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("LOCAL_STORAGE_ROOT", root)
-	p, err := NewLocalProvider()
+	p, err := NewLocalProvider("user-a")
 	if err != nil {
 		t.Fatalf("NewLocalProvider: %v", err)
 	}
@@ -126,8 +126,44 @@ func TestLocalProviderNonFilesRejected(t *testing.T) {
 
 func TestNewLocalProviderUnconfigured(t *testing.T) {
 	t.Setenv("LOCAL_STORAGE_ROOT", "")
-	if _, err := NewLocalProvider(); err == nil {
+	if _, err := NewLocalProvider("user-a"); err == nil {
 		t.Fatalf("expected error when LOCAL_STORAGE_ROOT unset")
+	}
+}
+
+func TestLocalProviderIsolatesUserNamespaces(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LOCAL_STORAGE_ROOT", root)
+	userA, err := NewLocalProvider("user-a")
+	if err != nil {
+		t.Fatalf("NewLocalProvider user-a: %v", err)
+	}
+	userB, err := NewLocalProvider("user-b")
+	if err != nil {
+		t.Fatalf("NewLocalProvider user-b: %v", err)
+	}
+	ctx := context.Background()
+	content := []byte("tenant-a-only")
+	if err := userA.StreamUpload(ctx, "files", "private/data.txt", bytes.NewReader(content), int64(len(content))); err != nil {
+		t.Fatalf("user A upload: %v", err)
+	}
+	if _, err := userB.StreamDownload(ctx, "files", "private/data.txt"); !os.IsNotExist(err) {
+		t.Fatalf("user B accessed user A file, err=%v", err)
+	}
+	if err := userB.DeleteFile(ctx, "files", "../user-a/private/data.txt"); err == nil {
+		t.Fatal("user B cross-tenant delete attempt was not rejected")
+	}
+	if exists, _, err := userA.FileExists(ctx, "files", "private/data.txt"); err != nil || !exists {
+		t.Fatalf("user A file was affected by user B: exists=%v err=%v", exists, err)
+	}
+}
+
+func TestNewLocalProviderRejectsUnsafeUserScope(t *testing.T) {
+	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
+	for _, userID := range []string{"", "..", "../other", "a/b"} {
+		if _, err := NewLocalProvider(userID); err == nil {
+			t.Fatalf("expected user scope %q to be rejected", userID)
+		}
 	}
 }
 

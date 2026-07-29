@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"backend/internal/db"
+	"backend/internal/storage"
 )
 
 type ContextKey string
@@ -102,7 +103,7 @@ func AuthMiddlewareWithAuthStateLookup(secretKey string, lookup AuthStateLookup)
 			}
 
 			// Inject full Claims into request context
-			ctx := context.WithValue(r.Context(), ClaimsKey, claims)
+			ctx := storage.WithLocalUserScope(context.WithValue(r.Context(), ClaimsKey, claims), claims.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -150,7 +151,7 @@ func AuthMiddlewareAllowMustChangeWithAuthStateLookup(secretKey string, lookup A
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), ClaimsKey, claims)
+			ctx := storage.WithLocalUserScope(context.WithValue(r.Context(), ClaimsKey, claims), claims.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

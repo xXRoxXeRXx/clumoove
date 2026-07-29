@@ -2,6 +2,7 @@ package processor
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"time"
 
@@ -287,7 +288,7 @@ func recoveryBackoff(attempts int) time.Duration {
 
 func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	query := `
-		SELECT id, source_url, source_username, source_password_encrypted,
+		SELECT id, user_id, source_url, source_username, source_password_encrypted,
 		       target_url, target_username, target_password_encrypted,
 		       source_provider, target_provider
 		FROM migrations
@@ -301,7 +302,8 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 
 	for rows.Next() {
 		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
-		if err := rows.Scan(&id, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
+		var userID sql.NullString
+		if err := rows.Scan(&id, &userID, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
 			continue
 		}
 
@@ -322,11 +324,12 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 			continue
 		}
 
-		sClient, err := storage.NewProvider(ctx, sProv, sURL, sUser, sPass)
+		userCtx := storage.WithLocalUserScope(ctx, userID.String)
+		sClient, err := storage.NewProvider(userCtx, sProv, sURL, sUser, sPass)
 		if err != nil {
 			continue
 		}
-		tClient, err := storage.NewProvider(ctx, tProv, tURL, tUser, tPass)
+		tClient, err := storage.NewProvider(userCtx, tProv, tURL, tUser, tPass)
 		if err != nil {
 			sClient.Close()
 			continue
