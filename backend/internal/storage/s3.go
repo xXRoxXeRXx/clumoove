@@ -85,6 +85,7 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 	// connection (closing the DNS-rebinding/TOCTOU window). The keep-alive
 	// pool limits how often DNS is actually hit.
 	httpClient := &http.Client{
+		CheckRedirect: validateEgressRedirect,
 		Transport: &http.Transport{
 			ForceAttemptHTTP2:     true,
 			MaxIdleConns:          1000,
