@@ -121,22 +121,22 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 	})
 }
 
-func TestTransitionMigrationToIndexing(t *testing.T) {
+func TestClaimScheduledMigrationForIndexing(t *testing.T) {
 	db := setupProgressTestDB(t)
 
 	tests := []struct {
-		name       string
-		id         string
-		initial    string
-		insert     bool
-		wantErr    bool
-		wantStatus string
+		name        string
+		id          string
+		initial     string
+		insert      bool
+		wantClaimed bool
+		wantStatus  string
 	}{
-		{name: "scheduled migration", id: "m-scheduled", initial: "SCHEDULED", insert: true, wantStatus: "INDEXING"},
-		{name: "indexing migration is idempotent", id: "m-indexing", initial: "INDEXING", insert: true, wantStatus: "INDEXING"},
-		{name: "running migration is rejected", id: "m-running", initial: "RUNNING", insert: true, wantErr: true, wantStatus: "RUNNING"},
-		{name: "failed migration is rejected", id: "m-failed", initial: "FAILED", insert: true, wantErr: true, wantStatus: "FAILED"},
-		{name: "missing migration is rejected", id: "m-missing", wantErr: true},
+		{name: "scheduled migration", id: "m-scheduled", initial: "SCHEDULED", insert: true, wantClaimed: true, wantStatus: "INDEXING"},
+		{name: "indexing migration cannot be claimed twice", id: "m-indexing", initial: "INDEXING", insert: true, wantStatus: "INDEXING"},
+		{name: "running migration is rejected", id: "m-running", initial: "RUNNING", insert: true, wantStatus: "RUNNING"},
+		{name: "failed migration is rejected", id: "m-failed", initial: "FAILED", insert: true, wantStatus: "FAILED"},
+		{name: "missing migration is rejected", id: "m-missing"},
 	}
 
 	for _, tt := range tests {
@@ -147,9 +147,12 @@ func TestTransitionMigrationToIndexing(t *testing.T) {
 				}
 			}
 
-			err := TransitionMigrationToIndexing(db, tt.id)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("TransitionMigrationToIndexing() error = %v, wantErr %v", err, tt.wantErr)
+			claimed, err := ClaimScheduledMigrationForIndexing(db, tt.id)
+			if err != nil {
+				t.Fatalf("ClaimScheduledMigrationForIndexing() error = %v", err)
+			}
+			if claimed != tt.wantClaimed {
+				t.Errorf("ClaimScheduledMigrationForIndexing() claimed = %v, want %v", claimed, tt.wantClaimed)
 			}
 			if tt.insert && migrationStatus(t, db, tt.id) != tt.wantStatus {
 				t.Errorf("status = %q, want %q", migrationStatus(t, db, tt.id), tt.wantStatus)
@@ -158,7 +161,24 @@ func TestTransitionMigrationToIndexing(t *testing.T) {
 	}
 }
 
-func TestUpdateMigrationStatusIfIndexing(t *testing.T) {
+func TestClaimSucceeded(t *testing.T) {
+	tests := []struct {
+		rowsAffected int64
+		want         bool
+	}{
+		{rowsAffected: 0, want: false},
+		{rowsAffected: 1, want: true},
+		{rowsAffected: 2, want: false},
+	}
+
+	for _, tt := range tests {
+		if got := claimSucceeded(tt.rowsAffected); got != tt.want {
+			t.Errorf("claimSucceeded(%d) = %v, want %v", tt.rowsAffected, got, tt.want)
+		}
+	}
+}
+
+func TestTransitionMigrationIndexingToRunning(t *testing.T) {
 	db := setupProgressTestDB(t)
 
 	tests := []struct {
@@ -182,9 +202,9 @@ func TestUpdateMigrationStatusIfIndexing(t *testing.T) {
 				}
 			}
 
-			err := UpdateMigrationStatusIfIndexing(db, tt.id, "RUNNING")
+			err := TransitionMigrationIndexingToRunning(db, tt.id)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("UpdateMigrationStatusIfIndexing() error = %v, wantErr %v", err, tt.wantErr)
+				t.Fatalf("TransitionMigrationIndexingToRunning() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if tt.insert && migrationStatus(t, db, tt.id) != tt.wantStatus {
 				t.Errorf("status = %q, want %q", migrationStatus(t, db, tt.id), tt.wantStatus)

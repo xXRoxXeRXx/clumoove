@@ -46,17 +46,12 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	ctx, cancel := context.WithTimeout(serverCtx, indexingTimeout())
 	defer cancel()
 
-	// Transition status to INDEXING before starting work. This is essential for
-	// scheduled migrations (created as SCHEDULED) so the UI and overlap protection
-	// correctly reflect that indexing is actively in progress. For immediate starts
-	// the migration is already INDEXING, so this is a no-op.
-	if err := db.TransitionMigrationToIndexing(idx.db, migID); err != nil {
-		log.Printf("Migration %s: unable to transition to indexing: %v", migID, err)
-		failMigration(idx.db, migID, "Migration could not be started. It may have been cancelled or is already running.")
-		return
-	}
+	// Both callers establish INDEXING before starting this goroutine: immediate
+	// migrations are created in INDEXING, and the scheduler atomically claims
+	// SCHEDULED migrations first. Keeping that claim outside the goroutine makes
+	// a lost scheduled claim observable before its one-shot schedule is retired.
 
-	// Load migration from DB (includes persisted selected paths)
+	// Load migration from DB (includes persisted selected paths).
 	mig, err := db.GetMigration(idx.db, migID)
 	if err != nil {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to fetch migration: %v", err))
@@ -304,7 +299,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 
-	err = db.UpdateMigrationStatusIfIndexing(idx.db, migID, "RUNNING")
+	err = db.TransitionMigrationIndexingToRunning(idx.db, migID)
 	if err != nil {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration running: %v", err))
 		return

@@ -327,39 +327,39 @@ func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string)
 	return nil
 }
 
-// TransitionMigrationToIndexing begins indexing for migrations that were either
-// started immediately (and are already INDEXING) or released by the scheduler
-// (and are SCHEDULED). A zero-row result means the migration changed state
-// before it could be claimed.
-func TransitionMigrationToIndexing(db *sql.DB, id string) error {
+// ClaimScheduledMigrationForIndexing atomically claims a scheduled migration for
+// indexing. A false result means the row either does not exist or is no longer
+// in SCHEDULED state; both cases are intentionally treated as an invalid claim.
+func ClaimScheduledMigrationForIndexing(db *sql.DB, id string) (bool, error) {
 	query := `
 		UPDATE migrations
 		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status IN ('SCHEDULED', 'INDEXING')
+		WHERE id = $1 AND status = 'SCHEDULED'
 	`
 	result, err := db.Exec(query, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if rowsAffected != 1 {
-		return fmt.Errorf("migration %s is not scheduled or indexing", id)
-	}
-	return nil
+	return claimSucceeded(rowsAffected), nil
 }
 
-// UpdateMigrationStatusIfIndexing transitions an actively indexing migration to
-// its next state. It rejects stale transitions instead of silently succeeding.
-func UpdateMigrationStatusIfIndexing(db *sql.DB, id string, status string) error {
+func claimSucceeded(rowsAffected int64) bool {
+	return rowsAffected == 1
+}
+
+// TransitionMigrationIndexingToRunning completes indexing. It rejects a stale
+// transition instead of silently leaving newly-created tasks unrunnable.
+func TransitionMigrationIndexingToRunning(db *sql.DB, id string) error {
 	query := `
 		UPDATE migrations
-		SET status = $1, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2 AND status = 'INDEXING'
+		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'INDEXING'
 	`
-	result, err := db.Exec(query, status, id)
+	result, err := db.Exec(query, id)
 	if err != nil {
 		return err
 	}

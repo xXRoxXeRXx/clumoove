@@ -269,21 +269,23 @@ func (s *Scheduler) triggerJob(ctx context.Context, schedule *db.Schedule) error
 // The indexer is spawned in a goroutine to avoid blocking the scheduler loop
 // (indexing can take up to 20 minutes for large migrations).
 func (s *Scheduler) triggerMigration(ctx context.Context, migrationID string) error {
-	// Fetch migration to verify it exists and is in SCHEDULED state
-	mig, err := db.GetMigration(s.db, migrationID)
+	// Atomically claim the migration before starting the asynchronous indexer.
+	// A prior status read cannot prevent a competing cancel/trigger from changing
+	// the row before this point.
+	claimed, err := db.ClaimScheduledMigrationForIndexing(s.db, migrationID)
 	if err != nil {
-		return fmt.Errorf("failed to fetch migration %s: %w", migrationID, err)
+		return fmt.Errorf("claim scheduled migration %s: %w", migrationID, err)
+	}
+	if !claimed {
+		// This is intentionally an error: processSchedule deactivates a one-shot
+		// schedule after an invalid claim, including a user cancellation or delete.
+		return fmt.Errorf("migration %s is no longer scheduled", migrationID)
 	}
 
-	// Only trigger if migration is in SCHEDULED state
-	if mig.Status != "SCHEDULED" {
-		return fmt.Errorf("migration %s is not in SCHEDULED state (current: %s)", migrationID, mig.Status)
-	}
-
-	// Delegate to the shared indexer in a goroutine. It transitions the migration
-	// to INDEXING, walks the persisted selected paths, and creates PENDING tasks.
-	// On failure it marks the migration FAILED internally. Spawning asynchronously
-	// prevents blocking the scheduler loop (indexing can take up to 20 minutes).
+	// Delegate to the shared indexer in a goroutine. The migration is already
+	// INDEXING because the CAS above succeeded; on failure the indexer marks it
+	// FAILED internally. Spawning asynchronously prevents blocking the scheduler
+	// loop (indexing can take up to 20 minutes).
 	go s.indexer.Start(ctx, migrationID)
 	log.Printf("[Scheduler] Migration %s indexing started", migrationID)
 	return nil
