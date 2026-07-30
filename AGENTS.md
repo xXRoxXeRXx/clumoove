@@ -20,7 +20,7 @@
 
 ## Architecture Overview
 - **Two Go entrypoints**: `cmd/api` (HTTP API gateway) and `cmd/worker` (migration engine). Both share the same module `backend/`.
-- **Queue**: PostgreSQL-native via `SELECT … FOR UPDATE SKIP LOCKED` in `queue.DequeueSQL()`: migrations dequeue in `RUNNING`/`INDEXING`; sync jobs dequeue only in `RUNNING` (their `INDEXING` phase builds a fresh delta). Redis is used **only** for worker-liveness heartbeats and distributed recovery locks (`SET NX`).
+- **Queue**: PostgreSQL-native via `SELECT … FOR UPDATE SKIP LOCKED` in `queue.DequeueSQL()`: migrations dequeue in `RUNNING`/`INDEXING`; sync jobs dequeue only in `RUNNING` (their `INDEXING` phase builds a fresh delta). Each claimed sync pass increments `run_generation`; engine lifecycle updates and the running-only progress reconciler gate on it. Redis is used **only** for worker-liveness heartbeats and distributed recovery locks (`SET NX`).
 - **Worker background schedulers** (all started by `processor.Start()`):
   - `RunWorkerLiveness` — heartbeat every 10 s, detects dead workers and reclaims their tasks
   - `RunRetryScheduler` — re-enqueues tasks whose `next_retry_at <= NOW()` every 10 s
