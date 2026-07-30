@@ -247,23 +247,29 @@ func (e *Engine) listFiles(
 		etag    string
 	}
 
-	jobsChan := make(chan listJob, 100000)
-	var wg sync.WaitGroup
+	// The coordinator owns pending work. Workers only report completed listings;
+	// they never submit child directories directly. This is important for wide
+	// trees: if every worker were blocked sending children to a full jobs channel,
+	// no worker would remain to receive work and drain that channel.
+	const numWorkers = 16
+	jobsChan := make(chan listJob)
+	type listResult struct {
+		job   listJob
+		files []storage.CloudResource
+		err   error
+	}
+	resultsChan := make(chan listResult, numWorkers*2)
+	var pending []listJob
+	pendingHead := 0
 	visited := make(map[string]bool)
-	var visitedMu sync.Mutex
 
 	enqueueDir := func(dirPath, etag string) {
 		cdir := cleanRelPath(dirPath)
-		visitedMu.Lock()
 		if visited[cdir] {
-			visitedMu.Unlock()
 			return
 		}
 		visited[cdir] = true
-		visitedMu.Unlock()
-
-		wg.Add(1)
-		jobsChan <- listJob{dirPath: dirPath, etag: etag}
+		pending = append(pending, listJob{dirPath: dirPath, etag: etag})
 	}
 
 	for _, startPath := range startPaths {
@@ -292,52 +298,67 @@ func (e *Engine) listFiles(
 		enqueueDir(startPath, res.ETag)
 	}
 
-	type dirETagItem struct {
-		path string
-		etag string
-	}
-
-	numWorkers := 16
+	var workers sync.WaitGroup
+	workers.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
 		go func() {
+			defer workers.Done()
 			for job := range jobsChan {
-				func() {
-					defer wg.Done()
-
-					if ctx.Err() != nil {
-						return
-					}
-
-					files, err := client.GetDirectoryListing(ctx, "files", job.dirPath)
-					if err != nil {
-						removeDir(job.dirPath)
-						addError(job.dirPath, err.Error())
-						return
-					}
-
-					for _, file := range files {
-						cpath := cleanRelPath(file.Path)
-						if file.IsDir {
-							addDirETag(cpath, file.ETag)
-							addDir(cpath)
-							enqueueDir(file.Path, file.ETag)
-						} else {
-							addFile(fileState{
-								Path:         cpath,
-								Size:         file.Size,
-								LastModified: file.LastModified,
-								Hash:         file.Hash,
-								ETag:         file.ETag,
-							})
-						}
-					}
-				}()
+				files, err := client.GetDirectoryListing(ctx, "files", job.dirPath)
+				select {
+				case resultsChan <- listResult{job: job, files: files, err: err}:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 	}
 
-	wg.Wait()
+	inFlight := 0
+	for pendingHead < len(pending) || inFlight > 0 {
+		var nextJob listJob
+		var sendJob chan listJob
+		if pendingHead < len(pending) {
+			nextJob = pending[pendingHead]
+			sendJob = jobsChan
+		}
+		// sendJob is nil (and therefore disabled in select) when no work is pending.
+
+		select {
+		case sendJob <- nextJob:
+			pending[pendingHead] = listJob{} // release references held by completed work
+			pendingHead++
+			if pendingHead >= 1024 && pendingHead*2 >= len(pending) {
+				copy(pending, pending[pendingHead:])
+				pending = pending[:len(pending)-pendingHead]
+				pendingHead = 0
+			}
+			inFlight++
+		case result := <-resultsChan:
+			inFlight--
+			if result.err != nil {
+				removeDir(result.job.dirPath)
+				addError(result.job.dirPath, result.err.Error())
+				continue
+			}
+			for _, file := range result.files {
+				cpath := cleanRelPath(file.Path)
+				if file.IsDir {
+					addDirETag(cpath, file.ETag)
+					addDir(cpath)
+					enqueueDir(file.Path, file.ETag)
+					continue
+				}
+				addFile(fileState{Path: cpath, Size: file.Size, LastModified: file.LastModified, Hash: file.Hash, ETag: file.ETag})
+			}
+		case <-ctx.Done():
+			close(jobsChan)
+			workers.Wait()
+			return fileMap, dirMap, dirETagMap, indexErrors, ctx.Err()
+		}
+	}
 	close(jobsChan)
+	workers.Wait()
 
 	if err := ctx.Err(); err != nil {
 		return fileMap, dirMap, dirETagMap, indexErrors, err

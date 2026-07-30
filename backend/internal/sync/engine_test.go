@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -200,6 +202,53 @@ func TestListFilesReportsTraversalErrors(t *testing.T) {
 	}
 	if dirMap["/unreadable"] {
 		t.Error("failed directory should not appear in dirMap")
+	}
+}
+
+func TestListFilesTraversesTreeWiderThanLegacyQueue(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping wide-tree traversal test in short mode")
+	}
+
+	// Each of the 16 workers discovers children concurrently. The old design
+	// could fill its 100,000-entry channel and leave every worker blocked while
+	// trying to enqueue another child directory.
+	const branches = 16
+	const childrenPerBranch = 6_400 // 102,400 directories in total
+
+	provider := listingTestProvider{
+		inspect: func(resourcePath string) (storage.CloudResource, error) {
+			return storage.CloudResource{Path: resourcePath, IsDir: true}, nil
+		},
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			if dirPath == "/" {
+				files := make([]storage.CloudResource, branches)
+				for i := range files {
+					files[i] = storage.CloudResource{Path: "/branch-" + strconv.Itoa(i), IsDir: true}
+				}
+				return files, nil
+			}
+			if strings.HasPrefix(dirPath, "/branch-") && !strings.Contains(dirPath[len("/branch-"):], "/") {
+				files := make([]storage.CloudResource, childrenPerBranch)
+				for i := range files {
+					files[i] = storage.CloudResource{Path: dirPath + "/child-" + strconv.Itoa(i), IsDir: true}
+				}
+				return files, nil
+			}
+			return nil, nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, dirs, _, _, err := NewEngine(nil, nil, "secret").listFiles(ctx, provider, []string{"/"}, nil, nil)
+	if err != nil {
+		t.Fatalf("listFiles returned error for broad tree: %v", err)
+	}
+	// root (1) + branches (16) + children (16 * 6,400)
+	wantDirs := 1 + branches + (branches * childrenPerBranch)
+	if got := len(dirs); got != wantDirs {
+		t.Fatalf("listed %d directories; want %d", got, wantDirs)
 	}
 }
 
