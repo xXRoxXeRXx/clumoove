@@ -1,9 +1,18 @@
-﻿package indexer
+package indexer
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"io"
 	"os"
+	"sync"
 	"testing"
 	"time"
+
+	"backend/internal/db"
+	"backend/internal/storage"
 )
 
 func TestSanitizeErrorRedactsCredentials(t *testing.T) {
@@ -85,6 +94,126 @@ func TestMarshalString(t *testing.T) {
 		t.Errorf("marshalString = %q, want %q", got, want)
 	}
 }
+
+func TestIndexFolderFlushesStagedCountersAfterCommit(t *testing.T) {
+	database, state := newBatchTestDB(t, false)
+	files, dirs, bytes := 0, 0, int64(0)
+	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
+		Path: "/report.txt", Name: "report.txt", Size: 42,
+	}}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	if err != nil {
+		t.Fatalf("indexFolder() error = %v", err)
+	}
+	if files != 1 || dirs != 0 || bytes != 42 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:1 dirs:0 bytes:42", files, dirs, bytes)
+	}
+	if state.execs != 1 || state.commits != 1 {
+		t.Fatalf("database calls = execs:%d commits:%d, want one committed batch", state.execs, state.commits)
+	}
+}
+
+func TestIndexFolderDoesNotApplyStagedCountersWhenBatchInsertFails(t *testing.T) {
+	database, state := newBatchTestDB(t, true)
+	files, dirs, bytes := 0, 0, int64(0)
+	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
+		Path: "/report.txt", Name: "report.txt", Size: 42,
+	}}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	if err == nil {
+		t.Fatal("indexFolder() succeeded after batch insert failure")
+	}
+	if files != 0 || dirs != 0 || bytes != 0 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want all zero after failed batch", files, dirs, bytes)
+	}
+	if state.execs != 1 || state.commits != 0 {
+		t.Fatalf("database calls = execs:%d commits:%d, want one failed uncommitted batch", state.execs, state.commits)
+	}
+}
+
+type indexFolderTestProvider struct{ listing []storage.CloudResource }
+
+func (p indexFolderTestProvider) Close() error                          { return nil }
+func (p indexFolderTestProvider) Connect(context.Context) (bool, error) { return true, nil }
+func (p indexFolderTestProvider) GetDirectoryListing(context.Context, string, string) ([]storage.CloudResource, error) {
+	return p.listing, nil
+}
+func (p indexFolderTestProvider) InspectResource(context.Context, string, string) (storage.CloudResource, error) {
+	return storage.CloudResource{}, errors.New("not implemented")
+}
+func (p indexFolderTestProvider) StreamDownload(context.Context, string, string) (io.ReadCloser, error) {
+	return nil, errors.New("not implemented")
+}
+func (p indexFolderTestProvider) StreamUpload(context.Context, string, string, io.Reader, int64) error {
+	return errors.New("not implemented")
+}
+func (p indexFolderTestProvider) StreamUploadChunked(context.Context, string, string, io.Reader, int64, chan<- int64) error {
+	return errors.New("not implemented")
+}
+func (p indexFolderTestProvider) FileExists(context.Context, string, string) (bool, int64, error) {
+	return false, 0, errors.New("not implemented")
+}
+func (p indexFolderTestProvider) DeleteFile(context.Context, string, string) error {
+	return errors.New("not implemented")
+}
+func (p indexFolderTestProvider) GetFileHash(context.Context, string, string) (string, error) {
+	return "", errors.New("not implemented")
+}
+func (p indexFolderTestProvider) CreateParentDirectories(context.Context, string, string) error {
+	return errors.New("not implemented")
+}
+func (p indexFolderTestProvider) CreateDirectory(context.Context, string, string) error {
+	return errors.New("not implemented")
+}
+func (p indexFolderTestProvider) RenameFile(context.Context, string, string, string) error {
+	return errors.New("not implemented")
+}
+func (p indexFolderTestProvider) SupportsAtomicRename() bool { return true }
+
+var (
+	batchTestDriverOnce sync.Once
+	batchTestState      *batchDBState
+)
+
+type batchDBState struct {
+	failInsert     bool
+	execs, commits int
+}
+
+func newBatchTestDB(t *testing.T, failInsert bool) (*sql.DB, *batchDBState) {
+	t.Helper()
+	batchTestDriverOnce.Do(func() { sql.Register("indexer-batch-test", batchTestDriver{}) })
+	batchTestState = &batchDBState{failInsert: failInsert}
+	database, err := sql.Open("indexer-batch-test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	return database, batchTestState
+}
+
+type batchTestDriver struct{}
+
+func (batchTestDriver) Open(string) (driver.Conn, error) { return batchTestConn{}, nil }
+
+type batchTestConn struct{}
+
+func (batchTestConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not implemented") }
+func (batchTestConn) Close() error                        { return nil }
+func (batchTestConn) Begin() (driver.Tx, error)           { return batchTestTx{}, nil }
+func (batchTestConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return batchTestTx{}, nil
+}
+func (batchTestConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	batchTestState.execs++
+	if batchTestState.failInsert {
+		return nil, errors.New("injected insert failure")
+	}
+	return driver.RowsAffected(1), nil
+}
+
+type batchTestTx struct{}
+
+func (batchTestTx) Commit() error   { batchTestState.commits++; return nil }
+func (batchTestTx) Rollback() error { return nil }
 
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
