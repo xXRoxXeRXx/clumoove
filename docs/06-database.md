@@ -65,7 +65,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted |
 | `target_dir` | TEXT NOT NULL DEFAULT `/` | |
 | `status` | TEXT | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `PAUSED`, `PAUSED_CONNECTION_LOSS`, `COMPLETED`, `FAILED`, `CANCELLED` |
-| `conflict_strategy` | TEXT | `SKIP`, `OVERWRITE`, `RENAME` |
+| `conflict_strategy` | TEXT NOT NULL DEFAULT `SKIP`, CHECK | `SKIP`, `OVERWRITE`, `RENAME` |
 | `selected_paths` / `selected_calendars` / `selected_contacts` | JSONB | persisted for deferred re-index |
 | `total_files` / `processed_files` / `skipped_files` / `failed_files` | INTEGER | |
 | `total_bytes` / `processed_bytes` | BIGINT | |

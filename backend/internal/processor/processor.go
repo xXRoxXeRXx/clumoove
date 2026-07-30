@@ -628,6 +628,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 	}
 
+	// The database and API allow only SKIP, OVERWRITE, and RENAME, but retain
+	// this guard for legacy rows and direct database writes. Falling through to
+	// an upload would overwrite an existing WebDAV target via PUT.
+	if !db.ValidConflictStrategy(mig.ConflictStrategy) {
+		return fmt.Errorf("invalid migration conflict strategy %q", mig.ConflictStrategy)
+	}
+
 	_, nativeDuplicates := targetClient.(storage.NativeDuplicateDetector)
 	if nativeDuplicates {
 		// Immich determines duplicates from its native asset identity/checksum;

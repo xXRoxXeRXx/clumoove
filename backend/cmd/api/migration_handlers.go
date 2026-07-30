@@ -865,6 +865,13 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
 		return
 	}
+	if req.ConflictStrategy == "" {
+		req.ConflictStrategy = "SKIP"
+	}
+	if !db.ValidConflictStrategy(req.ConflictStrategy) {
+		writeError(w, http.StatusBadRequest, ErrConflictStrategyInvalid)
+		return
+	}
 	// Conflict strategy controls writes at the target; Immich remains a valid
 	// source with any strategy supported by the non-Immich target.
 	if req.TargetProvider == "immich" && req.ConflictStrategy != "SKIP" {

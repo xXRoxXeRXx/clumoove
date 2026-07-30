@@ -435,14 +435,33 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := db.UpdateUserActive(s.db, id, false); err != nil {
+	syncJobIDs, err := db.SuspendUser(s.db, id)
+	if err != nil {
 		log.Printf("Admin suspend %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+	var failedSyncCancelEvents []string
+	for _, syncJobID := range syncJobIDs {
+		s.syncEngine.CancelPass(syncJobID)
+		if err := s.queue.PublishSyncCancelEvent(r.Context(), syncJobID); err != nil {
+			log.Printf("Warning: failed to publish cancel event for suspended user's sync job %s: %v", syncJobID, err)
+			failedSyncCancelEvents = append(failedSyncCancelEvents, syncJobID)
+		}
+	}
 
-	s.writeAudit(r, db.AuditUserSuspended, id, actor, nil)
-	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true, "active": false})
+	auditDetails := map[string]interface{}(nil)
+	if len(failedSyncCancelEvents) > 0 {
+		auditDetails = map[string]interface{}{"sync_cancel_event_failures": failedSyncCancelEvents}
+	}
+	s.writeAudit(r, db.AuditUserSuspended, id, actor, auditDetails)
+	response := map[string]interface{}{"success": true, "active": false}
+	if len(failedSyncCancelEvents) > 0 {
+		// Suspension is committed, but a worker may need manual intervention if
+		// it did not receive the cancellation event while Redis was unavailable.
+		response["partial"] = true
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *APIServer) handleAdminReactivateUser(w http.ResponseWriter, r *http.Request) {

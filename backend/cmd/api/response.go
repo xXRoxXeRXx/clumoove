@@ -94,6 +94,7 @@ const (
 	ErrThreadsOutOfRange            APIErrorCode = "THREADS_OUT_OF_RANGE"
 	ErrBandwidthOutOfRange          APIErrorCode = "BANDWIDTH_OUT_OF_RANGE"
 	ErrNoSourcePaths                APIErrorCode = "NO_SOURCE_PATHS"
+	ErrConflictStrategyInvalid      APIErrorCode = "CONFLICT_STRATEGY_INVALID"
 	ErrEncryptionFailed             APIErrorCode = "ENCRYPTION_FAILED"
 	ErrInvalidScheduledTime         APIErrorCode = "INVALID_SCHEDULED_TIME"
 	ErrScheduledTimePast            APIErrorCode = "SCHEDULED_TIME_PAST"

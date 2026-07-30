@@ -17,7 +17,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 - `JWT` — requires `Authorization: Bearer <access_token>`.
 - `admin` — JWT + `role == ADMIN` (enforced inside the handler).
 
-Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Immich endpoints use a server URL and API key supplied in the password field; no username is required.
+Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migration starts default an omitted strategy to `SKIP`; sync creation defaults it to `OVERWRITE`. Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Immich endpoints use a server URL and API key supplied in the password field; no username is required.
 
 ---
 
@@ -138,7 +138,7 @@ Immich validation: migration start rejects calendar/contact selections when eith
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
 | `POST` | `/admin/users` | admin | Create a user with role + must-change flag. |
-| `POST` | `/admin/users/{id}/suspend` | admin | Deactivate user (pauses migrations, disables schedules). |
+| `POST` | `/admin/users/{id}/suspend` | admin | Deactivate user (pauses active migrations and sync jobs, cancels active sync work, disables schedules). |
 | `POST` | `/admin/users/{id}/reactivate` | admin | Reactivate user (re-enables schedules). |
 | `DELETE` | `/admin/users/{id}` | admin | Delete user (cascade). |
 | `PUT` | `/admin/users/{id}/role` | admin | Change role (`USER`/`ADMIN`). |
@@ -147,6 +147,8 @@ Immich validation: migration start rejects calendar/contact selections when eith
 | `GET` | `/admin/migrations` | admin | All migrations across users (with owner email). |
 | `GET` | `/admin/syncs` | admin | All sync jobs across users (with owner email). |
 | `GET` | `/audit/log` | admin | Paginated/filtered audit log. |
+
+If a user suspension commits but a Redis sync-cancellation event cannot be published, the endpoint still returns `200` with `partial: true`; the affected sync-job IDs are recorded in the suspension audit entry for operator follow-up.
 
 ---
 

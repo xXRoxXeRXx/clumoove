@@ -589,6 +589,7 @@
     "MIGRATION_NOT_FOUND": "Transfer not found.",
     "THREADS_OUT_OF_RANGE": "The number of simultaneous transfers must be between 1 and 16.",
     "BANDWIDTH_OUT_OF_RANGE": "The speed limit must be between 0 and 1000 Mbit/s.",
+    "CONFLICT_STRATEGY_INVALID": "The selected conflict strategy is invalid.",
     "NO_SOURCE_PATHS": "Please select at least one folder to copy.",
     "TOO_MANY_ACTIVE_MIGRATIONS": "Too many active transfers. Please wait for one to finish before starting a new one.",
     "ENCRYPTION_FAILED": "Encryption failed.",

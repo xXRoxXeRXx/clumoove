@@ -62,6 +62,17 @@ type Migration struct {
 	ResourceStats               *MigrationResourceStats `json:"resource_stats,omitempty"`
 }
 
+// ValidConflictStrategy reports whether strategy is safe for a target write.
+// Keep this allowlist shared by request validation and the transfer processor.
+func ValidConflictStrategy(strategy string) bool {
+	switch strategy {
+	case "SKIP", "OVERWRITE", "RENAME":
+		return true
+	default:
+		return false
+	}
+}
+
 func (m Migration) MarshalJSON() ([]byte, error) {
 	type Alias Migration
 	return json.Marshal(&struct {
