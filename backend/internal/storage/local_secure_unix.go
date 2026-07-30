@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -168,7 +169,7 @@ func (r *localRoot) open(parts []string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), parts[len(parts)-1]), nil
 }
 
-func (r *localRoot) upload(parts []string, stream io.Reader, progress chan<- int64) error {
+func (r *localRoot) upload(ctx context.Context, parts []string, stream io.Reader, progress chan<- int64) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("cannot upload to the storage root")
 	}
@@ -199,6 +200,10 @@ func (r *localRoot) upload(parts []string, stream io.Reader, progress chan<- int
 
 	buf := make([]byte, 32*1024)
 	for {
+		if err := ctx.Err(); err != nil {
+			tmp.Close()
+			return err
+		}
 		n, readErr := stream.Read(buf)
 		if n > 0 {
 			if _, err := tmp.Write(buf[:n]); err != nil {
@@ -206,7 +211,12 @@ func (r *localRoot) upload(parts []string, stream io.Reader, progress chan<- int
 				return err
 			}
 			if progress != nil {
-				progress <- int64(n)
+				select {
+				case progress <- int64(n):
+				case <-ctx.Done():
+					tmp.Close()
+					return ctx.Err()
+				}
 			}
 		}
 		if readErr == io.EOF {

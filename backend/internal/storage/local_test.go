@@ -7,10 +7,13 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func newTestLocalProvider(t *testing.T) *LocalProvider {
@@ -427,4 +430,215 @@ func TestLocalProviderConcurrentClose(t *testing.T) {
 	}()
 	close(start)
 	wg.Wait()
+}
+
+func TestLocalProviderConcurrentUploadsNoSharedStaging(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+
+	concurrent := 8
+	payloads := make([][]byte, concurrent)
+	for i := range payloads {
+		payloads[i] = bytes.Repeat([]byte{byte('A' + i%26)}, 64*1024)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(concurrent)
+	for i := range concurrent {
+		go func(idx int) {
+			defer wg.Done()
+			content := payloads[idx]
+			if err := p.StreamUpload(ctx, "files", "shared/target.txt", bytes.NewReader(content), int64(len(content))); err != nil {
+				t.Errorf("upload %d failed: %v", idx, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	tmpFiles := countTempFiles(t, filepath.Join(p.root, "shared"))
+	if tmpFiles != 0 {
+		t.Fatalf("expected 0 temp files after concurrent uploads, found %d", tmpFiles)
+	}
+
+	exists, size, err := p.FileExists(ctx, "files", "shared/target.txt")
+	if err != nil || !exists || size != int64(len(payloads[0])) {
+		t.Fatalf("target file: exists=%v size=%d err=%v", exists, size, err)
+	}
+
+	got, err := p.GetFileHash(ctx, "files", "shared/target.txt")
+	if err != nil {
+		t.Fatalf("GetFileHash: %v", err)
+	}
+	var matched int
+	for _, pl := range payloads {
+		if "SHA1:"+sha1Hex(pl) == got {
+			matched++
+			break
+		}
+	}
+	if matched == 0 {
+		t.Fatalf("final file content does not match any uploaded payload; hash=%s", got)
+	}
+}
+
+func TestLocalProviderUploadCleanupOnReadError(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+
+	if err := p.CreateDirectory(ctx, "files", "faildir"); err != nil {
+		t.Fatalf("CreateDirectory: %v", err)
+	}
+
+	errReader := &failingReader{
+		data:   bytes.Repeat([]byte("x"), 48*1024),
+		failAt: 16 * 1024,
+	}
+	err := p.StreamUpload(ctx, "files", "faildir/upload.bin", errReader, int64(len(errReader.data)))
+	if err == nil {
+		t.Fatal("expected error from upload with failing reader")
+	}
+
+	if exists, _, e := p.FileExists(ctx, "files", "faildir/upload.bin"); e != nil {
+		t.Fatalf("FileExists error: %v", e)
+	} else if exists {
+		t.Fatal("target file should not exist after failed upload")
+	}
+
+	tmpFiles := countTempFiles(t, filepath.Join(p.root, "faildir"))
+	if tmpFiles != 0 {
+		t.Fatalf("expected 0 temp files after failed upload, found %d", tmpFiles)
+	}
+}
+
+func TestLocalProviderUploadCleanupOnContextCancel(t *testing.T) {
+	p := newTestLocalProvider(t)
+
+	if err := p.CreateDirectory(context.Background(), "files", "cancdir"); err != nil {
+		t.Fatalf("CreateDirectory: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	slowReader := &delayedReader{
+		data:  bytes.Repeat([]byte("data"), 128*1024),
+		delay: 20 * time.Millisecond,
+	}
+
+	uploadErr := make(chan error, 1)
+	go func() {
+		uploadErr <- p.StreamUpload(ctx, "files", "cancdir/upload.bin", slowReader, int64(len(slowReader.data)))
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	err := <-uploadErr
+	if err == nil {
+		t.Fatal("expected error from upload cancelled via context")
+	}
+
+	tmpFiles := countTempFiles(t, filepath.Join(p.root, "cancdir"))
+	if tmpFiles != 0 {
+		t.Fatalf("expected 0 temp files after cancelled upload, found %d", tmpFiles)
+	}
+}
+
+func TestLocalProviderUploadProgressContextCancel(t *testing.T) {
+	p := newTestLocalProvider(t)
+
+	if err := p.CreateDirectory(context.Background(), "files", "progdir"); err != nil {
+		t.Fatalf("CreateDirectory: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	data := bytes.Repeat([]byte("x"), 32*1024*4)
+	slowReader := &delayedReader{
+		data:  data,
+		delay: 50 * time.Millisecond,
+	}
+	progress := make(chan int64)
+
+	uploadErr := make(chan error, 1)
+	go func() {
+		uploadErr <- p.StreamUploadChunked(ctx, "files", "progdir/upload.bin", slowReader, int64(len(data)), progress)
+	}()
+
+	<-progress
+	cancel()
+
+	err := <-uploadErr
+	if err == nil {
+		t.Fatal("expected error from upload cancelled via context")
+	}
+
+	tmpFiles := countTempFiles(t, filepath.Join(p.root, "progdir"))
+	if tmpFiles != 0 {
+		t.Fatalf("expected 0 temp files after cancelled upload, found %d", tmpFiles)
+	}
+}
+
+func countTempFiles(t *testing.T, dir string) int {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.Contains(name, ".tmp-") {
+			count++
+		}
+	}
+	return count
+}
+
+func sha1Hex(data []byte) string {
+	h := sha1.Sum(data)
+	return hex.EncodeToString(h[:])
+}
+
+type failingReader struct {
+	data   []byte
+	pos    int
+	failAt int
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	if r.pos >= r.failAt {
+		return 0, io.ErrUnexpectedEOF
+	}
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	end := r.pos + len(p)
+	if end > r.failAt {
+		end = r.failAt
+	}
+	if end > len(r.data) {
+		end = len(r.data)
+	}
+	n := copy(p, r.data[r.pos:end])
+	r.pos += n
+	if r.pos >= r.failAt {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, nil
+}
+
+type delayedReader struct {
+	data  []byte
+	pos   int
+	delay time.Duration
+}
+
+func (r *delayedReader) Read(p []byte) (int, error) {
+	if r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.pos:])
+	r.pos += n
+	if r.delay > 0 {
+		time.Sleep(r.delay)
+	}
+	return n, nil
 }

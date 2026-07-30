@@ -71,5 +71,8 @@ func TestThrottledReaderContextCancel(t *testing.T) {
 	defer cancel()
 	r := NewThrottledReader(bytes.NewReader(make([]byte, 1<<20)), mt, ctx)
 	buf := make([]byte, 1<<20)
-	_, _ = r.Read(buf) // must not panic; may return or be cancelled.
+	_, err := r.Read(buf)
+	if err == nil {
+		t.Fatal("expected error from Read when context is cancelled")
+	}
 }
