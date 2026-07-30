@@ -50,8 +50,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// scheduled migrations (created as SCHEDULED) so the UI and overlap protection
 	// correctly reflect that indexing is actively in progress. For immediate starts
 	// the migration is already INDEXING, so this is a no-op.
-	if err := db.UpdateMigrationStatusIfIndexing(idx.db, migID, "INDEXING"); err != nil {
-		failMigration(idx.db, migID, fmt.Sprintf("Failed to set indexing status: %v", err))
+	if err := db.TransitionMigrationToIndexing(idx.db, migID); err != nil {
+		log.Printf("Migration %s: unable to transition to indexing: %v", migID, err)
+		failMigration(idx.db, migID, "Migration could not be started. It may have been cancelled or is already running.")
 		return
 	}
 
