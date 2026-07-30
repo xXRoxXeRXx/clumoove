@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { listenForOAuthMessage, type OAuthSuccessMessage } from '../utils/oauth';
+import { listenForOAuthMessage, type OAuthErrorMessage, type OAuthSuccessMessage } from '../utils/oauth';
 
 export type OAuthPopupHandlers = {
   onSuccess: (msg: OAuthSuccessMessage) => void;
-  onError: (error: string) => void;
+  onError: (errorCode: OAuthErrorMessage['error_code']) => void;
 };
 
 /**
@@ -46,7 +46,7 @@ export function useOAuthPopup(apiUrl: string) {
           cleanupRef.current = null;
         },
         onError: (msg) => {
-          handlers.onError(msg.error);
+          handlers.onError(msg.error_code);
           cleanupRef.current = null;
         },
       });

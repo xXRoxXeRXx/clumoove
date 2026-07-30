@@ -140,6 +140,10 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	if req.Direction == "" {
 		req.Direction = "one_way"
 	}
+	if !validSyncDirection(req.Direction) {
+		writeValidationError(w, ErrSyncDirectionInvalid)
+		return
+	}
 	if req.ConflictStrategy == "" {
 		req.ConflictStrategy = "OVERWRITE"
 	}
@@ -264,6 +268,10 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"id": jobID})
+}
+
+func validSyncDirection(direction string) bool {
+	return direction == "one_way" || direction == "two_way"
 }
 
 func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) {

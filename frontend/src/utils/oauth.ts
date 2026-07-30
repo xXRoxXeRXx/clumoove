@@ -19,7 +19,7 @@ export interface OAuthSuccessMessage {
 
 export interface OAuthErrorMessage {
   type: 'oauth-error';
-  error: string;
+  error_code: string;
 }
 
 export type OAuthMessage = OAuthSuccessMessage | OAuthErrorMessage;

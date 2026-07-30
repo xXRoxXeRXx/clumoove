@@ -1172,6 +1172,30 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A worker can already have loaded this migration and be streaming a file.
+	// Mark it cancelled and broadcast before deleting its rows so active workers
+	// cancel their request contexts instead of continuing against deleted tasks.
+	if err = db.UpdateMigrationStatus(s.db, id, "CANCELLED", nil); err != nil {
+		log.Printf("Error cancelling migration %s before deletion: %v\n", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if err = db.CancelPendingTasks(s.db, id); err != nil {
+		// Once the migration row is removed, workers cannot observe its CANCELLED
+		// status. Do not delete until all not-yet-running tasks are cancelled.
+		log.Printf("Failed to cancel pending tasks for migration %s before deletion: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	s.writeAudit(r, db.AuditMigrationCancelled, id, userID, map[string]interface{}{"reason": "deletion"})
+	if err = s.queue.PublishCancelEvent(r.Context(), id); err != nil {
+		// Do not remove the cancellation state while a worker may still be
+		// streaming. Retrying the delete will publish a fresh cancellation event.
+		log.Printf("Failed to publish cancel event for migration %s before deletion: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
 	err = db.DeleteMigrationCascade(s.db, id)
 	if err != nil {
 		log.Printf("Error deleting migration %s: %v\n", id, err)

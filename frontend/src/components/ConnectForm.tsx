@@ -241,7 +241,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         }
       },
       onError: (err) => {
-        setError(t('connect.errors.oauthError', { error: err }));
+        setError(translateApiError(err));
       },
     });
   };
