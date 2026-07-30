@@ -187,14 +187,14 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 
 	// Refresh OAuth tokens if necessary
 	if job.SourceRefreshTokenEncrypted.Valid && job.SourceRefreshTokenEncrypted.String != "" {
-		sourcePass, err = e.ensureFreshToken(syncJobID, job, "source", sourcePass)
+		sourcePass, err = e.ensureFreshToken(indexCtx, syncJobID, job, "source", sourcePass)
 		if err != nil {
 			e.failSync(syncJobID, generation, fmt.Sprintf("Failed to refresh source OAuth token: %v", err))
 			return
 		}
 	}
 	if job.TargetRefreshTokenEncrypted.Valid && job.TargetRefreshTokenEncrypted.String != "" {
-		targetPass, err = e.ensureFreshToken(syncJobID, job, "target", targetPass)
+		targetPass, err = e.ensureFreshToken(indexCtx, syncJobID, job, "target", targetPass)
 		if err != nil {
 			e.failSync(syncJobID, generation, fmt.Sprintf("Failed to refresh target OAuth token: %v", err))
 			return

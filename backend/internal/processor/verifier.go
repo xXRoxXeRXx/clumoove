@@ -13,7 +13,6 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
-	"backend/internal/oauth"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
@@ -521,69 +520,4 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	}
 
 	p.runVerificationPass(ctx, cfg)
-}
-
-// ensureFreshSyncOAuthToken refreshes a sync target/source access token before
-// a worker-side provider is constructed. It mirrors the engine path so a long
-// running pass cannot silently fail checksum verification after token expiry.
-func (p *Processor) ensureFreshSyncOAuthToken(ctx context.Context, job *db.SyncJob, role, accessToken string) (string, error) {
-	var refreshTokenEnc sql.NullString
-	var expiresAt sql.NullTime
-	var provider, accessTokenEnc string
-	if role == "source" {
-		refreshTokenEnc, expiresAt, provider, accessTokenEnc = job.SourceRefreshTokenEncrypted, job.SourceTokenExpiresAt, job.SourceProvider, job.SourcePasswordEncrypted
-	} else if role == "target" {
-		refreshTokenEnc, expiresAt, provider, accessTokenEnc = job.TargetRefreshTokenEncrypted, job.TargetTokenExpiresAt, job.TargetProvider, job.TargetPasswordEncrypted
-	} else {
-		return "", fmt.Errorf("invalid OAuth role %q", role)
-	}
-	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
-		return accessToken, nil
-	}
-
-	mu := p.getOrCreateRefreshLock("sync:" + job.ID)
-	mu.Lock()
-	defer mu.Unlock()
-	latest, err := db.GetSyncJob(p.db, job.ID)
-	if err != nil {
-		return "", fmt.Errorf("failed to fetch sync job inside refresh lock: %w", err)
-	}
-	if role == "source" {
-		refreshTokenEnc, expiresAt, provider, accessTokenEnc = latest.SourceRefreshTokenEncrypted, latest.SourceTokenExpiresAt, latest.SourceProvider, latest.SourcePasswordEncrypted
-	} else {
-		refreshTokenEnc, expiresAt, provider, accessTokenEnc = latest.TargetRefreshTokenEncrypted, latest.TargetTokenExpiresAt, latest.TargetProvider, latest.TargetPasswordEncrypted
-	}
-	if latestAccess, derr := crypto.Decrypt(accessTokenEnc, p.secretKey); derr == nil {
-		accessToken = latestAccess
-	}
-	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
-		return accessToken, nil
-	}
-
-	refreshToken, err := crypto.Decrypt(refreshTokenEnc.String, p.secretKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt %s refresh token: %w", role, err)
-	}
-	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	tokenResp, err := oauth.RefreshToken(refreshCtx, provider, refreshToken)
-	cancel()
-	if err != nil {
-		return "", fmt.Errorf("OAuth refresh failed for %s (%s): %w", role, provider, err)
-	}
-	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to encrypt refreshed %s access token: %w", role, err)
-	}
-	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, p.secretKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to encrypt refreshed %s refresh token: %w", role, err)
-	}
-	expiresIn := tokenResp.ExpiresIn
-	if expiresIn <= 0 {
-		expiresIn = 3600
-	}
-	if err := db.UpdateSyncJobOAuthTokens(p.db, job.ID, role, newAccessEnc, newRefreshEnc, time.Now().Add(time.Duration(expiresIn)*time.Second)); err != nil {
-		return "", fmt.Errorf("failed to persist refreshed %s OAuth tokens: %w", role, err)
-	}
-	return tokenResp.AccessToken, nil
 }

@@ -409,19 +409,92 @@ func AbortSyncJobVerification(db *sql.DB, id string) (bool, error) {
 
 // UpdateSyncJobOAuthTokens persists a rotated OAuth token pair for a sync job.
 // Keeping this update in db makes token rotation identical for the API engine
-// and the worker-side checksum verifier.
-func UpdateSyncJobOAuthTokens(db *sql.DB, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time) error {
+// and the worker-side checksum verifier. Uses conditional persistence to prevent
+// concurrent token rotation from overwriting a newer token pair.
+func UpdateSyncJobOAuthTokens(db *sql.DB, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time, expectedRefreshTokenEncrypted string) error {
 	if role != "source" && role != "target" {
 		return fmt.Errorf("invalid oauth token role %q", role)
 	}
+	if expectedRefreshTokenEncrypted == "" {
+		return ErrOAuthTokenConflict
+	}
 	var query string
 	if role == "source" {
-		query = `UPDATE sync_jobs SET source_password_encrypted = $1, source_refresh_token_encrypted = $2, source_token_expires_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
+		query = `
+			UPDATE sync_jobs
+			SET source_password_encrypted        = $1,
+			    source_refresh_token_encrypted   = $2,
+			    source_token_expires_at          = $3,
+			    updated_at                       = CURRENT_TIMESTAMP
+			WHERE id = $4
+			  AND source_refresh_token_encrypted = $5
+		`
 	} else {
-		query = `UPDATE sync_jobs SET target_password_encrypted = $1, target_refresh_token_encrypted = $2, target_token_expires_at = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
+		query = `
+			UPDATE sync_jobs
+			SET target_password_encrypted        = $1,
+			    target_refresh_token_encrypted   = $2,
+			    target_token_expires_at          = $3,
+			    updated_at                       = CURRENT_TIMESTAMP
+			WHERE id = $4
+			  AND target_refresh_token_encrypted = $5
+		`
 	}
-	_, err := db.Exec(query, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, id)
-	return err
+	res, err := db.Exec(query, accessTokenEncrypted, refreshTokenEncrypted, expiresAt, id, expectedRefreshTokenEncrypted)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return ErrOAuthTokenConflict
+	}
+	return nil
+}
+
+// ExpiringOAuthSyncJob describes a sync job credential near OAuth token expiry.
+type ExpiringOAuthSyncJob struct {
+	SyncJobID             string
+	Role                  string
+	Provider              string
+	RefreshTokenEncrypted string
+}
+
+// GetExpiringOAuthSyncJobs returns active sync jobs whose OAuth access tokens expire within 15 minutes.
+func GetExpiringOAuthSyncJobs(db *sql.DB) ([]ExpiringOAuthSyncJob, error) {
+	threshold := time.Now().Add(15 * time.Minute)
+	query := `
+		SELECT id, 'source' AS role, source_provider, source_refresh_token_encrypted
+		FROM sync_jobs
+		WHERE status IN ('INDEXING', 'RUNNING')
+		  AND source_refresh_token_encrypted IS NOT NULL
+		  AND source_token_expires_at IS NOT NULL
+		  AND source_token_expires_at < $1
+		UNION ALL
+		SELECT id, 'target' AS role, target_provider, target_refresh_token_encrypted
+		FROM sync_jobs
+		WHERE status IN ('INDEXING', 'RUNNING')
+		  AND target_refresh_token_encrypted IS NOT NULL
+		  AND target_token_expires_at IS NOT NULL
+		  AND target_token_expires_at < $1
+	`
+	rows, err := db.Query(query, threshold)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []ExpiringOAuthSyncJob
+	for rows.Next() {
+		var e ExpiringOAuthSyncJob
+		if err := rows.Scan(&e.SyncJobID, &e.Role, &e.Provider, &e.RefreshTokenEncrypted); err != nil {
+			return nil, err
+		}
+		result = append(result, e)
+	}
+	return result, rows.Err()
 }
 
 // ClaimSyncJobPass atomically reserves a manually runnable sync job for a new

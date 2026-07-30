@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -672,64 +673,158 @@ func (s *APIServer) RunOAuthRotationDaemon(ctx context.Context) {
 }
 
 func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
-	expiring, err := db.GetExpiringOAuthMigrations(s.db)
+	expiringMig, err := db.GetExpiringOAuthMigrations(s.db)
 	if err != nil {
-		log.Printf("[OAuthDaemon] Error querying expiring tokens: %v\n", err)
-		return
+		log.Printf("[OAuthDaemon] Error querying expiring migration tokens: %v\n", err)
 	}
 
-	for _, entry := range expiring {
-		refreshToken, err := crypto.Decrypt(entry.RefreshTokenEncrypted, s.encryptionKey)
-		if err != nil {
-			log.Printf("[OAuthDaemon] Failed to decrypt refresh token for migration %s (%s): %v\n",
-				entry.MigrationID, entry.Role, err)
-			continue
-		}
+	expiringSync, errSync := db.GetExpiringOAuthSyncJobs(s.db)
+	if errSync != nil {
+		log.Printf("[OAuthDaemon] Error querying expiring sync tokens: %v\n", errSync)
+	}
 
-		refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		tokenResp, err := oauth.RefreshToken(refreshCtx, entry.Provider, refreshToken)
-		cancel()
+	if err == nil {
+		for _, entry := range expiringMig {
+			func(entry db.ExpiringOAuthMigration) {
+				if s.queue != nil {
+					lockToken, claimed, err := s.queue.TryClaimOAuthLock(ctx, "migration", entry.MigrationID, entry.Role, 30*time.Second)
+					if err != nil || !claimed {
+						log.Printf("[OAuthDaemon] Lock claim failed for migration %s (%s) (claimed=%v, err=%v), skipping tick\n", entry.MigrationID, entry.Role, claimed, err)
+						return
+					}
+					defer s.queue.ReleaseOAuthLock(ctx, "migration", entry.MigrationID, entry.Role, lockToken)
+				}
 
-		if err != nil {
-			log.Printf("[OAuthDaemon] Refresh failed for migration %s (%s provider=%s): %v — marking INVALID\n",
-				entry.MigrationID, entry.Role, entry.Provider, err)
-			errMsg := fmt.Sprintf("OAuth token refresh failed (%s): %v", entry.Provider, err)
-			_ = db.UpdateMigrationStatus(s.db, entry.MigrationID, "FAILED", &errMsg)
-			continue
-		}
+				refreshToken, err := crypto.Decrypt(entry.RefreshTokenEncrypted, s.encryptionKey)
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to decrypt refresh token for migration %s (%s): %v\n",
+						entry.MigrationID, entry.Role, err)
+					return
+				}
+				defer crypto.ZeroString(&refreshToken)
 
-		newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
-		if err != nil {
-			log.Printf("[OAuthDaemon] Failed to encrypt new access token for migration %s: %v\n", entry.MigrationID, err)
-			continue
-		}
-		newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
-		if err != nil {
-			log.Printf("[OAuthDaemon] Failed to encrypt new refresh token for migration %s: %v\n", entry.MigrationID, err)
-			continue
-		}
+				refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				tokenResp, err := oauth.RefreshToken(refreshCtx, entry.Provider, refreshToken)
+				cancel()
 
-		expiresIn := tokenResp.ExpiresIn
-		if expiresIn <= 0 {
-			expiresIn = 3600
-		}
-		newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+				if err != nil {
+					log.Printf("[OAuthDaemon] Refresh failed for migration %s (%s provider=%s): %v — marking FAILED\n",
+						entry.MigrationID, entry.Role, entry.Provider, err)
+					// Provider error bodies can contain credential hints. Persist only a
+					// stable, non-sensitive failure reason.
+					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
+					_ = db.UpdateMigrationStatus(s.db, entry.MigrationID, "FAILED", &errMsg)
+					return
+				}
+				defer crypto.ZeroString(&tokenResp.AccessToken)
+				defer crypto.ZeroString(&tokenResp.RefreshToken)
 
-		err = db.UpdateMigrationOAuthTokens(s.db, db.OAuthTokenUpdate{
-			MigrationID:           entry.MigrationID,
-			Role:                  entry.Role,
-			AccessTokenEncrypted:  newAccessEnc,
-			RefreshTokenEncrypted: newRefreshEnc,
-			ExpiresAt:             newExpiresAt,
-		})
-		if err != nil {
-			log.Printf("[OAuthDaemon] Failed to persist new tokens for migration %s (%s): %v\n",
-				entry.MigrationID, entry.Role, err)
-			continue
-		}
+				newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to encrypt new access token for migration %s: %v\n", entry.MigrationID, err)
+					return
+				}
+				newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to encrypt new refresh token for migration %s: %v\n", entry.MigrationID, err)
+					return
+				}
 
-		log.Printf("[OAuthDaemon] Successfully rotated %s OAuth token for migration %s (provider=%s, new_expires_at=%s)\n",
-			entry.Role, entry.MigrationID, entry.Provider, newExpiresAt.Format(time.RFC3339))
+				expiresIn := tokenResp.ExpiresIn
+				if expiresIn <= 0 {
+					expiresIn = 3600
+				}
+				newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+				err = db.UpdateMigrationOAuthTokens(s.db, db.OAuthTokenUpdate{
+					MigrationID:           entry.MigrationID,
+					Role:                  entry.Role,
+					AccessTokenEncrypted:  newAccessEnc,
+					RefreshTokenEncrypted: newRefreshEnc,
+					ExpiresAt:             newExpiresAt,
+				}, entry.RefreshTokenEncrypted)
+				if errors.Is(err, db.ErrOAuthTokenConflict) {
+					log.Printf("[OAuthDaemon] Token update conflict for migration %s (%s): token was updated concurrently\n", entry.MigrationID, entry.Role)
+					return
+				}
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to persist new tokens for migration %s (%s): %v\n",
+						entry.MigrationID, entry.Role, err)
+					return
+				}
+
+				log.Printf("[OAuthDaemon] Successfully rotated %s OAuth token for migration %s (provider=%s, new_expires_at=%s)\n",
+					entry.Role, entry.MigrationID, entry.Provider, newExpiresAt.Format(time.RFC3339))
+			}(entry)
+		}
+	}
+
+	if errSync == nil {
+		for _, entry := range expiringSync {
+			func(entry db.ExpiringOAuthSyncJob) {
+				if s.queue != nil {
+					lockToken, claimed, err := s.queue.TryClaimOAuthLock(ctx, "sync", entry.SyncJobID, entry.Role, 30*time.Second)
+					if err != nil || !claimed {
+						log.Printf("[OAuthDaemon] Lock claim failed for sync job %s (%s) (claimed=%v, err=%v), skipping tick\n", entry.SyncJobID, entry.Role, claimed, err)
+						return
+					}
+					defer s.queue.ReleaseOAuthLock(ctx, "sync", entry.SyncJobID, entry.Role, lockToken)
+				}
+
+				refreshToken, err := crypto.Decrypt(entry.RefreshTokenEncrypted, s.encryptionKey)
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to decrypt refresh token for sync job %s (%s): %v\n",
+						entry.SyncJobID, entry.Role, err)
+					return
+				}
+				defer crypto.ZeroString(&refreshToken)
+
+				refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				tokenResp, err := oauth.RefreshToken(refreshCtx, entry.Provider, refreshToken)
+				cancel()
+
+				if err != nil {
+					log.Printf("[OAuthDaemon] Refresh failed for sync job %s (%s provider=%s): %v — marking FAILED\n",
+						entry.SyncJobID, entry.Role, entry.Provider, err)
+					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
+					_ = db.UpdateSyncJobStatus(s.db, entry.SyncJobID, "FAILED", &errMsg)
+					return
+				}
+				defer crypto.ZeroString(&tokenResp.AccessToken)
+				defer crypto.ZeroString(&tokenResp.RefreshToken)
+
+				newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to encrypt new access token for sync job %s: %v\n", entry.SyncJobID, err)
+					return
+				}
+				newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to encrypt new refresh token for sync job %s: %v\n", entry.SyncJobID, err)
+					return
+				}
+
+				expiresIn := tokenResp.ExpiresIn
+				if expiresIn <= 0 {
+					expiresIn = 3600
+				}
+				newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+				err = db.UpdateSyncJobOAuthTokens(s.db, entry.SyncJobID, entry.Role, newAccessEnc, newRefreshEnc, newExpiresAt, entry.RefreshTokenEncrypted)
+				if errors.Is(err, db.ErrOAuthTokenConflict) {
+					log.Printf("[OAuthDaemon] Token update conflict for sync job %s (%s): token was updated concurrently\n", entry.SyncJobID, entry.Role)
+					return
+				}
+				if err != nil {
+					log.Printf("[OAuthDaemon] Failed to persist new tokens for sync job %s (%s): %v\n",
+						entry.SyncJobID, entry.Role, err)
+					return
+				}
+
+				log.Printf("[OAuthDaemon] Successfully rotated %s OAuth token for sync job %s (provider=%s, new_expires_at=%s)\n",
+					entry.Role, entry.SyncJobID, entry.Provider, newExpiresAt.Format(time.RFC3339))
+			}(entry)
+		}
 	}
 }
 

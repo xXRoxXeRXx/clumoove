@@ -2,7 +2,9 @@ package queue
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -207,10 +209,54 @@ func (q *Queue) TryClaimScheduleLock(ctx context.Context, scheduleID string, ttl
 	return q.client.SetNX(ctx, key, "1", ttl).Result()
 }
 
+var releaseLockLuaScript = redis.NewScript(`
+	if redis.call("get", KEYS[1]) == ARGV[1] then
+		return redis.call("del", KEYS[1])
+	else
+		return 0
+	end
+`)
+
+func generateRandomLockToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed while generating OAuth lock token: %v", err))
+	}
+	return hex.EncodeToString(b)
+}
+
 // TryClaimOrphanedSyncRecoveryLock claims a single-writer lock for orphaned sync-job recovery.
 // In a multi-instance API deployment only one gateway should reset stale jobs per tick.
 func (q *Queue) TryClaimOrphanedSyncRecoveryLock(ctx context.Context, ttl time.Duration) (bool, error) {
 	return q.client.SetNX(ctx, "sync:orphaned-recovery-lock", "1", ttl).Result()
+}
+
+// TryClaimOAuthLock claims a single-writer lock for OAuth token rotation of a specific job and role using a random token.
+// Returns (lockToken, claimed, error). Callers must pass lockToken to ReleaseOAuthLock when finished.
+func (q *Queue) TryClaimOAuthLock(ctx context.Context, jobType, jobID, role string, ttl time.Duration) (string, bool, error) {
+	if q == nil || q.client == nil {
+		return "local-no-redis", true, nil
+	}
+	key := fmt.Sprintf("oauth:lock:%s:%s:%s", jobType, jobID, role)
+	token := generateRandomLockToken()
+	ok, err := q.client.SetNX(ctx, key, token, ttl).Result()
+	if err != nil {
+		return "", false, err
+	}
+	if !ok {
+		return "", false, nil
+	}
+	return token, true, nil
+}
+
+// ReleaseOAuthLock releases the distributed lock for OAuth token rotation safely using Lua compare-and-delete.
+// It deletes the key ONLY if the stored value matches token.
+func (q *Queue) ReleaseOAuthLock(ctx context.Context, jobType, jobID, role string, token string) error {
+	if q == nil || q.client == nil || token == "" || token == "local-no-redis" {
+		return nil
+	}
+	key := fmt.Sprintf("oauth:lock:%s:%s:%s", jobType, jobID, role)
+	return releaseLockLuaScript.Run(ctx, q.client, []string{key}, token).Err()
 }
 
 // RegisterActiveWorker registers/refreshes the worker's active status in Redis

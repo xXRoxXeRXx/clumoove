@@ -88,6 +88,18 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 	defer crypto.ZeroString(&targetPass)
 
+	sourceProviderPass, err := p.ensureFreshSyncOAuthToken(ctx, job, "source", sourcePass)
+	if err != nil {
+		return fmt.Errorf("failed to refresh source OAuth token: %w", err)
+	}
+	defer crypto.ZeroString(&sourceProviderPass)
+
+	targetProviderPass, err := p.ensureFreshSyncOAuthToken(ctx, job, "target", targetPass)
+	if err != nil {
+		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
+	}
+	defer crypto.ZeroString(&targetProviderPass)
+
 	// Handle directory creation tasks (action == "mkdir").
 	// Enqueued by the sync engine for directories present on one side but
 	// missing on the other. We create the directory on the appropriate client
@@ -100,7 +112,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		var mkPath string
 		var mkProvider string
 		if side == "source" {
-			mkClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+			mkClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
 			if err != nil {
 				return fmt.Errorf("failed to create source client for mkdir: %w", err)
 			}
@@ -108,7 +120,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			mkPath = task.FilePath
 			mkProvider = job.SourceProvider
 		} else {
-			mkClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+			mkClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
 			if err != nil {
 				return fmt.Errorf("failed to create target client for mkdir: %w", err)
 			}
@@ -147,13 +159,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	// Setup clients depending on action
 	if action == "delete" {
-		sourceClient, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+		sourceClient, err := storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
 		if err != nil {
 			return fmt.Errorf("failed to create source client: %w", err)
 		}
 		defer sourceClient.Close()
 
-		targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+		targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
 		if err != nil {
 			return fmt.Errorf("failed to create target client: %w", err)
 		}
@@ -188,7 +200,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 
 	if action == "conflict_copy" {
-		targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+		targetClient, err := storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
 		if err != nil {
 			return fmt.Errorf("failed to create target client for conflict: %w", err)
 		}
@@ -223,13 +235,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if action == "download" {
 		// Download: Target -> Source (Two-Way pull)
-		srcClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+		srcClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
 		if err != nil {
 			return fmt.Errorf("failed to create target (source) client: %w", err)
 		}
 		defer srcClient.Close()
 
-		tgtClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+		tgtClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
 		if err != nil {
 			return fmt.Errorf("failed to create source (target) client: %w", err)
 		}
@@ -241,13 +253,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		tgtProvider = job.SourceProvider
 	} else {
 		// Upload: Source -> Target (Standard migration style)
-		srcClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+		srcClient, err = storage.NewProvider(ctx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
 		if err != nil {
 			return fmt.Errorf("failed to create source client: %w", err)
 		}
 		defer srcClient.Close()
 
-		tgtClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+		tgtClient, err = storage.NewProvider(ctx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
 		if err != nil {
 			return fmt.Errorf("failed to create target client: %w", err)
 		}
