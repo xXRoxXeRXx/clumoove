@@ -3,13 +3,11 @@ networks:
     driver: bridge
 
 services:
-  # Persistent Database
   postgres-db:
     image: postgres:15-alpine
     container_name: migration-postgres
     restart: unless-stopped
-    # Do NOT expose PostgreSQL to the host network. Only reachable from
-    # within the Docker network by api-backend and migration-worker.
+    # Internal only; do not publish a host port.
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
@@ -17,27 +15,21 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
     networks:
       - migration-network
 
-  # Message Broker & Queue
   redis-queue:
     image: redis:7-alpine
     container_name: migration-redis
     restart: unless-stopped
-    # Do NOT expose Redis to the host network. It must only be reachable from
-    # inside the Docker network. Binding the port publicly allowed the SLAVEOF
-    # attack that wiped the queue on 2026-07-08.
-    # REDIS_PASSWORD is REQUIRED. The api-backend/worker refuse to start with
-    # an empty or known-default password (queue.NewQueue). Do not ship a
-    # fallback default here — generate a strong unique password per deployment.
+    # Internal only; REDIS_PASSWORD must be a strong deployment-specific secret.
     command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}" --bind 0.0.0.0
     volumes:
       - redis_data:/data
     networks:
       - migration-network
 
-  # Go API Gateway & Backend Control
   api-backend:
     build:
       context: .
@@ -67,6 +59,7 @@ services:
     depends_on:
       - postgres-db
       - redis-queue
+    command: ["air", "-c", "/app/backend/.air.api.toml"]
     volumes:
       - ./backend:/app/backend
       - ./frontend/src/locales:/app/frontend/src/locales:ro
@@ -74,18 +67,17 @@ services:
     networks:
       - migration-network
 
-  # Core Migration Engine (Worker)
   migration-worker:
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: dev
-    container_name: migration-worker-1
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
+      - MAX_THREADS=${MAX_THREADS:-16}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID:-}
@@ -95,7 +87,7 @@ services:
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID:-}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET:-}
       - LOCAL_STORAGE_ROOT=/clumoove
-    entrypoint: go run cmd/worker/main.go
+    command: ["air", "-c", "/app/backend/.air.worker.toml"]
     depends_on:
       - postgres-db
       - redis-queue
@@ -106,7 +98,6 @@ services:
     networks:
       - migration-network
 
-  # Web-Frontend (React SPA)
   frontend:
     build:
       context: ./frontend

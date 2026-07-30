@@ -5,6 +5,7 @@ WORKDIR /app/backend
 RUN apk add --no-cache git build-base
 COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
+RUN go install github.com/air-verse/air@v1.66.0
 COPY backend/ ./
 COPY frontend/src/locales /app/frontend/src/locales
 RUN go generate ./internal/i18n
