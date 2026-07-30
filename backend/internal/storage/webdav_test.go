@@ -93,6 +93,63 @@ func TestWebDAVProviderErrAuth(t *testing.T) {
 	}
 }
 
+func TestWebDAVFileExistsFallsBackToPropfindForUnknownHEADLength(t *testing.T) {
+	propfindResponse := `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+	<d:response>
+		<d:propstat>
+			<d:prop>
+				<d:getcontentlength>0</d:getcontentlength>
+				<d:resourcetype/>
+			</d:prop>
+			<d:status>HTTP/1.1 200 OK</d:status>
+		</d:propstat>
+	</d:response>
+</d:multistatus>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.WriteHeader(http.StatusOK) // Deliberately omit Content-Length.
+		case "PROPFIND":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(propfindResponse))
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	p, err := NewWebDAVProvider(server.URL, "user", "pass")
+	if err != nil {
+		t.Fatalf("NewWebDAVProvider: %v", err)
+	}
+	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
+	if err != nil || !exists || size != 0 {
+		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)
+	}
+}
+
+func TestWebDAVFileExistsUsesHEADForExplicitZeroLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("unexpected method %s", r.Method)
+			return
+		}
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	p, err := NewWebDAVProvider(server.URL, "user", "pass")
+	if err != nil {
+		t.Fatalf("NewWebDAVProvider: %v", err)
+	}
+	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
+	if err != nil || !exists || size != 0 {
+		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)
+	}
+}
+
 func TestWebDAVCreateDirectoryVerifiesMKCOLMethodNotAllowed(t *testing.T) {
 	collectionResponse := `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`
 	fileResponse := `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>`

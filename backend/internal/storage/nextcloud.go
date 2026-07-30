@@ -1033,13 +1033,17 @@ func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath str
 	defer cancel()
 	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
 
+	// HEAD is only an optimization. Bound it separately so a slow DAV server
+	// cannot consume the verification deadline needed by the PROPFIND fallback.
+	headCtx, headCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer headCancel()
 	// Try lightweight HEAD request first (returns 200 OK with Content-Length or 404 Not Found directly)
 	headReq, err := p.newRequest("HEAD", u, nil)
 	if err == nil {
-		headReq = headReq.WithContext(ctx)
+		headReq = headReq.WithContext(headCtx)
 		if resp, err := p.HTTPClient.Do(headReq); err == nil {
 			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if resp.StatusCode == http.StatusOK && resp.ContentLength >= 0 {
 				return true, resp.ContentLength, nil
 			}
 			if resp.StatusCode == http.StatusNotFound {
@@ -1048,8 +1052,10 @@ func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath str
 			if resp.StatusCode == http.StatusUnauthorized {
 				return false, 0, fmt.Errorf("nextcloud file-exists: %w", ErrAuth)
 			}
-			// For status >= 400 (e.g. 500 Internal Server Error or 405 Method Not Allowed on CalDAV/CardDAV resources),
-			// do not return error immediately; fall through to PROPFIND below.
+			// Fall through to PROPFIND if HEAD did not include Content-Length
+			// (net/http reports a missing header as -1, not 0), or for status >= 400
+			// (e.g. 500 Internal Server Error or 405 Method Not Allowed). Zero-byte
+			// files commonly omit Content-Length on WebDAV servers.
 		}
 	}
 

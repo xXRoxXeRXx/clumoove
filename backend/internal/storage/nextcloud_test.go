@@ -62,6 +62,63 @@ func TestNewNextcloudProviderURLNormalization(t *testing.T) {
 	}
 }
 
+func TestNextcloudFileExistsFallsBackToPropfindForUnknownHEADLength(t *testing.T) {
+	propfindResponse := `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+	<d:response>
+		<d:propstat>
+			<d:prop>
+				<d:getcontentlength>0</d:getcontentlength>
+				<d:resourcetype/>
+			</d:prop>
+			<d:status>HTTP/1.1 200 OK</d:status>
+		</d:propstat>
+	</d:response>
+</d:multistatus>`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodHead:
+			w.WriteHeader(http.StatusOK) // Deliberately omit Content-Length.
+		case "PROPFIND":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(propfindResponse))
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	if err != nil {
+		t.Fatalf("NewNextcloudProvider: %v", err)
+	}
+	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
+	if err != nil || !exists || size != 0 {
+		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)
+	}
+}
+
+func TestNextcloudFileExistsUsesHEADForExplicitZeroLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("unexpected method %s", r.Method)
+			return
+		}
+		w.Header().Set("Content-Length", "0")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	if err != nil {
+		t.Fatalf("NewNextcloudProvider: %v", err)
+	}
+	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
+	if err != nil || !exists || size != 0 {
+		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)
+	}
+}
+
 func TestNextcloudCalendarListingFiltering(t *testing.T) {
 	xmlResponse := `<?xml version="1.0" encoding="utf-8"?>
 <d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/">
@@ -228,5 +285,3 @@ func TestNextcloudFileExistsHEADFallback(t *testing.T) {
 		t.Errorf("Expected size=150, got %d", size)
 	}
 }
-
-
