@@ -116,15 +116,15 @@ docker compose -f docker-compose.dev.yml up --build -d
 Frontend: http://localhost:3001 · API: http://localhost:8001
 
 > [!NOTE]
-> `docker-compose.dev.yml` builds all images locally with source mounts for live reload. For production,
+> `docker-compose.dev.yml` builds all images locally with Air-based Go reloads and Vite frontend HMR. For production,
 > the default `docker-compose.yml` builds the `prod` images locally from source — run
 > `docker compose up --build -d`.
 
 > [!TIP]
 > Scale workers horizontally at runtime: `docker compose -f docker-compose.dev.yml up --scale migration-worker=4 -d`. Pending transfers are
-> distributed atomically across all workers via the PostgreSQL queue.
+> distributed atomically across all workers via the PostgreSQL queue; adjust `POSTGRES_MAX_CONNECTIONS` for the worker count.
 
-For production deployment (local builds via `docker-compose.yml`, hardened `docker-compose.prod.yml`, `MAX_THREADS`, HTTPS behind a reverse proxy) and operations
+For production deployment (local builds via `docker-compose.yml`, `MAX_THREADS`, HTTPS behind a reverse proxy) and operations
 tasks, see [`docs/08-deployment.md`](./docs/08-deployment.md).
 
 ## Configuration
@@ -181,7 +181,6 @@ clumoove/
 ├── db/schema.sql            # DDL (also inline in db.go for auto-migration)
 ├── docker-compose.yml       # Production stack (local prod build)
 ├── docker-compose.dev.yml   # Development stack (local build)
-├── docker-compose.prod.yml  # Production stack (hardened)
 └── .env.example             # Environment variable template
 ```
 

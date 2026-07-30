@@ -182,7 +182,7 @@ backend/cmd/{api,worker}   entrypoints
 backend/internal/{auth,crypto,db,email,indexer,oauth,processor,queue,sanitize,scheduler,storage,throttle,totp2fa}
 frontend/src/{components,contexts,hooks,locales,utils}
 db/schema.sql
-docker-compose.yml / docker-compose.dev.yml / docker-compose.prod.yml
+docker-compose.yml / docker-compose.dev.yml
 .env.example
 ```
 

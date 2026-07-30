@@ -26,6 +26,7 @@ configuration, scaling, and routine operational tasks.
 | `REDIS_URL` | Redis connection (`redis://:pw@host:6379`). | `localhost:6379` |
 | `REDIS_PASSWORD` | Redis password (required; strong/unique). | – |
 | `CORS_ALLOWED_ORIGIN` | Allowed CORS origin for production. | – |
+| `POSTGRES_MAX_CONNECTIONS` | PostgreSQL connection limit for the production Compose stack; increase when scaling workers. | `300` |
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for the Vite dev server. | – |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials. | – |
 | `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. | – |
@@ -33,7 +34,7 @@ configuration, scaling, and routine operational tasks.
 | `OAUTH_REDIRECT_URI` | Optional OAuth redirect override (auto-detected otherwise). | auto |
 | `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `60` |
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |
-| `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` |
+| `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` (`50` in production Compose) |
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
 | `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting). | off |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` / `SMTP_FROM_NAME` / `SMTP_ENCRYPTION` | System SMTP (password reset, etc.). | – |
@@ -45,11 +46,10 @@ configuration, scaling, and routine operational tasks.
 
 | File | Use | Build | Notes |
 | :--- | :--- | :--- | :--- |
-| `docker-compose.yml` | Production | Local multi-stage build (`target: prod`) | Builds api/worker/frontend from source. Run behind a reverse proxy. |
-| `docker-compose.dev.yml` | Development | Local multi-stage build (`target: dev`) + source mounts | Live-reload backend/frontend, mounts `./backend` and `./frontend`. |
-| `docker-compose.prod.yml` | Production (advanced) | Local multi-stage build (`target: prod`) | Hardened production variant with extra ops settings. |
+| `docker-compose.yml` | Production | Local multi-stage build (`target: prod`) | Builds api/worker/frontend from source; uses production restart policies, a 300-connection PostgreSQL limit, and `MAX_THREADS=50` by default. Run behind a reverse proxy. |
+| `docker-compose.dev.yml` | Development | Local multi-stage build (`target: dev`) + source mounts | Air restarts API and worker after Go/locale changes; Vite provides frontend HMR. |
 
-> Both production compose files build the images locally from source — no prebuilt
+> Both compose files build the images locally from source — no prebuilt
 > images are pulled from GHCR. Use `docker-compose.dev.yml` for local development with
 > source mounts and live reload.
 
@@ -79,7 +79,8 @@ cp .env.example .env   # fill ENCRYPTION_SECRET_KEY / JWT_SECRET_KEY / REDIS_PAS
 docker compose -f docker-compose.dev.yml up --build -d
 ```
 
-This builds local images, installs dependencies, mounts `./backend` and `./frontend` for live reload,
+This builds local images, installs dependencies, mounts `./backend` and `./frontend`, restarts API and
+worker with Air after Go or locale changes, and enables Vite frontend HMR. It also
 initializes the PostgreSQL schema from `db/schema.sql`, and starts all services in the background.
 
 ### Production (local build)
@@ -92,12 +93,6 @@ This builds the api/worker/frontend `prod` images locally from source and starts
 services in the background. Suitable for running behind a reverse proxy with HTTPS. The
 API auto-detects proxied CORS/hosts; set `CORS_ALLOWED_ORIGIN`, `FRONTEND_URL`, and
 `TRUSTED_PROXY=1` as needed.
-
-For the hardened production variant, use:
-
-```bash
-docker compose -f docker-compose.prod.yml up --build -d
-```
 
 > Note: the first `docker compose up --build` compiles the Go binaries and the frontend
 > bundle, so the initial build takes a few minutes. Subsequent runs reuse the layer cache.
@@ -129,6 +124,11 @@ docker compose -f docker-compose.dev.yml up --scale migration-worker=4 -d   # de
 Pending transfers are distributed atomically across workers via the PostgreSQL `SKIP LOCKED` queue.
 `MAX_THREADS` controls per-process parallelism; raise it above the per-migration max (16) only when
 running several migrations concurrently.
+
+Each worker has a database pool of `max(50, 2 × MAX_THREADS)` connections plus one dedicated `LISTEN`
+connection; the API uses up to 50. Set `POSTGRES_MAX_CONNECTIONS` to at least
+`50 + worker count × (max(50, 2 × MAX_THREADS) + 1)`, plus operational headroom. The production default
+of 300 is suitable for up to two 50-thread workers; set it to at least `500` before running four.
 
 ---
 
