@@ -676,7 +676,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			Metadata:     metaJSON,
 		})
 	}
-	if err := db.BulkCreateSyncTasks(e.db, dbTasks); err != nil {
+	if err := db.BulkCreateSyncTasks(ctx, e.db, dbTasks); err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to create tasks in DB: %v", err))
 		return
 	}

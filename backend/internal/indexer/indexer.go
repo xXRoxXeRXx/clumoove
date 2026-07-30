@@ -367,31 +367,33 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 // Resilient indexing: a failure to list a single folder (e.g. a slow/stalled
 // WebDAV PROPFIND that hits the per-request timeout) is recorded in indexErrors
 // and skipped, so the rest of the tree keeps being indexed instead of aborting
-// the whole migration. If the overall indexing context is cancelled (deadline or
-// shutdown) traversal stops gracefully after recording a single interrupted error.
+// the whole migration. Database insertion failures are not recoverable partial
+// successes: they are returned so the migration is failed rather than receiving
+// totals for tasks that were never committed.
 func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	queue := []string{startPath}
 	visited := make(map[string]bool)
 	visited[startPath] = true
 
 	var taskBatch []*db.Task
-	flushBatch := func() {
+	var batchFiles, batchDirs int
+	var batchBytes int64
+	flushBatch := func() error {
 		if len(taskBatch) == 0 {
-			return
+			return nil
 		}
-		if err := db.BulkCreateSyncTasks(database, taskBatch); err != nil {
-			log.Printf("Indexing batch insert error: %v", err)
-			for _, t := range taskBatch {
-				*indexErrors = append(*indexErrors, db.IndexingErrorInput{
-					Path:         t.FilePath,
-					ResourceType: t.ResourceType,
-					ErrorMessage: "failed to create task batch: " + sanitizeError(err.Error()),
-				})
-			}
+		if err := db.BulkCreateSyncTasks(ctx, database, taskBatch); err != nil {
+			return fmt.Errorf("create task batch: %w", err)
 		}
+		*totalFiles += batchFiles
+		*totalDirs += batchDirs
+		*totalBytes += batchBytes
 		taskBatch = taskBatch[:0]
+		batchFiles = 0
+		batchDirs = 0
+		batchBytes = 0
+		return nil
 	}
-	defer flushBatch()
 
 	for len(queue) > 0 {
 		currentPath := queue[0]
@@ -439,9 +441,11 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 						Status:       "PENDING",
 						Metadata:     mkdirMeta,
 					})
-					*totalDirs++
+					batchDirs++
 					if len(taskBatch) >= 500 {
-						flushBatch()
+						if err := flushBatch(); err != nil {
+							return err
+						}
 					}
 				}
 				if !visited[file.Path] {
@@ -476,15 +480,17 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					Metadata:     metaJSON,
 				}
 				taskBatch = append(taskBatch, task)
-				*totalFiles++
-				*totalBytes += file.Size
+				batchFiles++
+				batchBytes += file.Size
 				if len(taskBatch) >= 500 {
-					flushBatch()
+					if err := flushBatch(); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
-	return nil
+	return flushBatch()
 }
 
 // resourceIndexKey prevents Immich's All Assets and album virtual paths from

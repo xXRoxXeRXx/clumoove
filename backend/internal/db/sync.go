@@ -997,14 +997,14 @@ func ListSyncStateByJob(db *sql.DB, syncJobID string) ([]SyncState, error) {
 // BulkCreateSyncTasks inserts sync tasks in batches of batchSize rows per statement.
 // This is dramatically faster than N individual INSERTs for large sync passes with
 // many files (e.g. 1000 files → 2 DB round-trips instead of 1000).
-func BulkCreateSyncTasks(db *sql.DB, tasks []*Task) error {
+func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 	if len(tasks) == 0 {
 		return nil
 	}
 
 	const batchSize = 500
 
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("bulk create tasks: begin tx: %w", err)
 	}
@@ -1045,7 +1045,7 @@ func BulkCreateSyncTasks(db *sql.DB, tasks []*Task) error {
 		query := "INSERT INTO tasks (migration_id, sync_job_id, file_path, file_size, source_hash, status, resource_type, metadata) VALUES " +
 			strings.Join(valuesClauses, ",")
 
-		if _, err := tx.Exec(query, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return fmt.Errorf("bulk create tasks: insert batch [%d:%d]: %w", start, end, err)
 		}
 	}
