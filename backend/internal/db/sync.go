@@ -349,14 +349,14 @@ func ResumeSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
 
 // TransitionSyncJobToRunning atomically starts task processing for an indexed
 // pass. It prevents a superseded INDEXING pass from reviving another status.
-func TransitionSyncJobToRunning(db *sql.DB, id string) (bool, error) {
+func TransitionSyncJobToRunning(db *sql.DB, id string, generation int) (bool, error) {
 	var transitionedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
 		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status = 'INDEXING'
+		WHERE id = $1 AND status = 'INDEXING' AND run_generation = $2
 		RETURNING id
-	`, id).Scan(&transitionedID)
+	`, id, generation).Scan(&transitionedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -426,34 +426,33 @@ func UpdateSyncJobOAuthTokens(db *sql.DB, id, role, accessTokenEncrypted, refres
 
 // ClaimSyncJobPass atomically reserves a manually runnable sync job for a new
 // pass. A successful claim moves the job to INDEXING before its pass starts.
-func ClaimSyncJobPass(database *sql.DB, id string) (bool, error) {
-	var claimedID string
-	err := database.QueryRow(`
+func ClaimSyncJobPass(database *sql.DB, id string) (generation int, claimed bool, err error) {
+	err = database.QueryRow(`
 		UPDATE sync_jobs
-		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
+		SET status = 'INDEXING', run_generation = run_generation + 1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status IN ('IDLE', 'FAILED')
-		RETURNING id
-	`, id).Scan(&claimedID)
+		RETURNING run_generation
+	`, id).Scan(&generation)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
-	return true, nil
+	return generation, true, nil
 }
 
 // ReleaseUnstartedSyncPass prevents a failed coordinator startup from leaving
 // an otherwise runnable job permanently in INDEXING. It deliberately only
 // releases INDEXING: a concurrent pause or lifecycle transition is preserved.
-func ReleaseUnstartedSyncPass(database *sql.DB, id string) (bool, error) {
+func ReleaseUnstartedSyncPass(database *sql.DB, id string, generation int) (bool, error) {
 	var releasedID string
 	err := database.QueryRow(`
 		UPDATE sync_jobs
 		SET status = 'IDLE', updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status = 'INDEXING'
+		WHERE id = $1 AND status = 'INDEXING' AND run_generation = $2
 		RETURNING id
-	`, id).Scan(&releasedID)
+	`, id, generation).Scan(&releasedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -501,15 +500,23 @@ func RecoverConnectionLostSyncJob(database *sql.DB, ctx context.Context, id stri
 	return true, nil
 }
 
-// UpdateSyncJobTotals updates the total_files and total_bytes count calculated at index time and resets pass counters
-func UpdateSyncJobTotals(db *sql.DB, id string, totalFiles int, totalBytes int64) error {
-	query := `
+// UpdateSyncJobTotals updates counters for its INDEXING pass. A false result
+// means the pass was superseded or otherwise left INDEXING before the update.
+func UpdateSyncJobTotals(db *sql.DB, id string, generation, totalFiles int, totalBytes int64) (bool, error) {
+	var updatedID string
+	err := db.QueryRow(`
 		UPDATE sync_jobs
 		SET total_files = $1, total_bytes = $2, processed_files = 0, processed_bytes = 0, live_bytes = 0, changed_files = 0, deleted_files = 0, failed_files = 0, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $3
-	`
-	_, err := db.Exec(query, totalFiles, totalBytes, id)
-	return err
+		WHERE id = $3 AND run_generation = $4 AND status = 'INDEXING'
+		RETURNING id
+	`, totalFiles, totalBytes, id, generation).Scan(&updatedID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // AddSyncJobLiveBytes adds bytes to the live_bytes counter of a sync job for real-time speed display
@@ -548,17 +555,17 @@ func UpdateSyncJobRunStats(db *sql.DB, id string, lastRunStatus string, errMsg *
 // FinalizeSyncJobPass records a transfer/verification pass and returns it to
 // IDLE only from RUNNING or VERIFYING. It must not accept INDEXING: a newly
 // resumed pass can be INDEXING while a cancelled predecessor is winding down.
-func FinalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
-	return finalizeSyncJobPass(db, id, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status IN ('RUNNING', 'VERIFYING')")
+func FinalizeSyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
+	return finalizeSyncJobPass(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status IN ('RUNNING', 'VERIFYING')")
 }
 
 // FinalizeEmptySyncJobPass completes an index-only pass that produced no
 // tasks. This is deliberately separate from transfer finalization.
-func FinalizeEmptySyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
-	return finalizeSyncJobPass(db, id, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status = 'INDEXING'")
+func FinalizeEmptySyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
+	return finalizeSyncJobPass(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status = 'INDEXING'")
 }
 
-func finalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, predicate string) (bool, error) {
+func finalizeSyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, predicate string) (bool, error) {
 	var errVal sql.NullString
 	if errMsg != nil {
 		errVal = sql.NullString{String: *errMsg, Valid: true}
@@ -577,9 +584,9 @@ func finalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *st
 		    deleted_files = $6,
 		    failed_files = $7,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $8 AND `+predicate+`
+		WHERE id = $8 AND run_generation = $9 AND `+predicate+`
 		RETURNING id
-	`, lastRunStatus, errVal, total, processed, changed, deleted, failed, id).Scan(&finalizedID)
+	`, lastRunStatus, errVal, total, processed, changed, deleted, failed, id, generation).Scan(&finalizedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -595,7 +602,7 @@ func finalizeSyncJobPass(db *sql.DB, id string, lastRunStatus string, errMsg *st
 // FailSyncJobPass records an engine failure without overwriting a concurrent
 // FAILED or PAUSED_* decision made elsewhere. Engine indexing failures remain
 // FAILED so the UI exposes the hard failure until a later pass claims the job.
-func FailSyncJobPass(db *sql.DB, id string, errMsg string) (bool, error) {
+func FailSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool, error) {
 	var failedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
@@ -609,9 +616,9 @@ func FailSyncJobPass(db *sql.DB, id string, errMsg string) (bool, error) {
 		    deleted_files = 0,
 		    failed_files = 0,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING')
+		WHERE id = $2 AND run_generation = $3 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING')
 		RETURNING id
-	`, errMsg, id).Scan(&failedID)
+	`, errMsg, id, generation).Scan(&failedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -720,7 +727,7 @@ func CancelOpenSyncTasksForPause(dbsql *sql.DB, syncJobID string) (int, error) {
 }
 
 // ReconcileSyncJobProgress repairs progress counter drift for a sync job
-func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string) error {
+func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) error {
 	query := `
 		SELECT 
 			COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed,
@@ -748,13 +755,14 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string) error {
 		SET processed_files = $1,
 		    failed_files = $2,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $3
+		WHERE id = $3 AND run_generation = $4 AND status = 'RUNNING'
 	`
-	if _, err := dbsql.Exec(updateQuery, completed+skipped, failed+cancelled, syncJobID); err != nil {
+	if _, err := dbsql.Exec(updateQuery, completed+skipped, failed+cancelled, syncJobID, generation); err != nil {
 		return err
 	}
 
-	// If no open tasks remain, ensure a RUNNING/INDEXING sync job returns to IDLE state
+	// Only reconcile a RUNNING pass. INDEXING intentionally has no tasks while
+	// listing remote trees and building its delta; the engine alone finalizes it.
 	if open == 0 {
 		finalRunStatus := "SUCCESS"
 		var finalErr *string
@@ -777,10 +785,20 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string) error {
 			    error_message = COALESCE($2, error_message),
 			    last_run_at = CURRENT_TIMESTAMP,
 			    updated_at = CURRENT_TIMESTAMP
-			WHERE id = $3 AND status IN ('RUNNING', 'INDEXING')
+			WHERE id = $3 AND run_generation = $4 AND status = 'RUNNING'
 		`
-		_, err = dbsql.Exec(statusQuery, finalRunStatus, finalErr, syncJobID)
-		return err
+		var finalizedID string
+		err = dbsql.QueryRow(statusQuery+` RETURNING id`, finalRunStatus, finalErr, syncJobID, generation).Scan(&finalizedID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := CreateSyncNotificationEvent(dbsql, syncJobID); err != nil {
+			log.Printf("notification event creation for reconciled sync %s failed: %v", syncJobID, err)
+		}
+		return nil
 	}
 
 	return nil

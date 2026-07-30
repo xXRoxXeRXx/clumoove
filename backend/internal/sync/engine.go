@@ -67,11 +67,11 @@ type fileState struct {
 // exactly one asynchronous pass. The boolean is false when another pass owns
 // the job or its status is not runnable.
 func (e *Engine) StartSyncPass(serverCtx context.Context, syncJobID string) (bool, error) {
-	claimed, err := db.ClaimSyncJobPass(e.db, syncJobID)
+	generation, claimed, err := db.ClaimSyncJobPass(e.db, syncJobID)
 	if err != nil || !claimed {
 		return claimed, err
 	}
-	go e.runSyncPass(serverCtx, syncJobID)
+	go e.runSyncPass(serverCtx, syncJobID, generation)
 	return true, nil
 }
 
@@ -108,7 +108,7 @@ func (e *Engine) lockPass(ctx context.Context, syncJobID string) (func(), error)
 
 // runSyncPass performs a previously claimed sync pass: scans, computes delta,
 // enqueues tasks, waits, and updates state.
-func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
+func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, generation int) {
 	log.Printf("[SyncEngine] Starting sync pass for job %s\n", syncJobID)
 
 	ctx, cancel := context.WithCancel(serverCtx)
@@ -120,7 +120,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	if err != nil {
 		if ctx.Err() == nil {
 			log.Printf("[SyncEngine] Failed to lock sync pass for %s: %v", syncJobID, err)
-			if released, releaseErr := db.ReleaseUnstartedSyncPass(e.db, syncJobID); releaseErr != nil {
+			if released, releaseErr := db.ReleaseUnstartedSyncPass(e.db, syncJobID, generation); releaseErr != nil {
 				log.Printf("[SyncEngine] Failed to release unstarted sync pass for %s: %v", syncJobID, releaseErr)
 			} else if !released {
 				log.Printf("[SyncEngine] Sync pass %s changed state before lock failure recovery", syncJobID)
@@ -173,14 +173,14 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	// 3. Decrypt credentials
 	sourcePass, err := crypto.Decrypt(job.SourcePasswordEncrypted, e.encryptionKey)
 	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to decrypt source password: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to decrypt source password: %v", err))
 		return
 	}
 	defer crypto.ZeroString(&sourcePass)
 
 	targetPass, err := crypto.Decrypt(job.TargetPasswordEncrypted, e.encryptionKey)
 	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to decrypt target password: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to decrypt target password: %v", err))
 		return
 	}
 	defer crypto.ZeroString(&targetPass)
@@ -189,14 +189,14 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	if job.SourceRefreshTokenEncrypted.Valid && job.SourceRefreshTokenEncrypted.String != "" {
 		sourcePass, err = e.ensureFreshToken(syncJobID, job, "source", sourcePass)
 		if err != nil {
-			e.failSync(syncJobID, fmt.Sprintf("Failed to refresh source OAuth token: %v", err))
+			e.failSync(syncJobID, generation, fmt.Sprintf("Failed to refresh source OAuth token: %v", err))
 			return
 		}
 	}
 	if job.TargetRefreshTokenEncrypted.Valid && job.TargetRefreshTokenEncrypted.String != "" {
 		targetPass, err = e.ensureFreshToken(syncJobID, job, "target", targetPass)
 		if err != nil {
-			e.failSync(syncJobID, fmt.Sprintf("Failed to refresh target OAuth token: %v", err))
+			e.failSync(syncJobID, generation, fmt.Sprintf("Failed to refresh target OAuth token: %v", err))
 			return
 		}
 	}
@@ -204,14 +204,14 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	// 4. Create storage provider clients
 	sourceClient, err := storage.NewProvider(indexCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
 	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to connect to source: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to connect to source: %v", err))
 		return
 	}
 	defer sourceClient.Close()
 
 	targetClient, err := storage.NewProvider(indexCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
 	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to connect to target: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to connect to target: %v", err))
 		return
 	}
 	defer targetClient.Close()
@@ -220,18 +220,18 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second)
 	defer connCancel()
 	if ok, err := sourceClient.Connect(connCtx); !ok {
-		e.failSync(syncJobID, fmt.Sprintf("Source connection failed: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Source connection failed: %v", err))
 		return
 	}
 	if ok, err := targetClient.Connect(connCtx); !ok {
-		e.failSync(syncJobID, fmt.Sprintf("Target connection failed: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Target connection failed: %v", err))
 		return
 	}
 
 	// 5. Load previous state from DB to enable ETag folder skipping and fast delta checks
 	prevStates, err := db.ListSyncStateByJob(e.db, job.ID)
 	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to load sync state: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to load sync state: %v", err))
 		return
 	}
 
@@ -291,14 +291,14 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	if err != nil {
 		// Parent cancel (pause/delete/shutdown) shares indexCtx; only hard-fail on the 30m deadline.
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
-			e.failSync(syncJobID, fmt.Sprintf("Source file listing timed out: %v", err))
+			e.failSync(syncJobID, generation, fmt.Sprintf("Source file listing timed out: %v", err))
 			return
 		}
 		if ctx.Err() != nil {
 			log.Printf("[SyncEngine] Source listing interrupted for job %s: %v\n", syncJobID, ctx.Err())
 			return
 		}
-		e.failSync(syncJobID, fmt.Sprintf("Source file listing failed: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Source file listing failed: %v", err))
 		return
 	}
 	if len(srcErrors) > 0 {
@@ -312,14 +312,14 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	targetRawMap, targetDirMap, targetDirETags, tgtErrors, err := e.listFiles(indexCtx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
-			e.failSync(syncJobID, fmt.Sprintf("Target file listing timed out: %v", err))
+			e.failSync(syncJobID, generation, fmt.Sprintf("Target file listing timed out: %v", err))
 			return
 		}
 		if ctx.Err() != nil {
 			log.Printf("[SyncEngine] Target listing interrupted for job %s: %v\n", syncJobID, ctx.Err())
 			return
 		}
-		e.failSync(syncJobID, fmt.Sprintf("Target file listing failed: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Target file listing failed: %v", err))
 		return
 	}
 	if len(tgtErrors) > 0 {
@@ -351,7 +351,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 	// thread currently holds, causing silent counter drift.
 	if err := e.drainRemainingTasks(indexCtx, job.ID); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
-			e.failSync(syncJobID, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
+			e.failSync(syncJobID, generation, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
 			return
 		}
 		log.Printf("[SyncEngine] Drain interrupted for job %s: %v\n", syncJobID, err)
@@ -366,7 +366,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 		WHERE sync_job_id = $1 AND status IN ('COMPLETED','FAILED','CANCELLED','SKIPPED','PENDING')
 	`, job.ID)
 	if err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to clear old tasks: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to clear old tasks: %v", err))
 		return
 	}
 
@@ -638,7 +638,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 
 	if totalCreatedTasks == 0 {
 		// No transfers needed: update stats immediately and complete run
-		finalized, err := db.FinalizeEmptySyncJobPass(e.db, job.ID, "SUCCESS", nil, 0, 0, 0, 0, 0)
+		finalized, err := db.FinalizeEmptySyncJobPass(e.db, job.ID, generation, "SUCCESS", nil, 0, 0, 0, 0, 0)
 		if err != nil {
 			log.Printf("[SyncEngine] Failed to finalize empty sync pass for job %s: %v\n", syncJobID, err)
 			return
@@ -677,14 +677,22 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string) {
 		})
 	}
 	if err := db.BulkCreateSyncTasks(e.db, dbTasks); err != nil {
-		e.failSync(syncJobID, fmt.Sprintf("Failed to create tasks in DB: %v", err))
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to create tasks in DB: %v", err))
 		return
 	}
 	// Update totals
-	_ = db.UpdateSyncJobTotals(e.db, job.ID, totalCreatedTasks, totalBytes)
+	updated, err := db.UpdateSyncJobTotals(e.db, job.ID, generation, totalCreatedTasks, totalBytes)
+	if err != nil {
+		log.Printf("[SyncEngine] Failed to update totals for job %s: %v\n", syncJobID, err)
+		return
+	}
+	if !updated {
+		log.Printf("[SyncEngine] Not updating totals for job %s; pass was superseded\n", syncJobID)
+		return
+	}
 
 	// Transition to RUNNING
-	running, err := db.TransitionSyncJobToRunning(e.db, job.ID)
+	running, err := db.TransitionSyncJobToRunning(e.db, job.ID, generation)
 	if err != nil {
 		log.Printf("[SyncEngine] Failed to set RUNNING status for job %s: %v\n", syncJobID, err)
 		return
@@ -874,7 +882,7 @@ SyncTasksDone:
 	// Persist the run outcome and return to IDLE only if this engine still owns
 	// an active pass. In particular, do not overwrite a FAILED/PAUSED_* state
 	// written by a task worker after an auth or connection failure.
-	finalized, err := db.FinalizeSyncJobPass(e.db, job.ID, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed)
+	finalized, err := db.FinalizeSyncJobPass(e.db, job.ID, generation, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed)
 	if err != nil {
 		log.Printf("[SyncEngine] Failed to finalize job %s: %v\n", syncJobID, err)
 		return
@@ -931,10 +939,10 @@ func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 	}
 }
 
-func (e *Engine) failSync(id string, errMsg string) {
+func (e *Engine) failSync(id string, generation int, errMsg string) {
 	errMsg = sanitize.SanitizeError(errMsg)
 	log.Printf("[SyncEngine] Job %s failed pass: %s\n", id, errMsg)
-	failed, err := db.FailSyncJobPass(e.db, id, errMsg)
+	failed, err := db.FailSyncJobPass(e.db, id, generation, errMsg)
 	if err != nil {
 		log.Printf("[SyncEngine] Failed to record failed pass for job %s: %v\n", id, err)
 		return

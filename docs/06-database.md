@@ -135,6 +135,7 @@ from `delivery.*` locale keys.
 | `threads` | INT NOT NULL DEFAULT 8 | |
 | `bandwidth_limit_mbps` | INT NOT NULL DEFAULT 0 | 0–1000; 0 is unlimited |
 | `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `RUNNING`, `PAUSED`, `FAILED` |
+| `run_generation` | INTEGER NOT NULL DEFAULT `0` | incremented for each claimed sync pass; guards lifecycle CAS updates |
 | `target_dir` | TEXT NOT NULL DEFAULT `/` | |
 | `selected_paths` | JSONB | |
 | `last_run_at` | TIMESTAMPTZ | |

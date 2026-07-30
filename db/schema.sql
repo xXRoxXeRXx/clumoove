@@ -285,6 +285,7 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
     threads INT NOT NULL DEFAULT 8,
     bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'IDLE',
+    run_generation INT NOT NULL DEFAULT 0,
     target_dir TEXT NOT NULL DEFAULT '/',
     selected_paths JSONB,
     last_run_at TIMESTAMP WITH TIME ZONE,
@@ -330,6 +331,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_state_job ON sync_state(sync_job_id, side);
 ALTER TABLE tasks ALTER COLUMN migration_id DROP NOT NULL;
 
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE;
+ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0;
 
 DO $$
 BEGIN

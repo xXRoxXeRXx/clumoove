@@ -164,9 +164,9 @@ func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
 
 func (p *Processor) reconcileActiveSyncJobs(ctx context.Context) {
 	rows, err := p.db.QueryContext(ctx, `
-		SELECT DISTINCT sj.id
+		SELECT DISTINCT sj.id, sj.run_generation
 		FROM sync_jobs sj
-		WHERE sj.status IN ('RUNNING', 'INDEXING')
+		WHERE sj.status = 'RUNNING'
 	`)
 	if err != nil {
 		log.Printf("[ProgressReconciler] Sync DB query error: %v\n", err)
@@ -174,22 +174,26 @@ func (p *Processor) reconcileActiveSyncJobs(ctx context.Context) {
 	}
 	defer rows.Close()
 
-	var ids []string
+	type syncPass struct {
+		id         string
+		generation int
+	}
+	var passes []syncPass
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var pass syncPass
+		if err := rows.Scan(&pass.id, &pass.generation); err != nil {
 			continue
 		}
-		ids = append(ids, id)
+		passes = append(passes, pass)
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("[ProgressReconciler] Sync rows error: %v\n", err)
 		return
 	}
 
-	for _, id := range ids {
-		if err := db.ReconcileSyncJobProgress(p.db, id); err != nil {
-			log.Printf("[ProgressReconciler] error reconciling sync job %s: %v\n", id, err)
+	for _, pass := range passes {
+		if err := db.ReconcileSyncJobProgress(p.db, pass.id, pass.generation); err != nil {
+			log.Printf("[ProgressReconciler] error reconciling sync job %s: %v\n", pass.id, err)
 		}
 	}
 }
