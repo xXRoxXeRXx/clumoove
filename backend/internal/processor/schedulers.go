@@ -134,7 +134,11 @@ func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
 	rows, err := p.db.QueryContext(ctx, `
 		SELECT DISTINCT m.id
 		FROM migrations m
-		WHERE m.status IN ('RUNNING', 'INDEXING')
+		-- INDEXING migrations may be actively adding tasks while workers drain an
+		-- earlier batch. Reconciling them here could see a transient empty queue
+		-- and incorrectly mark the migration terminal before the indexer performs
+		-- its guarded INDEXING -> RUNNING transition.
+		WHERE m.status = 'RUNNING'
 	`)
 	if err != nil {
 		log.Printf("[ProgressReconciler] DB query error: %v\n", err)
