@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"path"
@@ -467,21 +468,63 @@ func shouldRefreshToken(expiry sql.NullTime) bool {
 }
 
 // ensureFreshToken refreshes OAuth credentials for a sync job if they are expired or near expiry.
-func (e *Engine) ensureFreshToken(syncJobID string, job *db.SyncJob, role string, currentToken string) (string, error) {
-	var expiry sql.NullTime
-	var provider, refreshTokenEnc string
+func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db.SyncJob, role string, currentToken string) (string, error) {
+	tokenSet := func(j *db.SyncJob) (sql.NullTime, string, string, string) {
+		if role == "source" {
+			return j.SourceTokenExpiresAt, j.SourceProvider, j.SourceRefreshTokenEncrypted.String, j.SourcePasswordEncrypted
+		}
+		return j.TargetTokenExpiresAt, j.TargetProvider, j.TargetRefreshTokenEncrypted.String, j.TargetPasswordEncrypted
+	}
 
-	if role == "source" {
-		expiry = job.SourceTokenExpiresAt
-		provider = job.SourceProvider
-		refreshTokenEnc = job.SourceRefreshTokenEncrypted.String
-	} else {
-		expiry = job.TargetTokenExpiresAt
-		provider = job.TargetProvider
-		refreshTokenEnc = job.TargetRefreshTokenEncrypted.String
+	expiry, provider, refreshTokenEnc, _ := tokenSet(job)
+
+	if !shouldRefreshToken(expiry) {
+		return currentToken, nil
+	}
+
+	var lockToken string
+	if e.queue != nil {
+		var claimed bool
+		var err error
+		for attempt := 0; attempt < 15; attempt++ {
+			lockToken, claimed, err = e.queue.TryClaimOAuthLock(ctx, "sync", syncJobID, role, 30*time.Second)
+			if err == nil && claimed {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+			if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
+				latestExpiry, _, _, latestAccessEnc := tokenSet(latestJob)
+				if !shouldRefreshToken(latestExpiry) {
+					if latestAccess, derr := crypto.Decrypt(latestAccessEnc, e.encryptionKey); derr == nil {
+						return latestAccess, nil
+					}
+				}
+			}
+		}
+		if lockToken == "" || !claimed {
+			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for sync job %s (%s)", syncJobID, role)
+		}
+		defer e.queue.ReleaseOAuthLock(ctx, "sync", syncJobID, role, lockToken)
+	}
+
+	// Re-fetch latest sync job details inside lock
+	if latestJob, err := db.GetSyncJob(e.db, syncJobID); err == nil {
+		latestExpiry, latestProvider, latestRefreshEnc, latestAccessEnc := tokenSet(latestJob)
+		if latestAccess, derr := crypto.Decrypt(latestAccessEnc, e.encryptionKey); derr == nil {
+			currentToken = latestAccess
+		}
+		expiry, provider, refreshTokenEnc = latestExpiry, latestProvider, latestRefreshEnc
 	}
 
 	if !shouldRefreshToken(expiry) {
+		return currentToken, nil
+	}
+
+	if refreshTokenEnc == "" {
 		return currentToken, nil
 	}
 
@@ -489,11 +532,13 @@ func (e *Engine) ensureFreshToken(syncJobID string, job *db.SyncJob, role string
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt refresh token: %w", err)
 	}
+	defer crypto.ZeroString(&refreshToken)
 
-	tokenResp, err := oauth.RefreshToken(context.Background(), provider, refreshToken)
+	tokenResp, err := oauth.RefreshToken(ctx, provider, refreshToken)
 	if err != nil {
 		return "", fmt.Errorf("oauth refresh failed for %s (%s): %w", role, provider, err)
 	}
+	defer crypto.ZeroString(&tokenResp.RefreshToken)
 
 	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, e.encryptionKey)
 	if err != nil {
@@ -504,6 +549,9 @@ func (e *Engine) ensureFreshToken(syncJobID string, job *db.SyncJob, role string
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new refresh token: %w", err)
 	}
+	// The returned access token remains live for the caller to construct the
+	// provider; runSyncPass defers zeroing that returned credential. Clear the
+	// response's refresh-token reference as soon as it has been encrypted.
 
 	expiresIn := tokenResp.ExpiresIn
 	if expiresIn <= 0 {
@@ -511,7 +559,19 @@ func (e *Engine) ensureFreshToken(syncJobID string, job *db.SyncJob, role string
 	}
 	newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
 
-	if err := db.UpdateSyncJobOAuthTokens(e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt); err != nil {
+	expectedRefreshEnc := refreshTokenEnc
+	err = db.UpdateSyncJobOAuthTokens(e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
+	if errors.Is(err, db.ErrOAuthTokenConflict) {
+		log.Printf("[SyncEngine] Token update conflict for sync job %s (%s) — adopting winner token from DB\n", syncJobID, role)
+		if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
+			_, _, _, latestAccessEnc := tokenSet(latestJob)
+			if latestAccess, derr := crypto.Decrypt(latestAccessEnc, e.encryptionKey); derr == nil {
+				return latestAccess, nil
+			}
+		}
+		return "", fmt.Errorf("token update conflict for sync job %s (%s): %w", syncJobID, role, err)
+	}
+	if err != nil {
 		return "", fmt.Errorf("failed to persist refreshed tokens: %w", err)
 	}
 

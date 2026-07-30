@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -328,19 +329,63 @@ func directoryTaskMetadata(metadata storage.FileMetadata) map[string]interface{}
 
 // ensureFreshSourceToken refreshes an OAuth source access token if it is expired
 // or near expiry (mirroring the worker's inline refresh). It returns the freshly
-// decrypted access token and persists the new token pair atomically.
+// decrypted access token and persists the new token pair atomically under a
+// per-migration distributed lock with CAS update validation.
 func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, accessToken string) (string, error) {
 	if !mig.SourceTokenExpiresAt.Valid || time.Now().Before(mig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
 		return accessToken, nil
 	}
+
+	ctx := context.Background()
+	var lockToken string
+	if idx.queue != nil {
+		var claimed bool
+		var err error
+		for attempt := 0; attempt < 15; attempt++ {
+			lockToken, claimed, err = idx.queue.TryClaimOAuthLock(ctx, "migration", migID, "source", 30*time.Second)
+			if err == nil && claimed {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+			if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
+				if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
+					if latestAccess, derr := crypto.Decrypt(latestMig.SourcePasswordEncrypted, idx.encryptionKey); derr == nil {
+						return latestAccess, nil
+					}
+				}
+			}
+		}
+		if lockToken == "" || !claimed {
+			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for migration %s (source)", migID)
+		}
+		defer idx.queue.ReleaseOAuthLock(ctx, "migration", migID, "source", lockToken)
+	}
+
+	// Re-fetch latest migration details inside lock
+	if latestMig, err := db.GetMigration(idx.db, migID); err == nil {
+		if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
+			if latestAccess, derr := crypto.Decrypt(latestMig.SourcePasswordEncrypted, idx.encryptionKey); derr == nil {
+				return latestAccess, nil
+			}
+		}
+		mig = latestMig
+	}
+
+	if !mig.SourceRefreshTokenEncrypted.Valid || mig.SourceRefreshTokenEncrypted.String == "" {
+		return accessToken, nil
+	}
+
 	refreshToken, err := crypto.Decrypt(mig.SourceRefreshTokenEncrypted.String, idx.encryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt source refresh token: %w", err)
 	}
-	tokenResp, err := oauth.RefreshToken(context.Background(), mig.SourceProvider, refreshToken)
+	defer crypto.ZeroString(&refreshToken)
+
+	tokenResp, err := oauth.RefreshToken(ctx, mig.SourceProvider, refreshToken)
 	if err != nil {
 		return "", fmt.Errorf("oauth refresh failed for source (%s): %w", mig.SourceProvider, err)
 	}
+	defer crypto.ZeroString(&tokenResp.RefreshToken)
 	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, idx.encryptionKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt refreshed source access token: %w", err)
@@ -353,15 +398,29 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
-	if err := db.UpdateMigrationOAuthTokens(idx.db, db.OAuthTokenUpdate{
+
+	expectedRefreshEnc := mig.SourceRefreshTokenEncrypted.String
+	err = db.UpdateMigrationOAuthTokens(idx.db, db.OAuthTokenUpdate{
 		MigrationID:           migID,
 		Role:                  "source",
 		AccessTokenEncrypted:  newAccessEnc,
 		RefreshTokenEncrypted: newRefreshEnc,
 		ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
-	}); err != nil {
+	}, expectedRefreshEnc)
+
+	if errors.Is(err, db.ErrOAuthTokenConflict) {
+		log.Printf("[Indexer] Token update conflict for migration %s (source) — adopting winner token from DB\n", migID)
+		if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
+			if latestAccess, derr := crypto.Decrypt(latestMig.SourcePasswordEncrypted, idx.encryptionKey); derr == nil {
+				return latestAccess, nil
+			}
+		}
+		return "", fmt.Errorf("token update conflict for migration %s (source): %w", migID, err)
+	}
+	if err != nil {
 		return "", fmt.Errorf("failed to persist refreshed source tokens: %w", err)
 	}
+
 	return tokenResp.AccessToken, nil
 }
 

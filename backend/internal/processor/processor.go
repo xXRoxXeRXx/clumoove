@@ -1226,13 +1226,6 @@ func isNetworkError(err error) bool {
 // For non-OAuth providers (no refresh token stored) the original accessToken is returned
 // unchanged, making this a safe no-op for Nextcloud/WebDAV.
 func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration, role string, accessToken string) (string, error) {
-	var refreshTokenEnc sql.NullString
-	var expiresAt sql.NullTime
-	var provider string
-
-	// tokenSet selects the role-specific encrypted tokens/expiry/provider from a
-	// migration row. Used both for the initial check and the post-lock re-read so
-	// the source/target branches are not duplicated.
 	tokenSet := func(m *db.Migration) struct {
 		refreshEnc sql.NullString
 		expiresAt  sql.NullTime
@@ -1256,17 +1249,50 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	}
 
 	initial := tokenSet(mig)
-	refreshTokenEnc, expiresAt, provider = initial.refreshEnc, initial.expiresAt, initial.provider
+	refreshTokenEnc, expiresAt, provider := initial.refreshEnc, initial.expiresAt, initial.provider
 
-	// No refresh token stored → not an OAuth provider, nothing to do.
 	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
 		return accessToken, nil
 	}
 
-	// Acquire lock to serialize token refresh requests for the same migration (Finding 7)
-	mu := p.getOrCreateRefreshLock(mig.ID)
+	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+		return accessToken, nil
+	}
+
+	// Acquire lock to serialize token refresh requests for the same migration
+	lockKey := fmt.Sprintf("migration:%s:%s", mig.ID, role)
+	mu := p.getOrCreateRefreshLock(lockKey)
 	mu.Lock()
 	defer mu.Unlock()
+
+	var lockToken string
+	if p.queue != nil {
+		var claimed bool
+		var err error
+		for attempt := 0; attempt < 15; attempt++ {
+			lockToken, claimed, err = p.queue.TryClaimOAuthLock(ctx, "migration", mig.ID, role, 30*time.Second)
+			if err == nil && claimed {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+			if latestMig, lerr := db.GetMigration(p.db, mig.ID); lerr == nil {
+				latest := tokenSet(latestMig)
+				if latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
+					if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+						return latestAccess, nil
+					}
+				}
+			}
+		}
+		if lockToken == "" || !claimed {
+			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for migration %s (%s)", mig.ID, role)
+		}
+		defer p.queue.ReleaseOAuthLock(ctx, "migration", mig.ID, role, lockToken)
+	}
 
 	// Double-check: re-query the migration from the database after acquiring the lock to get the latest tokens.
 	latestMig, err := db.GetMigration(p.db, mig.ID)
@@ -1274,8 +1300,6 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 		return "", fmt.Errorf("failed to fetch latest migration details inside refresh lock: %w", err)
 	}
 
-	// Adopt the latest access token (if it decrypts) and refresh/expiry/provider
-	// fields from the re-read row.
 	latest := tokenSet(latestMig)
 	if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
 		accessToken = latestAccess
@@ -1289,7 +1313,6 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	log.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
 		p.workerID, role, mig.ID)
 
-	// Decrypt refresh token immediately before use (Zero Plaintext rule from PRD-12)
 	refreshToken, err := crypto.Decrypt(refreshTokenEnc.String, p.secretKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt %s refresh token: %w", role, err)
@@ -1302,12 +1325,8 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	if err != nil {
 		return "", fmt.Errorf("OAuth refresh failed for %s (%s): %w", role, provider, err)
 	}
+	defer crypto.ZeroString(&tokenResp.RefreshToken)
 
-	// Encrypt and persist the new token pair atomically (Token Rotation Constraint F-03).
-	// Encryption failure is fatal: for single-use refresh tokens (e.g. Google) the old
-	// refresh token has already been invalidated by the provider. Proceeding without
-	// persisting the new one would leave the DB with a stale token and cause a permanent
-	// auth failure on the next refresh attempt.
 	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new %s access token after refresh: %w", role, err)
@@ -1320,13 +1339,163 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	if expiresIn <= 0 {
 		expiresIn = 3600
 	}
-	if err := db.UpdateMigrationOAuthTokens(p.db, db.OAuthTokenUpdate{
+
+	expectedRefreshEnc := refreshTokenEnc.String
+	err = db.UpdateMigrationOAuthTokens(p.db, db.OAuthTokenUpdate{
 		MigrationID:           mig.ID,
 		Role:                  role,
 		AccessTokenEncrypted:  newAccessEnc,
 		RefreshTokenEncrypted: newRefreshEnc,
 		ExpiresAt:             time.Now().Add(time.Duration(expiresIn) * time.Second),
-	}); err != nil {
+	}, expectedRefreshEnc)
+
+	if errors.Is(err, db.ErrOAuthTokenConflict) {
+		log.Printf("[Worker %s] Token update conflict for migration %s (%s) — adopting winner token from DB\n", p.workerID, mig.ID, role)
+		if latestMig, lerr := db.GetMigration(p.db, mig.ID); lerr == nil {
+			latest := tokenSet(latestMig)
+			if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+				return latestAccess, nil
+			}
+		}
+		return "", fmt.Errorf("token update conflict for migration %s (%s): %w", mig.ID, role, err)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to persist new %s OAuth tokens after refresh: %w", role, err)
+	}
+
+	return tokenResp.AccessToken, nil
+}
+
+// ensureFreshSyncOAuthToken checks whether a sync job's OAuth access token is expired
+// (or within 2 minutes of expiry) and, if so, performs an inline token refresh under
+// a per-job/role distributed lock before provider construction.
+func (p *Processor) ensureFreshSyncOAuthToken(ctx context.Context, job *db.SyncJob, role string, currentToken string) (string, error) {
+	tokenSet := func(j *db.SyncJob) struct {
+		refreshEnc sql.NullString
+		expiresAt  sql.NullTime
+		provider   string
+		accessEnc  string
+	} {
+		if role == "source" {
+			return struct {
+				refreshEnc sql.NullString
+				expiresAt  sql.NullTime
+				provider   string
+				accessEnc  string
+			}{j.SourceRefreshTokenEncrypted, j.SourceTokenExpiresAt, j.SourceProvider, j.SourcePasswordEncrypted}
+		}
+		return struct {
+			refreshEnc sql.NullString
+			expiresAt  sql.NullTime
+			provider   string
+			accessEnc  string
+		}{j.TargetRefreshTokenEncrypted, j.TargetTokenExpiresAt, j.TargetProvider, j.TargetPasswordEncrypted}
+	}
+
+	initial := tokenSet(job)
+	refreshTokenEnc, expiresAt, provider := initial.refreshEnc, initial.expiresAt, initial.provider
+
+	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
+		return currentToken, nil
+	}
+
+	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+		return currentToken, nil
+	}
+
+	lockKey := fmt.Sprintf("sync:%s:%s", job.ID, role)
+	mu := p.getOrCreateRefreshLock(lockKey)
+	mu.Lock()
+	defer mu.Unlock()
+
+	var lockToken string
+	if p.queue != nil {
+		var claimed bool
+		var err error
+		for attempt := 0; attempt < 15; attempt++ {
+			lockToken, claimed, err = p.queue.TryClaimOAuthLock(ctx, "sync", job.ID, role, 30*time.Second)
+			if err == nil && claimed {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+			if latestJob, lerr := db.GetSyncJob(p.db, job.ID); lerr == nil {
+				latest := tokenSet(latestJob)
+				if latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
+					if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+						return latestAccess, nil
+					}
+				}
+			}
+		}
+		if lockToken == "" || !claimed {
+			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for sync job %s (%s)", job.ID, role)
+		}
+		defer p.queue.ReleaseOAuthLock(ctx, "sync", job.ID, role, lockToken)
+	}
+
+	latestJob, err := db.GetSyncJob(p.db, job.ID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch latest sync job details inside refresh lock: %w", err)
+	}
+
+	latest := tokenSet(latestJob)
+	if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+		currentToken = latestAccess
+	}
+	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
+
+	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+		return currentToken, nil
+	}
+
+	log.Printf("[Worker %s] %s OAuth token expired or near expiry for sync job %s — refreshing inline\n",
+		p.workerID, role, job.ID)
+
+	refreshToken, err := crypto.Decrypt(refreshTokenEnc.String, p.secretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt %s refresh token for sync job: %w", role, err)
+	}
+	defer crypto.ZeroString(&refreshToken)
+
+	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	tokenResp, err := oauth.RefreshToken(refreshCtx, provider, refreshToken)
+	cancel()
+	if err != nil {
+		return "", fmt.Errorf("OAuth refresh failed for sync job %s (%s): %w", role, provider, err)
+	}
+	defer crypto.ZeroString(&tokenResp.RefreshToken)
+
+	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt new %s access token after refresh: %w", role, err)
+	}
+	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, p.secretKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt new %s refresh token after refresh: %w", role, err)
+	}
+	expiresIn := tokenResp.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+
+	expectedRefreshEnc := refreshTokenEnc.String
+	err = db.UpdateSyncJobOAuthTokens(p.db, job.ID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
+	if errors.Is(err, db.ErrOAuthTokenConflict) {
+		log.Printf("[Worker %s] Token update conflict for sync job %s (%s) — adopting winner token from DB\n", p.workerID, job.ID, role)
+		if latestJob, lerr := db.GetSyncJob(p.db, job.ID); lerr == nil {
+			latest := tokenSet(latestJob)
+			if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+				return latestAccess, nil
+			}
+		}
+		return "", fmt.Errorf("token update conflict for sync job %s (%s): %w", job.ID, role, err)
+	}
+	if err != nil {
 		return "", fmt.Errorf("failed to persist new %s OAuth tokens after refresh: %w", role, err)
 	}
 

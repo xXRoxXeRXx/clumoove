@@ -59,7 +59,6 @@ func InitConfigs() {
 	}
 }
 
-
 // ConfiguredProviders returns the set of OAuth provider keys that have both a
 // client ID and secret configured.
 func ConfiguredProviders() map[string]bool {
@@ -288,14 +287,9 @@ func RefreshToken(ctx context.Context, provider, refreshToken string) (*TokenRes
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			ErrorDescription string `json:"error_description"`
-			Error            string `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&errResp)
-		if errResp.ErrorDescription != "" {
-			return nil, fmt.Errorf("token refresh failed: %s", errResp.ErrorDescription)
-		}
+		// OAuth error bodies are controlled by an external provider and can include
+		// credential hints. Do not surface their contents to callers, logs, or the
+		// persisted migration status.
 		return nil, fmt.Errorf("token refresh failed with status: %d", resp.StatusCode)
 	}
 
