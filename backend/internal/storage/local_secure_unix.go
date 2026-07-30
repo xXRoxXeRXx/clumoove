@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -14,7 +15,10 @@ import (
 // localRoot anchors local-provider writes at an already-open tenant directory.
 // openat(2) with O_NOFOLLOW is used for every intermediate component, so a
 // concurrent rename or symlink replacement cannot redirect a write outside it.
-type localRoot struct{ fd int }
+type localRoot struct {
+	mu sync.Mutex
+	fd int
+}
 
 func openLocalRoot(path string) (*localRoot, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
@@ -40,7 +44,12 @@ func ensureLocalRoot(container, userID string) (*localRoot, error) {
 }
 
 func (r *localRoot) close() error {
-	if r == nil || r.fd < 0 {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fd < 0 {
 		return nil
 	}
 	err := unix.Close(r.fd)
@@ -49,7 +58,12 @@ func (r *localRoot) close() error {
 }
 
 func (r *localRoot) healthy() error {
-	if r == nil || r.fd < 0 {
+	if r == nil {
+		return fmt.Errorf("local provider is closed")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fd < 0 {
 		return fmt.Errorf("local provider is closed")
 	}
 	var stat unix.Stat_t
@@ -57,7 +71,13 @@ func (r *localRoot) healthy() error {
 }
 
 func (r *localRoot) directory(parts []string, create bool) (int, error) {
+	r.mu.Lock()
+	if r.fd < 0 {
+		r.mu.Unlock()
+		return -1, fmt.Errorf("local provider is closed")
+	}
 	fd, err := unix.Dup(r.fd)
+	r.mu.Unlock()
 	if err != nil {
 		return -1, err
 	}
@@ -87,6 +107,30 @@ func (r *localRoot) mkdirAll(parts []string) error {
 		unix.Close(fd)
 	}
 	return err
+}
+
+func (r *localRoot) openDirectory(parts []string) (*os.File, error) {
+	fd, err := r.directory(parts, false)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), "local directory"), nil
+}
+
+func (r *localRoot) open(parts []string) (*os.File, error) {
+	if len(parts) == 0 {
+		return r.openDirectory(nil)
+	}
+	parent, err := r.directory(parts[:len(parts)-1], false)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(parent)
+	fd, err := unix.Openat(parent, parts[len(parts)-1], unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), parts[len(parts)-1]), nil
 }
 
 func (r *localRoot) upload(parts []string, stream io.Reader, progress chan<- int64) error {

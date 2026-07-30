@@ -5,6 +5,7 @@ package storage
 import (
 	"fmt"
 	"io"
+	"os"
 )
 
 // Windows does not expose an openat-style API through the Go standard library.
@@ -23,6 +24,12 @@ func (r *localRoot) healthy() error {
 }
 func (r *localRoot) mkdirAll(parts []string) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
+}
+func (r *localRoot) openDirectory(parts []string) (*os.File, error) {
+	return nil, fmt.Errorf("local provider reads are unsupported on Windows")
+}
+func (r *localRoot) open(parts []string) (*os.File, error) {
+	return nil, fmt.Errorf("local provider reads are unsupported on Windows")
 }
 func (r *localRoot) upload(parts []string, stream io.Reader, progress chan<- int64) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
