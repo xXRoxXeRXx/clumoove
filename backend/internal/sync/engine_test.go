@@ -272,3 +272,60 @@ func TestUpdateSyncStatesPrevKeys(t *testing.T) {
 	// We call updateSyncStates to verify it executes without unexpected runtime errors before DB call.
 	engine.updateSyncStates("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil)
 }
+
+func TestWaitForNoRunningTasksChecksImmediately(t *testing.T) {
+	calls := 0
+	err := waitForNoRunningTasks(context.Background(), time.Hour, func() (int, error) {
+		calls++
+		return 0, nil
+	})
+	if err != nil {
+		t.Fatalf("waitForNoRunningTasks returned error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("count calls = %d; want 1 immediate check", calls)
+	}
+}
+
+func TestWaitForNoRunningTasksReturnsCancelledContextBeforeCounting(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	err := waitForNoRunningTasks(ctx, time.Millisecond, func() (int, error) {
+		calls++
+		return 0, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("waitForNoRunningTasks error = %v; want context.Canceled", err)
+	}
+	if calls != 0 {
+		t.Fatalf("count calls = %d; want 0 for a cancelled context", calls)
+	}
+}
+
+func TestWaitForNoRunningTasksPollsUntilTasksDrain(t *testing.T) {
+	calls := 0
+	err := waitForNoRunningTasks(context.Background(), time.Millisecond, func() (int, error) {
+		calls++
+		if calls == 1 {
+			return 1, nil
+		}
+		return 0, nil
+	})
+	if err != nil {
+		t.Fatalf("waitForNoRunningTasks returned error: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("count calls = %d; want initial check plus one poll", calls)
+	}
+}
+
+func TestWaitForNoRunningTasksPropagatesCountError(t *testing.T) {
+	want := errors.New("database unavailable")
+	err := waitForNoRunningTasks(context.Background(), time.Millisecond, func() (int, error) {
+		return 0, want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("waitForNoRunningTasks error = %v; want wrapped %v", err, want)
+	}
+}

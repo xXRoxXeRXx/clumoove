@@ -357,14 +357,21 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	isFirstPass := len(prevStates) == 0
 
 	// Wait for any tasks that may still be RUNNING from a previous pass before
-	// clearing them. This prevents a race where we delete task rows that a worker
-	// thread currently holds, causing silent counter drift.
+	// clearing them. A successor must not enqueue its delta while an old worker
+	// may still mutate the same target path. This also prevents deleting a task
+	// row that a worker thread currently holds, causing counter drift.
 	if err := e.drainRemainingTasks(indexCtx, job.ID); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
-			e.failSync(syncJobID, generation, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
+		if indexCtx.Err() != nil {
+			// A cancelled coordinator must preserve a concurrent pause or deletion.
+			if errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
+				e.failSync(syncJobID, generation, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
+			} else {
+				log.Printf("[SyncEngine] Drain interrupted for job %s: %v\n", syncJobID, err)
+			}
 			return
 		}
-		log.Printf("[SyncEngine] Drain interrupted for job %s: %v\n", syncJobID, err)
+		// The database could not establish that no prior worker owns a task.
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to determine whether previous tasks drained: %v", err))
 		return
 	}
 
@@ -921,28 +928,54 @@ SyncTasksDone:
 		syncJobID, finalRunStatus, completed+skipped, changedCount, deletedCount, failed)
 }
 
-// drainRemainingTasks waits (up to 2 minutes) for any RUNNING tasks from a
-// previous pass to reach a terminal state before we delete the task rows.
-// This prevents counter drift caused by deleting task rows that a worker thread
-// is still operating on. If the context is cancelled first, it returns an error.
+// drainRemainingTasks waits for any RUNNING tasks from a previous pass to reach
+// a terminal state before their rows are deleted. It deliberately has no
+// independent success deadline: a worker still in provider I/O owns the task
+// and may mutate the target, so starting a successor pass would allow two
+// passes to write, rename, or delete the same path concurrently. The caller's
+// indexing context supplies the bounded failure path. On its deadline the pass
+// fails without changing the old RUNNING task; its worker retains ownership and
+// must reach a terminal state before a later pass can begin.
 func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
-	deadline := time.Now().Add(2 * time.Minute)
-	ticker := time.NewTicker(3 * time.Second)
+	return waitForNoRunningTasks(ctx, 3*time.Second, func() (int, error) {
+		var runningCount int
+		err := e.db.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING'
+		`, jobID).Scan(&runningCount)
+		if err != nil {
+			return 0, fmt.Errorf("count running tasks for sync job %s: %w", jobID, err)
+		}
+		return runningCount, nil
+	})
+}
+
+// waitForNoRunningTasks checks immediately, then polls until task ownership
+// ends or the caller's context expires. Keeping the polling mechanics separate
+// makes the safety behavior testable without a database.
+func waitForNoRunningTasks(ctx context.Context, interval time.Duration, countRunning func() (int, error)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	count, err := countRunning()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return nil
+	}
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			var runningCount int
-			err := e.db.QueryRowContext(ctx, `
-				SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING'
-			`, jobID).Scan(&runningCount)
-			if err != nil || runningCount == 0 {
-				return nil
+			count, err := countRunning()
+			if err != nil {
+				return err
 			}
-			if time.Now().After(deadline) {
-				log.Printf("[SyncEngine] Drain deadline exceeded for job %s (%d tasks still RUNNING); proceeding anyway\n", jobID, runningCount)
+			if count == 0 {
 				return nil
 			}
 		}
