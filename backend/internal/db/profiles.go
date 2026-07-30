@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -14,12 +15,12 @@ type ConnectionProfile struct {
 	Provider              string       `json:"provider"`
 	URL                   string       `json:"url,omitempty"`
 	Username              string       `json:"username,omitempty"`
-	PasswordEncrypted    string       `json:"-"`
+	PasswordEncrypted     string       `json:"-"`
 	RefreshTokenEncrypted string       `json:"-"`
-	TokenExpiresAt       sql.NullTime `json:"token_expires_at,omitempty"`
-	OAuthUser            string       `json:"oauth_user,omitempty"`
-	CreatedAt            time.Time    `json:"created_at"`
-	UpdatedAt            time.Time    `json:"updated_at"`
+	TokenExpiresAt        sql.NullTime `json:"token_expires_at,omitempty"`
+	OAuthUser             string       `json:"oauth_user,omitempty"`
+	CreatedAt             time.Time    `json:"created_at"`
+	UpdatedAt             time.Time    `json:"updated_at"`
 }
 
 type ConnectionProfilePublic struct {
@@ -30,7 +31,7 @@ type ConnectionProfilePublic struct {
 	Username       string       `json:"username,omitempty"`
 	HasPassword    bool         `json:"has_password"`
 	TokenExpiresAt sql.NullTime `json:"token_expires_at,omitempty"`
-	OAuthUser     string       `json:"oauth_user,omitempty"`
+	OAuthUser      string       `json:"oauth_user,omitempty"`
 	CreatedAt      time.Time    `json:"created_at"`
 	UpdatedAt      time.Time    `json:"updated_at"`
 }
@@ -44,7 +45,7 @@ func (p *ConnectionProfile) ToPublic() ConnectionProfilePublic {
 		Username:       p.Username,
 		HasPassword:    p.PasswordEncrypted != "",
 		TokenExpiresAt: p.TokenExpiresAt,
-		OAuthUser:     p.OAuthUser,
+		OAuthUser:      p.OAuthUser,
 		CreatedAt:      p.CreatedAt,
 		UpdatedAt:      p.UpdatedAt,
 	}
@@ -69,7 +70,7 @@ func CreateConnectionProfile(database *sql.DB, p *ConnectionProfile) (string, er
 	return p.ID, nil
 }
 
-func GetConnectionProfile(database *sql.DB, id string) (*ConnectionProfile, error) {
+func GetConnectionProfile(ctx context.Context, database *sql.DB, id string) (*ConnectionProfile, error) {
 	query := `
 		SELECT id, user_id, name, provider, url, username,
 		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user,
@@ -77,7 +78,7 @@ func GetConnectionProfile(database *sql.DB, id string) (*ConnectionProfile, erro
 		FROM connection_profiles WHERE id = $1
 	`
 	var p ConnectionProfile
-	err := database.QueryRow(query, id).Scan(
+	err := database.QueryRowContext(ctx, query, id).Scan(
 		&p.ID, &p.UserID, &p.Name, &p.Provider, &p.URL, &p.Username,
 		&p.PasswordEncrypted, &p.RefreshTokenEncrypted, &p.TokenExpiresAt, &p.OAuthUser,
 		&p.CreatedAt, &p.UpdatedAt,
@@ -88,7 +89,7 @@ func GetConnectionProfile(database *sql.DB, id string) (*ConnectionProfile, erro
 	return &p, nil
 }
 
-func GetConnectionProfiles(database *sql.DB, userID, _ string) ([]ConnectionProfile, error) {
+func GetConnectionProfiles(ctx context.Context, database *sql.DB, userID, _ string) ([]ConnectionProfile, error) {
 	args := []interface{}{userID}
 	query := `
 		SELECT id, user_id, name, provider, url, username,
@@ -98,7 +99,7 @@ func GetConnectionProfiles(database *sql.DB, userID, _ string) ([]ConnectionProf
 		WHERE user_id = $1
 		ORDER BY name ASC
 	`
-	rows, err := database.Query(query, args...)
+	rows, err := database.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

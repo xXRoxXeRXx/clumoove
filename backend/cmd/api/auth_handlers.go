@@ -350,7 +350,7 @@ func (s *APIServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := db.GetUserByEmail(s.db, req.Email); err == nil {
+	if _, err := db.GetUserByEmail(r.Context(), s.db, req.Email); err == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	} else if err != sql.ErrNoRows {
@@ -396,7 +396,7 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByEmail(s.db, req.Email)
+	u, err := db.GetUserByEmail(r.Context(), s.db, req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			_ = auth.CheckPasswordHash(req.Password, s.dummyPasswordHash)
@@ -767,7 +767,7 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	u, err := db.GetUserByEmail(s.db, req.Email)
+	u, err := db.GetUserByEmail(r.Context(), s.db, req.Email)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -922,7 +922,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := db.GetUserByEmail(s.db, req.NewEmail)
+	existing, err := db.GetUserByEmail(r.Context(), s.db, req.NewEmail)
 	if err != nil && err != sql.ErrNoRows {
 		log.Printf("handleChangeEmail: error checking email: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
