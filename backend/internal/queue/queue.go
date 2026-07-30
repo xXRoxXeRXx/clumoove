@@ -119,9 +119,11 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 			LEFT JOIN migrations m ON t.migration_id = m.id
 			LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
 			WHERE t.status = 'PENDING'
-			AND NOT (
-				t.metadata->>'wait_for_conflict_copy' = 'true'
-				AND NOT EXISTS (
+			AND (
+				-- A missing JSON key yields SQL NULL. Coalesce it so ordinary
+				-- upload/mkdir tasks remain eligible for dequeue.
+				COALESCE(t.metadata->>'wait_for_conflict_copy', 'false') <> 'true'
+				OR EXISTS (
 					SELECT 1
 					FROM tasks AS prerequisite
 					WHERE prerequisite.sync_job_id = t.sync_job_id

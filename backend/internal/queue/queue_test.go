@@ -120,6 +120,25 @@ func TestDequeueSQLSkipsUploadWhenConflictCopyFails(t *testing.T) {
 	}
 }
 
+func TestDequeueSQLClaimsTaskWithoutConflictDependency(t *testing.T) {
+	database := setupDequeueTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO migrations (id, status, threads) VALUES ('migration-1', 'RUNNING', 1);
+		INSERT INTO tasks (id, migration_id, status, metadata)
+		VALUES ('ordinary-upload', 'migration-1', 'PENDING', '{"action":"upload"}');
+	`); err != nil {
+		t.Fatalf("insert ordinary upload task: %v", err)
+	}
+
+	payload, err := (&Queue{}).DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue ordinary upload: %v", err)
+	}
+	if payload == nil || payload.TaskID != "ordinary-upload" {
+		t.Fatalf("dequeue ordinary upload = %+v, want ordinary-upload", payload)
+	}
+}
+
 func TestDequeueSQLSyncTasksWaitForRunning(t *testing.T) {
 	database := setupDequeueTestDB(t)
 	if _, err := database.Exec(`
