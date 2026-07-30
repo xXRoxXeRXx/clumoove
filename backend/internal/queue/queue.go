@@ -90,12 +90,45 @@ func NewQueue(redisAddr string) (*Queue, error) {
 // DequeueSQL pops a task from the database queue natively respecting migration/sync thread limits.
 func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) (*Payload, error) {
 	query := `
-		WITH candidate AS (
+		-- A RENAME conflict produces a target-side conflict_copy followed by an
+		-- upload at the same path.  Keep the upload unclaimable until that exact
+		-- rename has completed, otherwise separate workers can rename the newly
+		-- uploaded file and lose the original target version.
+		WITH failed_conflict_dependents AS (
+			UPDATE tasks AS dependent
+			SET status = 'SKIPPED',
+			    worker_hash = NULL,
+			    error_message = 'conflict_copy prerequisite failed; upload skipped',
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE dependent.status = 'PENDING'
+			  AND dependent.metadata->>'wait_for_conflict_copy' = 'true'
+			  AND EXISTS (
+				SELECT 1
+				FROM tasks AS prerequisite
+				WHERE prerequisite.sync_job_id = dependent.sync_job_id
+				  AND prerequisite.file_path = dependent.file_path
+				  AND prerequisite.resource_type = dependent.resource_type
+				  AND prerequisite.metadata->>'action' = 'conflict_copy'
+				  AND prerequisite.status IN ('FAILED', 'CANCELLED', 'SKIPPED')
+			  )
+		), candidate AS (
 			SELECT t.id
 			FROM tasks t
 			LEFT JOIN migrations m ON t.migration_id = m.id
 			LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
 			WHERE t.status = 'PENDING'
+			AND NOT (
+				t.metadata->>'wait_for_conflict_copy' = 'true'
+				AND NOT EXISTS (
+					SELECT 1
+					FROM tasks AS prerequisite
+					WHERE prerequisite.sync_job_id = t.sync_job_id
+					  AND prerequisite.file_path = t.file_path
+					  AND prerequisite.resource_type = t.resource_type
+					  AND prerequisite.metadata->>'action' = 'conflict_copy'
+					  AND prerequisite.status = 'COMPLETED'
+				)
+			)
 			AND (
 				(t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING') AND (
 					SELECT COUNT(*) FROM tasks t2 

@@ -413,6 +413,9 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		resourceType string
 		action       string
 		side         string // source or target
+		// waitForConflictCopy prevents a source upload from racing the target
+		// rename that preserves the target version of a two-way conflict.
+		waitForConflictCopy bool
 	}
 
 	var tasks []taskToCreate
@@ -502,7 +505,8 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 					log.Printf("[SyncEngine] Sync conflict for %s: skipping due to strategy SKIP\n", S)
 				case "RENAME":
 					// Rename target first, then upload source
-					if conflictNeedsRename(job.ConflictStrategy) {
+					needsRename := conflictNeedsRename(job.ConflictStrategy)
+					if needsRename {
 						renameTasks = append(renameTasks, taskToCreate{
 							filePath:     S,
 							fileSize:     0,
@@ -512,11 +516,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 						})
 					}
 					tasks = append(tasks, taskToCreate{
-						filePath:     S,
-						fileSize:     srcFile.Size,
-						sourceHash:   srcFile.Hash,
-						resourceType: "files",
-						action:       "upload",
+						filePath:            S,
+						fileSize:            srcFile.Size,
+						sourceHash:          srcFile.Hash,
+						resourceType:        "files",
+						action:              "upload",
+						waitForConflictCopy: needsRename,
 					})
 				}
 			} else if hasSrc && (srcModified || (!hasTgt && !tgtDeleted)) {
@@ -680,6 +685,9 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		}
 		if tc.side != "" {
 			meta["side"] = tc.side
+		}
+		if tc.waitForConflictCopy {
+			meta["wait_for_conflict_copy"] = true
 		}
 		metaJSON, _ := json.Marshal(meta)
 

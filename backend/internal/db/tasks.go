@@ -535,7 +535,8 @@ func GetSyncErrors(db *sql.DB, syncJobID string, limit, offset int) ([]ErrorList
 			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,
 			       COALESCE(error_message, '') AS error_message, updated_at AS occurred_at
 			FROM tasks
-			WHERE sync_job_id = $1 AND status = 'FAILED'
+			WHERE sync_job_id = $1
+			  AND (status = 'FAILED' OR (status = 'SKIPPED' AND error_message IS NOT NULL))
 		), counted AS (
 			SELECT COUNT(*) AS total FROM errors
 		)
