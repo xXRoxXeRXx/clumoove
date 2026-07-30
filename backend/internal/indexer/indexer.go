@@ -268,11 +268,6 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 
-	// Re-evaluate completion: tasks may have all finished before totals were written
-	if err := db.IncrementMigrationProgress(idx.db, ctx, migID, 0, 0, 0, 0); err != nil {
-		log.Printf("Warning: zero-delta progress check after indexing failed for %s: %v\n", migID, err)
-	}
-
 	switch {
 	case totalItems == 0 && len(indexErrors) > 0:
 		// Nothing was indexed but some folders/paths failed: mark FAILED so the
@@ -303,6 +298,12 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	if err != nil {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration running: %v", err))
 		return
+	}
+	// Workers may have completed every task while indexing was still producing
+	// the migration's task list. Reconcile only after the guarded transition so
+	// that this final check may safely advance RUNNING to a terminal state.
+	if err := db.ReconcileMigrationProgress(idx.db, migID); err != nil {
+		log.Printf("Warning: final progress reconciliation after indexing failed for %s: %v\n", migID, err)
 	}
 
 	// Wake idle worker threads immediately so they start picking up the freshly
