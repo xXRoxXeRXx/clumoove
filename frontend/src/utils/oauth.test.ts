@@ -98,10 +98,10 @@ describe('listenForOAuthMessage', () => {
 
     const listener = addSpy.mock.calls[0][1] as EventListener;
     const src = { close: vi.fn() } as unknown as Window;
-    listener(makeEvent(API_ORIGIN, { type: 'oauth-error', error: 'denied' }, src));
+    listener(makeEvent(API_ORIGIN, { type: 'oauth-error', error_code: 'OAUTH_EXCHANGE_FAILED' }, src));
 
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenCalledWith({ type: 'oauth-error', error: 'denied' });
+    expect(onError).toHaveBeenCalledWith({ type: 'oauth-error', error_code: 'OAUTH_EXCHANGE_FAILED' });
   });
 
   it('rejects success messages whose purpose does not match expectedPurpose', () => {

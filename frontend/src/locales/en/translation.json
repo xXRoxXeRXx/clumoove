@@ -609,6 +609,8 @@
     "OAUTH_ORIGIN_INVALID": "Invalid website address.",
     "OAUTH_ORIGIN_UNTRUSTED": "This website address is not authorized.",
     "OAUTH_GENERATION_FAILED": "Could not prepare the connection.",
+    "OAUTH_EXCHANGE_FAILED": "Authorization could not be completed.",
+    "SYNC_DIRECTION_INVALID": "The selected sync direction is invalid.",
     "DISPLAY_NAME_REQUIRED": "Display name is a required field.",
     "PASSWORD_MISMATCH": "The new passwords do not match.",
     "PASSWORD_TOO_SHORT": "The password must be at least 12 characters long.",

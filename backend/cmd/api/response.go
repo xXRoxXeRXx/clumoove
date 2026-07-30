@@ -112,6 +112,8 @@ const (
 	ErrOauthOriginInvalid           APIErrorCode = "OAUTH_ORIGIN_INVALID"
 	ErrOauthOriginUntrusted         APIErrorCode = "OAUTH_ORIGIN_UNTRUSTED"
 	ErrOauthGenerationFailed        APIErrorCode = "OAUTH_GENERATION_FAILED"
+	ErrOauthExchangeFailed          APIErrorCode = "OAUTH_EXCHANGE_FAILED"
+	ErrSyncDirectionInvalid         APIErrorCode = "SYNC_DIRECTION_INVALID"
 	ErrDisplayNameRequired          APIErrorCode = "DISPLAY_NAME_REQUIRED"
 	ErrPasswordMismatch             APIErrorCode = "PASSWORD_MISMATCH"
 	ErrPasswordTooShort             APIErrorCode = "PASSWORD_TOO_SHORT"

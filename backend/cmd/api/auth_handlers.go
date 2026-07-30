@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"html"
 	"log"
 	"net/http"
 	"net/mail"
@@ -112,14 +111,14 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if code == "" || state == "" {
 		log.Printf("handleOAuthCallback: Missing code or state")
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", "Authorization code or state missing")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
 		return
 	}
 
 	parts := strings.SplitN(state, ":", 4)
 	if len(parts) < 3 {
 		log.Printf("handleOAuthCallback: Invalid state format (length %d)", len(parts))
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", "Invalid state parameter format")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
 		return
 	}
 	stateToken := parts[0]
@@ -134,14 +133,14 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if !allowedOrigins[origin] {
 		log.Printf("handleOAuthCallback: rejected untrusted origin %q in state", origin)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, "CSRF verification failed: untrusted origin")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthOriginUntrusted)
 		return
 	}
 
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
 		log.Printf("handleOAuthCallback: CSRF check failed. Cookie err: %v, stateToken: %q", err, stateToken)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, "CSRF verification failed: state mismatch")
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthGenerationFailed)
 		return
 	}
 
@@ -171,7 +170,7 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	tokenResp, err := oauth.ExchangeCode(ctx, provider, code, redirectURI)
 	if err != nil {
 		log.Printf("handleOAuthCallback: ExchangeCode failed: %v", err)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, fmt.Sprintf("Failed to exchange code: %v", err))
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthExchangeFailed)
 		return
 	}
 
@@ -186,15 +185,15 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, purpose, origin)
 }
 
-func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, purpose, targetOrigin string, errorMsg ...string) {
+func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, purpose, targetOrigin string, errorCode ...APIErrorCode) {
 	provider = stripScriptTerminator(provider)
 	token = stripScriptTerminator(token)
 	refreshToken = stripScriptTerminator(refreshToken)
 	username = stripScriptTerminator(username)
 
-	var errStr string
-	if len(errorMsg) > 0 {
-		errStr = stripScriptTerminator(errorMsg[0])
+	var errCode string
+	if len(errorCode) > 0 {
+		errCode = string(errorCode[0])
 	}
 
 	nonceBytes := make([]byte, 16)
@@ -207,23 +206,22 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
 	var script string
-	if errStr != "" {
+	if errCode != "" {
 		script = fmt.Sprintf(`
-			console.log("OAuth error occurred:", %q);
 			try {
 				if (!window.opener) {
 					console.error("window.opener is null on error page!");
 				} else {
 					window.opener.postMessage({
 						type: "oauth-error",
-						error: %q
+						error_code: %q
 					}, %q);
 				}
 			} catch (e) {
 				console.error("Failed to post oauth-error:", e);
 			}
 			setTimeout(() => { window.close(); }, 1000);
-		`, errStr, errStr, targetOrigin)
+		`, errCode, targetOrigin)
 	} else {
 		script = fmt.Sprintf(`
 			console.log("OAuth successful. Sending credentials to opener at", %q);
@@ -292,8 +290,8 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 		</body>
 		</html>
 	`, func() string {
-		if errStr != "" {
-			return fmt.Sprintf("<h3 style='color: #ef4444;'>Authorization Failed</h3><p>%s</p>", html.EscapeString(errStr))
+		if errCode != "" {
+			return "<h3 style='color: #ef4444;'>Authorization Failed</h3><p>Authorization could not be completed.</p>"
 		}
 		return "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
 	}(), nonce, script)
