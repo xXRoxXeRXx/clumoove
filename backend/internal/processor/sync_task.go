@@ -134,9 +134,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 				log.Printf("[Worker] Directory case collision detected: %s conflicts with %s", mkPath, collision)
 				task.Status = "SKIPPED"
 				task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Directory skipped due to case collision with %s", collision), Valid: true}
-				_ = db.UpdateTaskStatus(p.db, task)
-				_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, 0)
-				return nil
+				return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, 0)
 			}
 		}
 
@@ -144,9 +142,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			return fmt.Errorf("failed to create directory %s: %w", mkPath, err)
 		}
 		task.Status = "COMPLETED"
-		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, 0) // count as 1 changed item, 0 bytes
-		return nil
+		return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, 0) // count as 1 changed item, 0 bytes
 	}
 
 	// Setup clients depending on action
@@ -188,9 +184,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 		// Success
 		task.Status = "COMPLETED"
-		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 0, 1, 0, 0) // filesDelta=1, deletedDelta=1
-		return nil
+		return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 0, 1, 0, 0) // filesDelta=1, deletedDelta=1
 	}
 
 	if action == "conflict_copy" {
@@ -219,9 +213,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 		// Success
 		task.Status = "COMPLETED"
-		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, 0) // filesDelta=1, changedDelta=1
-		return nil
+		return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, 0) // filesDelta=1, changedDelta=1
 	}
 
 	// Handle upload and download
@@ -470,9 +462,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	task.Status = "COMPLETED"
 	task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 	task.TargetHash = sql.NullString{String: workerHash, Valid: true}
-	_ = db.UpdateTaskStatus(p.db, task)
-	_ = db.IncrementSyncJobProgress(p.db, ctx, job.ID, 1, 1, 0, 0, task.FileSize) // filesDelta=1, changedDelta=1, bytesDelta=task.FileSize
-	return nil
+	return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, task.FileSize) // filesDelta=1, changedDelta=1, bytesDelta=task.FileSize
 }
 
 // handleSyncTaskFailure registers failure and checks retry count for sync tasks.
@@ -493,7 +483,9 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 	isShutdown := errors.Is(procErr, context.Canceled) || ctx.Err() != nil
 	if isShutdown {
 		task.Status = "PENDING"
-		_ = db.UpdateTaskStatus(p.db, task)
+		if err := db.UpdateTaskStatus(p.db, task); err != nil {
+			log.Printf("Error returning cancelled sync task %s to pending: %v", task.ID, err)
+		}
 		return
 	}
 
@@ -510,7 +502,9 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 			nextRetry := time.Now().Add(backoff)
 			task.Status = "FAILED"
 			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-			_ = db.UpdateTaskStatus(p.db, task)
+			if err := db.UpdateTaskStatus(p.db, task); err != nil {
+				log.Printf("Error scheduling sync task %s retry after connection loss: %v", task.ID, err)
+			}
 			return
 		}
 
@@ -521,7 +515,9 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		p.recoveryAttempts.Delete(payload.SyncJobID)
 
 		task.Status = "PENDING"
-		_ = db.UpdateTaskStatus(p.db, task)
+		if err := db.UpdateTaskStatus(p.db, task); err != nil {
+			log.Printf("Error re-queueing sync task %s after connection loss: %v", task.ID, err)
+		}
 		return
 	}
 
@@ -547,13 +543,19 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
-		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 1, 0, 0, 1, 0)
+		if err := db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 0, 0, 1, 0); err != nil {
+			log.Printf("Error recording terminal sync task failure for %s: %v", task.ID, err)
+			return
+		}
 
 		// Cancel other pending tasks
 		cancelled, cerr := db.CancelRemainingPendingSyncTasks(p.db, task.SyncJobID)
 		if cerr == nil && cancelled > 0 {
-			_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 0, 0, 0, cancelled, 0)
+			if err := db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 0, 0, 0, cancelled, 0); err != nil {
+				log.Printf("Error recording %d cancelled sync tasks for job %s: %v", cancelled, task.SyncJobID, err)
+			}
+		} else if cerr != nil {
+			log.Printf("Error cancelling pending sync tasks for job %s: %v", task.SyncJobID, cerr)
 		}
 		return
 	}
@@ -563,13 +565,17 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		nextRetry := time.Now().Add(backoff)
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-		_ = db.UpdateTaskStatus(p.db, task)
+		if err := db.UpdateTaskStatus(p.db, task); err != nil {
+			log.Printf("Error scheduling sync task %s retry: %v", task.ID, err)
+		}
 	} else {
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
-		_ = db.UpdateTaskStatus(p.db, task)
+		if err := db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 0, 0, 1, 0); err != nil {
+			log.Printf("Error recording exhausted sync task failure for %s: %v", task.ID, err)
+			return
+		}
 		p.clearConnLossTask(task.ID)
-		_ = db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 1, 0, 0, 1, 0)
 	}
 }
 
