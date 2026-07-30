@@ -151,7 +151,7 @@ html {
 
 .ui-section.p-6,
 .ui-section.p-8 {
-  background-color: #ffffff;
+  background-color: var(--color-bg-secondary);
 }
 
 @utility ui-input {
