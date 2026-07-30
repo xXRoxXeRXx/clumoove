@@ -85,10 +85,10 @@ time, description, tags, etc.) after a successful upload.
 `LOCAL_STORAGE_ROOT` environment variable. It carries **no credentials** (no URL, no username, no
 password). Each provider instance is rooted at `LOCAL_STORAGE_ROOT/users/<user-id>`, where the user ID is
 derived server-side from authenticated JWT claims (API paths) or the persisted migration/sync owner
-(background paths). It is never supplied by the request or profile. On Unix-like hosts, an open descriptor
-anchors the tenant root and all mutating operations resolve each component with `openat` and `O_NOFOLLOW`;
-this rejects `..` traversal and symlink replacement races without ever re-opening an attacker-controlled
-path. Local-provider mutations are intentionally unavailable on Windows until an equivalent handle-relative
+(background paths). It is never supplied by the request or profile. On Unix-like hosts, descriptor-relative,
+component-by-component `openat` with `O_NOFOLLOW` anchors both the configured root and every local
+operation; this rejects `..` traversal and symlink replacement races without ever re-opening an
+attacker-controlled path. Local-provider mutations are intentionally unavailable on Windows until an equivalent handle-relative
 implementation exists. Creating a local provider without a valid user scope fails. It supports only the
 `files` resource type; calendars/contacts are not applicable.
 
