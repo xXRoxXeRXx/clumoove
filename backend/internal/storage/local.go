@@ -55,91 +55,19 @@ func NewLocalProvider(userID string) (*LocalProvider, error) {
 	return &LocalProvider{root: abs, rootHandle: rootHandle}, nil
 }
 
-// resolve is used only for read-only operations (listing, download, hash, and
-// stat). Mutating operations use localPathComponents and rootHandle to avoid
-// TOCTOU races. It joins a user-supplied relative path to the storage root and
-// rejects ".." traversal and symlink escapes.
-func (p *LocalProvider) resolve(rel string) (string, error) {
-	// Reject any explicit parent-directory references up front.
-	if strings.Contains(rel, "..") {
-		return "", fmt.Errorf("path escapes storage root")
-	}
-	clean := filepath.Clean(strings.TrimPrefix(rel, "/"))
-	if clean == "." || clean == "/" || clean == string(os.PathSeparator) {
-		clean = ""
-	}
-	joined := filepath.Join(p.root, clean)
-	if joined != p.root && !strings.HasPrefix(joined, p.root+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path escapes storage root")
-	}
-
-	// Prevent sandbox escape via symlinked intermediate directories: evaluate
-	// each existing ancestor against the storage root. Missing components are
-	// permitted (they will be created by the upload/mkdir operations).
-	cur := p.root
-	for _, comp := range strings.Split(clean, string(os.PathSeparator)) {
-		if comp == "" || comp == "." {
-			continue
-		}
-		cur = filepath.Join(cur, comp)
-		info, err := os.Lstat(cur)
-		if err != nil {
-			break // not yet created; remaining components cannot be checked
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			resolved, rerr := filepath.EvalSymlinks(cur)
-			if rerr != nil || (resolved != p.root && !strings.HasPrefix(resolved, p.root+string(os.PathSeparator))) {
-				return "", fmt.Errorf("path escapes storage root")
-			}
-		}
-	}
-	return joined, nil
-}
-
-// secureResolve validates a path like resolve, then re-checks containment after
-// fully resolving any symlinks in the final path to close the TOCTOU window
-// between resolve() and the actual I/O.
-func (p *LocalProvider) secureResolve(rel string) (string, error) {
-	joined, err := p.resolve(rel)
-	if err != nil {
-		return "", err
-	}
-	resolved, rerr := filepath.EvalSymlinks(joined)
-	if rerr != nil {
-		if os.IsNotExist(rerr) {
-			// Final element may not exist yet (upload target); validate the
-			// existing parent directory instead so the new file stays in root.
-			parent := filepath.Dir(joined)
-			parentResolved, perr := filepath.EvalSymlinks(parent)
-			if perr == nil {
-				if parentResolved != p.root && !strings.HasPrefix(parentResolved, p.root+string(os.PathSeparator)) {
-					return "", fmt.Errorf("path escapes storage root")
-				}
-			}
-			return joined, nil
-		}
-		return "", fmt.Errorf("path escapes storage root")
-	}
-	if resolved != p.root && !strings.HasPrefix(resolved, p.root+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path escapes storage root")
-	}
-	return joined, nil
-}
-
 func (p *LocalProvider) Close() error {
 	if p.rootHandle == nil {
 		return nil
 	}
-	err := p.rootHandle.close()
-	p.rootHandle = nil
-	return err
+	return p.rootHandle.close()
 }
 
 func (p *LocalProvider) Connect(ctx context.Context) (bool, error) {
-	if p.rootHandle == nil {
-		return false, fmt.Errorf("local provider is closed")
+	root, err := p.localRoot()
+	if err != nil {
+		return false, err
 	}
-	if err := p.rootHandle.healthy(); err != nil {
+	if err := root.healthy(); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -149,27 +77,36 @@ func (p *LocalProvider) GetDirectoryListing(ctx context.Context, resourceType, d
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.resolve(dirPath)
+	root, err := p.localRoot()
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(resolved)
+	parts, err := localPathComponents(dirPath)
 	if err != nil {
 		return nil, err
 	}
+	dir, err := root.openDirectory(parts)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	cleanDir := strings.Join(parts, "/")
 	var resources []CloudResource
 	for _, e := range entries {
-		full := filepath.Join(resolved, e.Name())
 		info, ierr := e.Info()
 		if ierr != nil {
 			continue
 		}
-		rel, rerr := filepath.Rel(p.root, full)
-		if rerr != nil {
-			rel = e.Name()
+		relPath := e.Name()
+		if cleanDir != "" {
+			relPath = cleanDir + "/" + e.Name()
 		}
 		res := CloudResource{
-			Path:  filepath.ToSlash(rel),
+			Path:  relPath,
 			Name:  e.Name(),
 			IsDir: e.IsDir(),
 			Size:  info.Size(),
@@ -184,27 +121,32 @@ func (p *LocalProvider) InspectResource(ctx context.Context, resourceType, resou
 	if resourceType != "files" {
 		return CloudResource{}, fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.secureResolve(resourcePath)
+	root, err := p.localRoot()
 	if err != nil {
 		return CloudResource{}, err
 	}
-	info, err := os.Stat(resolved)
+	parts, err := localPathComponents(resourcePath)
 	if err != nil {
 		return CloudResource{}, err
 	}
-	rel, rerr := filepath.Rel(p.root, resolved)
-	if rerr != nil {
-		rel = resourcePath
+	f, err := root.open(parts)
+	if err != nil {
+		return CloudResource{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return CloudResource{}, err
 	}
 	res := CloudResource{
-		Path:         filepath.ToSlash(rel),
+		Path:         filepath.ToSlash(resourcePath),
 		Name:         info.Name(),
 		IsDir:        info.IsDir(),
 		Size:         info.Size(),
 		LastModified: info.ModTime(),
 	}
 	if !info.IsDir() {
-		if h, herr := p.hashFile(resolved); herr == nil {
+		if h, herr := hashReader(f); herr == nil {
 			res.Hash = "SHA1:" + h
 		}
 	}
@@ -215,11 +157,15 @@ func (p *LocalProvider) StreamDownload(ctx context.Context, resourceType, filePa
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.secureResolve(filePath)
+	root, err := p.localRoot()
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.Open(resolved)
+	parts, err := localPathComponents(filePath)
+	if err != nil {
+		return nil, err
+	}
+	f, err := root.open(parts)
 	if err != nil {
 		return nil, err
 	}
@@ -230,37 +176,54 @@ func (p *LocalProvider) StreamUpload(ctx context.Context, resourceType, filePath
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
+	root, err := p.localRoot()
+	if err != nil {
+		return err
+	}
 	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
 	}
-	return p.rootHandle.upload(parts, stream, nil)
+	return root.upload(parts, stream, nil)
 }
 
 func (p *LocalProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
+	root, err := p.localRoot()
+	if err != nil {
+		return err
+	}
 	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
 	}
-	return p.rootHandle.upload(parts, stream, progressChan)
+	return root.upload(parts, stream, progressChan)
 }
 
 func (p *LocalProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
 	if resourceType != "files" {
 		return false, 0, fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.resolve(filePath)
+	root, err := p.localRoot()
 	if err != nil {
 		return false, 0, err
 	}
-	info, err := os.Stat(resolved)
+	parts, err := localPathComponents(filePath)
+	if err != nil {
+		return false, 0, err
+	}
+	f, err := root.open(parts)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, 0, nil
 		}
+		return false, 0, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
 		return false, 0, err
 	}
 	return true, info.Size(), nil
@@ -270,6 +233,10 @@ func (p *LocalProvider) DeleteFile(ctx context.Context, resourceType, filePath s
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
+	root, err := p.localRoot()
+	if err != nil {
+		return err
+	}
 	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
@@ -277,18 +244,27 @@ func (p *LocalProvider) DeleteFile(ctx context.Context, resourceType, filePath s
 	if len(parts) == 0 {
 		return fmt.Errorf("cannot delete the storage root")
 	}
-	return p.rootHandle.remove(parts)
+	return root.remove(parts)
 }
 
 func (p *LocalProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	if resourceType != "files" {
 		return "", fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
-	resolved, err := p.secureResolve(filePath)
+	root, err := p.localRoot()
 	if err != nil {
 		return "", err
 	}
-	h, err := p.hashFile(resolved)
+	parts, err := localPathComponents(filePath)
+	if err != nil {
+		return "", err
+	}
+	f, err := root.open(parts)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h, err := hashReader(f)
 	if err != nil {
 		return "", err
 	}
@@ -299,6 +275,10 @@ func (p *LocalProvider) CreateParentDirectories(ctx context.Context, resourceTyp
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
+	root, err := p.localRoot()
+	if err != nil {
+		return err
+	}
 	parts, err := localPathComponents(filePath)
 	if err != nil {
 		return err
@@ -306,23 +286,31 @@ func (p *LocalProvider) CreateParentDirectories(ctx context.Context, resourceTyp
 	if len(parts) < 2 {
 		return nil
 	}
-	return p.rootHandle.mkdirAll(parts[:len(parts)-1])
+	return root.mkdirAll(parts[:len(parts)-1])
 }
 
 func (p *LocalProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
 	}
+	root, err := p.localRoot()
+	if err != nil {
+		return err
+	}
 	parts, err := localPathComponents(dirPath)
 	if err != nil {
 		return err
 	}
-	return p.rootHandle.mkdirAll(parts)
+	return root.mkdirAll(parts)
 }
 
 func (p *LocalProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
+	}
+	root, err := p.localRoot()
+	if err != nil {
+		return err
 	}
 	oldParts, err := localPathComponents(oldPath)
 	if err != nil {
@@ -338,7 +326,7 @@ func (p *LocalProvider) RenameFile(ctx context.Context, resourceType, oldPath, n
 	if len(newParts) == 0 {
 		return fmt.Errorf("cannot rename into the storage root")
 	}
-	return p.rootHandle.rename(oldParts, newParts)
+	return root.rename(oldParts, newParts)
 }
 
 // localPathComponents accepts only a relative path and returns components for
@@ -371,14 +359,16 @@ func (p *LocalProvider) SupportsAtomicRename() bool {
 	return true
 }
 
-func (p *LocalProvider) hashFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
+func (p *LocalProvider) localRoot() (*localRoot, error) {
+	if p.rootHandle == nil {
+		return nil, fmt.Errorf("local provider is closed")
 	}
-	defer f.Close()
+	return p.rootHandle, nil
+}
+
+func hashReader(reader io.Reader) (string, error) {
 	h := sha1.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, reader); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil

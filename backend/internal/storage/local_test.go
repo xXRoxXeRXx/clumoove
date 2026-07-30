@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -25,12 +26,10 @@ func newTestLocalProvider(t *testing.T) *LocalProvider {
 }
 
 func TestLocalProviderTraversalRejected(t *testing.T) {
-	p := newTestLocalProvider(t)
-	if _, err := p.resolve("../escape"); err == nil {
-		t.Fatalf("expected traversal rejection, got nil")
-	}
-	if _, err := p.resolve("a/../../escape"); err == nil {
-		t.Fatalf("expected nested traversal rejection, got nil")
+	for _, path := range []string{"../escape", "a/../../escape"} {
+		if _, err := localPathComponents(path); err == nil {
+			t.Fatalf("expected traversal rejection for %q, got nil", path)
+		}
 	}
 }
 
@@ -93,6 +92,10 @@ func TestLocalProviderListingExistsDeleteRenameMkdir(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].Name != "a.txt" {
 		t.Fatalf("unexpected listing: %+v", list)
+	}
+	list, err = p.GetDirectoryListing(ctx, "files", "/docs//")
+	if err != nil || len(list) != 1 || list[0].Path != "docs/a.txt" {
+		t.Fatalf("normalized listing: %+v, err=%v", list, err)
 	}
 
 	if err := p.RenameFile(ctx, "files", "docs/a.txt", "docs/b.txt"); err != nil {
@@ -198,14 +201,13 @@ func TestLocalProviderSymlinkEscapeRejected(t *testing.T) {
 	if err := os.Symlink(outside, linkPath); err != nil {
 		t.Skipf("symlink not supported on this platform: %v", err)
 	}
-	if _, err := p.resolve("link/secret"); err == nil {
+	if _, err := p.StreamDownload(context.Background(), "files", "link/secret"); err == nil {
 		t.Fatalf("expected symlink escape rejection")
 	}
 }
 
-func TestLocalProviderSymlinkInsideRootAllowed(t *testing.T) {
+func TestLocalProviderSymlinkParentRejected(t *testing.T) {
 	p := newTestLocalProvider(t)
-	// Create a subdir, symlink it from the root, write a file via the symlink.
 	sub := filepath.Join(p.root, "real")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -214,8 +216,43 @@ func TestLocalProviderSymlinkInsideRootAllowed(t *testing.T) {
 	if err := os.Symlink(sub, linkPath); err != nil {
 		t.Skipf("symlink not supported on this platform: %v", err)
 	}
-	if _, err := p.resolve("link"); err != nil {
-		t.Fatalf("symlink inside root should be allowed: %v", err)
+	if _, err := p.StreamDownload(context.Background(), "files", "link/missing"); err == nil {
+		t.Fatal("StreamDownload unexpectedly followed an in-root symlink")
+	}
+}
+
+func TestLocalProviderReadOperationsRejectReplacedParent(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+	if err := p.CreateDirectory(ctx, "files", "safe"); err != nil {
+		t.Fatalf("CreateDirectory: %v", err)
+	}
+
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.Remove(filepath.Join(p.root, "safe")); err != nil {
+		t.Fatalf("remove original directory: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(p.root, "safe")); err != nil {
+		t.Skipf("symlink not supported on this platform: %v", err)
+	}
+
+	if _, err := p.StreamDownload(ctx, "files", "safe/secret.txt"); err == nil {
+		t.Fatal("StreamDownload followed a replaced symlink")
+	}
+	if _, err := p.InspectResource(ctx, "files", "safe/secret.txt"); err == nil {
+		t.Fatal("InspectResource followed a replaced symlink")
+	}
+	if _, _, err := p.FileExists(ctx, "files", "safe/secret.txt"); err == nil {
+		t.Fatal("FileExists followed a replaced symlink")
+	}
+	if _, err := p.GetFileHash(ctx, "files", "safe/secret.txt"); err == nil {
+		t.Fatal("GetFileHash followed a replaced symlink")
+	}
+	if _, err := p.GetDirectoryListing(ctx, "files", "safe"); err == nil {
+		t.Fatal("GetDirectoryListing followed a replaced symlink")
 	}
 }
 
@@ -251,4 +288,88 @@ func TestLocalProviderDeleteRootRejected(t *testing.T) {
 	if err := p.DeleteFile(ctx, "files", ""); err == nil {
 		t.Fatalf("expected root deletion rejection")
 	}
+}
+
+func TestLocalProviderOperationsAfterClose(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{"GetDirectoryListing", func() error {
+			_, err := p.GetDirectoryListing(ctx, "files", "")
+			return err
+		}},
+		{"InspectResource", func() error {
+			_, err := p.InspectResource(ctx, "files", "file.txt")
+			return err
+		}},
+		{"StreamDownload", func() error {
+			_, err := p.StreamDownload(ctx, "files", "file.txt")
+			return err
+		}},
+		{"StreamUpload", func() error {
+			return p.StreamUpload(ctx, "files", "file.txt", bytes.NewReader(nil), 0)
+		}},
+		{"StreamUploadChunked", func() error {
+			return p.StreamUploadChunked(ctx, "files", "file.txt", bytes.NewReader(nil), 0, nil)
+		}},
+		{"FileExists", func() error {
+			_, _, err := p.FileExists(ctx, "files", "file.txt")
+			return err
+		}},
+		{"DeleteFile", func() error {
+			return p.DeleteFile(ctx, "files", "file.txt")
+		}},
+		{"GetFileHash", func() error {
+			_, err := p.GetFileHash(ctx, "files", "file.txt")
+			return err
+		}},
+		{"CreateParentDirectories", func() error {
+			return p.CreateParentDirectories(ctx, "files", "dir/file.txt")
+		}},
+		{"CreateDirectory", func() error {
+			return p.CreateDirectory(ctx, "files", "dir")
+		}},
+		{"RenameFile", func() error {
+			return p.RenameFile(ctx, "files", "old.txt", "new.txt")
+		}},
+	}
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			if err := operation.run(); err == nil || err.Error() != "local provider is closed" {
+				t.Fatalf("error = %v, want local provider is closed", err)
+			}
+		})
+	}
+	if connected, err := p.Connect(ctx); connected || err == nil || err.Error() != "local provider is closed" {
+		t.Fatalf("Connect = (%v, %v), want (false, local provider is closed)", connected, err)
+	}
+}
+
+func TestLocalProviderConcurrentClose(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		<-start
+		for range 100 {
+			_, _, _ = p.FileExists(ctx, "files", "file.txt")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-start
+		_ = p.Close()
+	}()
+	close(start)
+	wg.Wait()
 }
