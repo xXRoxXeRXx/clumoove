@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -21,11 +23,44 @@ type localRoot struct {
 }
 
 func openLocalRoot(path string) (*localRoot, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := openAbsoluteDirectory(path)
 	if err != nil {
 		return nil, err
 	}
 	return &localRoot{fd: fd}, nil
+}
+
+// openAbsoluteDirectory walks an absolute directory from the filesystem root,
+// retaining a descriptor at every step.  unix.Open(path, O_NOFOLLOW) protects
+// only path's final component: a rename that replaces an intermediate
+// directory with a symlink can still be followed while the kernel resolves the
+// pathname.  Resolving one component at a time relative to an already-open
+// descriptor closes that TOCTOU window for the configured storage root too.
+func openAbsoluteDirectory(path string) (int, error) {
+	if !filepath.IsAbs(path) {
+		return -1, fmt.Errorf("local storage root must be absolute")
+	}
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(path), string(os.PathSeparator)), string(os.PathSeparator))
+	fd, err := unix.Open(string(os.PathSeparator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, err
+	}
+	if len(parts) == 1 && parts[0] == "" {
+		return fd, nil
+	}
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			unix.Close(fd)
+			return -1, fmt.Errorf("invalid local storage root")
+		}
+		next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		unix.Close(fd)
+		if openErr != nil {
+			return -1, openErr
+		}
+		fd = next
+	}
+	return fd, nil
 }
 
 // ensureLocalRoot creates the server-derived users/<id> components while the

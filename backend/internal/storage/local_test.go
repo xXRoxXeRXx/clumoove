@@ -256,6 +256,61 @@ func TestLocalProviderReadOperationsRejectReplacedParent(t *testing.T) {
 	}
 }
 
+func TestLocalProviderSymlinkReplacementCannotEscapeMutations(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "sentinel"), []byte("outside"), 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	parent := filepath.Join(p.root, "changing")
+	parked := filepath.Join(p.root, "changing-parked")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatalf("create mutable parent: %v", err)
+	}
+	if err := p.StreamUpload(ctx, "files", "changing/from", bytes.NewReader([]byte("x")), 1); err != nil {
+		t.Fatalf("seed rename source: %v", err)
+	}
+
+	stop := make(chan struct{})
+	var swaps sync.WaitGroup
+	swaps.Add(1)
+	go func() {
+		defer swaps.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := os.Rename(parent, parked); err != nil {
+				continue
+			}
+			if err := os.Symlink(outside, parent); err == nil {
+				_ = os.Remove(parent)
+			}
+			_ = os.Rename(parked, parent)
+		}
+	}()
+	for range 200 {
+		_ = p.StreamUpload(ctx, "files", "changing/uploaded", bytes.NewReader([]byte("x")), 1)
+		_ = p.CreateDirectory(ctx, "files", "changing/created")
+		_ = p.DeleteFile(ctx, "files", "changing/delete-me")
+		_ = p.RenameFile(ctx, "files", "changing/from", "changing/to")
+	}
+	close(stop)
+	swaps.Wait()
+
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("read outside directory: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "sentinel" {
+		t.Fatalf("mutation escaped through replacement symlink: outside contains %v", entries)
+	}
+}
+
 func TestLocalProviderRootListing(t *testing.T) {
 	p := newTestLocalProvider(t)
 	ctx := context.Background()
