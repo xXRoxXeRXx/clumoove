@@ -302,7 +302,13 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		return
 	}
 	if len(srcErrors) > 0 {
-		log.Printf("[SyncEngine] Warning: encountered %d indexing errors on source for job %s\n", len(srcErrors), syncJobID)
+		// listFiles returns the successfully enumerated portion of a tree along
+		// with per-directory failures. That portion is not an authoritative
+		// snapshot: treating missing entries as deletions could delete valid
+		// target files or overwrite a changed target. Do not continue to delta
+		// calculation or state persistence from an incomplete source scan.
+		e.failSync(syncJobID, generation, fmt.Sprintf("Source file listing incomplete: %d traversal errors (first: %s)", len(srcErrors), srcErrors[0].ErrorMessage))
+		return
 	}
 
 	log.Printf("[SyncEngine] Listing target files for job %s...\n", syncJobID)
@@ -323,7 +329,11 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		return
 	}
 	if len(tgtErrors) > 0 {
-		log.Printf("[SyncEngine] Warning: encountered %d indexing errors on target for job %s (e.g. %v)\n", len(tgtErrors), syncJobID, tgtErrors[0])
+		// As above, an incomplete target scan must not be used to infer that a
+		// target file disappeared. In particular, doing so can enqueue uploads
+		// that overwrite a target-side change and can erase durable sync state.
+		e.failSync(syncJobID, generation, fmt.Sprintf("Target file listing incomplete: %d traversal errors (first: %s)", len(tgtErrors), tgtErrors[0].ErrorMessage))
+		return
 	}
 	log.Printf("[SyncEngine] Job %s target raw files listed: %d (targetScanPaths=%v)\n", syncJobID, len(targetRawMap), targetScanPaths)
 
