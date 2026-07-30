@@ -1,6 +1,7 @@
 package processor
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -9,6 +10,22 @@ import (
 	"backend/internal/db"
 	"backend/internal/storage"
 )
+
+type verifierProvider struct {
+	fakeProvider
+	hash    string
+	hashErr error
+	exists  bool
+	size    int64
+}
+
+func (p *verifierProvider) FileExists(context.Context, string, string) (bool, int64, error) {
+	return p.exists, p.size, nil
+}
+
+func (p *verifierProvider) GetFileHash(context.Context, string, string) (string, error) {
+	return p.hash, p.hashErr
+}
 
 func TestBestSourceHash(t *testing.T) {
 	cases := []struct {
@@ -118,5 +135,88 @@ func TestIsNonRetryableHashError(t *testing.T) {
 				t.Errorf("isNonRetryableHashError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestVerificationFallbackRejectsMissingOrTruncatedTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		hash       string
+		hashErr    error
+		sourceHash sql.NullString
+		exists     bool
+		size       int64
+	}{
+		{name: "hash unavailable, missing target", hashErr: storage.ErrHashNotSupported, exists: false, size: 0},
+		{name: "hash unavailable, truncated target", hashErr: storage.ErrHashNotSupported, exists: true, size: 7},
+		{name: "different algorithms, truncated target", hash: "MD5:target-md5", sourceHash: sql.NullString{String: "SHA1:source-sha1", Valid: true}, exists: true, size: 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := &verifierProvider{
+				hash:    tc.hash,
+				hashErr: tc.hashErr,
+				exists:  tc.exists,
+				size:    tc.size,
+			}
+			task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10, SourceHash: tc.sourceHash}
+			verified := false
+			mismatched := false
+			p := &Processor{}
+			p.runVerificationPass(context.Background(), verificationPassConfig{
+				EntityType:        "Migration",
+				EntityID:          tc.name,
+				Threads:           1,
+				TargetClient:      provider,
+				GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+				ReconcileProgress: func() error { return nil },
+				MarkVerified: func(context.Context, *db.Task, string) (bool, error) {
+					verified = true
+					return true, nil
+				},
+				MarkMismatch: func(_ context.Context, got *db.Task) (bool, error) {
+					mismatched = got.Status == "FAILED"
+					return true, nil
+				},
+			})
+
+			if verified {
+				t.Fatal("fallback verified a missing or truncated target")
+			}
+			if !mismatched {
+				t.Fatal("fallback did not mark the invalid target as mismatched")
+			}
+		})
+	}
+}
+
+func TestVerificationDifferentAlgorithmsRequiresSizeAndPersistsTargetHash(t *testing.T) {
+	provider := &verifierProvider{hash: "MD5:target-md5", exists: true, size: 10}
+	task := &db.Task{
+		ID:           "task",
+		ResourceType: "files",
+		FilePath:     "/file",
+		FileSize:     10,
+		SourceHash:   sql.NullString{String: "SHA1:source-sha1", Valid: true},
+	}
+	var persistedTargetHash string
+	p := &Processor{}
+	p.runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType:        "Migration",
+		EntityID:          "different-algorithms",
+		Threads:           1,
+		TargetClient:      provider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified: func(_ context.Context, got *db.Task, targetHash string) (bool, error) {
+			if got.SourceHash.String != "SHA1:source-sha1" {
+				t.Fatalf("source hash changed before persistence: %q", got.SourceHash.String)
+			}
+			persistedTargetHash = targetHash
+			return true, nil
+		},
+	})
+
+	if persistedTargetHash != "MD5:target-md5" {
+		t.Fatalf("persisted target hash = %q, want provider hash", persistedTargetHash)
 	}
 }

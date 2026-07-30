@@ -120,15 +120,18 @@ func (p *Processor) processVerifyingSyncJobs(ctx context.Context) {
 }
 
 type verificationPassConfig struct {
-	EntityType        string // "Migration" or "Sync job"
-	EntityID          string
-	UserID            string
-	TargetProvider    string
-	TargetURL         string
-	TargetUsername    string
-	TargetPassword    string
-	TargetDir         string
-	Threads           int
+	EntityType     string // "Migration" or "Sync job"
+	EntityID       string
+	UserID         string
+	TargetProvider string
+	TargetURL      string
+	TargetUsername string
+	TargetPassword string
+	TargetDir      string
+	Threads        int
+	// TargetClient is test-only injection for a connected target. Production
+	// callers leave it nil and construct a scoped provider below.
+	TargetClient      storage.StorageProvider
 	GetTasks          func(ctx context.Context) ([]*db.Task, error)
 	OnVerified        func(task *db.Task, targetPath string, targetHash string)
 	ReconcileProgress func() error
@@ -211,9 +214,16 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		}
 		return db.MarkTaskChecksumVerified(p.db, passCtx, task.ID, targetHash) == nil
 	}
-	markMismatch := func(task db.Task, message string) {
+	markMismatch := func(task *db.Task, message, targetHash string) {
 		task.Status = "FAILED"
 		task.ErrorMessage = sql.NullString{String: message, Valid: true}
+		// Keep the provider-computed target hash even when it does not match.
+		// This preserves both sides of the verification evidence: SourceHash (or
+		// WorkerHash) remains the source-side value and TargetHash records the
+		// target-side value that was actually compared.
+		if targetHash != "" {
+			task.TargetHash = sql.NullString{String: targetHash, Valid: true}
+		}
 		if !canWrite() {
 			return
 		}
@@ -221,12 +231,12 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 			// A sync pass is being finalized by the engine; do not create new
 			// runnable work during that finalization.
 			task.NextRetryAt = sql.NullTime{}
-			_, _ = cfg.MarkMismatch(passCtx, &task)
+			_, _ = cfg.MarkMismatch(passCtx, task)
 			return
 		}
 		// Migrations keep their established automatic re-copy behavior.
 		task.NextRetryAt = sql.NullTime{Time: time.Now(), Valid: true}
-		_ = db.UpdateTaskStatus(p.db, &task)
+		_ = db.UpdateTaskStatus(p.db, task)
 	}
 
 	unverifiedTasks, err := cfg.GetTasks(passCtx)
@@ -247,12 +257,15 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	}
 
 	passCtx = storage.WithLocalUserScope(passCtx, cfg.UserID)
-	targetClient, err := newProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
-	if err != nil {
-		log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
-		return
+	targetClient := cfg.TargetClient
+	if targetClient == nil {
+		targetClient, err = newProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
+		if err != nil {
+			log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+			return
+		}
+		defer targetClient.Close()
 	}
-	defer targetClient.Close()
 
 	numWorkers := cfg.Threads
 	if numWorkers <= 0 {
@@ -312,7 +325,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					}
 					if !exists || targetSize != task.FileSize {
 						log.Printf("[VERIFIER] [SIZE_MISMATCH] %s | Got: %d | Expected: %d\n", targetPath, targetSize, task.FileSize)
-						markMismatch(*task, fmt.Sprintf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize))
+						markMismatch(task, fmt.Sprintf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize), targetHash)
 						return false
 					}
 					return markVerified(task, targetHash)
@@ -353,7 +366,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 							} else {
 								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
-								markMismatch(*task, fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget))
+								markMismatch(task, fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget), targetHash)
 							}
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
 							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
