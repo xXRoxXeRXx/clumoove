@@ -322,7 +322,7 @@ func InitDB(connStr string) (*sql.DB, error) {
 				target_provider VARCHAR(64) NOT NULL DEFAULT 'nextcloud',
 				target_dir VARCHAR(512) NOT NULL DEFAULT '/',
 				status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
-				conflict_strategy VARCHAR(32) NOT NULL DEFAULT 'SKIP',
+				conflict_strategy VARCHAR(32) NOT NULL DEFAULT 'SKIP' CONSTRAINT chk_migrations_conflict_strategy CHECK (conflict_strategy IN ('SKIP', 'OVERWRITE', 'RENAME')),
 				total_files INT NOT NULL DEFAULT 0,
 				total_bytes BIGINT NOT NULL DEFAULT 0,
 				processed_files INT NOT NULL DEFAULT 0,
@@ -339,6 +339,23 @@ func InitDB(connStr string) (*sql.DB, error) {
 			)`)
 			if err != nil {
 				log.Printf("Failed schema migration (migrations): %v\n", err)
+			}
+
+			// Repair legacy invalid values before adding the constraint. This makes
+			// the startup migration safe for databases created before validation.
+			_, err = db.Exec(`UPDATE migrations SET conflict_strategy = 'SKIP' WHERE conflict_strategy IS NULL OR conflict_strategy NOT IN ('SKIP', 'OVERWRITE', 'RENAME')`)
+			if err != nil {
+				log.Printf("Failed data migration (migration conflict strategy): %v\n", err)
+			}
+			_, err = db.Exec(`DO $$ BEGIN
+				IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'migrations'::regclass AND conname = 'chk_migrations_conflict_strategy') THEN
+					ALTER TABLE migrations ADD CONSTRAINT chk_migrations_conflict_strategy CHECK (conflict_strategy IN ('SKIP', 'OVERWRITE', 'RENAME'));
+				END IF;
+			END $$`)
+			if err != nil {
+				// schemaErrorLogger records this as schemaErr, causing InitDB to
+				// close the connection and fail startup below.
+				log.Printf("Failed schema migration (migration conflict strategy constraint): %v\n", err)
 			}
 
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS source_refresh_token_encrypted TEXT`)

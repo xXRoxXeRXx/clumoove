@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     source_provider TEXT NOT NULL DEFAULT 'nextcloud',
     target_provider TEXT NOT NULL DEFAULT 'nextcloud',
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, INDEXING, RUNNING, PAUSED_CONNECTION_LOSS, COMPLETED, COMPLETED_WITH_ERRORS, FAILED, SCHEDULED
-    conflict_strategy TEXT NOT NULL DEFAULT 'SKIP', -- SKIP, OVERWRITE, RENAME
+    conflict_strategy TEXT NOT NULL DEFAULT 'SKIP' CONSTRAINT chk_migrations_conflict_strategy CHECK (conflict_strategy IN ('SKIP', 'OVERWRITE', 'RENAME')),
     target_dir TEXT NOT NULL DEFAULT '/',
     selected_paths JSONB,
     selected_calendars JSONB,

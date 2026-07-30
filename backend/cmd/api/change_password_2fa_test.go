@@ -218,7 +218,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 		t.Fatalf("store refresh token: %v", err)
 	}
 
-	if err := db.UpdateUserActive(database, user.ID, false); err != nil {
+	if _, err := db.SuspendUser(database, user.ID); err != nil {
 		t.Fatalf("suspend user: %v", err)
 	}
 

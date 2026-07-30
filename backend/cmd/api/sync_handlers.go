@@ -143,6 +143,10 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	if req.ConflictStrategy == "" {
 		req.ConflictStrategy = "OVERWRITE"
 	}
+	if !db.ValidConflictStrategy(req.ConflictStrategy) {
+		writeError(w, http.StatusBadRequest, ErrConflictStrategyInvalid)
+		return
+	}
 	if req.IntervalMinutes <= 0 {
 		req.IntervalMinutes = 15
 	}

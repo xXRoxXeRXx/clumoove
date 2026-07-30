@@ -589,6 +589,7 @@
     "MIGRATION_NOT_FOUND": "Übertragung nicht gefunden.",
     "THREADS_OUT_OF_RANGE": "Die Anzahl der gleichzeitigen Übertragungen muss zwischen 1 und 16 liegen.",
     "BANDWIDTH_OUT_OF_RANGE": "Die Geschwindigkeit muss zwischen 0 und 1000 Mbit/s liegen.",
+    "CONFLICT_STRATEGY_INVALID": "Die gewählte Konfliktstrategie ist ungültig.",
     "NO_SOURCE_PATHS": "Bitte wähle mindestens einen Ordner zum Kopieren aus.",
     "TOO_MANY_ACTIVE_MIGRATIONS": "Zu viele aktive Übertragungen. Bitte warte, bis ein Vorgang fertig ist.",
     "ENCRYPTION_FAILED": "Verschlüsselung fehlgeschlagen.",

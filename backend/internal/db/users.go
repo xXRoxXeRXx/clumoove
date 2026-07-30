@@ -264,40 +264,97 @@ func UpdateUserRole(database *sql.DB, id, role string) error {
 	return err
 }
 
-func UpdateUserActive(database *sql.DB, id string, active bool) error {
+// SuspendUser deactivates an account and abandons every active sync pass. It
+// returns the affected jobs so the API can cancel their in-flight coordinators
+// and worker streams after this transaction commits.
+func SuspendUser(database *sql.DB, id string) ([]string, error) {
 	tx, err := database.Begin()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(`UPDATE users SET active = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, active, id); err != nil {
+	if _, err := tx.Exec(`UPDATE users SET active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id); err != nil {
+		return nil, err
+	}
+
+	// Suspending an account must terminate every renewable session while this
+	// transaction still holds the user row lock. This also prevents a refresh
+	// request from surviving the suspension by rotating its token concurrently.
+	if _, err := tx.Exec(`DELETE FROM refresh_tokens WHERE user_id = $1`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(
+		`UPDATE migrations SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND status IN ('RUNNING', 'INDEXING')`,
+		id,
+	); err != nil {
+		return nil, err
+	}
+
+	syncJobIDs, err := func() ([]string, error) {
+		rows, err := tx.Query(`
+			UPDATE sync_jobs
+			SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP
+			-- PAUSED_CONNECTION_LOSS is intentional: account suspension is final
+			-- until an administrator reactivates the account, so recovery must not
+			-- automatically resume this job.
+			WHERE user_id = $1 AND status IN ('INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED_CONNECTION_LOSS')
+			RETURNING id
+		`, id)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var ids []string
+		for rows.Next() {
+			var syncJobID string
+			if err := rows.Scan(&syncJobID); err != nil {
+				return nil, err
+			}
+			ids = append(ids, syncJobID)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return ids, nil
+	}()
+	if err != nil {
+		return nil, err
+	}
+	for _, syncJobID := range syncJobIDs {
+		if _, err := tx.Exec(`
+			UPDATE tasks
+			SET status = 'CANCELLED', worker_hash = NULL, next_retry_at = NULL, updated_at = CURRENT_TIMESTAMP
+			WHERE sync_job_id = $1
+			  AND (status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
+		`, syncJobID); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE schedules SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`, id); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return syncJobIDs, nil
+}
+
+// UpdateUserActive is the reactivation path (active=true). For suspension
+// (active=false), callers MUST use SuspendUser directly so they can publish
+// cancellation events for in-flight sync coordinators and worker streams.
+func UpdateUserActive(database *sql.DB, id string, active bool) error {
+	if !active {
+		return fmt.Errorf("use SuspendUser to deactivate an account")
+	}
+	_, err := database.Exec(`UPDATE users SET active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id)
+	if err != nil {
 		return err
 	}
-
-	if !active {
-		// Suspending an account must terminate every renewable session while this
-		// transaction still holds the user row lock. This also prevents a refresh
-		// request from surviving the suspension by rotating its token concurrently.
-		if _, err := tx.Exec(`DELETE FROM refresh_tokens WHERE user_id = $1`, id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(
-			`UPDATE migrations SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND status IN ('RUNNING', 'INDEXING')`,
-			id,
-		); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(`UPDATE schedules SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`, id); err != nil {
-			return err
-		}
-	} else {
-		if _, err := tx.Exec(`UPDATE schedules SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`, id); err != nil {
-			return err
-		}
-	}
-
-	return tx.Commit()
+	_, err = database.Exec(`UPDATE schedules SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`, id)
+	return err
 }
 
 func DeleteUser(database *sql.DB, id string) error {
