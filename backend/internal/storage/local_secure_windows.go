@@ -3,6 +3,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -31,7 +32,7 @@ func (r *localRoot) openDirectory(parts []string) (*os.File, error) {
 func (r *localRoot) open(parts []string) (*os.File, error) {
 	return nil, fmt.Errorf("local provider reads are unsupported on Windows")
 }
-func (r *localRoot) upload(parts []string, stream io.Reader, progress chan<- int64) error {
+func (r *localRoot) upload(ctx context.Context, parts []string, stream io.Reader, progress chan<- int64) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }
 func (r *localRoot) remove(parts []string) error {

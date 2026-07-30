@@ -53,11 +53,15 @@ func (tr *ThrottledReader) Read(p []byte) (int, error) {
 	if n > 0 {
 		if tr.upload {
 			if limiter := tr.mt.uploadLimiter.Load(); limiter != nil {
-				limiter.WaitN(tr.ctx, n)
+				if werr := limiter.WaitN(tr.ctx, n); werr != nil {
+					return n, werr
+				}
 			}
 		} else {
 			if limiter := tr.mt.downloadLimiter.Load(); limiter != nil {
-				limiter.WaitN(tr.ctx, n)
+				if werr := limiter.WaitN(tr.ctx, n); werr != nil {
+					return n, werr
+				}
 			}
 		}
 	}

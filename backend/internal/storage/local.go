@@ -184,7 +184,7 @@ func (p *LocalProvider) StreamUpload(ctx context.Context, resourceType, filePath
 	if err != nil {
 		return err
 	}
-	return root.upload(parts, stream, nil)
+	return root.upload(ctx, parts, stream, nil)
 }
 
 func (p *LocalProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
@@ -199,7 +199,7 @@ func (p *LocalProvider) StreamUploadChunked(ctx context.Context, resourceType, f
 	if err != nil {
 		return err
 	}
-	return root.upload(parts, stream, progressChan)
+	return root.upload(ctx, parts, stream, progressChan)
 }
 
 func (p *LocalProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
