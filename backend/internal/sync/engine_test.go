@@ -1,12 +1,31 @@
 package sync
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	"backend/internal/db"
+	"backend/internal/storage"
 )
+
+// listingTestProvider embeds the full provider contract and only implements
+// the listing calls exercised by listFiles.
+type listingTestProvider struct {
+	storage.StorageProvider
+	inspect func(path string) (storage.CloudResource, error)
+	list    func(path string) ([]storage.CloudResource, error)
+}
+
+func (p listingTestProvider) InspectResource(_ context.Context, _ string, resourcePath string) (storage.CloudResource, error) {
+	return p.inspect(resourcePath)
+}
+
+func (p listingTestProvider) GetDirectoryListing(_ context.Context, _ string, dirPath string) ([]storage.CloudResource, error) {
+	return p.list(dirPath)
+}
 
 func TestGetSourceRelPath(t *testing.T) {
 	tests := []struct {
@@ -147,6 +166,43 @@ func TestCleanRelPath(t *testing.T) {
 	}
 }
 
+func TestListFilesReportsTraversalErrors(t *testing.T) {
+	provider := listingTestProvider{
+		inspect: func(resourcePath string) (storage.CloudResource, error) {
+			if resourcePath != "/" {
+				t.Fatalf("InspectResource path = %q; want /", resourcePath)
+			}
+			return storage.CloudResource{Path: "/", IsDir: true}, nil
+		},
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			switch dirPath {
+			case "/":
+				return []storage.CloudResource{{Path: "/healthy.txt", Size: 1}, {Path: "/unreadable", IsDir: true}}, nil
+			case "/unreadable":
+				return nil, errors.New("temporary permission failure")
+			default:
+				t.Fatalf("GetDirectoryListing path = %q", dirPath)
+				return nil, nil
+			}
+		},
+	}
+
+	engine := NewEngine(nil, nil, "secret")
+	files, dirMap, _, indexErrors, err := engine.listFiles(context.Background(), provider, []string{"/"}, nil, nil)
+	if err != nil {
+		t.Fatalf("listFiles returned fatal error: %v", err)
+	}
+	if len(indexErrors) != 1 || indexErrors[0].Path != "/unreadable" {
+		t.Fatalf("indexErrors = %#v; want one error for /unreadable", indexErrors)
+	}
+	if _, ok := files["/healthy.txt"]; !ok {
+		t.Fatal("successful entries should still be returned alongside traversal errors")
+	}
+	if dirMap["/unreadable"] {
+		t.Error("failed directory should not appear in dirMap")
+	}
+}
+
 func TestUpdateSyncStatesPrevKeys(t *testing.T) {
 	// Verify that allKeys in updateSyncStates captures keys from prevSource and prevTarget
 	// even when sourceMap and targetMap are empty (e.g. all files deleted on source and target).
@@ -167,5 +223,3 @@ func TestUpdateSyncStatesPrevKeys(t *testing.T) {
 	// We call updateSyncStates to verify it executes without unexpected runtime errors before DB call.
 	engine.updateSyncStates("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil)
 }
-
-

@@ -220,6 +220,18 @@ func (e *Engine) listFiles(
 		mu.Unlock()
 	}
 
+	// A directory whose contents could not be listed is not part of a
+	// complete snapshot. Keep it out of the maps used for directory state and
+	// ETag skipping; callers must treat the accompanying indexing error as a
+	// failed scan rather than persist these partial results.
+	removeDir := func(dirPath string) {
+		cdir := cleanRelPath(dirPath)
+		mu.Lock()
+		delete(dirMap, cdir)
+		delete(dirETagMap, cdir)
+		mu.Unlock()
+	}
+
 	addError := func(path, msg string) {
 		errsMu.Lock()
 		indexErrors = append(indexErrors, db.IndexingErrorInput{
@@ -298,6 +310,7 @@ func (e *Engine) listFiles(
 
 					files, err := client.GetDirectoryListing(ctx, "files", job.dirPath)
 					if err != nil {
+						removeDir(job.dirPath)
 						addError(job.dirPath, err.Error())
 						return
 					}
