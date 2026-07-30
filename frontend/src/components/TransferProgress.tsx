@@ -24,7 +24,7 @@ export function TransferProgress({ progress, rate, transferred, remaining, label
           <p className="mt-1.5 font-mono text-base font-extrabold text-[var(--color-success-text)]">{rate}</p>
         </div>
       </div>
-       <ProgressBar value={progress} label={labels.progress} valueText={`${Math.round(progress)}%`} className="mb-6 h-5 border border-[var(--color-border)] p-0.5" />
+      <ProgressBar value={progress} label={labels.progress} valueText={`${Math.round(progress)}%`} className="mb-6 h-5 p-0.5" />
       <div className="grid grid-cols-2 gap-4 text-xs font-mono font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
         <span>{labels.transferred}: <strong className="text-[var(--color-text-primary)]">{transferred}</strong></span>
         <span className="text-right">{labels.remaining}: <strong className="text-[var(--color-text-primary)]">{remaining}</strong></span>
