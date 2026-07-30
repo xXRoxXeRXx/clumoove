@@ -377,7 +377,7 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if _, err := db.GetUserByEmail(s.db, req.Email); err == nil {
+	if _, err := db.GetUserByEmail(r.Context(), s.db, req.Email); err == nil {
 		writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 		return
 	}

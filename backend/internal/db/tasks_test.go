@@ -2,8 +2,31 @@ package db
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 )
+
+func TestIndexingErrorMessage(t *testing.T) {
+	tests := []struct {
+		name  string
+		input IndexingErrorInput
+		want  string
+	}{
+		{name: "persists explicit message", input: IndexingErrorInput{ErrorMessage: "failed to inspect path"}, want: "failed to inspect path"},
+		{name: "falls back to error", input: IndexingErrorInput{Err: errors.New("listing failed")}, want: "listing failed"},
+		{name: "prefers explicit message", input: IndexingErrorInput{ErrorMessage: "safe message", Err: errors.New("raw error")}, want: "safe message"},
+		{name: "sanitizes fallback error", input: IndexingErrorInput{Err: errors.New("failed: https://user:password@example.com")}, want: "failed: https://***:***@example.com"},
+		{name: "empty input returns empty string", input: IndexingErrorInput{}, want: ""},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := indexingErrorMessage(test.input); got != test.want {
+				t.Errorf("indexingErrorMessage() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 func TestDisplayTaskName(t *testing.T) {
 	tests := []struct {

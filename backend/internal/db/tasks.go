@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"backend/internal/sanitize"
 )
 
 type Task struct {
@@ -408,7 +410,7 @@ func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	return tasks, rows.Err()
 }
 
-func RecordIndexingErrors(db *sql.DB, ctx context.Context, migrationID string, errors []IndexingErrorInput) error {
+func RecordIndexingErrors(ctx context.Context, db *sql.DB, migrationID string, errors []IndexingErrorInput) error {
 	if len(errors) == 0 {
 		return nil
 	}
@@ -429,10 +431,7 @@ func RecordIndexingErrors(db *sql.DB, ctx context.Context, migrationID string, e
 	defer stmt.Close()
 
 	for _, e := range errors {
-		errMsg := ""
-		if e.Err != nil {
-			errMsg = e.Err.Error()
-		}
+		errMsg := indexingErrorMessage(e)
 		resType := e.ResourceType
 		if resType == "" {
 			resType = "files"
@@ -443,6 +442,16 @@ func RecordIndexingErrors(db *sql.DB, ctx context.Context, migrationID string, e
 	}
 
 	return tx.Commit()
+}
+
+func indexingErrorMessage(e IndexingErrorInput) string {
+	if e.ErrorMessage != "" {
+		return e.ErrorMessage
+	}
+	if e.Err != nil {
+		return sanitize.SanitizeError(e.Err.Error())
+	}
+	return ""
 }
 
 func GetIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError, error) {

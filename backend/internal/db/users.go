@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"time"
@@ -96,7 +97,7 @@ func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role
 	return &u, nil
 }
 
-func GetUserByEmail(db *sql.DB, email string) (*User, error) {
+func GetUserByEmail(ctx context.Context, db *sql.DB, email string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
@@ -106,7 +107,7 @@ func GetUserByEmail(db *sql.DB, email string) (*User, error) {
 	var u User
 	var mime sql.NullString
 	var totpSecret sql.NullString
-	err := db.QueryRow(query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+	err := db.QueryRowContext(ctx, query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil)
 	if err != nil {

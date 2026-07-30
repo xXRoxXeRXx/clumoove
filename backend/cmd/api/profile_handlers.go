@@ -38,7 +38,7 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 	if !owned {
 		return base, errors.New("profile not owned")
 	}
-	p, err := db.GetConnectionProfile(s.db, profileID)
+	p, err := db.GetConnectionProfile(r.Context(), s.db, profileID)
 	if err != nil {
 		return base, errors.New("profile not found")
 	}
@@ -102,7 +102,7 @@ func (s *APIServer) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profiles, err := db.GetConnectionProfiles(s.db, userID, "")
+	profiles, err := db.GetConnectionProfiles(r.Context(), s.db, userID, "")
 	if err != nil {
 		log.Printf("handleListProfiles: query failed for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -226,7 +226,7 @@ func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
-	p, err := db.GetConnectionProfile(s.db, id)
+	p, err := db.GetConnectionProfile(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
@@ -305,7 +305,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		in.OAuthUser = &req.OAuthUser
 	}
 
-	if existing, gerr := db.GetConnectionProfile(s.db, id); gerr == nil {
+	if existing, gerr := db.GetConnectionProfile(r.Context(), s.db, id); gerr == nil {
 		mergedProvider := existing.Provider
 		if in.Provider != nil {
 			mergedProvider = *in.Provider
@@ -381,7 +381,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
-	p, err := db.GetConnectionProfile(s.db, id)
+	p, err := db.GetConnectionProfile(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return

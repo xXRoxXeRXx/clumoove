@@ -259,7 +259,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// Resilient indexing keeps the migration running (partial success) instead of
 	// failing the whole migration on a single bad folder.
 	if len(indexErrors) > 0 {
-		if err := db.RecordIndexingErrors(idx.db, ctx, migID, indexErrors); err != nil {
+		if err := db.RecordIndexingErrors(ctx, idx.db, migID, indexErrors); err != nil {
 			log.Printf("Warning: failed to record indexing errors for %s: %v\n", migID, err)
 		}
 	}
