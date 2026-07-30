@@ -316,14 +316,50 @@ func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string)
 	return nil
 }
 
+// TransitionMigrationToIndexing begins indexing for migrations that were either
+// started immediately (and are already INDEXING) or released by the scheduler
+// (and are SCHEDULED). A zero-row result means the migration changed state
+// before it could be claimed.
+func TransitionMigrationToIndexing(db *sql.DB, id string) error {
+	query := `
+		UPDATE migrations
+		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status IN ('SCHEDULED', 'INDEXING')
+	`
+	result, err := db.Exec(query, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf("migration %s is not scheduled or indexing", id)
+	}
+	return nil
+}
+
+// UpdateMigrationStatusIfIndexing transitions an actively indexing migration to
+// its next state. It rejects stale transitions instead of silently succeeding.
 func UpdateMigrationStatusIfIndexing(db *sql.DB, id string, status string) error {
 	query := `
 		UPDATE migrations
 		SET status = $1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $2 AND status = 'INDEXING'
 	`
-	_, err := db.Exec(query, status, id)
-	return err
+	result, err := db.Exec(query, status, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return fmt.Errorf("migration %s is not indexing", id)
+	}
+	return nil
 }
 
 func UpdateMigrationBandwidthLimit(db *sql.DB, id string, limitMbps int) error {

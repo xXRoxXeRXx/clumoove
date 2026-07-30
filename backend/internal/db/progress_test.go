@@ -120,3 +120,75 @@ func TestIncrementMigrationProgress_Transition(t *testing.T) {
 		}
 	})
 }
+
+func TestTransitionMigrationToIndexing(t *testing.T) {
+	db := setupProgressTestDB(t)
+
+	tests := []struct {
+		name       string
+		id         string
+		initial    string
+		insert     bool
+		wantErr    bool
+		wantStatus string
+	}{
+		{name: "scheduled migration", id: "m-scheduled", initial: "SCHEDULED", insert: true, wantStatus: "INDEXING"},
+		{name: "indexing migration is idempotent", id: "m-indexing", initial: "INDEXING", insert: true, wantStatus: "INDEXING"},
+		{name: "running migration is rejected", id: "m-running", initial: "RUNNING", insert: true, wantErr: true, wantStatus: "RUNNING"},
+		{name: "failed migration is rejected", id: "m-failed", initial: "FAILED", insert: true, wantErr: true, wantStatus: "FAILED"},
+		{name: "missing migration is rejected", id: "m-missing", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.insert {
+				if _, err := db.Exec(`INSERT INTO migrations (id, user_id, status) VALUES ($1, $2, $3)`, tt.id, "u1", tt.initial); err != nil {
+					t.Fatalf("insert migration: %v", err)
+				}
+			}
+
+			err := TransitionMigrationToIndexing(db, tt.id)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("TransitionMigrationToIndexing() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.insert && migrationStatus(t, db, tt.id) != tt.wantStatus {
+				t.Errorf("status = %q, want %q", migrationStatus(t, db, tt.id), tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestUpdateMigrationStatusIfIndexing(t *testing.T) {
+	db := setupProgressTestDB(t)
+
+	tests := []struct {
+		name       string
+		id         string
+		initial    string
+		insert     bool
+		wantErr    bool
+		wantStatus string
+	}{
+		{name: "indexing migration advances", id: "m-indexing-running", initial: "INDEXING", insert: true, wantStatus: "RUNNING"},
+		{name: "scheduled migration is rejected", id: "m-scheduled-running", initial: "SCHEDULED", insert: true, wantErr: true, wantStatus: "SCHEDULED"},
+		{name: "missing migration is rejected", id: "m-missing-running", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.insert {
+				if _, err := db.Exec(`INSERT INTO migrations (id, user_id, status) VALUES ($1, $2, $3)`, tt.id, "u1", tt.initial); err != nil {
+					t.Fatalf("insert migration: %v", err)
+				}
+			}
+
+			err := UpdateMigrationStatusIfIndexing(db, tt.id, "RUNNING")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("UpdateMigrationStatusIfIndexing() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.insert && migrationStatus(t, db, tt.id) != tt.wantStatus {
+				t.Errorf("status = %q, want %q", migrationStatus(t, db, tt.id), tt.wantStatus)
+			}
+		})
+	}
+}
