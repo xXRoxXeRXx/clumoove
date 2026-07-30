@@ -346,6 +346,9 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_tasks_sync_status ON tasks(sync_job_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy
+    ON tasks ((metadata->>'wait_for_conflict_copy'))
+    WHERE status = 'PENDING' AND metadata->>'wait_for_conflict_copy' = 'true';
 
 -- Multi-channel completion notification outbox (after migrations and sync_jobs).
 CREATE TABLE IF NOT EXISTS notification_channels (

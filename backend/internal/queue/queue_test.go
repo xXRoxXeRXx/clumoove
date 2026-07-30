@@ -33,7 +33,11 @@ func setupDequeueTestDB(t *testing.T) *sql.DB {
 			id TEXT PRIMARY KEY,
 			migration_id TEXT,
 			sync_job_id TEXT,
+			file_path TEXT NOT NULL DEFAULT '',
+			resource_type TEXT NOT NULL DEFAULT 'files',
 			status TEXT NOT NULL,
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			error_message TEXT,
 			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE,
 			worker_hash TEXT
@@ -44,6 +48,76 @@ func setupDequeueTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestDequeueSQLConflictCopyDependency(t *testing.T) {
+	database := setupDequeueTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO sync_jobs (id, status, threads) VALUES ('sync-1', 'RUNNING', 1);
+		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata, created_at)
+		VALUES ('conflict-copy', 'sync-1', '/file.txt', 'files', 'PENDING', '{"action":"conflict_copy"}', '2020-01-01');
+		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata, created_at)
+		VALUES ('upload', 'sync-1', '/file.txt', 'files', 'PENDING', '{"action":"upload","wait_for_conflict_copy":true}', '2020-01-02');
+	`); err != nil {
+		t.Fatalf("insert conflict dependency tasks: %v", err)
+	}
+
+	q := &Queue{}
+	payload, err := q.DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue conflict copy: %v", err)
+	}
+	if payload == nil || payload.TaskID != "conflict-copy" {
+		t.Fatalf("first dequeue = %+v, want conflict copy", payload)
+	}
+
+	payload, err = q.DequeueSQL(context.Background(), database, "worker-2")
+	if err != nil {
+		t.Fatalf("dequeue while conflict copy running: %v", err)
+	}
+	if payload != nil {
+		t.Fatalf("dequeue while conflict copy running = %+v, want nil", payload)
+	}
+
+	if _, err := database.Exec(`UPDATE tasks SET status = 'COMPLETED' WHERE id = 'conflict-copy'`); err != nil {
+		t.Fatalf("complete conflict copy: %v", err)
+	}
+	payload, err = q.DequeueSQL(context.Background(), database, "worker-2")
+	if err != nil {
+		t.Fatalf("dequeue after conflict copy completion: %v", err)
+	}
+	if payload == nil || payload.TaskID != "upload" {
+		t.Fatalf("dequeue after conflict copy completion = %+v, want upload", payload)
+	}
+}
+
+func TestDequeueSQLSkipsUploadWhenConflictCopyFails(t *testing.T) {
+	database := setupDequeueTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO sync_jobs (id, status, threads) VALUES ('sync-1', 'RUNNING', 1);
+		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata)
+		VALUES ('conflict-copy', 'sync-1', '/file.txt', 'files', 'FAILED', '{"action":"conflict_copy"}');
+		INSERT INTO tasks (id, sync_job_id, file_path, resource_type, status, metadata)
+		VALUES ('upload', 'sync-1', '/file.txt', 'files', 'PENDING', '{"action":"upload","wait_for_conflict_copy":true}');
+	`); err != nil {
+		t.Fatalf("insert failed conflict dependency tasks: %v", err)
+	}
+
+	payload, err := (&Queue{}).DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue failed conflict dependency: %v", err)
+	}
+	if payload != nil {
+		t.Fatalf("dequeue failed conflict dependency = %+v, want nil", payload)
+	}
+
+	var status, errorMessage string
+	if err := database.QueryRow(`SELECT status, error_message FROM tasks WHERE id = 'upload'`).Scan(&status, &errorMessage); err != nil {
+		t.Fatalf("read skipped upload: %v", err)
+	}
+	if status != "SKIPPED" || errorMessage != "conflict_copy prerequisite failed; upload skipped" {
+		t.Fatalf("skipped upload = (%q, %q), want auditable skipped status", status, errorMessage)
+	}
 }
 
 func TestDequeueSQLSyncTasksWaitForRunning(t *testing.T) {

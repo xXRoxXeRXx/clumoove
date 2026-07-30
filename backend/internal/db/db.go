@@ -618,6 +618,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (idx_tasks_sync_status): %v\n", err)
 			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy ON tasks ((metadata->>'wait_for_conflict_copy')) WHERE status = 'PENDING' AND metadata->>'wait_for_conflict_copy' = 'true'`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_wait_conflict_copy): %v\n", err)
+			}
 
 			// Notification tables intentionally follow migrations and sync_jobs because
 			// their event foreign keys reference both tables.
