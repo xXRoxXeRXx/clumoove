@@ -857,9 +857,62 @@ func IncrementSyncJobProgress(db *sql.DB, ctx context.Context, id string, filesD
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $6
 	`
-	_, err = tx.ExecContext(ctx, query, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, id)
+	result, err := tx.ExecContext(ctx, query, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, id)
 	if err != nil {
 		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return sql.ErrNoRows
+	}
+
+	return tx.Commit()
+}
+
+// UpdateSyncTaskStatusAndIncrementProgress persists a sync task's terminal
+// status and its job counters as one logical transition.  A task must never be
+// left RUNNING while its job reports that it has been processed.
+func UpdateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t *Task, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
+		    source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $9 AND sync_job_id = $10
+	`, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash,
+		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID, t.SyncJobID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return sql.ErrNoRows
+	}
+
+	result, err = tx.ExecContext(ctx, `
+		UPDATE sync_jobs
+		SET processed_files = processed_files + $1,
+		    processed_bytes = processed_bytes + $2,
+		    changed_files = changed_files + $3,
+		    deleted_files = deleted_files + $4,
+		    failed_files = failed_files + $5,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $6
+	`, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, t.SyncJobID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return sql.ErrNoRows
 	}
 
 	return tx.Commit()
