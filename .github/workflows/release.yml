@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version tag (e.g. v1.0.0)"
+        description: "Release version tag (e.g. v0.8.0)"
         required: false
         type: string
 
@@ -37,7 +37,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -46,6 +49,8 @@ jobs:
       # --- 1. API Image ---
       - name: Compute tags for API
         id: tags-api
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           TAG_NAME="${{ github.event.release.tag_name }}"
@@ -54,7 +59,6 @@ jobs:
           
           TAGS="ghcr.io/${REPO_OWNER}/clumoove-api:${VERSION},ghcr.io/${REPO_OWNER}/clumoove-api:latest"
           
-          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
           if [ -n "$DOCKERHUB_USER" ]; then
             TAGS="${TAGS},${DOCKERHUB_USER}/clumoove-api:${VERSION},${DOCKERHUB_USER}/clumoove-api:latest"
           fi
@@ -74,6 +78,8 @@ jobs:
       # --- 2. Worker Image ---
       - name: Compute tags for Worker
         id: tags-worker
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           TAG_NAME="${{ github.event.release.tag_name }}"
@@ -82,7 +88,6 @@ jobs:
           
           TAGS="ghcr.io/${REPO_OWNER}/clumoove-worker:${VERSION},ghcr.io/${REPO_OWNER}/clumoove-worker:latest"
           
-          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
           if [ -n "$DOCKERHUB_USER" ]; then
             TAGS="${TAGS},${DOCKERHUB_USER}/clumoove-worker:${VERSION},${DOCKERHUB_USER}/clumoove-worker:latest"
           fi
@@ -102,6 +107,8 @@ jobs:
       # --- 3. Frontend Image ---
       - name: Compute tags for Frontend
         id: tags-frontend
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           TAG_NAME="${{ github.event.release.tag_name }}"
@@ -110,7 +117,6 @@ jobs:
           
           TAGS="ghcr.io/${REPO_OWNER}/clumoove-frontend:${VERSION},ghcr.io/${REPO_OWNER}/clumoove-frontend:latest"
           
-          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
           if [ -n "$DOCKERHUB_USER" ]; then
             TAGS="${TAGS},${DOCKERHUB_USER}/clumoove-frontend:${VERSION},${DOCKERHUB_USER}/clumoove-frontend:latest"
           fi
