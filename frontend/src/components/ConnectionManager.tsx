@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useId, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useId, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
@@ -6,19 +6,41 @@ import { apiFetch } from '../utils/apiClient';
 import { MessageBanner, type MessageState } from './MessageBanner';
 import { LoadingIndicator } from './LoadingIndicator';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import type { ApiErrBody } from './SettingsPage';
 import { LinkIcon as Plug } from '@heroicons/react/24/outline';
+import {
+  parseSmbUrl,
+  buildSmbUrl,
+  parseS3Url,
+  buildS3Url,
+  parseSftpUrl,
+  buildSftpUrl,
+  sftpHostKeyFingerprintPattern,
+} from '../utils/providerUrls';
+import { ProviderFields } from './connect/ProviderFields';
 
-interface ConnectionManagerProps {
+export interface ConnectionManagerProps {
   apiUrl: string;
   token: string;
   localStorageEnabled?: boolean;
   oauthProviders?: Record<string, boolean>;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local';
+export type ProviderId =
+  | 'nextcloud'
+  | 'dropbox'
+  | 'webdav'
+  | 'magentacloud'
+  | 'google'
+  | 'hidrive'
+  | 'smb'
+  | 's3'
+  | 'sftp'
+  | 'local'
+  | 'immich';
 
-interface ProfilePublic {
+export interface ProfilePublic {
   id: string;
   name: string;
   provider: string;
@@ -31,8 +53,6 @@ interface ProfilePublic {
   updated_at: string;
 }
 
-const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
-const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
 const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50';
 const secondaryBtnCls = 'ui-button-secondary px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]';
 
@@ -112,18 +132,22 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     }
   };
 
-  const providerOptions: { id: ProviderId; name: string }[] = [
-    { id: 'nextcloud', name: 'Nextcloud' },
-    { id: 'webdav', name: 'WebDAV' },
-    { id: 'magentacloud', name: 'MagentaCLOUD' },
-    { id: 'smb', name: 'SMB/CIFS' },
-    { id: 's3', name: 'S3' },
-    { id: 'sftp', name: 'SFTP' },
-    ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
-    ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
-    ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
-    ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : []),
-  ];
+  const providerOptions = useMemo(
+    (): { id: ProviderId; name: string }[] => [
+      { id: 'nextcloud', name: 'Nextcloud' },
+      { id: 'webdav', name: 'WebDAV' },
+      { id: 'magentacloud', name: 'MagentaCLOUD' },
+      { id: 'smb', name: 'SMB/CIFS' },
+      { id: 's3', name: 'S3' },
+      { id: 'sftp', name: 'SFTP' },
+      ...(localStorageEnabled ? [{ id: 'immich' as const, name: 'Immich' }] : []),
+      ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
+      ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+      ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
+      ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : []),
+    ],
+    [localStorageEnabled, oauthProviders.dropbox, oauthProviders.google, oauthProviders.hidrive]
+  );
 
   const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google' || prov === 'hidrive';
 
@@ -243,42 +267,25 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
   const { t } = useTranslation();
   const translateApiError = useApiError();
   const [busy, setBusy] = useState(false);
+  const { openOAuthPopup } = useOAuthPopup(apiUrl);
 
   const openReauth = () => {
     const provider = profile.provider;
-    const width = 600, height = 700;
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
-    const targetOrigin = new URL(apiUrl, window.location.origin).origin;
-
-    const popup = window.open(
-      `${apiUrl}/api/oauth/auth?provider=${provider}&purpose=connect&origin=${encodeURIComponent(window.location.origin)}`,
-      'OAuth',
-      `width=${width},height=${height},left=${left},top=${top}`
-    );
     setBusy(true);
-
-    const cleanup = () => {
-      window.removeEventListener('message', handleMessage);
-      clearInterval(checkClosed);
-      setBusy(false);
-    };
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== targetOrigin || event.source !== popup) return;
-      if (event.data?.type === 'oauth-success' && event.data.provider === provider && event.data.purpose === 'connect') {
-        const refreshToken: string = event.data.refreshToken || '';
-        cleanup();
+    openOAuthPopup(provider, 'connect', {
+      onSuccess: (msg) => {
+        const refreshToken = msg.refreshToken || '';
         if (!refreshToken) {
+          setBusy(false);
           onError(t('settings.connections.testFailed'));
           return;
         }
-        // Persist the new refresh token onto the existing profile.
         apiFetch(`${apiUrl}/api/profiles/${profile.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify({
             refresh_token: refreshToken,
-            oauth_user: event.data.username || provider,
+            oauth_user: msg.username || provider,
           }),
         })
           .then(async (res) => {
@@ -288,18 +295,14 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
             }
             onReauthorized();
           })
-          .catch((err) => onError(err instanceof Error ? err.message : t('settings.connections.testFailed')));
-      } else if (event.data?.type === 'oauth-error') {
-        cleanup();
+          .catch((err) => onError(err instanceof Error ? err.message : t('settings.connections.testFailed')))
+          .finally(() => setBusy(false));
+      },
+      onError: () => {
+        setBusy(false);
         onError(t('settings.connections.testFailed'));
-      }
-    };
-    const checkClosed = setInterval(() => {
-      let closed = true;
-      try { closed = !popup || popup.closed; } catch { /* ignore */ }
-      if (closed) cleanup();
-    }, 1000);
-    window.addEventListener('message', handleMessage);
+      },
+    });
   };
 
   return (
@@ -323,6 +326,59 @@ interface ProfileEditorProps {
   onError: (msg: string) => void;
 }
 
+interface FormState {
+  name: string;
+  provider: ProviderId;
+  url: string;
+  username: string;
+  password: string;
+  oauthUser: string;
+  oauthRefreshToken: string;
+  smbHost: string;
+  smbPort: string;
+  smbShare: string;
+  smbDomain: string;
+  s3Bucket: string;
+  s3Region: string;
+  s3Endpoint: string;
+  s3Insecure: boolean;
+  sftpHost: string;
+  sftpPort: string;
+  sftpHostKey: string;
+  sftpAuthMode: 'password' | 'key';
+  sftpPrivateKey: string;
+}
+
+function initFormState(editing: ProfilePublic | null): FormState {
+  const provider = (editing?.provider as ProviderId) || 'nextcloud';
+  const smb = parseSmbUrl(provider === 'smb' ? editing?.url || '' : '');
+  const s3 = parseS3Url(provider === 's3' ? editing?.url || '' : '');
+  const sftp = parseSftpUrl(provider === 'sftp' ? editing?.url || '' : '');
+
+  return {
+    name: editing?.name || '',
+    provider,
+    url: editing?.url || '',
+    username: editing?.username || '',
+    password: '',
+    oauthUser: editing?.oauth_user || '',
+    oauthRefreshToken: '',
+    smbHost: smb.host,
+    smbPort: smb.port || '445',
+    smbShare: smb.share,
+    smbDomain: smb.domain,
+    s3Bucket: s3.bucket,
+    s3Region: s3.region || 'us-east-1',
+    s3Endpoint: s3.endpoint,
+    s3Insecure: s3.insecure,
+    sftpHost: sftp.host,
+    sftpPort: sftp.port || '22',
+    sftpHostKey: sftp.hostKey,
+    sftpAuthMode: 'password',
+    sftpPrivateKey: '',
+  };
+}
+
 function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSaved, onError }: ProfileEditorProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
@@ -331,79 +387,154 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const titleId = useId();
   const nameId = useId();
   const providerId = useId();
-  const urlId = useId();
-  const usernameId = useId();
-  const passwordId = useId();
 
-  const [name, setName] = useState<string>(editing?.name || '');
-  const [provider, setProvider] = useState<ProviderId>((editing?.provider as ProviderId) || 'nextcloud');
-  const [url, setUrl] = useState<string>(editing?.url || '');
-  const [username, setUsername] = useState<string>(editing?.username || '');
-  const [password, setPassword] = useState<string>('');
-  const [oauthUser, setOauthUser] = useState<string>(editing?.oauth_user || '');
-  const [oauthRefreshToken, setOauthRefreshToken] = useState<string>('');
+  const fieldIds = useMemo(() => ({
+    urlId: 'profile-editor-url',
+    usernameId: 'profile-editor-username',
+    passwordId: 'profile-editor-password',
+    smbHostId: 'profile-editor-smb-host',
+    smbPortId: 'profile-editor-smb-port',
+    smbShareId: 'profile-editor-smb-share',
+    smbDomainId: 'profile-editor-smb-domain',
+    s3BucketId: 'profile-editor-s3-bucket',
+    s3RegionId: 'profile-editor-s3-region',
+    s3EndpointId: 'profile-editor-s3-endpoint',
+    s3InsecureId: 'profile-editor-s3-insecure',
+    sftpHostId: 'profile-editor-sftp-host',
+    sftpPortId: 'profile-editor-sftp-port',
+    sftpHostKeyId: 'profile-editor-sftp-hostkey',
+    sftpPrivateKeyId: 'profile-editor-sftp-privatekey',
+  }), []);
+
+  const { openOAuthPopup: triggerOAuthPopup } = useOAuthPopup(apiUrl);
+
+  const [form, setForm] = useState<FormState>(() => initFormState(editing));
   const [saving, setSaving] = useState<boolean>(false);
   useFocusTrap(dialogRef, closeRef, onClose);
 
-  const isOAuth = provider === 'dropbox' || provider === 'google';
-  const needsPassword = !isOAuth && provider !== 'local';
+  const isOAuth = form.provider === 'dropbox' || form.provider === 'google' || form.provider === 'hidrive';
+  const needsPassword = !isOAuth && form.provider !== 'local';
+
+  const updateField = <K extends keyof FormState>(key: K, value: FormState[K]) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleProviderSelect = (newProvider: ProviderId) => {
+    setForm((prev) => {
+      const next = { ...prev, provider: newProvider };
+      if (editing && editing.provider === newProvider && editing.url) {
+        if (newProvider === 'smb') {
+          const smb = parseSmbUrl(editing.url);
+          next.smbHost = smb.host; next.smbPort = smb.port || '445'; next.smbShare = smb.share; next.smbDomain = smb.domain;
+        } else if (newProvider === 's3') {
+          const s3 = parseS3Url(editing.url);
+          next.s3Bucket = s3.bucket; next.s3Region = s3.region || 'us-east-1'; next.s3Endpoint = s3.endpoint; next.s3Insecure = s3.insecure;
+        } else if (newProvider === 'sftp') {
+          const sftp = parseSftpUrl(editing.url);
+          next.sftpHost = sftp.host; next.sftpPort = sftp.port || '22'; next.sftpHostKey = sftp.hostKey;
+        } else {
+          next.url = editing.url;
+        }
+      } else {
+        if (newProvider === 'smb' && !prev.smbPort) next.smbPort = '445';
+        if (newProvider === 's3' && !prev.s3Region) next.s3Region = 'us-east-1';
+        if (newProvider === 'sftp' && !prev.sftpPort) next.sftpPort = '22';
+      }
+      return next;
+    });
+  };
 
   const openOAuthPopup = () => {
-    const width = 600, height = 700;
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
-    const targetOrigin = new URL(apiUrl, window.location.origin).origin;
-    const popup = window.open(
-      `${apiUrl}/api/oauth/auth?provider=${provider}&purpose=connect&origin=${encodeURIComponent(window.location.origin)}`,
-      'OAuth',
-      `width=${width},height=${height},left=${left},top=${top}`
-    );
-    const cleanup = () => { window.removeEventListener('message', handleMessage); clearInterval(checkClosed); };
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== targetOrigin || event.source !== popup) return;
-      if (event.data?.type === 'oauth-success' && event.data.provider === provider && event.data.purpose === 'connect') {
-        cleanup();
-        setOauthUser(event.data.username || provider);
-        setOauthRefreshToken(event.data.refreshToken || '');
-      } else if (event.data?.type === 'oauth-error') {
-        cleanup();
+    triggerOAuthPopup(form.provider, 'connect', {
+      onSuccess: (msg) => {
+        updateField('oauthUser', msg.username || form.provider);
+        updateField('oauthRefreshToken', msg.refreshToken || '');
+      },
+      onError: () => {
         onError(t('settings.connections.testFailed'));
-      }
-    };
-    const checkClosed = setInterval(() => {
-      let closed = true;
-      try { closed = !popup || popup.closed; } catch { /* ignore */ }
-      if (closed) cleanup();
-    }, 1000);
-    window.addEventListener('message', handleMessage);
+      },
+    });
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) { onError(t('settings.connections.nameLabel') + ' ' + t('common.required').toLowerCase()); return; }
+    if (!form.name.trim()) {
+      onError(t('settings.connections.nameLabel') + ' ' + t('common.required').toLowerCase());
+      return;
+    }
+
+    let finalUrl: string;
+    let finalUsername = form.username;
+    let finalPassword = form.password;
+
+    if (form.provider === 'smb') {
+      if (!form.smbHost.trim() || !form.smbShare.trim()) {
+        onError(t('common.required'));
+        return;
+      }
+      finalUrl = buildSmbUrl(form.smbHost, form.smbPort, form.smbShare, form.smbDomain);
+    } else if (form.provider === 's3') {
+      if (!form.s3Bucket.trim()) {
+        onError(t('common.required'));
+        return;
+      }
+      finalUrl = buildS3Url(form.s3Bucket, form.s3Region, form.s3Endpoint, form.s3Insecure);
+    } else if (form.provider === 'sftp') {
+      if (!form.sftpHost.trim() || !form.sftpHostKey.trim()) {
+        onError(t('common.required'));
+        return;
+      }
+      if (!sftpHostKeyFingerprintPattern.test(form.sftpHostKey.trim())) {
+        onError(t('connect.sftpHostKeyHint'));
+        return;
+      }
+      finalUrl = buildSftpUrl(form.sftpHost, form.sftpPort, form.sftpHostKey);
+      finalPassword = form.sftpAuthMode === 'key' ? form.sftpPrivateKey : form.password;
+    } else if (form.provider === 'immich') {
+      if (!form.url.trim()) {
+        onError(t('common.required'));
+        return;
+      }
+      finalUrl = form.url;
+      finalUsername = '';
+      finalPassword = form.password;
+    } else if (form.provider === 'magentacloud' || form.provider === 'local') {
+      finalUrl = '';
+      finalUsername = form.provider === 'local' ? '' : form.username;
+    } else if (isOAuth) {
+      // Backend ignores the URL for OAuth, setting placeholder to satisfy NOT NULL constraints
+      finalUrl = `oauth://${form.provider}`;
+      finalUsername = form.oauthUser || form.provider;
+    } else {
+      if (!form.url.trim()) {
+        onError(t('common.required'));
+        return;
+      }
+      finalUrl = form.url;
+    }
+
     setSaving(true);
 
     const payload: Record<string, unknown> = {
-      name: name.trim(),
-      provider,
+      name: form.name.trim(),
+      provider: form.provider,
+      url: finalUrl,
+      username: finalUsername,
     };
-    // Only send url/username when present (PUT leaves omitted fields unchanged).
-    if (url) payload.url = url;
+
     if (isOAuth) {
-      payload.username = oauthUser || provider;
-    } else if (username) {
-      payload.username = username;
-    }
-    // Only send credentials when present (PUT leaves omitted fields unchanged).
-    if (needsPassword && password) payload.password = password;
-    if (isOAuth && oauthRefreshToken) {
-      payload.refresh_token = oauthRefreshToken;
-      payload.oauth_user = oauthUser || provider;
+      payload.username = form.oauthUser || form.provider;
+      if (form.oauthRefreshToken) {
+        payload.refresh_token = form.oauthRefreshToken;
+        payload.oauth_user = form.oauthUser || form.provider;
+      }
+    } else if (needsPassword && finalPassword) {
+      payload.password = finalPassword;
     }
 
     try {
       const method = editing ? 'PUT' : 'POST';
-      const urlStr = editing ? `${apiUrl}/api/profiles/${editing.id}` : `${apiUrl}/api/profiles`;
+      const urlStr = editing ? `${apiUrl}/api/profiles/${editing.id}?url=1&username=1` : `${apiUrl}/api/profiles`;
       const res = await apiFetch(urlStr, {
         method,
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -421,6 +552,9 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
     }
   };
 
+  const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
+  const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
+
   return (
     <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
@@ -436,75 +570,63 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         <form onSubmit={handleSave} className="space-y-4">
           <div className="space-y-1.5">
             <label htmlFor={nameId} className={labelCls}>{t('settings.connections.nameLabel')}</label>
-            <input id={nameId} type="text" required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />
+            <input id={nameId} type="text" required value={form.name} onChange={(e) => updateField('name', e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />
           </div>
 
           <div className="space-y-1.5">
             <label htmlFor={providerId} className={labelCls}>{t('settings.connections.providerLabel')}</label>
             <select
               id={providerId}
-              value={provider}
+              value={form.provider}
               disabled={!!editing}
-              onChange={(e) => setProvider(e.target.value as ProviderId)}
+              onChange={(e) => handleProviderSelect(e.target.value as ProviderId)}
               className={inputCls}
             >
               {providerOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
           </div>
 
-          {provider === 'local' ? (
-            <div className="border border-[var(--color-info-border)] bg-[var(--color-info-bg)] p-4 text-[var(--color-info-text)] flex items-start gap-2">
-              <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
-            </div>
-          ) : isOAuth ? (
-            <div className="space-y-3">
-              {oauthRefreshToken ? (
-                <div className="border border-[var(--color-success-border)] bg-[var(--color-success-bg)] p-4 text-[var(--color-success-text)] flex items-center justify-between">
-                  <div className="truncate pr-2">
-                    <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('settings.connections.oauthConnectedAs', { user: oauthUser || provider })}</p>
-                  </div>
-                  <button type="button" onClick={() => { setOauthRefreshToken(''); setOauthUser(''); }} className="ui-button-secondary px-3 py-1.5 text-[10px] font-mono font-bold">
-                    {t('connect.disconnect')}
-                  </button>
-                </div>
-              ) : (
-                <button type="button" onClick={openOAuthPopup}
-                  className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider flex items-center justify-center gap-2">
-                  {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : 'Dropbox' })}
-                </button>
-              )}
-              {editing && !oauthRefreshToken && (
-                <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.reauthorizeHint')}</p>
-              )}
-            </div>
-          ) : (
-            <>
-              {provider !== 'magentacloud' && (
-                <div className="space-y-1.5">
-                  <label htmlFor={urlId} className={labelCls}>{t('connect.nextcloudUrl')}</label>
-                  <input id={urlId} type="text" value={url} onChange={(e) => setUrl(e.target.value)} className={inputCls} placeholder={provider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')} />
-                </div>
-              )}
-              <div className="space-y-1.5">
-                <label htmlFor={usernameId} className={labelCls}>{t('connect.username')}</label>
-                <input id={usernameId} type="text" autoComplete="username" name="username" value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor={passwordId} className={labelCls}>{t('settings.connections.passwordLabel')}</label>
-                <input
-                  id={passwordId}
-                  type="password"
-                  autoComplete="current-password"
-                  name="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={inputCls}
-                  placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')}
-                />
-                {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
-              </div>
-            </>
-          )}
+          <ProviderFields
+            provider={form.provider}
+            editing={!!editing}
+            oauthUser={form.oauthUser}
+            oauthRefreshToken={form.oauthRefreshToken}
+            onOpenOAuthPopup={openOAuthPopup}
+            onDisconnectOAuth={() => { updateField('oauthRefreshToken', ''); updateField('oauthUser', ''); }}
+            url={form.url}
+            onUrlChange={(v) => updateField('url', v)}
+            username={form.username}
+            onUsernameChange={(v) => updateField('username', v)}
+            password={form.password}
+            onPasswordChange={(v) => updateField('password', v)}
+            smbHost={form.smbHost}
+            onSmbHostChange={(v) => updateField('smbHost', v)}
+            smbPort={form.smbPort}
+            onSmbPortChange={(v) => updateField('smbPort', v)}
+            smbShare={form.smbShare}
+            onSmbShareChange={(v) => updateField('smbShare', v)}
+            smbDomain={form.smbDomain}
+            onSmbDomainChange={(v) => updateField('smbDomain', v)}
+            s3Bucket={form.s3Bucket}
+            onS3BucketChange={(v) => updateField('s3Bucket', v)}
+            s3Region={form.s3Region}
+            onS3RegionChange={(v) => updateField('s3Region', v)}
+            s3Endpoint={form.s3Endpoint}
+            onS3EndpointChange={(v) => updateField('s3Endpoint', v)}
+            s3Insecure={form.s3Insecure}
+            onS3InsecureChange={(v) => updateField('s3Insecure', v)}
+            sftpHost={form.sftpHost}
+            onSftpHostChange={(v) => updateField('sftpHost', v)}
+            sftpPort={form.sftpPort}
+            onSftpPortChange={(v) => updateField('sftpPort', v)}
+            sftpHostKey={form.sftpHostKey}
+            onSftpHostKeyChange={(v) => updateField('sftpHostKey', v)}
+            sftpAuthMode={form.sftpAuthMode}
+            onSftpAuthModeChange={(v) => updateField('sftpAuthMode', v)}
+            sftpPrivateKey={form.sftpPrivateKey}
+            onSftpPrivateKeyChange={(v) => updateField('sftpPrivateKey', v)}
+            ids={fieldIds}
+          />
 
           <div className="flex gap-2 pt-2">
             <button type="submit" disabled={saving} className={`flex-1 ${primaryBtnCls}`}>
