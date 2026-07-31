@@ -266,19 +266,19 @@ func TestConnLossCounts(t *testing.T) {
 func TestResolveTargetPath(t *testing.T) {
 	t.Run("unconditional target join when source path matches targetDir prefix", func(t *testing.T) {
 		task := &db.Task{ResourceType: "files", FilePath: "/docs/file.txt"}
-		got := resolveTargetPath(task, "/docs", "nextcloud", "nextcloud")
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/docs", "nextcloud", "nextcloud")
 		want := "/docs/docs/file.txt"
 		if got != want {
-			t.Fatalf("resolveTargetPath() = %q, want %q", got, want)
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
 		}
 	})
 
 	t.Run("component by component path sanitization", func(t *testing.T) {
 		task := &db.Task{ResourceType: "files", FilePath: "/invalid?dir/bad:name.txt"}
-		got := resolveTargetPath(task, "/targetDir", "nextcloud", "smb")
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/targetDir", "nextcloud", "smb")
 		want := "/targetDir/invalid_dir/bad_name.txt"
 		if got != want {
-			t.Fatalf("resolveTargetPath() = %q, want %q", got, want)
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
 		}
 	})
 
@@ -288,10 +288,10 @@ func TestResolveTargetPath(t *testing.T) {
 			FilePath:     "/Albums/album-uuid-1/asset-uuid-2",
 			Metadata:     []byte(`{"immich_filename":"bad:photo?.jpg","immich_album_name":"Vacation/2024?"}`),
 		}
-		got := resolveTargetPath(task, "/Immich Alben", "immich", "smb")
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Immich Alben", "immich", "smb")
 		want := "/Immich Alben/Albums/Vacation/2024_/bad_photo_.jpg"
 		if got != want {
-			t.Fatalf("resolveTargetPath() = %q, want %q", got, want)
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
 		}
 	})
 
@@ -301,10 +301,10 @@ func TestResolveTargetPath(t *testing.T) {
 			FilePath:     "/Albums/album-uuid-1/asset-uuid-2",
 			Metadata:     []byte(`{"immich_filename":"photo:1.jpg","immich_album_name":"Vacation"}`),
 		}
-		got := resolveTargetPath(task, "/Immich Target", "immich", "immich")
+		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Immich Target", "immich", "immich")
 		want := "/Immich Target/Albums/Vacation/photo:1.jpg"
 		if got != want {
-			t.Fatalf("resolveTargetPath() = %q, want %q", got, want)
+			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
 		}
 	})
 }
