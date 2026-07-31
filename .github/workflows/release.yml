@@ -1,0 +1,128 @@
+name: Release Docker Images
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version tag (e.g. v1.0.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # --- 1. API Image ---
+      - name: Compute tags for API
+        id: tags-api
+        run: |
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          INPUT_VER="${{ inputs.version }}"
+          VERSION="${TAG_NAME:-${INPUT_VER:-latest}}"
+          
+          TAGS="ghcr.io/${REPO_OWNER}/clumoove-api:${VERSION},ghcr.io/${REPO_OWNER}/clumoove-api:latest"
+          
+          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          if [ -n "$DOCKERHUB_USER" ]; then
+            TAGS="${TAGS},${DOCKERHUB_USER}/clumoove-api:${VERSION},${DOCKERHUB_USER}/clumoove-api:latest"
+          fi
+          
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and Push API Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          target: prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags-api.outputs.tags }}
+
+      # --- 2. Worker Image ---
+      - name: Compute tags for Worker
+        id: tags-worker
+        run: |
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          INPUT_VER="${{ inputs.version }}"
+          VERSION="${TAG_NAME:-${INPUT_VER:-latest}}"
+          
+          TAGS="ghcr.io/${REPO_OWNER}/clumoove-worker:${VERSION},ghcr.io/${REPO_OWNER}/clumoove-worker:latest"
+          
+          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          if [ -n "$DOCKERHUB_USER" ]; then
+            TAGS="${TAGS},${DOCKERHUB_USER}/clumoove-worker:${VERSION},${DOCKERHUB_USER}/clumoove-worker:latest"
+          fi
+          
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and Push Worker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          target: prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags-worker.outputs.tags }}
+
+      # --- 3. Frontend Image ---
+      - name: Compute tags for Frontend
+        id: tags-frontend
+        run: |
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          TAG_NAME="${{ github.event.release.tag_name }}"
+          INPUT_VER="${{ inputs.version }}"
+          VERSION="${TAG_NAME:-${INPUT_VER:-latest}}"
+          
+          TAGS="ghcr.io/${REPO_OWNER}/clumoove-frontend:${VERSION},ghcr.io/${REPO_OWNER}/clumoove-frontend:latest"
+          
+          DOCKERHUB_USER="${{ secrets.DOCKERHUB_USERNAME }}"
+          if [ -n "$DOCKERHUB_USER" ]; then
+            TAGS="${TAGS},${DOCKERHUB_USER}/clumoove-frontend:${VERSION},${DOCKERHUB_USER}/clumoove-frontend:latest"
+          fi
+          
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and Push Frontend Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          target: prod
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags-frontend.outputs.tags }}
