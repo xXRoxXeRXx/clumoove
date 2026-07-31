@@ -41,6 +41,7 @@ func IsValidProvider(p string) bool {
 type ProviderMetadata struct {
 	Type                   string
 	RequiresHost           bool
+	IsVirtual              bool
 	SupportedResourceTypes map[string]bool
 }
 
@@ -98,6 +99,7 @@ var providerRegistry = map[string]ProviderMetadata{
 	"immich": {
 		Type:                   "immich",
 		RequiresHost:           true,
+		IsVirtual:              true,
 		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 }
@@ -109,6 +111,12 @@ func ProviderSupportsResourceType(providerType, resourceType string) bool {
 		return false
 	}
 	return meta.SupportedResourceTypes[resourceType]
+}
+
+// IsVirtualProvider reports whether providerType uses virtual item references rather than filesystem paths.
+func IsVirtualProvider(providerType string) bool {
+	meta, exists := providerRegistry[providerType]
+	return exists && meta.IsVirtual
 }
 
 // ValidateProviderURL verifies that a provider which needs a host actually has a

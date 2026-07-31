@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -123,6 +122,7 @@ type verificationPassConfig struct {
 	EntityType     string // "Migration" or "Sync job"
 	EntityID       string
 	UserID         string
+	SourceProvider string
 	TargetProvider string
 	TargetURL      string
 	TargetUsername string
@@ -307,12 +307,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					continue
 				}
 
-				targetPath := task.FilePath
-				if cfg.TargetDir != "" && cfg.TargetDir != "/" {
-					if !strings.HasPrefix(task.FilePath, cfg.TargetDir+"/") && task.FilePath != cfg.TargetDir {
-						targetPath = path.Clean(path.Join(cfg.TargetDir, task.FilePath))
-					}
-				}
+				targetPath := resolveTargetPath(task, cfg.TargetDir, cfg.SourceProvider, cfg.TargetProvider)
 
 				var targetHash string
 				var errHash error
@@ -462,6 +457,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 		EntityType:     "Migration",
 		EntityID:       migrationID,
 		UserID:         mig.UserID.String,
+		SourceProvider: mig.SourceProvider,
 		TargetProvider: mig.TargetProvider,
 		TargetURL:      mig.TargetURL,
 		TargetUsername: mig.TargetUsername,
@@ -503,6 +499,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		EntityType:     "Sync job",
 		EntityID:       syncJobID,
 		UserID:         job.UserID,
+		SourceProvider: job.SourceProvider,
 		TargetProvider: job.TargetProvider,
 		TargetURL:      job.TargetURL,
 		TargetUsername: job.TargetUsername,

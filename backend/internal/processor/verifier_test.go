@@ -256,3 +256,67 @@ func TestVerificationDifferentAlgorithmsRequiresSizeAndPersistsTargetHash(t *tes
 		t.Fatalf("persisted target hash = %q, want provider hash", persistedTargetHash)
 	}
 }
+
+func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
+	var requestedPath string
+	provider := &verifierProvider{
+		hash:   "SHA1:abcd1234efgh5678",
+		exists: true,
+		size:   2000,
+	}
+	// Custom provider mock to track the exact path checked during verification
+	trackProvider := &pathTrackingVerifierProvider{
+		verifierProvider: provider,
+		onHash: func(p string) {
+			requestedPath = p
+		},
+	}
+
+	task := &db.Task{
+		ID:           "immich-task-1",
+		ResourceType: "files",
+		FilePath:     "/Albums/album-uuid-123/asset-uuid-456",
+		FileSize:     2000,
+		Metadata:     []byte(`{"immich_filename":"sunset.jpg","immich_album_name":"Vacation"}`),
+		SourceHash:   sql.NullString{String: "SHA1:abcd1234efgh5678", Valid: true},
+	}
+
+	verified := false
+	p := &Processor{}
+	p.runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType:        "Migration",
+		EntityID:          "immich-verification-test",
+		Threads:           1,
+		SourceProvider:    "immich",
+		TargetProvider:    "nextcloud",
+		TargetDir:         "/Immich Alben",
+		TargetClient:      trackProvider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified: func(_ context.Context, _ *db.Task, _ string) (bool, error) {
+			verified = true
+			return true, nil
+		},
+	})
+
+	if !verified {
+		t.Fatal("expected Immich task to be marked verified")
+	}
+
+	wantPath := "/Immich Alben/Albums/Vacation/sunset.jpg"
+	if requestedPath != wantPath {
+		t.Fatalf("verifier requested path %q, want %q", requestedPath, wantPath)
+	}
+}
+
+type pathTrackingVerifierProvider struct {
+	*verifierProvider
+	onHash func(path string)
+}
+
+func (p *pathTrackingVerifierProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	if p.onHash != nil {
+		p.onHash(filePath)
+	}
+	return p.verifierProvider.GetFileHash(ctx, resourceType, filePath)
+}

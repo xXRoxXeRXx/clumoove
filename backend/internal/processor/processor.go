@@ -96,6 +96,63 @@ func immichTargetPath(targetPath, filename, albumName string) string {
 	return targetPath
 }
 
+// resolveTargetPath computes the target file or directory path for a task
+// considering target directory, Immich source path translations, and target filename/directory sanitization.
+func resolveTargetPath(task *db.Task, targetDir, sourceProvider, targetProvider string) string {
+	if task.ResourceType != "files" {
+		return task.FilePath
+	}
+
+	relativePath := task.FilePath
+
+	if sourceProvider == "immich" {
+		var filename, albumName string
+		if len(task.Metadata) > 0 {
+			var meta struct {
+				CustomProps map[string]string `json:"custom_props"`
+				Filename    string            `json:"immich_filename"`
+				AlbumName   string            `json:"immich_album_name"`
+			}
+			if err := json.Unmarshal(task.Metadata, &meta); err == nil {
+				filename = meta.Filename
+				if filename == "" && meta.CustomProps != nil {
+					filename = meta.CustomProps["immich_filename"]
+				}
+				albumName = meta.AlbumName
+				if albumName == "" && meta.CustomProps != nil {
+					albumName = meta.CustomProps["immich_album_name"]
+				}
+			}
+		}
+
+		if isDirectoryTask(task) {
+			if albumName != "" {
+				relativePath = immichTargetPath(relativePath, "", albumName)
+			}
+		} else {
+			if filename != "" {
+				relativePath = immichTargetPath(relativePath, filename, albumName)
+			}
+		}
+	}
+
+	if !storage.IsVirtualProvider(targetProvider) {
+		parts := strings.Split(relativePath, "/")
+		for i, part := range parts {
+			if part != "" && part != "." && part != ".." {
+				sanitized := sanitize.SanitizeFilename(part, targetProvider)
+				parts[i] = sanitized.SanitizedName
+			}
+		}
+		relativePath = strings.Join(parts, "/")
+	}
+
+	if targetDir != "" && targetDir != "/" {
+		return path.Clean(path.Join(targetDir, relativePath))
+	}
+	return path.Clean(relativePath)
+}
+
 // newProvider creates a provider scoped to a single operation. Providers retain
 // their credentials internally, so retaining them in a shared cache would keep
 // decrypted credentials alive beyond the task that needs them.
@@ -534,21 +591,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if action == "mkdir" || strings.HasSuffix(task.FilePath, "/") {
 		targetPath := task.FilePath
 		if task.ResourceType == "files" {
-			targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
-			if mig.SourceProvider == "immich" {
-				if albumName, _ := taskMeta["immich_album_name"].(string); albumName != "" {
-					targetPath = immichTargetPath(targetPath, "", albumName)
-				}
-			}
-
-			// Sanitize directory name (same logic as files)
-			dirName := path.Base(targetPath)
-			sanitized := sanitize.SanitizeFilename(dirName, mig.TargetProvider)
-			if sanitized.Changed {
-				targetPath = path.Join(path.Dir(targetPath), sanitized.SanitizedName)
-				log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)",
-					dirName, sanitized.SanitizedName, strings.Join(sanitized.Reasons, ", "))
-			}
+			targetPath = resolveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 
 			// Check for case collisions on case-insensitive providers
 			if sanitize.IsCaseInsensitive(mig.TargetProvider) {
@@ -582,21 +625,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	var deleteAfterUpload bool // set true by OVERWRITE: delete original only after upload succeeds
 	targetPath := task.FilePath
 	if task.ResourceType == "files" {
-		// Use path (POSIX) rather than filepath: WebDAV/Nextcloud paths are always
-		// slash-separated, independent of the OS this server process runs on.
-		targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
-		// Immich source paths are stable virtual asset IDs, not filesystem names.
-		// Its original filename is retained in task metadata during indexing.
-		if mig.SourceProvider == "immich" {
-			var meta storage.FileMetadata
-			if err := json.Unmarshal(task.Metadata, &meta); err != nil {
-				log.Printf("[Immich] Warning: task %s has invalid metadata; using asset-ID target path %q", task.ID, targetPath)
-			} else if meta.CustomProps["immich_filename"] == "" {
-				log.Printf("[Immich] Warning: task %s has no immich_filename in metadata; using asset-ID target path %q", task.ID, targetPath)
-			} else {
-				targetPath = immichTargetPath(targetPath, meta.CustomProps["immich_filename"], meta.CustomProps["immich_album_name"])
-			}
-		}
+		targetPath = resolveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 	}
 
 	// 3a. Filename Sanitization (before conflict resolution)
