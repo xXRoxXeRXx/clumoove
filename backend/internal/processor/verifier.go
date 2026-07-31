@@ -1,7 +1,6 @@
 package processor
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -315,25 +314,41 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					}
 				}
 
+				var targetHash string
+				var errHash error
+
+				isDirErr := func(err error) bool {
+					if err == nil {
+						return false
+					}
+					msg := strings.ToLower(err.Error())
+					return strings.Contains(msg, "is a directory") || strings.Contains(msg, "is a folder")
+				}
+
 				// Check size immediately before committing verification. This covers
 				// checksum-unavailable and differing-algorithm fallbacks without an
 				// extra provider round trip before the hash lookup.
 				markVerifiedForFile := func(targetHash string) bool {
+					if isDirErr(errHash) {
+						log.Printf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
+						return markVerified(task, targetHash)
+					}
 					exists, targetSize, sizeErr := verifyTargetSize(passCtx, targetClient, task.ResourceType, targetPath)
 					if sizeErr != nil {
+						if isDirErr(sizeErr) {
+							log.Printf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
+							return markVerified(task, targetHash)
+						}
 						log.Printf("[VERIFIER] Cannot recheck target size for %s: %v\n", targetPath, sizeErr)
 						return false
 					}
-					if !exists || targetSize != task.FileSize {
+					if !exists || (targetSize != task.FileSize && !(task.FileSize == 0 && isDirectoryTask(task))) {
 						log.Printf("[VERIFIER] [SIZE_MISMATCH] %s | Got: %d | Expected: %d\n", targetPath, targetSize, task.FileSize)
 						markMismatch(task, fmt.Sprintf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize), targetHash)
 						return false
 					}
 					return markVerified(task, targetHash)
 				}
-
-				var targetHash string
-				var errHash error
 				for attempt := 0; attempt < 3; attempt++ {
 					taskCtx, taskCancel := context.WithTimeout(passCtx, 15*time.Second)
 					targetHash, errHash = targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
@@ -528,7 +543,7 @@ func isDirectoryTask(task *db.Task) bool {
 	if strings.HasSuffix(task.FilePath, "/") {
 		return true
 	}
-	if len(task.Metadata) > 0 && bytes.Contains(task.Metadata, []byte(`"mkdir"`)) {
+	if len(task.Metadata) > 0 {
 		var meta struct {
 			Action string `json:"action"`
 		}

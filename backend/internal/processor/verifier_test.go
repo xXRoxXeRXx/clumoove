@@ -124,6 +124,7 @@ func TestIsNonRetryableHashError(t *testing.T) {
 		{"wrapped ErrChecksumNotAvailable", fmt.Errorf("provider error: %w", storage.ErrChecksumNotAvailable), true},
 		{"substring checksum not available", errors.New("webdav: checksum not available"), true},
 		{"substring hash not supported", errors.New("sftp: hash not supported for resource"), true},
+		{"substring is a directory", errors.New("read bbb: is a directory"), true},
 		{"transient 404 error (should retry)", errors.New("nextcloud 404 file not found"), false},
 		{"transient network timeout (should retry)", errors.New("dial tcp 1.2.3.4:443: i/o timeout"), false},
 		{"transient 502 Bad Gateway (should retry)", errors.New("502 bad gateway"), false},
@@ -135,6 +136,41 @@ func TestIsNonRetryableHashError(t *testing.T) {
 				t.Errorf("isNonRetryableHashError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestVerificationPassMarksDirectoryAsVerified(t *testing.T) {
+	provider := &verifierProvider{
+		hashErr: errors.New("read bbb: is a directory"),
+		exists:  true,
+		size:    4096,
+	}
+	task := &db.Task{ID: "dir-task", ResourceType: "files", FilePath: "/bbb", FileSize: 0}
+	verified := false
+	mismatched := false
+	p := &Processor{}
+	p.runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType:        "Migration",
+		EntityID:          "dir-test",
+		Threads:           1,
+		TargetClient:      provider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified: func(context.Context, *db.Task, string) (bool, error) {
+			verified = true
+			return true, nil
+		},
+		MarkMismatch: func(_ context.Context, got *db.Task) (bool, error) {
+			mismatched = true
+			return true, nil
+		},
+	})
+
+	if !verified {
+		t.Fatal("expected directory task returning 'is a directory' error to be marked verified")
+	}
+	if mismatched {
+		t.Fatal("directory task should not have been marked as mismatched")
 	}
 }
 

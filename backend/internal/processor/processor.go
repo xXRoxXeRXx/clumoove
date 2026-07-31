@@ -1542,7 +1542,9 @@ func isNonRetryableHashError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "checksum not available") ||
 		strings.Contains(msg, "not supported") ||
-		strings.Contains(msg, "not implemented")
+		strings.Contains(msg, "not implemented") ||
+		strings.Contains(msg, "is a directory") ||
+		strings.Contains(msg, "is a folder")
 }
 
 func isWebDAVSystemConflict(err error) bool {
