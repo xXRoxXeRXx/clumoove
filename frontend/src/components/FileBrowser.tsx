@@ -111,6 +111,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const isImmichTarget = credentials.target_provider === 'immich';
   const hasImmichEndpoint = isImmichSource || isImmichTarget;
 
+  const supportsCalendars = useMemo(() => {
+    const src = credentials.source_provider || 'nextcloud';
+    const tgt = credentials.target_provider || 'nextcloud';
+    return (src === 'nextcloud' || src === 'google') && (tgt === 'nextcloud' || tgt === 'google');
+  }, [credentials.source_provider, credentials.target_provider]);
+
+  const supportsContacts = useMemo(() => {
+    const src = credentials.source_provider || 'nextcloud';
+    const tgt = credentials.target_provider || 'nextcloud';
+    return (src === 'nextcloud' || src === 'google') && (tgt === 'nextcloud' || tgt === 'google');
+  }, [credentials.source_provider, credentials.target_provider]);
+
   const [activeTab, setActiveTab] = useState<'files' | 'calendars' | 'contacts'>('files');
   const [calendars, setCalendars] = useState<CloudFile[]>([]);
   const [contacts, setContacts] = useState<CloudFile[]>([]);
@@ -393,15 +405,27 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     }
   }, [apiUrl, credentials, contacts.length, loadingContacts, t, token, translateApiError]);
 
+  const effectiveActiveTab = useMemo(() => {
+    if (activeTab === 'calendars' && !supportsCalendars) return 'files';
+    if (activeTab === 'contacts' && !supportsContacts) return 'files';
+    return activeTab;
+  }, [activeTab, supportsCalendars, supportsContacts]);
+
   useEffect(() => {
-    if (credentials.source_provider === 'nextcloud' || credentials.source_provider === 'google') {
-      const timer = setTimeout(() => {
+    const timer = setTimeout(() => {
+      if (supportsCalendars) {
         void fetchCalendars();
+      } else {
+        setSelectedCalendars({});
+      }
+      if (supportsContacts) {
         void fetchContacts();
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [credentials.source_provider, fetchCalendars, fetchContacts]);
+      } else {
+        setSelectedContacts({});
+      }
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [supportsCalendars, supportsContacts, fetchCalendars, fetchContacts]);
 
   const handleTabChange = (tab: 'files' | 'calendars' | 'contacts') => {
     setActiveTab(tab);
@@ -487,8 +511,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const handleStartMigration = async () => {
     const pathsToMigrate = Object.keys(selectedPaths).filter((p) => selectedPaths[p]);
-    const calendarsToMigrate = Object.keys(selectedCalendars).filter((p) => selectedCalendars[p]);
-    const contactsToMigrate = Object.keys(selectedContacts).filter((p) => selectedContacts[p]);
+    const calendarsToMigrate = supportsCalendars
+      ? Object.keys(selectedCalendars).filter((p) => selectedCalendars[p])
+      : [];
+    const contactsToMigrate = supportsContacts
+      ? Object.keys(selectedContacts).filter((p) => selectedContacts[p])
+      : [];
 
     if (pathsToMigrate.length === 0 && calendarsToMigrate.length === 0 && contactsToMigrate.length === 0) {
       setError(t('fileBrowser.errors.selectOne'));
@@ -1224,36 +1252,36 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             <button
               onClick={() => handleTabChange('files')}
               className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
-                activeTab === 'files'
+                effectiveActiveTab === 'files'
                   ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
                   : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
               }`}
             >
               {t('fileBrowser.files')} ({pathsToMigrate.length})
             </button>
-            {(credentials.source_provider === 'nextcloud' || credentials.source_provider === 'google') && (
-              <>
-                <button
-                  onClick={() => handleTabChange('calendars')}
-                  className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
-                    activeTab === 'calendars'
-                      ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-                  }`}
-                >
-                  {t('fileBrowser.calendars')} ({Object.values(selectedCalendars).filter(Boolean).length})
-                </button>
-                <button
-                  onClick={() => handleTabChange('contacts')}
-                  className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
-                    activeTab === 'contacts'
-                      ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
-                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
-                  }`}
-                >
-                  {t('fileBrowser.contacts')} ({Object.values(selectedContacts).filter(Boolean).length})
-                </button>
-              </>
+            {supportsCalendars && (
+              <button
+                onClick={() => handleTabChange('calendars')}
+                className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
+                  effectiveActiveTab === 'calendars'
+                    ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                }`}
+              >
+                {t('fileBrowser.calendars')} ({Object.values(selectedCalendars).filter(Boolean).length})
+              </button>
+            )}
+            {supportsContacts && (
+              <button
+                onClick={() => handleTabChange('contacts')}
+                className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
+                  effectiveActiveTab === 'contacts'
+                    ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]'
+                    : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]'
+                }`}
+              >
+                {t('fileBrowser.contacts')} ({Object.values(selectedContacts).filter(Boolean).length})
+              </button>
             )}
           </div>
 
@@ -1268,14 +1296,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             </button>
 
             {(() => {
-              const isRefreshing = activeTab === 'files' ? !!loadingPaths['/']
-                : activeTab === 'calendars' ? loadingCalendars
+              const isRefreshing = effectiveActiveTab === 'files' ? !!loadingPaths['/']
+                : effectiveActiveTab === 'calendars' ? loadingCalendars
                 : loadingContacts;
 
               const handleRefresh = () => {
-                if (activeTab === 'files') {
+                if (effectiveActiveTab === 'files') {
                   void refreshFiles();
-                } else if (activeTab === 'calendars') {
+                } else if (effectiveActiveTab === 'calendars') {
                   void fetchCalendars(true);
                 } else {
                   void fetchContacts(true);
@@ -1298,7 +1326,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
 
         <div className="flex-grow overflow-y-auto rounded-lg">
-          {activeTab === 'files' && (
+          {effectiveActiveTab === 'files' && (
             directoryContents['/']?.length > 0 ? (
               directoryContents['/'].map((file) => renderNode(file, 0))
             ) : (
@@ -1309,7 +1337,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             )
           )}
 
-          {activeTab === 'calendars' && (
+          {effectiveActiveTab === 'calendars' && (
             loadingCalendars ? (
               <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
                 <RefreshCw className="w-8 h-8 text-[var(--color-text-primary)] animate-spin" />
@@ -1349,7 +1377,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             )
           )}
 
-          {activeTab === 'contacts' && (
+          {effectiveActiveTab === 'contacts' && (
             loadingContacts ? (
               <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-3">
                 <RefreshCw className="w-8 h-8 text-[var(--color-text-primary)] animate-spin" />
