@@ -69,7 +69,7 @@ interface ProgressData {
 
 const renderResourceSection = (title: string, stats: ResourceStats | undefined, t: TFunc) => {
   if (!stats || stats.total === 0) return null;
-  const success = Math.max(0, stats.processed - stats.failed - stats.skipped);
+  const success = stats.processed;
   return (
     <div className="w-full mt-4 first:mt-0 first:border-t-0 first:pt-0 border-t border-[var(--color-border-light)] pt-4 text-[var(--color-text-muted)] text-left">
       <h5 className="font-bold text-[var(--color-text-secondary)] mb-2 uppercase tracking-wider text-[10px]">{title}</h5>
