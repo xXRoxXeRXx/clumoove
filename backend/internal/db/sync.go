@@ -1075,9 +1075,16 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 		return nil
 	}
 
-	const batchSize = 500
+	if ctx.Err() != nil {
+		log.Printf("Warning: flushing bulk task batch (%d tasks) after parent context expired: %v", len(tasks), ctx.Err())
+	}
 
-	tx, err := db.BeginTx(ctx, nil)
+	const batchSize = 2000
+
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	defer cancel()
+
+	tx, err := db.BeginTx(dbCtx, nil)
 	if err != nil {
 		return fmt.Errorf("bulk create tasks: begin tx: %w", err)
 	}
@@ -1118,7 +1125,7 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 		query := "INSERT INTO tasks (migration_id, sync_job_id, file_path, file_size, source_hash, status, resource_type, metadata) VALUES " +
 			strings.Join(valuesClauses, ",")
 
-		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		if _, err := tx.ExecContext(dbCtx, query, args...); err != nil {
 			return fmt.Errorf("bulk create tasks: insert batch [%d:%d]: %w", start, end, err)
 		}
 	}
