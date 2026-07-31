@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -415,29 +417,48 @@ func RecordIndexingErrors(ctx context.Context, db *sql.DB, migrationID string, e
 		return nil
 	}
 
-	tx, err := db.BeginTx(ctx, nil)
+	if ctx.Err() != nil {
+		log.Printf("Warning: recording indexing errors (%d errors) after parent context expired for migration %s: %v", len(errors), migrationID, ctx.Err())
+	}
+
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	defer cancel()
+
+	tx, err := db.BeginTx(dbCtx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`
-		INSERT INTO indexing_errors (migration_id, resource_type, path, error_message)
-		VALUES ($1, $2, $3, $4)
-	`)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
+	const batchSize = 500
+	const paramsPerRow = 4
 
-	for _, e := range errors {
-		errMsg := indexingErrorMessage(e)
-		resType := e.ResourceType
-		if resType == "" {
-			resType = "files"
+	for start := 0; start < len(errors); start += batchSize {
+		end := start + batchSize
+		if end > len(errors) {
+			end = len(errors)
 		}
-		if _, err := stmt.Exec(migrationID, resType, e.Path, errMsg); err != nil {
-			return err
+		batch := errors[start:end]
+
+		args := make([]interface{}, 0, len(batch)*paramsPerRow)
+		valuesClauses := make([]string, 0, len(batch))
+
+		for i, e := range batch {
+			base := i * paramsPerRow
+			errMsg := indexingErrorMessage(e)
+			resType := e.ResourceType
+			if resType == "" {
+				resType = "files"
+			}
+			args = append(args, migrationID, resType, e.Path, errMsg)
+			valuesClauses = append(valuesClauses, fmt.Sprintf("($%d,$%d,$%d,$%d)", base+1, base+2, base+3, base+4))
+		}
+
+		query := "INSERT INTO indexing_errors (migration_id, resource_type, path, error_message) VALUES " +
+			strings.Join(valuesClauses, ",")
+
+		if _, err := tx.ExecContext(dbCtx, query, args...); err != nil {
+			return fmt.Errorf("bulk record indexing errors [%d:%d]: %w", start, end, err)
 		}
 	}
 

@@ -63,6 +63,7 @@ services:
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
       - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Clumoove}
       - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-starttls}
+      - INDEXING_TIMEOUT_MINUTES=${INDEXING_TIMEOUT_MINUTES:-60}
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
