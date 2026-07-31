@@ -48,7 +48,7 @@ func TestImmichStreamDownloadReadsOriginal(t *testing.T) {
 	defer server.Close()
 
 	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
-	stream, err := p.StreamDownload(context.Background(), "files", "/All Assets/asset-id")
+	stream, err := p.StreamDownload(context.Background(), "files", "/Timeline/asset-id")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +119,8 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 		}
 		atomic.AddInt32(&pages, 1)
 		var request struct {
-			Page    int    `json:"page"`
-			AlbumID string `json:"albumId"`
+			Page     int      `json:"page"`
+			AlbumIDs []string `json:"albumIds"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
@@ -129,8 +129,8 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 			_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-1","originalFileName":"one.jpg"}],"nextPage":"2"}}`))
 			return
 		}
-		if request.AlbumID != "album-id" {
-			t.Errorf("albumId = %q, want album-id", request.AlbumID)
+		if len(request.AlbumIDs) != 1 || request.AlbumIDs[0] != "album-id" {
+			t.Errorf("albumIds = %v, want [album-id]", request.AlbumIDs)
 		}
 		_, _ = w.Write([]byte(`{"assets":{"items":[{"id":"asset-2","originalFileName":"two.jpg"}],"nextPage":null}}`))
 	}))
@@ -148,14 +148,14 @@ func TestImmichSearchAcceptsStringNextPage(t *testing.T) {
 	}
 }
 
-func TestImmichAllAssetsSearchPayloadAndSizeMapping(t *testing.T) {
+func TestImmichTimelineSearchPayloadAndSizeMapping(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatal(err)
 		}
-		if _, ok := request["albumId"]; ok {
-			t.Error("all-assets search unexpectedly sent albumId")
+		if _, ok := request["albumIds"]; ok {
+			t.Error("timeline search unexpectedly sent albumIds")
 		}
 		if request["withArchived"] != false || request["withDeleted"] != false {
 			t.Errorf("archive filters = withArchived:%v withDeleted:%v, want false", request["withArchived"], request["withDeleted"])
@@ -167,19 +167,19 @@ func TestImmichAllAssetsSearchPayloadAndSizeMapping(t *testing.T) {
 	}))
 	defer server.Close()
 	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
-	items, err := p.GetDirectoryListing(context.Background(), "files", "/All Assets")
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/Timeline")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Path != "/All Assets/asset-id" || items[0].Name != "photo.jpg" || items[0].Size != 12345 {
+	if len(items) != 1 || items[0].Path != "/Timeline/asset-id" || items[0].Name != "photo.jpg" || items[0].Size != 12345 {
 		t.Errorf("items = %#v", items)
 	}
 }
 
 func TestImmichAssetVirtualPathIsNotDirectory(t *testing.T) {
 	p := &ImmichProvider{albums: map[string]string{}, albumIDs: map[string]string{}}
-	if _, err := p.GetDirectoryListing(context.Background(), "files", "/All Assets/asset-1"); err == nil {
-		t.Error("GetDirectoryListing() unexpectedly accepted an All Assets asset path")
+	if _, err := p.GetDirectoryListing(context.Background(), "files", "/Timeline/asset-1"); err == nil {
+		t.Error("GetDirectoryListing() unexpectedly accepted a Timeline asset path")
 	}
 	if _, err := p.GetDirectoryListing(context.Background(), "files", "/Albums/album-1/asset-1"); err == nil {
 		t.Error("GetDirectoryListing() unexpectedly accepted an album asset path")

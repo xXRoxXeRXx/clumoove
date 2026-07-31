@@ -139,7 +139,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // entries so the selection checkboxes render checked on first paint.
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>(() =>
     initialFiles.reduce((acc, f) => {
-      acc[f.path] = !isImmichSource || f.path === '/All Assets';
+      acc[f.path] = !isImmichSource || f.path === '/Timeline';
       return acc;
     }, {} as Record<string, boolean>)
   );
