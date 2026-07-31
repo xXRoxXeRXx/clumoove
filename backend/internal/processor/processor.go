@@ -530,7 +530,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			return fmt.Errorf("failed to parse task metadata: %w", err)
 		}
 	}
-	if action, _ := taskMeta["action"].(string); action == "mkdir" {
+	action, _ := taskMeta["action"].(string)
+	if action == "mkdir" || strings.HasSuffix(task.FilePath, "/") {
 		targetPath := task.FilePath
 		if task.ResourceType == "files" {
 			targetPath = path.Clean(path.Join(mig.TargetDir, task.FilePath))
@@ -1096,16 +1097,19 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	}
 
 	// Check if error is permanent / non-retryable
-	isPermanent := false
+	isPermanent := errors.Is(procErr, storage.ErrUnsupportedResourceType) ||
+		errors.Is(procErr, storage.ErrPathEscapesRoot)
 	errStr := procErr.Error()
-	if strings.Contains(errStr, "exportSizeLimitExceeded") ||
+	if !isPermanent && (strings.Contains(errStr, "exportSizeLimitExceeded") ||
 		strings.Contains(errStr, "badRequest") ||
 		strings.Contains(errStr, "conversion is not supported") ||
 		strings.Contains(errStr, "fileNotDownloadable") ||
 		strings.Contains(errStr, "Only files with binary content can be downloaded") ||
 		strings.Contains(errStr, "too large to be exported") ||
 		strings.Contains(errStr, "notFound") ||
-		strings.Contains(errStr, "fileNotFound") {
+		strings.Contains(errStr, "fileNotFound") ||
+		strings.Contains(errStr, "not supported by") ||
+		strings.Contains(errStr, "path escapes storage root")) {
 		isPermanent = true
 	}
 

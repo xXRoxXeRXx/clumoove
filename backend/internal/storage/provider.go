@@ -25,6 +25,12 @@ var ErrChecksumNotAvailable = errors.New("checksum not available")
 // can record the normal SKIP outcome without retrying or deleting anything.
 var ErrNativeDuplicate = errors.New("native duplicate detected")
 
+// ErrUnsupportedResourceType is returned when a provider does not support the requested resource type.
+var ErrUnsupportedResourceType = errors.New("resource type not supported by provider")
+
+// ErrPathEscapesRoot is returned when a requested path escapes the storage root.
+var ErrPathEscapesRoot = errors.New("path escapes storage root")
+
 type FileMetadata struct {
 	ModifiedTime time.Time         `json:"modified_time,omitempty"`
 	Description  string            `json:"description,omitempty"`
@@ -133,6 +139,7 @@ func IsSystemOrAppGeneratedCollection(name string) bool {
 	}
 	return strings.HasPrefix(nameLower, "app-generated--") ||
 		strings.HasPrefix(nameLower, "z-server-generated--") ||
+		strings.HasPrefix(nameLower, "z-app-generated--") ||
 		nameLower == "contact_birthdays" ||
 		nameLower == "contact-birthdays" ||
 		nameLower == "contact_birthdays.ics" ||

@@ -29,9 +29,20 @@ func newTestLocalProvider(t *testing.T) *LocalProvider {
 }
 
 func TestLocalProviderTraversalRejected(t *testing.T) {
-	for _, path := range []string{"../escape", "a/../../escape"} {
+	for _, path := range []string{"../escape", "a/../../escape", "/../etc/passwd"} {
 		if _, err := localPathComponents(path); err == nil {
 			t.Fatalf("expected traversal rejection for %q, got nil", path)
+		}
+	}
+
+	validPaths := []string{
+		"Google/erstelle ein komplettes prd so dass ich dies entw....docx",
+		"file..txt",
+		"sub/folder..name/item.doc",
+	}
+	for _, path := range validPaths {
+		if _, err := localPathComponents(path); err != nil {
+			t.Fatalf("expected valid path components for %q, got error: %v", path, err)
 		}
 	}
 }
