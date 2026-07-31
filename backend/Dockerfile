@@ -13,15 +13,17 @@ RUN go generate ./internal/i18n
 CMD ["go", "run", "./cmd/api"]
 
 # --- Build Stage ---
-FROM golang:alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
 COPY backend/ ./
 COPY frontend/src/locales /src/frontend/src/locales
 RUN go generate ./internal/i18n
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/api ./cmd/api
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/worker ./cmd/worker
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /bin/api ./cmd/api
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -o /bin/worker ./cmd/worker
 
 # --- Production Stage ---
 FROM alpine:3.19 AS prod
