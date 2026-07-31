@@ -1,11 +1,11 @@
 networks:
-  migration-network:
+  clumoove-network:
     driver: bridge
 
 services:
   postgres-db:
     image: postgres:15-alpine
-    container_name: migration-postgres
+    container_name: clumoove-postgres
     restart: always
     # Internal only; do not publish a host port.
     environment:
@@ -17,25 +17,25 @@ services:
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
     networks:
-      - migration-network
+      - clumoove-network
 
   redis-queue:
     image: redis:7-alpine
-    container_name: migration-redis
+    container_name: clumoove-redis
     restart: always
     # Internal only; REDIS_PASSWORD must be a strong deployment-specific secret.
     command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}" --bind 0.0.0.0
     volumes:
       - redis_data:/data
     networks:
-      - migration-network
+      - clumoove-network
 
   api-backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: prod
-    container_name: migration-api
+    container_name: clumoove-api
     restart: always
     ports:
       - "8001:8000"
@@ -71,13 +71,14 @@ services:
       - postgres-db
       - redis-queue
     networks:
-      - migration-network
+      - clumoove-network
 
   migration-worker:
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: prod
+    container_name: clumoove-worker
     restart: always
     command: ["/app/worker"]
     environment:
@@ -100,13 +101,13 @@ services:
       - postgres-db
       - redis-queue
     networks:
-      - migration-network
+      - clumoove-network
 
   frontend:
     build:
       context: ./frontend
       target: prod
-    container_name: migration-frontend
+    container_name: clumoove-frontend
     restart: always
     ports:
       - "3001:3000"
@@ -120,7 +121,7 @@ services:
     depends_on:
       - api-backend
     networks:
-      - migration-network
+      - clumoove-network
 
 volumes:
   postgres_data:

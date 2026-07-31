@@ -5,25 +5,22 @@ networks:
 services:
   postgres-db:
     image: postgres:15-alpine
-    container_name: clumoove-postgres-dev
-    restart: unless-stopped
-    # Internal only; do not publish a host port.
+    container_name: clumoove-postgres
+    restart: always
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: cloud_migration_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
     command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
     networks:
       - clumoove-network
 
   redis-queue:
     image: redis:7-alpine
-    container_name: clumoove-redis-dev
-    restart: unless-stopped
-    # Internal only; REDIS_PASSWORD must be a strong deployment-specific secret.
+    container_name: clumoove-redis
+    restart: always
     command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}" --bind 0.0.0.0
     volumes:
       - redis_data:/data
@@ -31,12 +28,9 @@ services:
       - clumoove-network
 
   api-backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: dev
-    container_name: clumoove-api-dev
-    restart: unless-stopped
+    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}api:latest
+    container_name: clumoove-api
+    restart: always
     ports:
       - "8001:8000"
     environment:
@@ -55,30 +49,34 @@ services:
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID:-}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET:-}
       - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI:-}
+      - FRONTEND_URL=${FRONTEND_URL:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
+      - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Clumoove}
+      - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-starttls}
+      - INDEXING_TIMEOUT_MINUTES=${INDEXING_TIMEOUT_MINUTES:-60}
       - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
       - redis-queue
-    command: ["air", "-c", "/app/backend/.air.api.toml"]
-    volumes:
-      - ./backend:/app/backend
-      - ./frontend/src/locales:/app/frontend/src/locales:ro
-      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     networks:
       - clumoove-network
 
   migration-worker:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-      target: dev
-    container_name: clumoove-worker-dev
-    restart: unless-stopped
+    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}worker:latest
+    container_name: clumoove-worker
+    restart: always
+    command: ["/app/worker"]
     environment:
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
-      - MAX_THREADS=${MAX_THREADS:-16}
+      - MAX_THREADS=${MAX_THREADS:-50}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID:-}
@@ -88,33 +86,23 @@ services:
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID:-}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET:-}
       - LOCAL_STORAGE_ROOT=/clumoove
-    command: ["air", "-c", "/app/backend/.air.worker.toml"]
+    volumes:
+      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     depends_on:
       - postgres-db
       - redis-queue
-    volumes:
-      - ./backend:/app/backend
-      - ./frontend/src/locales:/app/frontend/src/locales:ro
-      - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
     networks:
       - clumoove-network
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      target: dev
-    container_name: clumoove-frontend-dev
-    restart: unless-stopped
+    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}frontend:latest
+    container_name: clumoove-frontend
+    restart: always
     ports:
       - "3001:3000"
-    command: node node_modules/vite/bin/vite.js --host --port 3000
     environment:
       - VITE_API_URL=http://localhost:8001
       - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-}
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
     ulimits:
       nofile:
         soft: 65536
