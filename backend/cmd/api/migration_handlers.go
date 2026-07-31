@@ -16,6 +16,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/processor"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
@@ -1290,8 +1291,9 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 		if task.ErrorMessage.Valid {
 			errMsg = task.ErrorMessage.String
 		}
+		displayPath := processor.ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 		_ = writer.Write([]string{
-			csvCell(task.FilePath),
+			csvCell(displayPath),
 			fmt.Sprintf("%d", task.FileSize),
 			fmt.Sprintf("%d", task.Attempts),
 			csvCell(errMsg),
@@ -1354,6 +1356,13 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 		log.Printf("Error fetching migration %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+	if mig, mErr := db.GetMigration(s.db, id); mErr == nil {
+		for i := range items {
+			if items[i].Kind == "transfer" && items[i].ResourceType == "files" {
+				items[i].Path = processor.ResolveTargetPath(items[i].ResourceType, items[i].Path, items[i].Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+			}
+		}
 	}
 	sanitizeErrorListItems(items)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"errors": items, "total": total, "limit": limit, "offset": offset})

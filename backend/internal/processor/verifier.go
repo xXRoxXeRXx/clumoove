@@ -307,7 +307,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					continue
 				}
 
-				targetPath := resolveTargetPath(task, cfg.TargetDir, cfg.SourceProvider, cfg.TargetProvider)
+				targetPath := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, cfg.TargetDir, cfg.SourceProvider, cfg.TargetProvider)
 
 				var targetHash string
 				var errHash error

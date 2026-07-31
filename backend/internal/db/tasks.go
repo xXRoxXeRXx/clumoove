@@ -58,14 +58,15 @@ type IndexingErrorInput struct {
 // ErrorListItem is a safe, display-oriented representation of an error that
 // occurred while indexing or transferring a migration/sync resource.
 type ErrorListItem struct {
-	ID           string    `json:"id"`
-	Kind         string    `json:"kind"`
-	ResourceType string    `json:"resource_type"`
-	Path         string    `json:"path"`
-	Status       string    `json:"status"`
-	Attempts     int       `json:"attempts"`
-	ErrorMessage string    `json:"error_message"`
-	OccurredAt   time.Time `json:"occurred_at"`
+	ID           string          `json:"id"`
+	Kind         string          `json:"kind"`
+	ResourceType string          `json:"resource_type"`
+	Path         string          `json:"path"`
+	Status       string          `json:"status"`
+	Attempts     int             `json:"attempts"`
+	ErrorMessage string          `json:"error_message"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	OccurredAt   time.Time       `json:"occurred_at"`
 }
 
 func CreateTask(db *sql.DB, t *Task) (string, error) {
@@ -390,7 +391,7 @@ func ResetMigrationForReindex(db *sql.DB, ctx context.Context, migrationID strin
 
 func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	query := `
-		SELECT id, migration_id, resource_type, file_path, file_size, status, attempts, error_message, created_at, updated_at
+		SELECT id, migration_id, resource_type, file_path, file_size, status, attempts, error_message, metadata, created_at, updated_at
 		FROM tasks
 		WHERE migration_id = $1 AND status = 'FAILED'
 		ORDER BY file_path ASC
@@ -404,7 +405,7 @@ func GetFailedTasksForReport(db *sql.DB, migrationID string) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		if err := rows.Scan(&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status, &t.Attempts, &t.ErrorMessage, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.MigrationID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status, &t.Attempts, &t.ErrorMessage, &t.Metadata, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		tasks = append(tasks, t)
@@ -505,19 +506,19 @@ func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]Er
 	rows, err := db.Query(`
 		WITH errors AS MATERIALIZED (
 			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,
-			       COALESCE(error_message, '') AS error_message, updated_at AS occurred_at
+			       COALESCE(error_message, '') AS error_message, metadata, updated_at AS occurred_at
 			FROM tasks
 			WHERE migration_id = $1 AND status = 'FAILED'
 			UNION ALL
 			SELECT id::text AS id, 'indexing' AS kind, resource_type, path, 'INDEXING' AS status, 0 AS attempts,
-			       error_message, created_at AS occurred_at
+			       error_message, '{}'::jsonb AS metadata, created_at AS occurred_at
 			FROM indexing_errors
 			WHERE migration_id = $1
 		), counted AS (
 			SELECT COUNT(*) AS total FROM errors
 		)
 		SELECT page.id, page.kind, page.resource_type, page.path, page.status, page.attempts,
-		       page.error_message, page.occurred_at, counted.total
+		       page.error_message, page.metadata, page.occurred_at, counted.total
 		FROM counted
 		LEFT JOIN LATERAL (
 			SELECT * FROM errors ORDER BY occurred_at DESC, path ASC, id ASC LIMIT $2 OFFSET $3
@@ -536,7 +537,8 @@ func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]Er
 		var id, kind, resourceType, path, status, errorMessage sql.NullString
 		var attempts sql.NullInt32
 		var occurredAt sql.NullTime
-		if err := rows.Scan(&id, &kind, &resourceType, &path, &status, &attempts, &errorMessage, &occurredAt, &total); err != nil {
+		var rawMeta []byte
+		if err := rows.Scan(&id, &kind, &resourceType, &path, &status, &attempts, &errorMessage, &rawMeta, &occurredAt, &total); err != nil {
 			return nil, 0, err
 		}
 		if !kind.Valid { // The count row remains when the requested page is empty.
@@ -544,6 +546,9 @@ func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]Er
 		}
 		item.ID, item.Kind, item.ResourceType, item.Path, item.Status = id.String, kind.String, resourceType.String, path.String, status.String
 		item.Attempts, item.ErrorMessage, item.OccurredAt = int(attempts.Int32), errorMessage.String, occurredAt.Time
+		if len(rawMeta) > 0 {
+			item.Metadata = json.RawMessage(rawMeta)
+		}
 		items = append(items, item)
 	}
 	return items, total, rows.Err()

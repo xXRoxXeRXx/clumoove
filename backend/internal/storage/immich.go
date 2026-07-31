@@ -236,8 +236,46 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 	if err != nil {
 		return nil, err
 	}
-	out := make([]CloudResource, 0, len(assets))
+	seenNames := make(map[string]int)
 	for _, a := range assets {
+		origName := a.OriginalFileName
+		if origName == "" {
+			origName = a.ID
+		}
+		seenNames[origName]++
+	}
+
+	out := make([]CloudResource, 0, len(assets))
+	usedNames := make(map[string]bool)
+	for _, a := range assets {
+		origName := a.OriginalFileName
+		if origName == "" {
+			origName = a.ID
+		}
+		resolvedName := origName
+		if seenNames[origName] > 1 {
+			ext := path.Ext(origName)
+			stem := strings.TrimSuffix(origName, ext)
+			shortID := a.ID
+			if len(shortID) > 8 {
+				shortID = shortID[:8]
+			}
+			resolvedName = fmt.Sprintf("%s_%s%s", stem, shortID, ext)
+		}
+
+		if usedNames[resolvedName] {
+			ext := path.Ext(resolvedName)
+			stem := strings.TrimSuffix(resolvedName, ext)
+			suffix := 1
+			candidate := fmt.Sprintf("%s_%d%s", stem, suffix, ext)
+			for usedNames[candidate] {
+				suffix++
+				candidate = fmt.Sprintf("%s_%d%s", stem, suffix, ext)
+			}
+			resolvedName = candidate
+		}
+		usedNames[resolvedName] = true
+
 		vp := "/Timeline/" + a.ID
 		if albumID != "" {
 			vp = "/Albums/" + albumID + "/" + a.ID
@@ -245,7 +283,13 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 		p.albumsMu.RLock()
 		albumName := p.albums[albumID]
 		p.albumsMu.RUnlock()
-		out = append(out, resourceForAsset(a, vp, albumID, albumName))
+
+		res := resourceForAsset(a, vp, albumID, albumName)
+		res.Name = resolvedName
+		if res.Metadata.CustomProps != nil {
+			res.Metadata.CustomProps["immich_filename"] = resolvedName
+		}
+		out = append(out, res)
 	}
 	return out, nil
 }

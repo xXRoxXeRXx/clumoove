@@ -69,6 +69,46 @@ type Processor struct {
 	// (keyed by "mig:<id>" or "sync:<id>") to prevent concurrent ticks from
 	// spawning duplicate verification passes for the same entity.
 	verifyingEntities sync.Map
+	// targetLocksMu protects targetFileLocks map initialization and cleanup.
+	targetLocksMu sync.Mutex
+	// targetFileLocks synchronizes parallel worker threads processing tasks that
+	// resolve to the same target file path.
+	targetFileLocks map[string]*refMutex
+}
+
+type refMutex struct {
+	sync.Mutex
+	count int
+}
+
+func (p *Processor) lockTargetFile(targetPath string) func() {
+	if targetPath == "" || targetPath == "/" {
+		return func() {}
+	}
+
+	p.targetLocksMu.Lock()
+	if p.targetFileLocks == nil {
+		p.targetFileLocks = make(map[string]*refMutex)
+	}
+	m, ok := p.targetFileLocks[targetPath]
+	if !ok {
+		m = &refMutex{}
+		p.targetFileLocks[targetPath] = m
+	}
+	m.count++
+	p.targetLocksMu.Unlock()
+
+	m.Lock()
+	return func() {
+		m.Unlock()
+
+		p.targetLocksMu.Lock()
+		defer p.targetLocksMu.Unlock()
+		m.count--
+		if m.count == 0 {
+			delete(p.targetFileLocks, targetPath)
+		}
+	}
 }
 
 // immichOriginalFilenamePath replaces an Immich virtual asset ID with its
@@ -96,24 +136,39 @@ func immichTargetPath(targetPath, filename, albumName string) string {
 	return targetPath
 }
 
-// resolveTargetPath computes the target file or directory path for a task
+func isDirectoryPath(filePath string, metadata []byte) bool {
+	if strings.HasSuffix(filePath, "/") {
+		return true
+	}
+	if len(metadata) > 0 {
+		var meta struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal(metadata, &meta); err == nil {
+			return meta.Action == "mkdir"
+		}
+	}
+	return false
+}
+
+// ResolveTargetPath computes the target file or directory path for a task
 // considering target directory, Immich source path translations, and target filename/directory sanitization.
-func resolveTargetPath(task *db.Task, targetDir, sourceProvider, targetProvider string) string {
-	if task.ResourceType != "files" {
-		return task.FilePath
+func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir, sourceProvider, targetProvider string) string {
+	if resourceType != "files" {
+		return filePath
 	}
 
-	relativePath := task.FilePath
+	relativePath := filePath
 
 	if sourceProvider == "immich" {
 		var filename, albumName string
-		if len(task.Metadata) > 0 {
+		if len(metadata) > 0 {
 			var meta struct {
 				CustomProps map[string]string `json:"custom_props"`
 				Filename    string            `json:"immich_filename"`
 				AlbumName   string            `json:"immich_album_name"`
 			}
-			if err := json.Unmarshal(task.Metadata, &meta); err == nil {
+			if err := json.Unmarshal(metadata, &meta); err == nil {
 				filename = meta.Filename
 				if filename == "" && meta.CustomProps != nil {
 					filename = meta.CustomProps["immich_filename"]
@@ -125,7 +180,7 @@ func resolveTargetPath(task *db.Task, targetDir, sourceProvider, targetProvider 
 			}
 		}
 
-		if isDirectoryTask(task) {
+		if isDirectoryPath(filePath, metadata) {
 			if albumName != "" {
 				relativePath = immichTargetPath(relativePath, "", albumName)
 			}
@@ -510,8 +565,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return fmt.Errorf("failed to fetch task: %w", err)
 	}
 
+	logPath := task.FilePath
+	if task.ResourceType == "files" {
+		logPath = ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+	}
+
 	log.Printf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
-		p.workerID, threadID, strings.ToUpper(task.ResourceType), task.FilePath, task.FileSize, mig.SourceProvider, mig.TargetProvider)
+		p.workerID, threadID, strings.ToUpper(task.ResourceType), logPath, task.FileSize, mig.SourceProvider, mig.TargetProvider)
 
 	// Decrypt credentials
 	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, p.secretKey)
@@ -591,7 +651,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if action == "mkdir" || strings.HasSuffix(task.FilePath, "/") {
 		targetPath := task.FilePath
 		if task.ResourceType == "files" {
-			targetPath = resolveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+			targetPath = ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 
 			// Check for case collisions on case-insensitive providers
 			if sanitize.IsCaseInsensitive(mig.TargetProvider) {
@@ -625,8 +685,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	var deleteAfterUpload bool // set true by OVERWRITE: delete original only after upload succeeds
 	targetPath := task.FilePath
 	if task.ResourceType == "files" {
-		targetPath = resolveTargetPath(task, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
+		targetPath = ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 	}
+
+	// Synchronize parallel worker threads operating on the exact same target path
+	unlockTarget := p.lockTargetFile(targetPath)
+	defer unlockTarget()
 
 	// 3a. Filename Sanitization (before conflict resolution)
 	if task.ResourceType == "files" && mig.TargetProvider != "immich" {
