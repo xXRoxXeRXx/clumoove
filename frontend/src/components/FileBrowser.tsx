@@ -409,8 +409,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     if (tab === 'contacts') fetchContacts();
   };
 
-  const fetchChildren = async (folderPath: string) => {
-    if (directoryContents[folderPath] || loadingPaths[folderPath]) return;
+  const fetchChildren = async (folderPath: string, force?: boolean) => {
+    if (loadingPaths[folderPath]) return;
+    if (!force && directoryContents[folderPath]) return;
 
     setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     try {
@@ -458,6 +459,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     } finally {
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
     }
+  };
+
+  const refreshFiles = async () => {
+    setDirectoryContents({});
+    setExpandedPaths({});
+    await fetchChildren('/', true);
   };
 
   const toggleExpand = (folderPath: string) => {
@@ -1260,17 +1267,33 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               <span className="text-[11px] font-mono font-bold uppercase tracking-wider">{t('common.deselectAll')}</span>
             </button>
 
-            {activeTab !== 'files' && (
-              <button
-                onClick={() => activeTab === 'calendars' ? fetchCalendars(true) : fetchContacts(true)}
-                disabled={loadingCalendars || loadingContacts}
-                className="ui-button-secondary p-2.5 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
-                title={t('common.refresh')}
-                aria-label={t('common.refresh')}
-              >
-                <RefreshCw className={`w-4 h-4 ${(loadingCalendars || loadingContacts) ? 'animate-spin' : ''}`} />
-              </button>
-            )}
+            {(() => {
+              const isRefreshing = activeTab === 'files' ? !!loadingPaths['/']
+                : activeTab === 'calendars' ? loadingCalendars
+                : loadingContacts;
+
+              const handleRefresh = () => {
+                if (activeTab === 'files') {
+                  void refreshFiles();
+                } else if (activeTab === 'calendars') {
+                  void fetchCalendars(true);
+                } else {
+                  void fetchContacts(true);
+                }
+              };
+
+              return (
+                <button
+                  onClick={handleRefresh}
+                  disabled={isRefreshing}
+                  className="ui-button-secondary p-2.5 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
+                  title={t('common.refresh')}
+                  aria-label={t('common.refresh')}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                </button>
+              );
+            })()}
           </div>
         </div>
 
