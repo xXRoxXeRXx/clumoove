@@ -1,5 +1,5 @@
 # --- Development Stage ---
-FROM node:20-alpine AS dev
+FROM node:24-alpine AS dev
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
@@ -7,8 +7,8 @@ COPY . .
 EXPOSE 3000
 CMD ["npm", "run", "dev", "--", "--host"]
 
-# --- Builder Stage ---
-FROM node:20-alpine AS builder
+# --- Builder Stage (Runs natively on build host CPU) ---
+FROM --platform=$BUILDPLATFORM node:24-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
