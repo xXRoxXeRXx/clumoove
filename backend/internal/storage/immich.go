@@ -127,7 +127,7 @@ func (p *ImmichProvider) search(ctx context.Context, albumID string) ([]immichAs
 	for page := 1; page <= 10000; page++ {
 		query := map[string]any{"page": page, "size": 500, "withArchived": false, "withDeleted": false, "withExif": true}
 		if albumID != "" {
-			query["albumId"] = albumID
+			query["albumIds"] = []string{albumID}
 		}
 		body, err := json.Marshal(query)
 		if err != nil {
@@ -209,7 +209,7 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 		dir = "/"
 	}
 	if dir == "/" {
-		return []CloudResource{{Path: "/All Assets", Name: "All Assets", IsDir: true}, {Path: "/Albums", Name: "Albums", IsDir: true}}, nil
+		return []CloudResource{{Path: "/Timeline", Name: "Timeline", IsDir: true}, {Path: "/Albums", Name: "Albums", IsDir: true}}, nil
 	}
 	if dir == "/Albums" {
 		if err := p.refreshAlbums(ctx); err != nil {
@@ -225,8 +225,8 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 	}
 	var albumID string
 	switch {
-	case dir == "/All Assets":
-		// All assets is a valid virtual directory without an album filter.
+	case dir == "/Timeline":
+		// Timeline is a valid virtual directory without an album filter.
 	case strings.HasPrefix(dir, "/Albums/") && len(strings.Split(strings.Trim(dir, "/"), "/")) == 2:
 		albumID = path.Base(dir)
 	default:
@@ -238,7 +238,7 @@ func (p *ImmichProvider) GetDirectoryListing(ctx context.Context, typ, dir strin
 	}
 	out := make([]CloudResource, 0, len(assets))
 	for _, a := range assets {
-		vp := "/All Assets/" + a.ID
+		vp := "/Timeline/" + a.ID
 		if albumID != "" {
 			vp = "/Albums/" + albumID + "/" + a.ID
 		}
@@ -253,7 +253,7 @@ func (p *ImmichProvider) InspectResource(ctx context.Context, typ, resourcePath 
 	if err := p.checkType(typ); err != nil {
 		return CloudResource{}, err
 	}
-	if resourcePath == "/" || resourcePath == "/All Assets" || resourcePath == "/Albums" {
+	if resourcePath == "/" || resourcePath == "/Timeline" || resourcePath == "/Albums" {
 		return CloudResource{Path: resourcePath, Name: path.Base(resourcePath), IsDir: true}, nil
 	}
 	if strings.HasPrefix(resourcePath, "/Albums/") && len(strings.Split(strings.Trim(resourcePath, "/"), "/")) == 2 {

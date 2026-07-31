@@ -5,7 +5,7 @@ styled with **Tailwind CSS v4** (via `@tailwindcss/vite`). Icons come exclusivel
 `@heroicons/react`. All user
 strings are localized with `i18next` + `react-i18next` + `i18next-browser-languagedetector`.
 
-The connection wizard has an Immich branch with server URL and API-key fields (no username), a least-privilege permission hint, `/All Assets` default selection, album browsing/creation, native-duplicate `SKIP`, and migration-only mode. Sync is unavailable whenever either endpoint is Immich.
+The connection wizard has an Immich branch with server URL and API-key fields (no username), a least-privilege permission hint, `/Timeline` default selection, album browsing/creation, native-duplicate `SKIP`, and migration-only mode. Sync is unavailable whenever either endpoint is Immich.
 
 ---
 

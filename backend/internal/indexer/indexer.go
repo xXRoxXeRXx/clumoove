@@ -575,12 +575,9 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 	return flushBatch()
 }
 
-// resourceIndexKey prevents Immich's All Assets and album virtual paths from
-// producing duplicate tasks for the same stable asset UUID.
+// resourceIndexKey returns a unique key for deduplicating resources during indexing.
+// Keying by resourceType and filePath ensures each selected virtual folder/album gets its files.
 func resourceIndexKey(resourceType, filePath string, meta storage.FileMetadata) string {
-	if id := meta.CustomProps["immich_asset_id"]; id != "" {
-		return resourceType + ":immich:" + id
-	}
 	return fmt.Sprintf("%s:%s", resourceType, filePath)
 }
 
