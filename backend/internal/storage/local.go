@@ -75,7 +75,7 @@ func (p *LocalProvider) Connect(ctx context.Context) (bool, error) {
 
 func (p *LocalProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 	if resourceType != "files" {
-		return nil, fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return nil, fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -119,7 +119,7 @@ func (p *LocalProvider) GetDirectoryListing(ctx context.Context, resourceType, d
 
 func (p *LocalProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
 	if resourceType != "files" {
-		return CloudResource{}, fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return CloudResource{}, fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -155,7 +155,7 @@ func (p *LocalProvider) InspectResource(ctx context.Context, resourceType, resou
 
 func (p *LocalProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
 	if resourceType != "files" {
-		return nil, fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return nil, fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -174,7 +174,7 @@ func (p *LocalProvider) StreamDownload(ctx context.Context, resourceType, filePa
 
 func (p *LocalProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -189,7 +189,7 @@ func (p *LocalProvider) StreamUpload(ctx context.Context, resourceType, filePath
 
 func (p *LocalProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -204,7 +204,7 @@ func (p *LocalProvider) StreamUploadChunked(ctx context.Context, resourceType, f
 
 func (p *LocalProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
 	if resourceType != "files" {
-		return false, 0, fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return false, 0, fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -231,7 +231,7 @@ func (p *LocalProvider) FileExists(ctx context.Context, resourceType, filePath s
 
 func (p *LocalProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -249,7 +249,7 @@ func (p *LocalProvider) DeleteFile(ctx context.Context, resourceType, filePath s
 
 func (p *LocalProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
 	if resourceType != "files" {
-		return "", fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return "", fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -273,7 +273,7 @@ func (p *LocalProvider) GetFileHash(ctx context.Context, resourceType, filePath 
 
 func (p *LocalProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -291,7 +291,7 @@ func (p *LocalProvider) CreateParentDirectories(ctx context.Context, resourceTyp
 
 func (p *LocalProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -306,7 +306,7 @@ func (p *LocalProvider) CreateDirectory(ctx context.Context, resourceType, dirPa
 
 func (p *LocalProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if resourceType != "files" {
-		return fmt.Errorf("resource type %s not supported by local provider", resourceType)
+		return fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -335,20 +335,17 @@ func (p *LocalProvider) RenameFile(ctx context.Context, resourceType, oldPath, n
 // filepath.Clean output uses '/', matching os.PathSeparator; Windows mutations
 // are unavailable until they can use an equivalent handle-relative API.
 func localPathComponents(rel string) ([]string, error) {
-	if strings.Contains(rel, "..") {
-		return nil, fmt.Errorf("path escapes storage root")
-	}
 	clean := filepath.Clean(strings.TrimPrefix(rel, "/"))
 	if clean == "." || clean == string(os.PathSeparator) {
 		return nil, nil
 	}
 	if filepath.IsAbs(clean) {
-		return nil, fmt.Errorf("path escapes storage root")
+		return nil, fmt.Errorf("%w", ErrPathEscapesRoot)
 	}
 	parts := strings.Split(clean, string(os.PathSeparator))
 	for _, part := range parts {
 		if part == "" || part == "." || part == ".." {
-			return nil, fmt.Errorf("path escapes storage root")
+			return nil, fmt.Errorf("%w", ErrPathEscapesRoot)
 		}
 	}
 	return parts, nil

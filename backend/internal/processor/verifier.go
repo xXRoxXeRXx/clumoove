@@ -1,8 +1,10 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"path"
@@ -298,7 +300,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				default:
 				}
 
-				if task.ResourceType != "files" {
+				if task.ResourceType != "files" || isDirectoryTask(task) {
 					if !markVerified(task, "") {
 						return
 					}
@@ -520,4 +522,19 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	}
 
 	p.runVerificationPass(ctx, cfg)
+}
+
+func isDirectoryTask(task *db.Task) bool {
+	if strings.HasSuffix(task.FilePath, "/") {
+		return true
+	}
+	if len(task.Metadata) > 0 && bytes.Contains(task.Metadata, []byte(`"mkdir"`)) {
+		var meta struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal(task.Metadata, &meta); err == nil {
+			return meta.Action == "mkdir"
+		}
+	}
+	return false
 }

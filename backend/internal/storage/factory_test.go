@@ -19,6 +19,23 @@ func TestIsValidProvider(t *testing.T) {
 	}
 }
 
+func TestProviderSupportsResourceType(t *testing.T) {
+	if !ProviderSupportsResourceType("nextcloud", "calendars") || !ProviderSupportsResourceType("nextcloud", "contacts") {
+		t.Errorf("expected nextcloud to support calendars and contacts")
+	}
+	if !ProviderSupportsResourceType("google", "calendars") || !ProviderSupportsResourceType("google", "contacts") {
+		t.Errorf("expected google to support calendars and contacts")
+	}
+	for _, p := range []string{"local", "webdav", "s3", "sftp", "smb", "dropbox", "hidrive", "immich", "magentacloud"} {
+		if !ProviderSupportsResourceType(p, "files") {
+			t.Errorf("expected %s to support files", p)
+		}
+		if ProviderSupportsResourceType(p, "calendars") || ProviderSupportsResourceType(p, "contacts") {
+			t.Errorf("expected %s NOT to support calendars or contacts", p)
+		}
+	}
+}
+
 func TestNewProviderRejectsUnsupported(t *testing.T) {
 	_, err := NewProvider(context.Background(), "unsupported-type", "https://example.com", "u", "p")
 	if err == nil {

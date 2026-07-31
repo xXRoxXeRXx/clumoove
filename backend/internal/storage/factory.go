@@ -37,16 +37,78 @@ func IsValidProvider(p string) bool {
 	return false
 }
 
-// Providers that require a user-supplied URL with a resolvable host. Providers
-// without a host (local, OAuth-only, or with a hardcoded endpoint such as
-// magentacloud/dropbox/google) are exempt from the URL-host check.
-var hostBasedProviders = map[string]bool{
-	"nextcloud": true,
-	"webdav":    true,
-	"smb":       true,
-	"sftp":      true,
-	"s3":        true,
-	"immich":    true,
+// ProviderMetadata defines static capabilities and connection requirements for a storage provider.
+type ProviderMetadata struct {
+	Type                   string
+	RequiresHost           bool
+	SupportedResourceTypes map[string]bool
+}
+
+var providerRegistry = map[string]ProviderMetadata{
+	"nextcloud": {
+		Type:                   "nextcloud",
+		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
+	},
+	"google": {
+		Type:                   "google",
+		RequiresHost:           false,
+		SupportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
+	},
+	"webdav": {
+		Type:                   "webdav",
+		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"dropbox": {
+		Type:                   "dropbox",
+		RequiresHost:           false,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"hidrive": {
+		Type:                   "hidrive",
+		RequiresHost:           false,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"smb": {
+		Type:                   "smb",
+		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"s3": {
+		Type:                   "s3",
+		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"sftp": {
+		Type:                   "sftp",
+		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"magentacloud": {
+		Type:                   "magentacloud",
+		RequiresHost:           false,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"local": {
+		Type:                   "local",
+		RequiresHost:           false,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"immich": {
+		Type:                   "immich",
+		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+}
+
+// ProviderSupportsResourceType reports whether providerType supports the given resourceType.
+func ProviderSupportsResourceType(providerType, resourceType string) bool {
+	meta, exists := providerRegistry[providerType]
+	if !exists {
+		return false
+	}
+	return meta.SupportedResourceTypes[resourceType]
 }
 
 // ValidateProviderURL verifies that a provider which needs a host actually has a
@@ -56,7 +118,8 @@ var hostBasedProviders = map[string]bool{
 // (where the raw Go error would otherwise leak to the client). The SSRF egress
 // policy itself is still enforced later inside NewProvider.
 func ValidateProviderURL(providerType, urlStr string) error {
-	if !hostBasedProviders[providerType] {
+	meta, exists := providerRegistry[providerType]
+	if !exists || !meta.RequiresHost {
 		return nil
 	}
 	parsed, err := url.Parse(urlStr)
