@@ -188,9 +188,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 
 	// 2. Index calendars
-	if len(calendars) > 0 && !storage.ProviderSupportsResourceType(mig.TargetProvider, "calendars") {
-		idx.skipUnsupportedResources(calendars, "calendars", mig.TargetProvider, &indexErrors)
-	} else {
+	if len(calendars) > 0 && storage.ProviderSupportsResourceType(mig.SourceProvider, "calendars") && storage.ProviderSupportsResourceType(mig.TargetProvider, "calendars") {
 		for _, p := range calendars {
 			// Emit a mkdir task for the root calendar directory itself (unless it
 			// is the root "/", which every provider already has). This ensures
@@ -221,12 +219,19 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				return
 			}
 		}
+	} else if len(calendars) > 0 {
+		log.Printf("Indexing: skipping calendars for migration %s (not supported by source %s or target %s)", migID, mig.SourceProvider, mig.TargetProvider)
+		for _, p := range calendars {
+			indexErrors = append(indexErrors, db.IndexingErrorInput{
+				Path:         p,
+				ResourceType: "calendars",
+				ErrorMessage: fmt.Sprintf("resource type calendars not supported by source %s or target %s", mig.SourceProvider, mig.TargetProvider),
+			})
+		}
 	}
 
 	// 3. Index contacts
-	if len(contacts) > 0 && !storage.ProviderSupportsResourceType(mig.TargetProvider, "contacts") {
-		idx.skipUnsupportedResources(contacts, "contacts", mig.TargetProvider, &indexErrors)
-	} else {
+	if len(contacts) > 0 && storage.ProviderSupportsResourceType(mig.SourceProvider, "contacts") && storage.ProviderSupportsResourceType(mig.TargetProvider, "contacts") {
 		for _, p := range contacts {
 			// Emit a mkdir task for the root contacts directory itself (unless it
 			// is the root "/", which every provider already has). This ensures
@@ -256,6 +261,15 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
 				return
 			}
+		}
+	} else if len(contacts) > 0 {
+		log.Printf("Indexing: skipping contacts for migration %s (not supported by source %s or target %s)", migID, mig.SourceProvider, mig.TargetProvider)
+		for _, p := range contacts {
+			indexErrors = append(indexErrors, db.IndexingErrorInput{
+				Path:         p,
+				ResourceType: "contacts",
+				ErrorMessage: fmt.Sprintf("resource type contacts not supported by source %s or target %s", mig.SourceProvider, mig.TargetProvider),
+			})
 		}
 	}
 
@@ -625,13 +639,4 @@ func sanitizeError(msg string) string {
 	return sanitize.SanitizeError(msg)
 }
 
-func (idx *Indexer) skipUnsupportedResources(resources []string, resourceType, targetProvider string, indexErrors *[]db.IndexingErrorInput) {
-	for _, p := range resources {
-		*indexErrors = append(*indexErrors, db.IndexingErrorInput{
-			Path:         p,
-			ResourceType: resourceType,
-			ErrorMessage: fmt.Sprintf("resource type %s not supported by target provider %s", resourceType, targetProvider),
-		})
-		log.Printf("Indexing: skipping %s %s (resource type %s not supported by target provider %s)", resourceType, p, resourceType, targetProvider)
-	}
-}
+

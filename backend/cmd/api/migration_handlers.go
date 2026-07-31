@@ -857,13 +857,17 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
 	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)
 
-	if (req.SourceProvider == "magentacloud" || req.SourceProvider == "immich") && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
-		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
-		return
+	if len(req.Calendars) > 0 {
+		if !storage.ProviderSupportsResourceType(req.SourceProvider, "calendars") || !storage.ProviderSupportsResourceType(req.TargetProvider, "calendars") {
+			writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
+			return
+		}
 	}
-	if (req.TargetProvider == "magentacloud" || req.TargetProvider == "immich") && (len(req.Calendars) > 0 || len(req.Contacts) > 0) {
-		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
-		return
+	if len(req.Contacts) > 0 {
+		if !storage.ProviderSupportsResourceType(req.SourceProvider, "contacts") || !storage.ProviderSupportsResourceType(req.TargetProvider, "contacts") {
+			writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
+			return
+		}
 	}
 	if req.ConflictStrategy == "" {
 		req.ConflictStrategy = "SKIP"
