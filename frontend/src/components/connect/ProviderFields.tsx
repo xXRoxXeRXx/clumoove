@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { ExclamationCircleIcon as AlertCircle, ArrowPathIcon as RefreshCw } from '@heroicons/react/24/outline';
 import type { ProviderId } from '../ConnectionManager';
+import { isOAuthProvider } from '../../types';
 
 const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
@@ -48,7 +49,7 @@ export interface ProviderFieldsProps {
 
 export function ProviderFields(props: ProviderFieldsProps) {
   const { provider } = props;
-  const isOAuth = provider === 'dropbox' || provider === 'google' || provider === 'hidrive';
+  const isOAuth = isOAuthProvider(provider);
 
   if (provider === 'local') {
     return <LocalFields />;
@@ -113,7 +114,7 @@ export function OAuthFields({
           className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider flex items-center justify-center gap-2"
         >
           <RefreshCw className="w-4 h-4" />
-          {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : provider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
+          {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : provider === 'onedrive' ? 'OneDrive' : provider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
         </button>
       )}
       {editing && !oauthRefreshToken && (

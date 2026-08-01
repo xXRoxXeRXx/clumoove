@@ -31,6 +31,9 @@ var ErrUnsupportedResourceType = errors.New("resource type not supported by prov
 // ErrPathEscapesRoot is returned when a requested path escapes the storage root.
 var ErrPathEscapesRoot = errors.New("path escapes storage root")
 
+// ErrNotFound is returned when a requested resource does not exist.
+var ErrNotFound = errors.New("resource not found")
+
 type FileMetadata struct {
 	ModifiedTime time.Time         `json:"modified_time,omitempty"`
 	Description  string            `json:"description,omitempty"`

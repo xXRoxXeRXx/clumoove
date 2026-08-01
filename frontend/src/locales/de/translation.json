@@ -156,9 +156,13 @@
     "magentacloudInfo": "Verbindung mit magentacloud.de (WebDAV). Verwenden Sie das separat festgelegte WebDAV-Passwort aus Ihren MagentaCLOUD-Kontoeinstellungen — NICHT Ihr normales Kontopasswort.",
     "localInfo": "Liest und schreibt Dateien direkt auf dem Server innerhalb des konfigurierten LOCAL_STORAGE_ROOT-Verzeichnisses. Es werden keine Anmeldedaten benötigt — geben Sie nur einen relativen Pfad innerhalb dieses Sandboxes ein (keine absoluten Pfade oder \"..\"-Navigation).",
     "googleConnect": "Google Verbindung",
+
+    "onedriveConnect": "OneDrive Verbindung",
     "dropboxConnect": "Dropbox Verbindung",
     "hidriveConnect": "HiDrive Verbindung",
     "googleAccount": "Google-Konto",
+
+    "onedriveAccount": "OneDrive-Konto",
     "dropboxAccount": "Dropbox-Konto",
     "hidriveAccount": "HiDrive-Konto",
     "submit": "Verbindung prüfen",

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, CheckCircleIcon as CheckCircle2, ExclamationCircleIcon as AlertCircle, QuestionMarkCircleIcon as HelpCircle } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
-import type { CloudFile, MigrationConfig } from '../types';
+import { isOAuthProvider, type CloudFile, type MigrationConfig } from '../types';
 
 import { useApiError } from '../utils/apiError';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
@@ -20,7 +20,7 @@ interface ConnectFormProps {
   onBack?: () => void;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local' | 'immich';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'onedrive' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local' | 'immich';
 
 const sftpHostKeyFingerprintPattern = /^SHA256:[A-Za-z0-9+/]{43}$/;
 
@@ -150,7 +150,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}?host_key=${encodeURIComponent(sourceSftpHostKey.trim())}`
     : sourceProvider === 'magentacloud' || sourceProvider === 'local'
     ? ''
-    : ((sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive') ? `https://api.${sourceProvider}.com` : sourceUrl));
+    : (isOAuthProvider(sourceProvider) ? (sourceProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${sourceProvider}.com`) : sourceUrl));
 
   // Build the final provider URL for the target side.
   const finalTargetUrlValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'smb'
@@ -161,11 +161,11 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${targetSftpHost}:${targetSftpPort}?host_key=${encodeURIComponent(targetSftpHostKey.trim())}`
     : targetProvider === 'magentacloud' || targetProvider === 'local'
     ? ''
-    : ((targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? `https://api.${targetProvider}.com` : targetUrl));
+    : (isOAuthProvider(targetProvider) ? (targetProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${targetProvider}.com`) : targetUrl));
   // Build the final credentials for the source side (reuses shared URL/user/pass logic).
   const finalSourceUserValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'local'
     ? ''
-    : (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive') ? (sourceOAuthUser || sourceProvider) : sourceUser);
+    : isOAuthProvider(sourceProvider) ? (sourceOAuthUser || sourceProvider) : sourceUser);
   const finalSourcePassValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'local'
     ? ''
     : sourceProvider === 'sftp' && sourceSftpAuthMode === 'key' ? sourceSftpPrivateKey : sourcePass);
@@ -173,7 +173,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   // Build the final credentials for the target side.
   const finalTargetUserValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'local'
     ? ''
-    : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive') ? (targetOAuthUser || targetProvider) : targetUser);
+    : isOAuthProvider(targetProvider) ? (targetOAuthUser || targetProvider) : targetUser);
   const finalTargetPassValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'local'
     ? ''
     : targetProvider === 'sftp' && targetSftpAuthMode === 'key' ? targetSftpPrivateKey : targetPass);
@@ -181,8 +181,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const saveProfile = async (role: 'source' | 'target', name: string) => {
     if (!name.trim()) return false;
     const isOAuth = (role === 'source'
-      ? (sourceProvider === 'dropbox' || sourceProvider === 'google' || sourceProvider === 'hidrive')
-      : (targetProvider === 'dropbox' || targetProvider === 'google' || targetProvider === 'hidrive'));
+      ? isOAuthProvider(sourceProvider)
+      : isOAuthProvider(targetProvider));
     const payload: Record<string, unknown> = {
       name: name.trim(),
       provider: role === 'source' ? sourceProvider : targetProvider,
@@ -226,14 +226,14 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       onSuccess: (msg) => {
         if (type === 'source') {
           setSourceOAuthUser(msg.username || provider);
-          setSourceUrl(`https://api.${provider}.com`);
+          setSourceUrl(provider === 'onedrive' ? 'oauth://onedrive' : `https://api.${provider}.com`);
           setSourceUser(msg.username || provider);
           setSourcePass(msg.token);
           setSourceRefreshToken(msg.refreshToken || '');
           setSourceTokenExpiresIn(msg.expiresIn || 3600);
         } else {
           setTargetOAuthUser(msg.username || provider);
-          setTargetUrl(`https://api.${provider}.com`);
+          setTargetUrl(provider === 'onedrive' ? 'oauth://onedrive' : `https://api.${provider}.com`);
           setTargetUser(msg.username || provider);
           setTargetPass(msg.token);
           setTargetRefreshToken(msg.refreshToken || '');
@@ -489,7 +489,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleSourceProviderSelect = (val: ProviderId) => {
     setSourceProvider(val);
-    if (val === 'dropbox' || val === 'google' || val === 'hidrive') {
+    if (isOAuthProvider(val)) {
       setSourceUrl(`https://api.${val}.com`);
       setSourceUser(val);
       setSourcePass('');
@@ -532,7 +532,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const handleTargetProviderSelect = (val: ProviderId) => {
     setTargetProvider(val);
-    if (val === 'dropbox' || val === 'google' || val === 'hidrive') {
+    if (isOAuthProvider(val)) {
       setTargetUrl(`https://api.${val}.com`);
       setTargetUser(val);
       setTargetPass('');
@@ -582,7 +582,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 'sftp', name: 'SFTP' },
     ...(localStorageEnabled ? [{ id: 'immich' as const, name: 'Immich' }] : []),
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
-    ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+	...(oauthProviders.onedrive ? [{ id: 'onedrive' as const, name: 'OneDrive' }] : []),
     ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
   ];
@@ -1058,13 +1059,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
+                    {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'onedrive' ? t('connect.onedriveConnect') : sourceProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                    {sourcePass ? (
                     <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : sourceProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{sourceOAuthUser || (sourceProvider === 'google' ? t('connect.googleAccount') : sourceProvider === 'onedrive' ? t('connect.onedriveAccount') : sourceProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                        <button
                         type="button"
@@ -1083,7 +1084,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => startOAuth(sourceProvider, 'source')}
                       className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: sourceProvider === 'google' ? 'Google' : sourceProvider === 'onedrive' ? 'OneDrive' : sourceProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
                   )}
                 </div>
@@ -1551,13 +1552,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               ) : (
                 <div className="py-2 space-y-1">
                   <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
+                    {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'onedrive' ? t('connect.onedriveConnect') : targetProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
                   </label>
                   {targetPass ? (
                     <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
                       <div className="truncate pr-2">
                         <p className="font-bold text-[9px] uppercase tracking-wider text-[var(--color-success-text)] font-mono">{t('connect.connectedAs')}</p>
-                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : targetProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
+                        <p className="text-xs font-bold text-[var(--color-text-secondary)] truncate">{targetOAuthUser || (targetProvider === 'google' ? t('connect.googleAccount') : targetProvider === 'onedrive' ? t('connect.onedriveAccount') : targetProvider === 'hidrive' ? t('connect.hidriveAccount') : t('connect.dropboxAccount'))}</p>
                       </div>
                       <button
                         type="button"
@@ -1576,7 +1577,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       onClick={() => startOAuth(targetProvider, 'target')}
                       className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider hover:opacity-90 flex items-center justify-center gap-2"
                     >
-                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
+                      <RefreshCw className="w-4 h-4" /> {t('connect.oauthConnect', { provider: targetProvider === 'google' ? 'Google' : targetProvider === 'onedrive' ? 'OneDrive' : targetProvider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
                     </button>
                   )}
                 </div>

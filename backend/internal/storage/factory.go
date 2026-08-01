@@ -24,7 +24,7 @@ func localUserID(ctx context.Context) string {
 // request-time whitelist checks (e.g. main.go handleConnect), so adding a
 // provider only requires updating the switch — not every call site.
 var ValidProviders = []string{
-	"nextcloud", "webdav", "dropbox", "google", "hidrive", "smb", "s3", "sftp", "magentacloud", "local", "immich",
+	"nextcloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "magentacloud", "local", "immich",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
@@ -55,6 +55,11 @@ var providerRegistry = map[string]ProviderMetadata{
 		Type:                   "google",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
+	},
+	"onedrive": {
+		Type:                   "onedrive",
+		RequiresHost:           false,
+		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 	"webdav": {
 		Type:                   "webdav",
@@ -177,6 +182,8 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	case "google":
 		// The OAuth token is passed in the password field for OAuth providers
 		return NewGoogleProvider(ctx, password)
+	case "onedrive":
+		return NewOneDriveProvider(password)
 	case "hidrive":
 		return NewHiDriveProvider(password)
 	case "smb":

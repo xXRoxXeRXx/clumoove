@@ -156,7 +156,7 @@ If a user suspension commits but a Redis sync-cancellation event cannot be publi
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
-| `GET` | `/oauth/auth` | public | Begin OAuth2 flow (Dropbox/Google); redirects to provider. |
+| `GET` | `/oauth/auth` | public | Begin OAuth2 flow (Dropbox/Google/OneDrive/HiDrive); redirects to provider. |
 | `GET` | `/oauth/callback` | public | Provider callback; sets tokens, posts result to opener via `postMessage`. |
 
 ---
@@ -192,9 +192,9 @@ If a user suspension commits but a Redis sync-cancellation event cannot be publi
 
 Validation rules applied server-side:
 - At least one of `paths`/`calendars`/`contacts` required.
-- Provider values must be in the whitelist (`nextcloud`, `webdav`, `dropbox`, `google`, `hidrive`, `smb`, `s3`,
+- Provider values must be in the whitelist (`nextcloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
   `sftp`, `magentacloud`, `local`, `immich`).
-- `magentacloud`, `hidrive`, `local`, and `immich` are files-only (reject calendars/contacts on source or target).
+- `magentacloud`, `onedrive`, `hidrive`, `local`, and `immich` are files-only (reject calendars/contacts on source or target).
 - An Immich target requires `conflict_strategy: "SKIP"`; Immich relies on native duplicate detection and does not support overwrite or rename. Immich can be used only for one-time migrations, not sync jobs.
 - Per-user cap of `maxActiveMigrations` (10) simultaneous active migrations.
 - `threads` clamped to 1–16; `bandwidth_limit_mbps` clamped to 0–1000.

@@ -26,7 +26,7 @@ func TestProviderSupportsResourceType(t *testing.T) {
 	if !ProviderSupportsResourceType("google", "calendars") || !ProviderSupportsResourceType("google", "contacts") {
 		t.Errorf("expected google to support calendars and contacts")
 	}
-	for _, p := range []string{"local", "webdav", "s3", "sftp", "smb", "dropbox", "hidrive", "immich", "magentacloud"} {
+	for _, p := range []string{"local", "webdav", "s3", "sftp", "smb", "dropbox", "onedrive", "hidrive", "immich", "magentacloud"} {
 		if !ProviderSupportsResourceType(p, "files") {
 			t.Errorf("expected %s to support files", p)
 		}
@@ -93,6 +93,12 @@ func TestNewProviderOAuthProviders(t *testing.T) {
 	}
 	if p, err := NewProvider(context.Background(), "google", "", "u", "oauth-token"); err != nil || p == nil {
 		t.Errorf("google: got p=%v err=%v", p, err)
+	}
+	if p, err := NewProvider(context.Background(), "onedrive", "oauth://onedrive", "u", "oauth-token"); err != nil || p == nil {
+		t.Errorf("onedrive: got p=%v err=%v", p, err)
+	}
+	if _, err := NewProvider(context.Background(), "onedrive", "", "", ""); err == nil {
+		t.Error("onedrive without token: expected error")
 	}
 	if p, err := NewProvider(context.Background(), "hidrive", "", "u", "oauth-token"); err != nil || p == nil {
 		t.Errorf("hidrive: got p=%v err=%v", p, err)

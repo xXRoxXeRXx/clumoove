@@ -19,6 +19,7 @@ import {
   sftpHostKeyFingerprintPattern,
 } from '../utils/providerUrls';
 import { ProviderFields } from './connect/ProviderFields';
+import { isOAuthProvider } from '../types';
 
 export interface ConnectionManagerProps {
   apiUrl: string;
@@ -33,6 +34,7 @@ export type ProviderId =
   | 'webdav'
   | 'magentacloud'
   | 'google'
+  | 'onedrive'
   | 'hidrive'
   | 'smb'
   | 's3'
@@ -142,14 +144,15 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
       { id: 'sftp', name: 'SFTP' },
       ...(localStorageEnabled ? [{ id: 'immich' as const, name: 'Immich' }] : []),
       ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
-      ...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
+	...(oauthProviders.onedrive ? [{ id: 'onedrive' as const, name: 'OneDrive' }] : []),
       ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
       ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : []),
     ],
-    [localStorageEnabled, oauthProviders.dropbox, oauthProviders.google, oauthProviders.hidrive]
+	[localStorageEnabled, oauthProviders.dropbox, oauthProviders.google, oauthProviders.onedrive, oauthProviders.hidrive]
   );
 
-  const isOAuth = (prov: string) => prov === 'dropbox' || prov === 'google' || prov === 'hidrive';
+  const isOAuth = isOAuthProvider;
 
   return (
     <div className="space-y-6">
@@ -412,7 +415,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const [saving, setSaving] = useState<boolean>(false);
   useFocusTrap(dialogRef, closeRef, onClose);
 
-  const isOAuth = form.provider === 'dropbox' || form.provider === 'google' || form.provider === 'hidrive';
+  const isOAuth = isOAuthProvider(form.provider);
   const needsPassword = !isOAuth && form.provider !== 'local';
 
   const updateField = <K extends keyof FormState>(key: K, value: FormState[K]) => {

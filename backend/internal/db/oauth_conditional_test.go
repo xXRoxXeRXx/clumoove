@@ -53,6 +53,13 @@ func setupOAuthTestDB(t *testing.T) *sql.DB {
 			target_token_expires_at TIMESTAMP WITH TIME ZONE,
 			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TEMP TABLE connection_profiles (
+			id TEXT PRIMARY KEY,
+			password_encrypted TEXT,
+			refresh_token_encrypted TEXT,
+			token_expires_at TIMESTAMP WITH TIME ZONE,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+		);
 	`); err != nil {
 		database.Close()
 		t.Fatalf("create temp tables: %v", err)
@@ -124,6 +131,32 @@ func TestConditionalOAuthTokenUpdate(t *testing.T) {
 
 	if curPass != "new-pass-1" || curRefresh != "new-refresh-1" {
 		t.Errorf("CAS failed: mismatched token update overwrote DB tokens")
+	}
+}
+
+func TestConditionalConnectionProfileOAuthTokenUpdate(t *testing.T) {
+	database := setupOAuthTestDB(t)
+	now := time.Now().Truncate(time.Second)
+	if _, err := database.Exec(`
+		INSERT INTO connection_profiles (id, password_encrypted, refresh_token_encrypted, token_expires_at)
+		VALUES ('onedrive-profile', 'old-access', 'old-refresh', $1)
+	`, now); err != nil {
+		t.Fatal(err)
+	}
+
+	expiresAt := now.Add(time.Hour)
+	if err := UpdateConnectionProfileOAuthTokens(database, "onedrive-profile", "new-access", "new-refresh", expiresAt, "old-refresh"); err != nil {
+		t.Fatal(err)
+	}
+	var access, refresh string
+	if err := database.QueryRow(`SELECT password_encrypted, refresh_token_encrypted FROM connection_profiles WHERE id = 'onedrive-profile'`).Scan(&access, &refresh); err != nil {
+		t.Fatal(err)
+	}
+	if access != "new-access" || refresh != "new-refresh" {
+		t.Fatalf("persisted tokens = %q, %q; want new values", access, refresh)
+	}
+	if err := UpdateConnectionProfileOAuthTokens(database, "onedrive-profile", "stale-access", "stale-refresh", expiresAt, "old-refresh"); err != ErrOAuthTokenConflict {
+		t.Fatalf("stale update error = %v, want ErrOAuthTokenConflict", err)
 	}
 }
 

@@ -1,0 +1,646 @@
+package storage
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"path"
+	"strings"
+	"time"
+)
+
+const (
+	defaultOneDriveAPIBase          = "https://graph.microsoft.com/v1.0/me/drive"
+	oneDriveSimpleUploadLimit int64 = 4 * 1024 * 1024
+	oneDriveUploadChunkSize         = 10 * 1024 * 1024 // Graph requires multiples of 320 KiB.
+)
+
+// OneDriveProvider accesses a personal OneDrive through Microsoft Graph.
+type OneDriveProvider struct {
+	accessToken string
+	apiBase     string
+	httpClient  *http.Client
+}
+
+var _ StorageProvider = (*OneDriveProvider)(nil)
+
+func NewOneDriveProvider(token string) (*OneDriveProvider, error) {
+	if token == "" {
+		return nil, fmt.Errorf("onedrive provider requires an oauth token: %w", ErrAuth)
+	}
+	transport := &http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   50,
+		MaxConnsPerHost:       50,
+		IdleConnTimeout:       120 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 2 * time.Minute,
+	}
+	return newOneDriveProvider(token, defaultOneDriveAPIBase, &http.Client{Transport: transport}), nil
+}
+
+// newOneDriveProvider is intentionally package-private so HTTP behavior can be
+// tested against a local Graph fixture without making the endpoint configurable.
+func newOneDriveProvider(token, apiBase string, client *http.Client) *OneDriveProvider {
+	return &OneDriveProvider{accessToken: token, apiBase: strings.TrimRight(apiBase, "/"), httpClient: client}
+}
+
+func (p *OneDriveProvider) Close() error {
+	if p.httpClient != nil {
+		p.httpClient.CloseIdleConnections()
+	}
+	return nil
+}
+
+func oneDrivePath(filePath string) (string, error) {
+	filePath = strings.ReplaceAll(filePath, "\\", "/")
+	parts := strings.Split(strings.Trim(filePath, "/"), "/")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return "", ErrPathEscapesRoot
+		}
+		clean = append(clean, part)
+	}
+	return "/" + strings.Join(clean, "/"), nil
+}
+
+func oneDriveEscapedPath(filePath string) (string, error) {
+	clean, err := oneDrivePath(filePath)
+	if err != nil {
+		return "", err
+	}
+	if clean == "/" {
+		return "", nil
+	}
+	parts := strings.Split(strings.TrimPrefix(clean, "/"), "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func (p *OneDriveProvider) itemURL(filePath string) (string, error) {
+	escaped, err := oneDriveEscapedPath(filePath)
+	if err != nil {
+		return "", err
+	}
+	if escaped == "" {
+		return p.apiBase + "/root", nil
+	}
+	return p.apiBase + "/root:/" + escaped + ":", nil
+}
+
+func (p *OneDriveProvider) request(ctx context.Context, method, rawURL string, body io.Reader, authorize bool) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if authorize {
+		req.Header.Set("Authorization", "Bearer "+p.accessToken)
+	}
+	return req, nil
+}
+
+func oneDriveError(operation string, status int) error {
+	if status == http.StatusUnauthorized {
+		return fmt.Errorf("onedrive %s: %w", operation, ErrAuth)
+	}
+	if status == http.StatusNotFound {
+		return fmt.Errorf("onedrive %s: %w", operation, ErrNotFound)
+	}
+	return fmt.Errorf("onedrive %s failed with status %d", operation, status)
+}
+
+func (p *OneDriveProvider) validPaginationURL(rawURL string) (string, error) {
+	next, err := url.Parse(rawURL)
+	if err != nil {
+		return "", errors.New("invalid onedrive pagination URL")
+	}
+	base, err := url.Parse(p.apiBase)
+	if err != nil || next.Scheme != "https" || next.Host != base.Host {
+		return "", errors.New("invalid onedrive pagination URL")
+	}
+	// Production instances are fixed to Graph. The configurable base only exists
+	// for package-local TLS fixtures and must still retain its exact host.
+	if p.apiBase == defaultOneDriveAPIBase && next.Host != "graph.microsoft.com" {
+		return "", errors.New("invalid onedrive pagination URL")
+	}
+	return next.String(), nil
+}
+
+func oneDriveFilesOnly(resourceType string) error {
+	if resourceType != "files" {
+		return ErrUnsupportedResourceType
+	}
+	return nil
+}
+
+type oneDriveItem struct {
+	ID                   string    `json:"id"`
+	Name                 string    `json:"name"`
+	Size                 int64     `json:"size"`
+	ETag                 string    `json:"eTag"`
+	LastModifiedDateTime string    `json:"lastModifiedDateTime"`
+	Folder               *struct{} `json:"folder"`
+}
+
+func oneDriveResource(item oneDriveItem, parentPath string) CloudResource {
+	resourcePath := path.Join(parentPath, item.Name)
+	if !strings.HasPrefix(resourcePath, "/") {
+		resourcePath = "/" + resourcePath
+	}
+	modified, _ := time.Parse(time.RFC3339, item.LastModifiedDateTime)
+	return CloudResource{Path: resourcePath, Name: item.Name, Size: item.Size, IsDir: item.Folder != nil, ETag: item.ETag, LastModified: modified}
+}
+
+func (p *OneDriveProvider) Connect(ctx context.Context) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := p.request(ctx, http.MethodGet, p.apiBase+"/root?$select=id", nil, true)
+	if err != nil {
+		return false, err
+	}
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return true, nil
+	}
+	return false, oneDriveError("connect", resp.StatusCode)
+}
+
+func (p *OneDriveProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	clean, err := oneDrivePath(dirPath)
+	if err != nil {
+		return nil, err
+	}
+	itemURL, err := p.itemURL(clean)
+	if err != nil {
+		return nil, err
+	}
+	nextURL := itemURL + "/children?$select=id,name,size,eTag,lastModifiedDateTime,folder"
+	var result []CloudResource
+	for nextURL != "" {
+		req, err := p.request(ctx, http.MethodGet, nextURL, nil, true)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return nil, oneDriveError("list directory", resp.StatusCode)
+		}
+		var page struct {
+			Value    []oneDriveItem `json:"value"`
+			NextLink string         `json:"@odata.nextLink"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode onedrive directory listing: %w", decodeErr)
+		}
+		for _, item := range page.Value {
+			result = append(result, oneDriveResource(item, clean))
+		}
+		if page.NextLink == "" {
+			nextURL = ""
+			continue
+		}
+		nextURL, err = p.validPaginationURL(page.NextLink)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
+func (p *OneDriveProvider) InspectResource(ctx context.Context, resourceType, filePath string) (CloudResource, error) {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return CloudResource{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	clean, err := oneDrivePath(filePath)
+	if err != nil {
+		return CloudResource{}, err
+	}
+	itemURL, err := p.itemURL(clean)
+	if err != nil {
+		return CloudResource{}, err
+	}
+	req, err := p.request(ctx, http.MethodGet, itemURL+"?$select=id,name,size,eTag,lastModifiedDateTime,folder", nil, true)
+	if err != nil {
+		return CloudResource{}, err
+	}
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return CloudResource{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return CloudResource{}, oneDriveError("inspect", resp.StatusCode)
+	}
+	var item oneDriveItem
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return CloudResource{}, fmt.Errorf("decode onedrive item: %w", err)
+	}
+	if clean == "/" {
+		return CloudResource{Path: "/", IsDir: true, ETag: item.ETag}, nil
+	}
+	return oneDriveResource(item, path.Dir(clean)), nil
+}
+
+func (p *OneDriveProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return nil, err
+	}
+	itemURL, err := p.itemURL(filePath)
+	if err != nil {
+		return nil, err
+	}
+	// Graph redirects to a pre-authorized host. Do not forward the bearer token.
+	client := *p.httpClient
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		req.Header.Del("Authorization")
+		return nil
+	}
+	req, err := p.request(ctx, http.MethodGet, itemURL+"/content", nil, true)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, oneDriveError("download", resp.StatusCode)
+	}
+	return resp.Body, nil
+}
+
+func (p *OneDriveProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	return p.StreamUploadChunked(ctx, resourceType, filePath, stream, size, nil)
+}
+
+func (p *OneDriveProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return err
+	}
+	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
+		return fmt.Errorf("create onedrive parent directories: %w", err)
+	}
+	if size <= oneDriveSimpleUploadLimit {
+		return p.simpleUpload(ctx, filePath, stream, size, progressChan)
+	}
+	return p.sessionUpload(ctx, filePath, stream, size, progressChan)
+}
+
+func (p *OneDriveProvider) simpleUpload(ctx context.Context, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	itemURL, err := p.itemURL(filePath)
+	if err != nil {
+		return err
+	}
+	var body io.Reader = stream
+	if progressChan != nil {
+		body = &ProgressReader{Reader: stream, ProgressChan: progressChan}
+	}
+	req, err := p.request(ctx, http.MethodPut, itemURL+"/content", body, true)
+	if err != nil {
+		return err
+	}
+	if size >= 0 {
+		req.ContentLength = size
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return oneDriveError("upload", resp.StatusCode)
+	}
+	return nil
+}
+
+func (p *OneDriveProvider) sessionUpload(ctx context.Context, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	itemURL, err := p.itemURL(filePath)
+	if err != nil {
+		return err
+	}
+	req, err := p.request(ctx, http.MethodPost, itemURL+"/createUploadSession", strings.NewReader(`{"item":{"@microsoft.graph.conflictBehavior":"replace"}}`), true)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return oneDriveError("create upload session", resp.StatusCode)
+	}
+	var session struct {
+		UploadURL string `json:"uploadUrl"`
+	}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&session)
+	resp.Body.Close()
+	if decodeErr != nil {
+		return fmt.Errorf("decode onedrive upload session: %w", decodeErr)
+	}
+	if session.UploadURL == "" {
+		return errors.New("onedrive upload session did not return an upload URL")
+	}
+
+	buf := make([]byte, oneDriveUploadChunkSize)
+	var offset int64
+	for offset < size {
+		remaining := size - offset
+		chunkLen := len(buf)
+		if remaining < int64(chunkLen) {
+			chunkLen = int(remaining)
+		}
+		n, readErr := io.ReadFull(stream, buf[:chunkLen])
+		if readErr != nil && readErr != io.ErrUnexpectedEOF && readErr != io.EOF {
+			return fmt.Errorf("read onedrive upload chunk: %w", readErr)
+		}
+		if n == 0 {
+			return io.ErrUnexpectedEOF
+		}
+		if err := p.uploadChunk(ctx, session.UploadURL, buf[:n], offset, size); err != nil {
+			return err
+		}
+		offset += int64(n)
+		if progressChan != nil {
+			progressChan <- int64(n)
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	if offset != size {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+func (p *OneDriveProvider) uploadChunk(ctx context.Context, uploadURL string, chunk []byte, offset, total int64) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		req, err := p.request(ctx, http.MethodPut, uploadURL, bytes.NewReader(chunk), false)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+int64(len(chunk))-1, total))
+		resp, err := p.httpClient.Do(req)
+		if err == nil {
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusAccepted {
+				resp.Body.Close()
+				return nil
+			}
+			lastErr = oneDriveError("upload chunk", resp.StatusCode)
+			retryAfter := resp.Header.Get("Retry-After")
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+				return lastErr
+			}
+			if err := oneDriveWait(ctx, retryAfter, attempt); err != nil {
+				return err
+			}
+			continue
+		}
+		lastErr = err
+		if err := oneDriveWait(ctx, "", attempt); err != nil {
+			return err
+		}
+	}
+	return lastErr
+}
+
+func oneDriveWait(ctx context.Context, retryAfter string, attempt int) error {
+	delay := time.Duration(attempt+1) * time.Second
+	if seconds, err := time.ParseDuration(retryAfter + "s"); err == nil && retryAfter != "" {
+		delay = seconds
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (p *OneDriveProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return false, 0, err
+	}
+	resource, err := p.InspectResource(ctx, resourceType, filePath)
+	if err == nil {
+		return true, resource.Size, nil
+	}
+	if errors.Is(err, ErrNotFound) {
+		return false, 0, nil
+	}
+	return false, 0, err
+}
+
+func (p *OneDriveProvider) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return err
+	}
+	itemURL, err := p.itemURL(filePath)
+	if err != nil {
+		return err
+	}
+	req, err := p.request(ctx, http.MethodDelete, itemURL, nil, true)
+	if err != nil {
+		return err
+	}
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || (resp.StatusCode >= 200 && resp.StatusCode < 300) {
+		return nil
+	}
+	return oneDriveError("delete", resp.StatusCode)
+}
+
+func (p *OneDriveProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return "", err
+	}
+	return "", ErrHashNotSupported
+}
+
+func (p *OneDriveProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return err
+	}
+	return p.CreateDirectory(ctx, resourceType, path.Dir(filePath))
+}
+
+func (p *OneDriveProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return err
+	}
+	clean, err := oneDrivePath(dirPath)
+	if err != nil || clean == "/" {
+		return err
+	}
+	current := ""
+	for _, component := range strings.Split(strings.TrimPrefix(clean, "/"), "/") {
+		current += "/" + component
+		resource, inspectErr := p.InspectResource(ctx, resourceType, current)
+		if inspectErr == nil {
+			if !resource.IsDir {
+				return fmt.Errorf("onedrive path component %q is a file", current)
+			}
+			continue
+		}
+		if !errors.Is(inspectErr, ErrNotFound) {
+			return inspectErr
+		}
+		parentURL, err := p.itemURL(path.Dir(current))
+		if err != nil {
+			return err
+		}
+		body, err := json.Marshal(map[string]any{"name": component, "folder": map[string]any{}, "@microsoft.graph.conflictBehavior": "fail"})
+		if err != nil {
+			return err
+		}
+		req, err := p.request(ctx, http.MethodPost, parentURL+"/children", bytes.NewReader(body), true)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode == http.StatusConflict {
+			resp.Body.Close()
+			existing, err := p.InspectResource(ctx, resourceType, current)
+			if err != nil {
+				return err
+			}
+			if !existing.IsDir {
+				return fmt.Errorf("onedrive path component %q is a file", current)
+			}
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return oneDriveError("create directory", resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+	return nil
+}
+
+func (p *OneDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return err
+	}
+	oldURL, err := p.itemURL(oldPath)
+	if err != nil {
+		return err
+	}
+	cleanNew, err := oneDrivePath(newPath)
+	if err != nil {
+		return err
+	}
+	cleanOld, err := oneDrivePath(oldPath)
+	if err != nil {
+		return err
+	}
+	payload := map[string]any{"name": path.Base(cleanNew)}
+	if oldParent, newParent := path.Dir(cleanOld), path.Dir(cleanNew); oldParent != newParent {
+		if err := p.CreateDirectory(ctx, resourceType, newParent); err != nil {
+			return err
+		}
+		parentID, err := p.itemID(ctx, newParent)
+		if err != nil {
+			return err
+		}
+		payload["parentReference"] = map[string]string{"id": parentID}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := p.request(ctx, http.MethodPatch, oldURL, bytes.NewReader(body), true)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return oneDriveError("rename", resp.StatusCode)
+	}
+	return nil
+}
+
+func (p *OneDriveProvider) itemID(ctx context.Context, filePath string) (string, error) {
+	itemURL, err := p.itemURL(filePath)
+	if err != nil {
+		return "", err
+	}
+	req, err := p.request(ctx, http.MethodGet, itemURL+"?$select=id", nil, true)
+	if err != nil {
+		return "", err
+	}
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", oneDriveError("inspect parent", resp.StatusCode)
+	}
+	var item struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		return "", fmt.Errorf("decode onedrive parent: %w", err)
+	}
+	if item.ID == "" {
+		return "", errors.New("onedrive parent item did not return an ID")
+	}
+	return item.ID, nil
+}
+
+func (p *OneDriveProvider) SupportsAtomicRename() bool { return true }

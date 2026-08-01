@@ -70,6 +70,7 @@ time, description, tags, etc.) after a successful upload.
 | `webdav` | `webdav.go` (+ `propfind.go`) | generic WebDAV | user/pass | files |
 | `dropbox` | `dropbox.go` | Dropbox API v2 | OAuth2 (access token in `password` field) | files |
 | `google` | `google.go` | Drive API v3 / Calendar / People | OAuth2 | files, calendars, contacts |
+| `onedrive` | `onedrive.go` | Microsoft Graph personal OneDrive | OAuth2 (access token in `password` field) | files only |
 | `hidrive` | `hidrive.go` | Strato HiDrive REST API v2.1 | OAuth2 | files only |
 | `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, …) | access key / secret key | files |
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
@@ -112,7 +113,11 @@ Immich is files-only and supports one-time migrations only: calendars, contacts,
    from the URL before use (prevents leakage in `url.Error`).
 2. For `nextcloud`/`webdav`/`smb`/`sftp`/`immich`, runs `validateEgressURL` (SSRF guard).
 3. Switches on the whitelisted provider type and returns the concrete client. `magentacloud` ignores
-   the URL (uses its fixed endpoint). `google`, `dropbox`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
+   the URL (uses its fixed endpoint). `google`, `dropbox`, `onedrive`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
+
+### OneDrive Personal
+
+`onedrive` uses fixed Microsoft Graph `/v1.0/me/drive` endpoints and the `consumers` OAuth authority, so it supports only the account owner's personal OneDrive hierarchy. Shared-with-me content, SharePoint, organizational accounts, calendars, and contacts are intentionally excluded. Graph `eTag` values are retained for sync change detection; its non-portable QuickXor hash is never exposed as a checksum, so verification safely falls back to size. Target filenames follow OneDrive's Windows-style forbidden-character, reserved-name, trailing-punctuation, 255-character segment, 400-character path, and case-insensitive rules.
 
 Provider URL normalization: `normalizeProviderURL` substitutes the constant MagentaCLOUD URL when the
 provider is `magentacloud` (the frontend sends an empty URL).

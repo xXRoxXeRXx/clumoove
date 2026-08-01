@@ -90,7 +90,7 @@ File-scoped commands referenced in `AGENTS.md`:
 ### Storage providers
 - Every provider implements `StorageProvider` (`storage/provider.go`) and is registered in
   `factory.go`.
-- Valid provider values are whitelisted: `nextcloud`, `webdav`, `dropbox`, `google`, `hidrive`, `smb`, `s3`,
+- Valid provider values are whitelisted: `nextcloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
   `sftp`, `magentacloud`, `local`. Never pass unvalidated provider strings to `NewProvider`.
 - Resource types: `files`, `calendars`, `contacts`. Calendars/contacts are always overwritten on
   conflict.

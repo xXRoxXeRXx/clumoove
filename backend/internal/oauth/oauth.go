@@ -29,6 +29,21 @@ var httpClient = &http.Client{
 	},
 }
 
+var oneDriveUserInfoURL = "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName,id"
+
+var providerNames = map[string]struct{}{
+	"dropbox":  {},
+	"google":   {},
+	"onedrive": {},
+	"hidrive":  {},
+}
+
+// IsProvider reports whether provider uses the shared OAuth credential lifecycle.
+func IsProvider(provider string) bool {
+	_, ok := providerNames[provider]
+	return ok
+}
+
 func InitConfigs() {
 	configs["dropbox"] = ProviderConfig{
 		ClientID:     os.Getenv("DROPBOX_CLIENT_ID"),
@@ -48,6 +63,13 @@ func InitConfigs() {
 			"https://www.googleapis.com/auth/userinfo.email",
 			"https://www.googleapis.com/auth/userinfo.profile",
 		},
+	}
+	configs["onedrive"] = ProviderConfig{
+		ClientID:     os.Getenv("ONEDRIVE_CLIENT_ID"),
+		ClientSecret: os.Getenv("ONEDRIVE_CLIENT_SECRET"),
+		AuthURL:      "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
+		TokenURL:     "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+		Scopes:       []string{"openid", "profile", "offline_access", "User.Read", "Files.ReadWrite"},
 	}
 	// Note: HiDrive OAuth requires comma-separated scopes ("admin,rw"), joined as single string.
 	configs["hidrive"] = ProviderConfig{
@@ -251,6 +273,35 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 			return info.Account, nil
 		}
 		return "HiDrive User", nil
+	case "onedrive":
+		req, err := http.NewRequestWithContext(ctx, "GET", oneDriveUserInfoURL, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("failed to fetch onedrive user info: status %d", resp.StatusCode)
+		}
+		var info struct {
+			DisplayName       string `json:"displayName"`
+			Mail              string `json:"mail"`
+			UserPrincipalName string `json:"userPrincipalName"`
+			ID                string `json:"id"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+			return "", err
+		}
+		for _, value := range []string{info.DisplayName, info.Mail, info.UserPrincipalName, info.ID} {
+			if value != "" {
+				return value, nil
+			}
+		}
+		return "OneDrive User", nil
 	default:
 		return "OAuth User", nil
 	}

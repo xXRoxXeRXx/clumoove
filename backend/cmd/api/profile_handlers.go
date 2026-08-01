@@ -68,11 +68,17 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 		}
 	}
 
-	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "hidrive"
+	isOAuth := oauth.IsProvider(p.Provider)
 	if isOAuth && refreshToken != "" {
-		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
-			password = tok.AccessToken
+		tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken)
+		if terr != nil || tok.AccessToken == "" {
+			return base, errors.New("profile OAuth token refresh failed")
 		}
+		if err := s.persistProfileOAuthTokens(p, tok); err != nil {
+			return base, err
+		}
+		password = tok.AccessToken
+		refreshToken = tok.RefreshToken
 	}
 
 	return profileCreds{
@@ -82,6 +88,25 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 		Password:     password,
 		RefreshToken: refreshToken,
 	}, nil
+}
+
+func (s *APIServer) persistProfileOAuthTokens(p *db.ConnectionProfile, token *oauth.TokenResponse) error {
+	accessEncrypted, err := crypto.Encrypt(token.AccessToken, s.encryptionKey)
+	if err != nil {
+		return err
+	}
+	refreshEncrypted, err := crypto.Encrypt(token.RefreshToken, s.encryptionKey)
+	if err != nil {
+		return err
+	}
+	expiresIn := token.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	if err := db.UpdateConnectionProfileOAuthTokens(s.db, p.ID, accessEncrypted, refreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), p.RefreshTokenEncrypted); err != nil {
+		return err
+	}
+	return nil
 }
 
 type ConnectionProfileRequest struct {
@@ -404,12 +429,14 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		}
 		refreshToken = dec
 	}
-	isOAuth := p.Provider == "dropbox" || p.Provider == "google" || p.Provider == "hidrive"
+	isOAuth := oauth.IsProvider(p.Provider)
 	if isOAuth && refreshToken != "" {
-		password = refreshToken
-		if tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken); terr == nil && tok.AccessToken != "" {
-			password = tok.AccessToken
+		tok, terr := oauth.RefreshToken(r.Context(), p.Provider, refreshToken)
+		if terr != nil || tok.AccessToken == "" || s.persistProfileOAuthTokens(p, tok) != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
+			return
 		}
+		password = tok.AccessToken
 	}
 
 	client, err := storage.NewProvider(r.Context(), p.Provider, p.URL, p.Username, password)

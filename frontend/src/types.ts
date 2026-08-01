@@ -13,12 +13,19 @@ export type Provider =
   | 'webdav'
   | 'magentacloud'
   | 'google'
+  | 'onedrive'
   | 'hidrive'
   | 'smb'
   | 's3'
   | 'sftp'
   | 'local'
   | 'immich';
+
+export const OAUTH_PROVIDERS = ['dropbox', 'google', 'onedrive', 'hidrive'] as const satisfies readonly Provider[];
+
+export function isOAuthProvider(provider: string): provider is (typeof OAUTH_PROVIDERS)[number] {
+  return (OAUTH_PROVIDERS as readonly string[]).includes(provider);
+}
 
 export interface MigrationConfig {
   source_url: string;

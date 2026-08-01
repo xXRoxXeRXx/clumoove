@@ -49,6 +49,13 @@ func TestSanitizeFilename_ForbiddenChars(t *testing.T) {
 			reason:   "forbidden_char",
 		},
 		{
+			name:     "OneDrive Windows restrictions",
+			input:    "CON: report?.txt ",
+			provider: "onedrive",
+			expected: "_CON_ report_.txt",
+			reason:   "forbidden_char",
+		},
+		{
 			name:     "Dropbox slash",
 			input:    "dir/file.txt",
 			provider: "dropbox",
@@ -159,6 +166,18 @@ func TestSanitizeFilename_HiDriveLengthTruncation(t *testing.T) {
 	}
 	if IsPathTooLong(strings.Repeat("a", 1020), "hidrive") {
 		t.Error("expected IsPathTooLong=false for 1020 chars on hidrive")
+	}
+}
+
+func TestOneDriveLimitsAndCaseSensitivity(t *testing.T) {
+	if GetMaxPathLength("onedrive") != 400 {
+		t.Errorf("OneDrive path length = %d, want 400", GetMaxPathLength("onedrive"))
+	}
+	if !IsPathTooLong(strings.Repeat("a", 401), "onedrive") {
+		t.Error("expected 401-character OneDrive path to be too long")
+	}
+	if !IsCaseInsensitive("onedrive") {
+		t.Error("onedrive should be case-insensitive")
 	}
 }
 

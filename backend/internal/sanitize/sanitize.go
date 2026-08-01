@@ -32,18 +32,20 @@ var reservedWindowsNames = map[string]bool{
 }
 
 var providerForbiddenChars = map[string][]rune{
-	"smb":      {'\\', '/', ':', '*', '?', '"', '<', '>', '|'},
-	"dropbox":  {'/'},
-	"google":   {'/'},
-	"hidrive":  {'?'},
-	"nextcloud": {'/'},
+	"smb":          {'\\', '/', ':', '*', '?', '"', '<', '>', '|'},
+	"onedrive":     {'\\', '/', ':', '*', '?', '"', '<', '>', '|'},
+	"dropbox":      {'/'},
+	"google":       {'/'},
+	"hidrive":      {'?'},
+	"nextcloud":    {'/'},
 	"magentacloud": {'/'},
-	"webdav":   {'/'},
-	"sftp":     {'/'},
+	"webdav":       {'/'},
+	"sftp":         {'/'},
 }
 
 var providerMaxLength = map[string]int{
 	"smb":          255,
+	"onedrive":     255,
 	"dropbox":      255,
 	"google":       255,
 	"hidrive":      251,
@@ -55,7 +57,8 @@ var providerMaxLength = map[string]int{
 }
 
 var providerMaxPathLength = map[string]int{
-	"hidrive": 1020,
+	"hidrive":  1020,
+	"onedrive": 400,
 }
 
 func GetMaxPathLength(provider string) int {
@@ -73,9 +76,10 @@ func IsPathTooLong(path string, targetProvider string) bool {
 // Case-insensitive providers. Note: HiDrive runs on ext4 (Linux) and is
 // case-sensitive, so it is intentionally omitted from caseInsensitiveProviders.
 var caseInsensitiveProviders = map[string]bool{
-	"dropbox": true,
-	"google":  true,
-	"smb":     true,
+	"dropbox":  true,
+	"google":   true,
+	"smb":      true,
+	"onedrive": true,
 }
 
 func IsCaseInsensitive(provider string) bool {
@@ -102,7 +106,7 @@ func SanitizeFilename(name string, targetProvider string) SanitizeResult {
 		return result
 	}
 
-	if targetProvider == "smb" {
+	if targetProvider == "smb" || targetProvider == "onedrive" {
 		sanitized := sanitizeWindowsReserved(result.SanitizedName)
 		if sanitized != result.SanitizedName {
 			result.SanitizedName = sanitized
@@ -121,7 +125,7 @@ func SanitizeFilename(name string, targetProvider string) SanitizeResult {
 		}
 	}
 
-	if targetProvider == "smb" {
+	if targetProvider == "smb" || targetProvider == "onedrive" {
 		sanitized := trimWindowsTrailing(result.SanitizedName)
 		if sanitized != result.SanitizedName {
 			result.SanitizedName = sanitized
@@ -222,4 +226,3 @@ func truncatePreserveExt(name string, maxLen int) string {
 	}
 	return string(runes) + ext
 }
-
