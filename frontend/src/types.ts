@@ -18,6 +18,7 @@ export type Provider =
   | 'smb'
   | 's3'
   | 'sftp'
+  | 'ftp'
   | 'local'
   | 'immich';
 

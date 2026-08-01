@@ -193,8 +193,11 @@ If a user suspension commits but a Redis sync-cancellation event cannot be publi
 Validation rules applied server-side:
 - At least one of `paths`/`calendars`/`contacts` required.
 - Provider values must be in the whitelist (`nextcloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
-  `sftp`, `magentacloud`, `local`, `immich`).
-- `magentacloud`, `onedrive`, `hidrive`, `local`, and `immich` are files-only (reject calendars/contacts on source or target).
+  `sftp`, `ftp`, `magentacloud`, `local`, `immich`).
+- `ftp`, `magentacloud`, `onedrive`, `hidrive`, `local`, and `immich` are files-only (reject calendars/contacts on source or target).
+- `ftp` accepts only `ftp://host:21?tls=explicit` for explicit FTPS or `ftps://host:990` for implicit FTPS. Plain FTP,
+  URL userinfo, certificate-validation bypasses, and custom CAs are not supported. Credentials belong in the encrypted
+  username/password request fields, not the URL.
 - An Immich target requires `conflict_strategy: "SKIP"`; Immich relies on native duplicate detection and does not support overwrite or rename. Immich can be used only for one-time migrations, not sync jobs.
 - Per-user cap of `maxActiveMigrations` (10) simultaneous active migrations.
 - `threads` clamped to 1–16; `bandwidth_limit_mbps` clamped to 0–1000.

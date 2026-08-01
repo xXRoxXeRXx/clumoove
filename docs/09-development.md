@@ -46,6 +46,7 @@ Run these from the respective component directories:
 
 ```bash
 # Go (from backend/)
+cd backend && go test ./...
 cd backend && go vet ./...
 cd backend && go build ./...
 
@@ -91,10 +92,21 @@ File-scoped commands referenced in `AGENTS.md`:
 - Every provider implements `StorageProvider` (`storage/provider.go`) and is registered in
   `factory.go`.
 - Valid provider values are whitelisted: `nextcloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
-  `sftp`, `magentacloud`, `local`. Never pass unvalidated provider strings to `NewProvider`.
+  `sftp`, `ftp`, `magentacloud`, `local`, `immich`. Never pass unvalidated provider strings to `NewProvider`.
+- `ftp` is files-only FTPS. Accept only explicit `ftp://host:21?tls=explicit` or implicit `ftps://host:990`; reject
+  cleartext FTP and URL userinfo. Use system-CA hostname/SNI validation only, without insecure or custom-CA options.
+  Control and passive data connections must use the SSRF-safe egress dialer; prefer EPSV and pin PASV data connections
+  to the validated control host, using only the server-announced port. FTPS deployments require outbound TCP access to
+  port 21 or 990 and the server's configured passive range, with no inbound Docker port required.
 - Resource types: `files`, `calendars`, `contacts`. Calendars/contacts are always overwritten on
   conflict.
 - S3 `insecure=true` endpoints must check literal IPs / `*.local`/`localhost` without DNS resolution.
+
+### FTPS test and deployment notes
+- Run `(cd backend && go test -race ./internal/storage)` for storage-provider changes that affect connection lifecycle,
+  passive data channels, or synchronization.
+- FTPS integration tests are separate from the default suite and require a configured FTPS server. They cover explicit
+  and implicit TLS, certificate validation, protected passive transfers, and rename behavior.
 
 ### Security
 - Credentials: never pass plaintext to background goroutines; query + decrypt at the last moment

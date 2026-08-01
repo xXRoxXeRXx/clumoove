@@ -11,7 +11,7 @@ func TestIsValidProvider(t *testing.T) {
 			t.Errorf("IsValidProvider(%q) = false, want true", p)
 		}
 	}
-	invalid := []string{"", "ftp", "NEXTCLOUD", "Dropbox", "s3 "}
+	invalid := []string{"", "NEXTCLOUD", "Dropbox", "s3 "}
 	for _, p := range invalid {
 		if IsValidProvider(p) {
 			t.Errorf("IsValidProvider(%q) = true, want false", p)
@@ -26,7 +26,7 @@ func TestProviderSupportsResourceType(t *testing.T) {
 	if !ProviderSupportsResourceType("google", "calendars") || !ProviderSupportsResourceType("google", "contacts") {
 		t.Errorf("expected google to support calendars and contacts")
 	}
-	for _, p := range []string{"local", "webdav", "s3", "sftp", "smb", "dropbox", "onedrive", "hidrive", "immich", "magentacloud"} {
+	for _, p := range []string{"local", "webdav", "s3", "sftp", "ftp", "smb", "dropbox", "onedrive", "hidrive", "immich", "magentacloud"} {
 		if !ProviderSupportsResourceType(p, "files") {
 			t.Errorf("expected %s to support files", p)
 		}
@@ -78,6 +78,7 @@ func TestNewProviderSSRFBlockedByDefault(t *testing.T) {
 		{"webdav", "https://localhost/dav"},
 		{"smb", "smb://169.254.169.254/share"},
 		{"sftp", "sftp://[::1]/"},
+		{"ftp", "ftps://127.0.0.1/"},
 	}
 	for _, c := range cases {
 		if _, err := NewProvider(context.Background(), c.typ, c.url, "u", "p"); err == nil {

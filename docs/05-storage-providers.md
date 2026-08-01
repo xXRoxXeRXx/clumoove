@@ -34,7 +34,7 @@ type StorageProvider interface {
 > provider, add this method alongside the others.
 >
 > - Return `true` for providers that support an atomic "upload to `<path>.tmp` then rename to `<path>`"
->   overwrite pattern (all standard file providers: Nextcloud/WebDAV, S3, SMB, SFTP, Dropbox, Google
+>   overwrite pattern (all standard file providers: Nextcloud/WebDAV, S3, SMB, SFTP, FTPS, Dropbox, Google
 >   Drive, Local).
 > - Return `false` for providers that **cannot** rename or delete (for example, `immich`, which writes
 >   an asset directly and relies on its native duplicate handling). The processor then skips the
@@ -75,12 +75,48 @@ time, description, tags, etc.) after a successful upload.
 | `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, …) | access key / secret key | files |
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
 | `sftp` | `sftp.go` | SSH SFTP (`pkg/sftp`) | user/pass (or key), trusted SHA-256 host-key fingerprint | files |
+| `ftp` | `ftp.go` | FTPS: explicit or implicit TLS | user/pass | files |
 | `local` | `local.go` | Local filesystem (server-side sandbox) | none (no URL/user/pass) | files only |
 | `immich` | `immich.go` | Immich stable v2 API | server URL + API key in encrypted password field | files only, one-time migrations |
 
 ---
 
-## 2.1. Local Storage Provider (`local`)
+## 2.1. FTPS Provider (`ftp`)
+
+`ftp` supports files only and always uses TLS-protected FTP. It can be a source or target for migrations,
+sync jobs, and connection profiles. The only accepted endpoint forms are:
+
+- Explicit FTPS: `ftp://host:21?tls=explicit`. The server must successfully upgrade the control
+  connection with `AUTH TLS`, `PBSZ 0`, and `PROT P`.
+- Implicit FTPS: `ftps://host:990`. TLS starts before the FTP control handshake.
+
+Plain FTP is not supported: `ftp://` URLs without exactly `tls=explicit` are rejected. URLs must not carry
+userinfo; the username and password are persisted in the existing encrypted credential fields. URL paths
+do not define an FTP root. Unknown, duplicate, or conflicting query parameters, fragments, and invalid
+ports are rejected.
+
+TLS uses the system CA trust store and validates the configured hostname through SNI. TLS 1.2 is the
+minimum version. There is no certificate-validation bypass, custom CA, client certificate, active FTP, or
+cleartext fallback.
+
+The FTP control connection and every passive data connection use the DNS-rebinding-safe egress dialer.
+EPSV is preferred. If the provider falls back to PASV, it uses only the port returned by the server and
+always opens the data connection to the already validated control host; it ignores the PASV response's
+advertised host or IP address. This prevents a malicious or misconfigured server from redirecting a data
+connection to a different egress destination.
+
+FTP does not provide portable file checksums, so the processor's integrity verification falls back to a
+size comparison. FTPS supports server-side rename within the target directory and therefore supports the
+temporary-upload then rename overwrite pattern.
+
+### FTPS deployment requirements
+
+The API and worker containers need outbound TCP access to the FTPS control port (21 for explicit FTPS or
+990 for implicit FTPS) and to the passive data-port range configured on the specific FTPS server. No
+inbound Docker port publication is required for FTPS. A server that requires a distinct passive data host
+is intentionally unsupported because data channels are pinned to the validated control host.
+
+## 2.2. Local Storage Provider (`local`)
 
 `local` reads and writes files from a server-side, tenant-isolated sandbox defined by the
 `LOCAL_STORAGE_ROOT` environment variable. It carries **no credentials** (no URL, no username, no
@@ -111,7 +147,7 @@ Immich is files-only and supports one-time migrations only: calendars, contacts,
 
 1. For `nextcloud`/`webdav`, extracts credentials embedded in the URL (`user:pass@host`) and strips them
    from the URL before use (prevents leakage in `url.Error`).
-2. For `nextcloud`/`webdav`/`smb`/`sftp`/`immich`, runs `validateEgressURL` (SSRF guard).
+2. For `nextcloud`/`webdav`/`smb`/`sftp`/`ftp`/`immich`, runs `validateEgressURL` (SSRF guard).
 3. Switches on the whitelisted provider type and returns the concrete client. `magentacloud` ignores
    the URL (uses its fixed endpoint). `google`, `dropbox`, `onedrive`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
 
@@ -142,6 +178,8 @@ the API against Server-Side Request Forgery through the connect/browse endpoints
 - **Redirects:** user-configured provider, S3, and notification HTTP clients do not follow redirects.
   Configure the canonical HTTPS endpoint and S3 regional endpoint directly; HTTP-to-HTTPS and S3
   regional redirect responses are returned to the caller rather than followed.
+- **FTPS data channels:** `ftp` validates the configured control host for every control and passive data
+  connection. EPSV is preferred; PASV never supplies a new host, only the passive data port.
 
 ### S3-specific SSRF
 

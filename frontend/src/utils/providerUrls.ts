@@ -85,3 +85,51 @@ export function buildSftpUrl(host: string, port: string, hostKey: string): strin
   const hkPart = hostKey.trim() ? `?host_key=${encodeURIComponent(hostKey.trim())}` : '';
   return `sftp://${host}:${p}${hkPart}`;
 }
+
+export type FtpTlsMode = 'explicit' | 'implicit';
+
+export interface FtpUrlParams {
+  host: string;
+  port: string;
+  tlsMode: FtpTlsMode;
+}
+
+const defaultFtpUrlParams: FtpUrlParams = { host: '', port: '21', tlsMode: 'explicit' };
+
+function isValidPort(port: string): boolean {
+  const value = Number(port);
+  return Number.isInteger(value) && value >= 1 && value <= 65535;
+}
+
+function formatUrlHost(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
+// Only FTPS URLs are accepted. Plain FTP must use explicit TLS.
+export function parseFtpUrl(urlStr: string): FtpUrlParams {
+  if (!urlStr) return defaultFtpUrlParams;
+  try {
+    const u = new URL(urlStr);
+    if (!u.hostname || !isValidPort(u.port || (u.protocol === 'ftps:' ? '990' : '21')) || u.username || u.password || u.hash || (u.pathname !== '' && u.pathname !== '/')) return defaultFtpUrlParams;
+
+    if (u.protocol === 'ftp:' && u.search === '?tls=explicit') {
+      return { host: u.hostname, port: u.port || '21', tlsMode: 'explicit' };
+    }
+    if (u.protocol === 'ftps:' && !u.search) {
+      return { host: u.hostname, port: u.port || '990', tlsMode: 'implicit' };
+    }
+  } catch {
+    // Ignore malformed profile URLs and use safe explicit-FTPS defaults.
+  }
+  return defaultFtpUrlParams;
+}
+
+export function buildFtpUrl(host: string, port: string, tlsMode: FtpTlsMode): string {
+  const trimmedHost = host.trim();
+  if (!trimmedHost || /[\s@/?#]/.test(trimmedHost) || !isValidPort(port || (tlsMode === 'explicit' ? '21' : '990'))) return '';
+  const finalPort = port || (tlsMode === 'explicit' ? '21' : '990');
+  const formattedHost = formatUrlHost(trimmedHost);
+  return tlsMode === 'explicit'
+    ? `ftp://${formattedHost}:${finalPort}?tls=explicit`
+    : `ftps://${formattedHost}:${finalPort}`;
+}

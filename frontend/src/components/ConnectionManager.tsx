@@ -17,6 +17,9 @@ import {
   parseSftpUrl,
   buildSftpUrl,
   sftpHostKeyFingerprintPattern,
+  parseFtpUrl,
+  buildFtpUrl,
+  type FtpTlsMode,
 } from '../utils/providerUrls';
 import { ProviderFields } from './connect/ProviderFields';
 import { isOAuthProvider } from '../types';
@@ -39,6 +42,7 @@ export type ProviderId =
   | 'smb'
   | 's3'
   | 'sftp'
+  | 'ftp'
   | 'local'
   | 'immich';
 
@@ -142,6 +146,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
       { id: 'smb', name: 'SMB/CIFS' },
       { id: 's3', name: 'S3' },
       { id: 'sftp', name: 'SFTP' },
+      { id: 'ftp', name: 'FTPS' },
       ...(localStorageEnabled ? [{ id: 'immich' as const, name: 'Immich' }] : []),
       ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
 	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
@@ -350,6 +355,9 @@ interface FormState {
   sftpHostKey: string;
   sftpAuthMode: 'password' | 'key';
   sftpPrivateKey: string;
+  ftpHost: string;
+  ftpPort: string;
+  ftpTlsMode: FtpTlsMode;
 }
 
 function initFormState(editing: ProfilePublic | null): FormState {
@@ -357,6 +365,7 @@ function initFormState(editing: ProfilePublic | null): FormState {
   const smb = parseSmbUrl(provider === 'smb' ? editing?.url || '' : '');
   const s3 = parseS3Url(provider === 's3' ? editing?.url || '' : '');
   const sftp = parseSftpUrl(provider === 'sftp' ? editing?.url || '' : '');
+  const ftp = parseFtpUrl(provider === 'ftp' ? editing?.url || '' : '');
 
   return {
     name: editing?.name || '',
@@ -379,6 +388,9 @@ function initFormState(editing: ProfilePublic | null): FormState {
     sftpHostKey: sftp.hostKey,
     sftpAuthMode: 'password',
     sftpPrivateKey: '',
+    ftpHost: ftp.host,
+    ftpPort: ftp.port,
+    ftpTlsMode: ftp.tlsMode,
   };
 }
 
@@ -407,6 +419,9 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
     sftpPortId: 'profile-editor-sftp-port',
     sftpHostKeyId: 'profile-editor-sftp-hostkey',
     sftpPrivateKeyId: 'profile-editor-sftp-privatekey',
+    ftpHostId: 'profile-editor-ftp-host',
+    ftpPortId: 'profile-editor-ftp-port',
+    ftpTlsModeId: 'profile-editor-ftp-tls-mode',
   }), []);
 
   const { openOAuthPopup: triggerOAuthPopup } = useOAuthPopup(apiUrl);
@@ -435,6 +450,9 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         } else if (newProvider === 'sftp') {
           const sftp = parseSftpUrl(editing.url);
           next.sftpHost = sftp.host; next.sftpPort = sftp.port || '22'; next.sftpHostKey = sftp.hostKey;
+        } else if (newProvider === 'ftp') {
+          const ftp = parseFtpUrl(editing.url);
+          next.ftpHost = ftp.host; next.ftpPort = ftp.port; next.ftpTlsMode = ftp.tlsMode;
         } else {
           next.url = editing.url;
         }
@@ -442,6 +460,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         if (newProvider === 'smb' && !prev.smbPort) next.smbPort = '445';
         if (newProvider === 's3' && !prev.s3Region) next.s3Region = 'us-east-1';
         if (newProvider === 'sftp' && !prev.sftpPort) next.sftpPort = '22';
+        if (newProvider === 'ftp' && !prev.ftpPort) next.ftpPort = '21';
       }
       return next;
     });
@@ -493,6 +512,16 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
       }
       finalUrl = buildSftpUrl(form.sftpHost, form.sftpPort, form.sftpHostKey);
       finalPassword = form.sftpAuthMode === 'key' ? form.sftpPrivateKey : form.password;
+    } else if (form.provider === 'ftp') {
+      if (!form.ftpHost.trim()) {
+        onError(t('connect.errors.ftpHost'));
+        return;
+      }
+      finalUrl = buildFtpUrl(form.ftpHost, form.ftpPort, form.ftpTlsMode);
+      if (!finalUrl) {
+        onError(t('connect.errors.ftpPort'));
+        return;
+      }
     } else if (form.provider === 'immich') {
       if (!form.url.trim()) {
         onError(t('common.required'));
@@ -628,6 +657,12 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
             onSftpAuthModeChange={(v) => updateField('sftpAuthMode', v)}
             sftpPrivateKey={form.sftpPrivateKey}
             onSftpPrivateKeyChange={(v) => updateField('sftpPrivateKey', v)}
+            ftpHost={form.ftpHost}
+            onFtpHostChange={(v) => updateField('ftpHost', v)}
+            ftpPort={form.ftpPort}
+            onFtpPortChange={(v) => updateField('ftpPort', v)}
+            ftpTlsMode={form.ftpTlsMode}
+            onFtpTlsModeChange={(v) => updateField('ftpTlsMode', v)}
             ids={fieldIds}
           />
 

@@ -7,6 +7,8 @@ import {
   parseSftpUrl,
   buildSftpUrl,
   sftpHostKeyFingerprintPattern,
+  parseFtpUrl,
+  buildFtpUrl,
 } from './providerUrls';
 
 describe('providerUrls', () => {
@@ -130,6 +132,37 @@ describe('providerUrls', () => {
       expect(sftpHostKeyFingerprintPattern.test('MD5:12345')).toBe(false);
       expect(sftpHostKeyFingerprintPattern.test('SHA256:short')).toBe(false);
       expect(sftpHostKeyFingerprintPattern.test('SHA256:too-long-fingerprint-string-that-exceeds-forty-three-chars-1234567890')).toBe(false);
+    });
+  });
+
+  describe('FTPS URL handling', () => {
+    it('round-trips explicit and implicit FTPS URLs', () => {
+      expect(parseFtpUrl('ftp://ftp.example.com:2121?tls=explicit')).toEqual({
+        host: 'ftp.example.com', port: '2121', tlsMode: 'explicit',
+      });
+      expect(parseFtpUrl('ftps://ftp.example.com:1990')).toEqual({
+        host: 'ftp.example.com', port: '1990', tlsMode: 'implicit',
+      });
+      expect(buildFtpUrl('ftp.example.com', '2121', 'explicit')).toBe('ftp://ftp.example.com:2121?tls=explicit');
+      expect(buildFtpUrl('ftp.example.com', '1990', 'implicit')).toBe('ftps://ftp.example.com:1990');
+    });
+
+    it('uses the FTPS default ports', () => {
+      expect(parseFtpUrl('ftp://ftp.example.com?tls=explicit')).toEqual({ host: 'ftp.example.com', port: '21', tlsMode: 'explicit' });
+      expect(parseFtpUrl('ftps://ftp.example.com')).toEqual({ host: 'ftp.example.com', port: '990', tlsMode: 'implicit' });
+      expect(buildFtpUrl('ftp.example.com', '', 'explicit')).toBe('ftp://ftp.example.com:21?tls=explicit');
+      expect(buildFtpUrl('ftp.example.com', '', 'implicit')).toBe('ftps://ftp.example.com:990');
+    });
+
+    it('rejects plaintext FTP and invalid FTPS variants', () => {
+      const empty = { host: '', port: '21', tlsMode: 'explicit' };
+      expect(parseFtpUrl('ftp://ftp.example.com')).toEqual(empty);
+      expect(parseFtpUrl('ftp://user:pass@ftp.example.com?tls=explicit')).toEqual(empty);
+      expect(parseFtpUrl('ftp://ftp.example.com?tls=implicit')).toEqual(empty);
+      expect(parseFtpUrl('ftps://ftp.example.com?tls=explicit')).toEqual(empty);
+      expect(parseFtpUrl('ftp://ftp.example.com:0?tls=explicit')).toEqual(empty);
+      expect(buildFtpUrl('ftp.example.com', '0', 'explicit')).toBe('');
+      expect(buildFtpUrl('user@ftp.example.com', '21', 'explicit')).toBe('');
     });
   });
 });

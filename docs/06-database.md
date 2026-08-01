@@ -12,6 +12,9 @@ migration step).
 legacy `cron_expression` values from `sync` schedules because sync cadence is stored in the linked
 job's `interval_minutes`.
 
+Adding the `ftp` provider requires no schema migration: existing provider, endpoint, username, and
+encrypted-password fields persist its FTPS connection details.
+
 > **Rule:** Any schema change must be added to `db/schema.sql` **and** as an inline statement inside
 > `InitDB()` for automatic migration on startup.
 
@@ -57,12 +60,12 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | :----- | :--- | :---- |
 | `id` | UUID PK | |
 | `user_id` | UUID → `users` ON DELETE CASCADE | owner (multi-tenancy) |
-| `source_url` / `target_url` | TEXT | |
+| `source_url` / `target_url` | TEXT | Provider endpoint only; for `ftp`, FTPS-only canonical URL (no userinfo) |
 | `source_username` / `target_username` | TEXT | |
 | `source_password_encrypted` / `target_password_encrypted` | TEXT | AES-GCM |
 | `source_refresh_token_encrypted` / `target_refresh_token_encrypted` | TEXT | OAuth (AES-GCM) |
 | `source_token_expires_at` / `target_token_expires_at` | TIMESTAMPTZ | |
-| `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted |
+| `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted, including files-only `ftp` |
 | `target_dir` | TEXT NOT NULL DEFAULT `/` | |
 | `status` | TEXT | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `PAUSED`, `PAUSED_CONNECTION_LOSS`, `COMPLETED`, `FAILED`, `CANCELLED` |
 | `conflict_strategy` | TEXT NOT NULL DEFAULT `SKIP`, CHECK | `SKIP`, `OVERWRITE`, `RENAME` |
@@ -111,7 +114,7 @@ from `delivery.*` locale keys.
 | `user_id` | UUID → `users` ON DELETE CASCADE | owner (UNIQUE with `name`) |
 | `name` | TEXT NOT NULL | profile name |
 | `provider` | TEXT NOT NULL | whitelisted provider |
-| `url` / `username` | TEXT | |
+| `url` / `username` | TEXT | URL carries the endpoint only; `ftp` stores an FTPS-only canonical URL without userinfo |
 | `password_encrypted` / `refresh_token_encrypted` | TEXT | AES-GCM |
 | `token_expires_at` | TIMESTAMPTZ | |
 | `oauth_user` | TEXT | |
@@ -122,12 +125,12 @@ from `delivery.*` locale keys.
 | :----- | :--- | :---- |
 | `id` | UUID PK | `gen_random_uuid()` |
 | `user_id` | UUID → `users` ON DELETE CASCADE | owner |
-| `source_url` / `target_url` | TEXT | |
+| `source_url` / `target_url` | TEXT | Provider endpoint only; for `ftp`, FTPS-only canonical URL (no userinfo) |
 | `source_username` / `target_username` | TEXT | |
 | `source_password_encrypted` / `target_password_encrypted` | TEXT | AES-GCM |
 | `source_refresh_token_encrypted` / `target_refresh_token_encrypted` | TEXT | OAuth (AES-GCM) |
 | `source_token_expires_at` / `target_token_expires_at` | TIMESTAMPTZ | |
-| `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted |
+| `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted, including files-only `ftp` |
 | `direction` | TEXT NOT NULL DEFAULT `one_way` | `one_way`, `two_way` |
 | `conflict_strategy` | TEXT NOT NULL DEFAULT `OVERWRITE` | `OVERWRITE`, `SKIP`, `RENAME` |
 | `delete_propagation` | BOOLEAN NOT NULL DEFAULT FALSE | |

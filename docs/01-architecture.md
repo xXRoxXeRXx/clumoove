@@ -38,7 +38,7 @@ cache, and migration workers. Every migration is tied to a user account and isol
        ▼      ▼
 ┌──────────────┐   ┌──────────────┐
  │  Source Store │   │ Target Store  │  (Nextcloud, WebDAV, Dropbox, Google, OneDrive,
-└──────────────┘   └──────────────┘   S3, SMB, SFTP, MagentaCLOUD, Local, Immich)
+└──────────────┘   └──────────────┘   S3, SMB, SFTP, FTPS, MagentaCLOUD, Local, Immich)
 ```
 
 > **Important:** The task queue runs **natively in PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`).
@@ -98,6 +98,13 @@ cache, and migration workers. Every migration is tied to a user account and isol
    it over authenticated SSE (`GET /api/migration/{id}/stream`) to the live dashboard.
 8. **Report** — On completion a CSV report can be downloaded (`GET /api/migration/{id}/report`) that
    includes failed tasks **and** skipped indexing errors.
+
+For the `ftp` provider, source and target transfers are FTPS-only and files-only. The worker opens
+either explicit FTPS (`ftp://host:21?tls=explicit`) or implicit FTPS (`ftps://host:990`) with normal CA,
+hostname, and SNI validation. Passive data connections are egress-validated independently and remain
+pinned to the validated control host; a PASV response can contribute its port but never a replacement
+host address. Deployments must allow outbound TCP to the control port and the FTPS server's configured
+passive data-port range; no inbound port publishing is needed.
 
 ---
 

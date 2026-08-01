@@ -249,8 +249,16 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 
 See [Storage Providers](./05-storage-providers.md) for the full interface and provider list.
 `NewProvider` (factory) whitelists provider types, strips credentials from WebDAV/Nextcloud URLs,
-applies SSRF egress validation for `nextcloud`/`webdav`/`smb`/`sftp`, and returns the concrete
+applies SSRF egress validation for `nextcloud`/`webdav`/`smb`/`sftp`/`ftp`, and returns the concrete
 implementation. `magentacloud` uses a fixed endpoint (URL ignored).
+
+`ftp` is a files-only FTPS provider. It accepts only explicit FTPS
+(`ftp://host:21?tls=explicit`) and implicit FTPS (`ftps://host:990`); cleartext FTP, URL userinfo,
+certificate-validation bypasses, and custom CAs are rejected. TLS uses the system trust store with
+hostname/SNI validation. Every control and passive data connection uses the SSRF-safe egress dialer;
+EPSV is preferred, and PASV may supply only the data port while the validated control host remains the
+data-channel destination. FTP has no portable hash API, so integrity verification uses the existing
+size-comparison fallback.
 
 ---
 

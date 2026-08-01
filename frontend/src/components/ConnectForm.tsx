@@ -8,6 +8,7 @@ import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { apiFetch } from '../utils/apiClient';
 import { ProfileSelect } from './connect/ProfileSelect';
 import { SaveProfileRow } from './connect/SaveProfileRow';
+import { buildFtpUrl, type FtpTlsMode } from '../utils/providerUrls';
 
 type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
 
@@ -20,7 +21,7 @@ interface ConnectFormProps {
   onBack?: () => void;
 }
 
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'onedrive' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'local' | 'immich';
+type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'onedrive' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'ftp' | 'local' | 'immich';
 
 const sftpHostKeyFingerprintPattern = /^SHA256:[A-Za-z0-9+/]{43}$/;
 
@@ -76,6 +77,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 	const [targetSftpHostKey, setTargetSftpHostKey] = useState('');
   const [targetSftpAuthMode, setTargetSftpAuthMode] = useState<'password' | 'key'>('password');
   const [targetSftpPrivateKey, setTargetSftpPrivateKey] = useState('');
+
+  const [sourceFtpHost, setSourceFtpHost] = useState('');
+  const [sourceFtpPort, setSourceFtpPort] = useState('21');
+  const [sourceFtpTlsMode, setSourceFtpTlsMode] = useState<FtpTlsMode>('explicit');
+  const [targetFtpHost, setTargetFtpHost] = useState('');
+  const [targetFtpPort, setTargetFtpPort] = useState('21');
+  const [targetFtpTlsMode, setTargetFtpTlsMode] = useState<FtpTlsMode>('explicit');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +156,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
     : sourceProvider === 'sftp'
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}?host_key=${encodeURIComponent(sourceSftpHostKey.trim())}`
+    : sourceProvider === 'ftp'
+    ? buildFtpUrl(sourceFtpHost, sourceFtpPort, sourceFtpTlsMode)
     : sourceProvider === 'magentacloud' || sourceProvider === 'local'
     ? ''
     : (isOAuthProvider(sourceProvider) ? (sourceProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${sourceProvider}.com`) : sourceUrl));
@@ -159,6 +169,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
     : targetProvider === 'sftp'
     ? `sftp://${targetSftpHost}:${targetSftpPort}?host_key=${encodeURIComponent(targetSftpHostKey.trim())}`
+    : targetProvider === 'ftp'
+    ? buildFtpUrl(targetFtpHost, targetFtpPort, targetFtpTlsMode)
     : targetProvider === 'magentacloud' || targetProvider === 'local'
     ? ''
     : (isOAuthProvider(targetProvider) ? (targetProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${targetProvider}.com`) : targetUrl));
@@ -276,6 +288,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         return;
       }
     }
+    if (sourceProvider === 'ftp' && !sourceProfileSelected) {
+      if (!sourceFtpHost.trim()) {
+        setError(t('connect.errors.sourceFtpHost'));
+        return;
+      }
+      if (!finalSourceUrl) {
+        setError(t('connect.errors.ftpPort'));
+        return;
+      }
+    }
     if (targetProvider === 'sftp' && !targetProfileSelected) {
       if (!targetSftpHost.trim()) {
         setError(t('connect.errors.targetSftpHost'));
@@ -287,6 +309,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
       if (targetSftpAuthMode === 'key' && !targetSftpPrivateKey.trim()) {
         setError(t('connect.errors.targetSftpKey'));
+        return;
+      }
+    }
+    if (targetProvider === 'ftp' && !targetProfileSelected) {
+      if (!targetFtpHost.trim()) {
+        setError(t('connect.errors.targetFtpHost'));
+        return;
+      }
+      if (!finalTargetUrl) {
+        setError(t('connect.errors.ftpPort'));
         return;
       }
     }
@@ -427,6 +459,16 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
         return;
       }
     }
+    if (sourceProvider === 'ftp' && !sourceProfileSelected) {
+      if (!sourceFtpHost.trim()) {
+        setError(t('connect.errors.sourceFtpHost'));
+        return;
+      }
+      if (!finalSourceUrl) {
+        setError(t('connect.errors.ftpPort'));
+        return;
+      }
+    }
     if (sourceProvider === 'smb' && !sourceProfileSelected) {
       if (!sourceSmbHost.trim() || !sourceSmbShare.trim()) {
         setError(t('connect.errors.sourceSmb'));
@@ -519,6 +561,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 		setSourceSftpHostKey('');
       setSourceSftpAuthMode('password');
       setSourceSftpPrivateKey('');
+    } else if (val === 'ftp') {
+      setSourceUrl('');
+      setSourceUser('');
+      setSourcePass('');
+      setSourceFtpHost('');
+      setSourceFtpPort('21');
+      setSourceFtpTlsMode('explicit');
     } else if (val === 'local') {
       setSourceUrl('');
       setSourceUser('');
@@ -562,6 +611,13 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 		setTargetSftpHostKey('');
       setTargetSftpAuthMode('password');
       setTargetSftpPrivateKey('');
+    } else if (val === 'ftp') {
+      setTargetUrl('');
+      setTargetUser('');
+      setTargetPass('');
+      setTargetFtpHost('');
+      setTargetFtpPort('21');
+      setTargetFtpTlsMode('explicit');
     } else if (val === 'local') {
       setTargetUrl('');
       setTargetUser('');
@@ -580,6 +636,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 'smb', name: 'SMB/CIFS' },
     { id: 's3', name: 'S3' },
     { id: 'sftp', name: 'SFTP' },
+    { id: 'ftp', name: 'FTPS' },
     ...(localStorageEnabled ? [{ id: 'immich' as const, name: 'Immich' }] : []),
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
 	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
@@ -744,6 +801,35 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className={formMonoInputClass}
                       required
                     />
+                  </div>
+                </>
+              ) : sourceProvider === 'ftp' ? (
+                <>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <input type="text" placeholder="ftp.example.com" value={sourceFtpHost} onChange={(e) => setSourceFtpHost(e.target.value)} className={formInputClass} required />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <input type="text" placeholder={sourceFtpTlsMode === 'explicit' ? '21' : '990'} value={sourceFtpPort} onChange={(e) => setSourceFtpPort(e.target.value)} className={formInputClass} required />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.ftpsMode')}</label>
+                    <select value={sourceFtpTlsMode} onChange={(e) => { const tlsMode = e.target.value as FtpTlsMode; setSourceFtpTlsMode(tlsMode); setSourceFtpPort(tlsMode === 'explicit' ? '21' : '990'); }} className={formInputClass}>
+                      <option value="explicit">{t('connect.ftpsExplicit')}</option>
+                      <option value="implicit">{t('connect.ftpsImplicit')}</option>
+                    </select>
+                    <p className="text-xs text-[var(--color-text-muted)]">{t('connect.ftpsHint')}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <input type="text" autoComplete="section-source username" name="source_username" placeholder={t('connect.usernamePlaceholder')} value={sourceUser} onChange={(e) => setSourceUser(e.target.value)} className={formInputClass} required />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                    <input type="password" autoComplete="section-source current-password" name="source_password" placeholder={t('connect.password')} value={sourcePass} onChange={(e) => setSourcePass(e.target.value)} className={formMonoInputClass} required />
                   </div>
                 </>
               ) : sourceProvider === 'sftp' ? (
@@ -1237,6 +1323,35 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       className={formMonoInputClass}
                       required
                     />
+                  </div>
+                </>
+              ) : targetProvider === 'ftp' ? (
+                <>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <input type="text" placeholder="ftp.example.com" value={targetFtpHost} onChange={(e) => setTargetFtpHost(e.target.value)} className={formInputClass} required />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <input type="text" placeholder={targetFtpTlsMode === 'explicit' ? '21' : '990'} value={targetFtpPort} onChange={(e) => setTargetFtpPort(e.target.value)} className={formInputClass} required />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.ftpsMode')}</label>
+                    <select value={targetFtpTlsMode} onChange={(e) => { const tlsMode = e.target.value as FtpTlsMode; setTargetFtpTlsMode(tlsMode); setTargetFtpPort(tlsMode === 'explicit' ? '21' : '990'); }} className={formInputClass}>
+                      <option value="explicit">{t('connect.ftpsExplicit')}</option>
+                      <option value="implicit">{t('connect.ftpsImplicit')}</option>
+                    </select>
+                    <p className="text-xs text-[var(--color-text-muted)]">{t('connect.ftpsHint')}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <input type="text" autoComplete="section-target username" name="target_username" placeholder={t('connect.usernamePlaceholder')} value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className={formInputClass} required />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                    <input type="password" autoComplete="section-target current-password" name="target_password" placeholder={t('connect.password')} value={targetPass} onChange={(e) => setTargetPass(e.target.value)} className={formMonoInputClass} required />
                   </div>
                 </>
               ) : targetProvider === 'sftp' ? (

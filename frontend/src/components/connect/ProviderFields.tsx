@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { ExclamationCircleIcon as AlertCircle, ArrowPathIcon as RefreshCw } from '@heroicons/react/24/outline';
 import type { ProviderId } from '../ConnectionManager';
 import { isOAuthProvider } from '../../types';
+import type { FtpTlsMode } from '../../utils/providerUrls';
 
 const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
@@ -36,6 +37,10 @@ export interface ProviderFieldsProps {
   sftpHostKey: string; onSftpHostKeyChange: (v: string) => void;
   sftpAuthMode: 'password' | 'key'; onSftpAuthModeChange: (v: 'password' | 'key') => void;
   sftpPrivateKey: string; onSftpPrivateKeyChange: (v: string) => void;
+  // FTPS
+  ftpHost: string; onFtpHostChange: (v: string) => void;
+  ftpPort: string; onFtpPortChange: (v: string) => void;
+  ftpTlsMode: FtpTlsMode; onFtpTlsModeChange: (v: FtpTlsMode) => void;
   // Field IDs for accessibility
   ids: {
     urlId: string;
@@ -44,6 +49,7 @@ export interface ProviderFieldsProps {
     smbHostId: string; smbPortId: string; smbShareId: string; smbDomainId: string;
     s3BucketId: string; s3RegionId: string; s3EndpointId: string; s3InsecureId: string;
     sftpHostId: string; sftpPortId: string; sftpHostKeyId: string; sftpPrivateKeyId: string;
+    ftpHostId: string; ftpPortId: string; ftpTlsModeId: string;
   };
 }
 
@@ -65,6 +71,9 @@ export function ProviderFields(props: ProviderFieldsProps) {
   }
   if (provider === 'sftp') {
     return <SftpFields {...props} />;
+  }
+  if (provider === 'ftp') {
+    return <FtpFields {...props} />;
   }
   if (provider === 'immich') {
     return <ImmichFields {...props} />;
@@ -340,6 +349,54 @@ export function SftpFields({
           {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
         </div>
       )}
+    </>
+  );
+}
+
+export function FtpFields({
+  editing,
+  username, onUsernameChange,
+  password, onPasswordChange,
+  ftpHost, onFtpHostChange,
+  ftpPort, onFtpPortChange,
+  ftpTlsMode, onFtpTlsModeChange,
+  ids,
+}: ProviderFieldsProps) {
+  const { t } = useTranslation();
+  const selectTlsMode = (tlsMode: FtpTlsMode) => {
+    onFtpTlsModeChange(tlsMode);
+    onFtpPortChange(tlsMode === 'explicit' ? '21' : '990');
+  };
+
+  return (
+    <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="space-y-1.5 sm:col-span-2">
+          <label htmlFor={ids.ftpHostId} className={labelCls}>{t('connect.serverHost')}</label>
+          <input id={ids.ftpHostId} type="text" required value={ftpHost} onChange={(e) => onFtpHostChange(e.target.value)} className={inputCls} placeholder="ftp.example.com" />
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor={ids.ftpPortId} className={labelCls}>{t('connect.port')}</label>
+          <input id={ids.ftpPortId} type="text" required value={ftpPort} onChange={(e) => onFtpPortChange(e.target.value)} className={inputCls} placeholder={ftpTlsMode === 'explicit' ? '21' : '990'} />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.ftpTlsModeId} className={labelCls}>{t('connect.ftpsMode')}</label>
+        <select id={ids.ftpTlsModeId} value={ftpTlsMode} onChange={(e) => selectTlsMode(e.target.value as FtpTlsMode)} className={inputCls}>
+          <option value="explicit">{t('connect.ftpsExplicit')}</option>
+          <option value="implicit">{t('connect.ftpsImplicit')}</option>
+        </select>
+        <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('connect.ftpsHint')}</p>
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
+        <input id={ids.usernameId} type="text" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.passwordId} className={labelCls}>{t('connect.password')}</label>
+        <input id={ids.passwordId} type="password" value={password} onChange={(e) => onPasswordChange(e.target.value)} className={`${inputCls} font-mono`} placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')} required={!editing} />
+        {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
+      </div>
     </>
   );
 }
