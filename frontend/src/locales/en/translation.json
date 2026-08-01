@@ -460,7 +460,7 @@
     "name": "Name",
     "appName": "Clumoove",
     "license": "License",
-    "licenseName": "MIT",
+    "licenseName": "AGPLv3",
     "source": "Source code",
     "emailNotifications": "Email notifications",
     "smtpHost": "Email server address",
