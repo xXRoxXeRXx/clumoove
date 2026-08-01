@@ -3,9 +3,14 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
+
+const initialAdminSetupLockID int64 = 84736292
+
+var ErrSetupAlreadyCompleted = errors.New("initial setup already completed")
 
 type User struct {
 	ID                  string       `json:"id"`
@@ -92,6 +97,51 @@ func CreateUserWithRole(database *sql.DB, email, passwordHash, displayName, role
 	err := database.QueryRow(query, email, passwordHash, displayName, role, mustChangePassword, language).
 		Scan(&u.ID, &u.Role, &u.Active, &u.MustChangePassword, &u.Language, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// CreateInitialAdmin atomically claims an empty installation for its first
+// administrator. The advisory lock also serializes the otherwise unlocked
+// empty-table case, where SELECT ... FOR UPDATE cannot protect a missing row.
+func CreateInitialAdmin(ctx context.Context, database *sql.DB, email, passwordHash, displayName, language string) (*User, error) {
+	if language != "de" && language != "en" {
+		language = "en"
+	}
+
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, initialAdminSetupLockID); err != nil {
+		return nil, err
+	}
+
+	var setupRequired bool
+	if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM users)`).Scan(&setupRequired); err != nil {
+		return nil, err
+	}
+	if !setupRequired {
+		return nil, ErrSetupAlreadyCompleted
+	}
+
+	const query = `
+		INSERT INTO users (email, password_hash, display_name, role, active, must_change_password, language)
+		VALUES ($1, $2, $3, 'ADMIN', TRUE, FALSE, $4)
+		RETURNING id, role, active, must_change_password, language, created_at, updated_at
+	`
+	var u User
+	u.Email = email
+	u.DisplayName = displayName
+	if err := tx.QueryRowContext(ctx, query, email, passwordHash, displayName, language).
+		Scan(&u.ID, &u.Role, &u.Active, &u.MustChangePassword, &u.Language, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -371,12 +421,12 @@ func CountActiveAdmins(database *sql.DB) (int, error) {
 
 // IsSetupRequired checks if there are no users in the database, requiring initial admin setup.
 func IsSetupRequired(database *sql.DB) (bool, error) {
-	var count int
-	err := database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&count)
+	var setupRequired bool
+	err := database.QueryRow(`SELECT NOT EXISTS (SELECT 1 FROM users)`).Scan(&setupRequired)
 	if err != nil {
 		return false, err
 	}
-	return count == 0, nil
+	return setupRequired, nil
 }
 
 func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {

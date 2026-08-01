@@ -10,14 +10,13 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// setupEmailChangeTestDB connects to a real PostgreSQL (via DATABASE_URL) and
-// creates the minimal schema needed to exercise email-change token logic. The
-// test is skipped when no DATABASE_URL is configured, so it does not fail in
-// environments without a database.
-func setupEmailChangeTestDB(t *testing.T) *sql.DB {
+// setupTestDB connects to a real PostgreSQL (via DATABASE_URL) and creates the
+// shared schema baseline for database integration tests. It skips tests when no
+// DATABASE_URL is configured, so environments without a database still pass.
+func setupTestDB(t *testing.T) *sql.DB {
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		t.Skip("DATABASE_URL not set; skipping email-change DB test")
+		t.Skip("DATABASE_URL not set; skipping database integration test")
 	}
 
 	db, err := sql.Open("postgres", dsn)
@@ -34,7 +33,10 @@ func setupEmailChangeTestDB(t *testing.T) *sql.DB {
 			email TEXT UNIQUE NOT NULL,
 			password_hash TEXT NOT NULL DEFAULT '',
 			display_name TEXT NOT NULL DEFAULT '',
+			language TEXT NOT NULL DEFAULT 'en',
 			role TEXT NOT NULL DEFAULT 'USER',
+			active BOOLEAN NOT NULL DEFAULT TRUE,
+			must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
@@ -114,7 +116,7 @@ func tokenUsed(t *testing.T, db *sql.DB, hash string) bool {
 }
 
 func TestClaimEmailChangeToken(t *testing.T) {
-	db := setupEmailChangeTestDB(t)
+	db := setupTestDB(t)
 
 	t.Run("valid claim updates email and invalidates refresh tokens", func(t *testing.T) {
 		uid := createTestUser(t, db, "old@example.com")
@@ -211,7 +213,7 @@ func TestClaimEmailChangeToken(t *testing.T) {
 }
 
 func TestCreateEmailChangeToken_ReplacesPriorOpenToken(t *testing.T) {
-	db := setupEmailChangeTestDB(t)
+	db := setupTestDB(t)
 
 	uid := createTestUser(t, db, "single@example.com")
 	insertChangeToken(t, db, "tok-first", uid, "a@example.com", time.Now().Add(4*time.Hour))

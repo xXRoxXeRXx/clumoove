@@ -1197,6 +1197,8 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Avoid expensive password hashing after bootstrap is permanently closed.
+	// CreateInitialAdmin repeats this check while holding its transaction lock.
 	needsSetup, err := db.IsSetupRequired(s.db)
 	if err != nil {
 		log.Printf("handleSetupAdmin: failed to check setup status: %v\n", err)
@@ -1238,15 +1240,14 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.CreateUserWithRole(s.db, req.Email, passHash, req.DisplayName, "ADMIN", false, req.Language)
+	u, err := db.CreateInitialAdmin(r.Context(), s.db, req.Email, passHash, req.DisplayName, req.Language)
 	if err != nil {
 		log.Printf("handleSetupAdmin: failed to create admin user: %v\n", err)
+		if errors.Is(err, db.ErrSetupAlreadyCompleted) {
+			writeError(w, http.StatusForbidden, ErrSetupAlreadyCompleted)
+			return
+		}
 		if db.IsUniqueViolation(err) {
-			stillNeedsSetup, checkErr := db.IsSetupRequired(s.db)
-			if checkErr == nil && !stillNeedsSetup {
-				writeError(w, http.StatusForbidden, ErrSetupAlreadyCompleted)
-				return
-			}
 			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 			return
 		}
