@@ -1,16 +1,18 @@
 package email
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"html"
 	"mime"
 	"net"
 	"net/smtp"
+	"sort"
 	"strings"
+	"time"
 
 	"backend/internal/i18n"
-	"backend/internal/storage"
 )
 
 type SMTPConfig struct {
@@ -23,32 +25,58 @@ type SMTPConfig struct {
 	Encryption string // tls, starttls, none
 }
 
-// ValidateSMTPHost checks that the SMTP host is not a private/internal IP
-// address to prevent SSRF attacks. Literal internal IPs are rejected directly;
-// hostnames are resolved and every returned address is inspected (mirroring
-// storage.ValidateEgressHost), closing the DNS-rebinding case where a name
-// points at an internal/metadata address such as 169.254.169.254.
+const smtpOperationTimeout = 15 * time.Second
+
+var resolveSMTPIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+}
+
+// ValidateSMTPHost rejects SMTP endpoints that resolve to a private or internal
+// address. Unlike storage providers, SMTP must never reach private networks.
 func ValidateSMTPHost(host string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), smtpOperationTimeout)
+	defer cancel()
+	return validateSMTPHost(ctx, host)
+}
+
+func validateSMTPHost(ctx context.Context, host string) error {
 	if host == "" {
 		return fmt.Errorf("SMTP host is required")
 	}
 
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		if !isAllowedSMTPIP(ip) {
 			return fmt.Errorf("SMTP host must not be a private or internal IP address")
 		}
 		return nil
 	}
 
-	// Hostname: resolve and validate every address (SSRF / DNS-rebinding).
-	if err := storage.ValidateEgressHost(host); err != nil {
-		return fmt.Errorf("SMTP host must not resolve to a private or internal address")
+	ips, err := resolveSMTPIPs(ctx, host)
+	if err != nil {
+		return fmt.Errorf("SMTP host lookup failed: %w", err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("SMTP host resolved to no addresses")
+	}
+	for _, ip := range ips {
+		if !isAllowedSMTPIP(ip) {
+			return fmt.Errorf("SMTP host must not resolve to a private or internal address")
+		}
 	}
 	return nil
 }
 
+func isAllowedSMTPIP(ip net.IP) bool {
+	return ip.IsGlobalUnicast() && !ip.IsPrivate()
+}
+
 func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
-	addr := net.JoinHostPort(cfg.Host, cfg.Port)
+	ctx, cancel := context.WithTimeout(context.Background(), smtpOperationTimeout)
+	defer cancel()
+
+	if err := validateSMTPHost(ctx, cfg.Host); err != nil {
+		return err
+	}
 
 	from := cfg.FromEmail
 	if cfg.FromName != "" {
@@ -64,65 +92,94 @@ func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 
 	switch strings.ToLower(cfg.Encryption) {
 	case "tls":
-		return sendWithTLS(addr, cfg, auth, to, msg)
+		return sendWithTLS(ctx, cfg, auth, to, msg)
 	case "starttls":
-		return sendWithSTARTTLS(addr, cfg, auth, to, msg)
+		return sendWithSTARTTLS(ctx, cfg, auth, to, msg)
 	default:
-		return smtp.SendMail(addr, auth, cfg.FromEmail, []string{to}, []byte(msg))
+		return sendWithoutTLS(ctx, cfg, auth, to, msg)
 	}
 }
 
-func sendWithTLS(addr string, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
+func smtpDialContext(ctx context.Context, host, port string) (net.Conn, error) {
+	ips, err := resolveSMTPIPs(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("SMTP host lookup failed: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("SMTP host resolved to no addresses")
+	}
+	for _, ip := range ips {
+		if !isAllowedSMTPIP(ip) {
+			return nil, fmt.Errorf("SMTP host resolved to a private or internal address")
+		}
+	}
+
+	sort.SliceStable(ips, func(i, j int) bool {
+		return ips[i].To4() != nil && ips[j].To4() == nil
+	})
+
+	var errMsgs []string
+	for _, ip := range ips {
+		network := "tcp6"
+		if ip.To4() != nil {
+			network = "tcp4"
+		}
+		conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		errMsgs = append(errMsgs, fmt.Sprintf("%s (%s): %v", ip, network, err))
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("SMTP dial failed: %w", err)
+	}
+	return nil, fmt.Errorf("SMTP dial failed: %s", strings.Join(errMsgs, " | "))
+}
+
+func setSMTPDeadline(ctx context.Context, conn net.Conn) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return nil
+	}
+	return conn.SetDeadline(deadline)
+}
+
+func sendWithTLS(ctx context.Context, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
 	tlsConfig := &tls.Config{
 		ServerName: cfg.Host,
 	}
 
-	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	conn, err := smtpDialContext(ctx, cfg.Host, cfg.Port)
 	if err != nil {
 		return fmt.Errorf("TLS dial failed: %w", err)
 	}
 	defer conn.Close()
+	if err := setSMTPDeadline(ctx, conn); err != nil {
+		return fmt.Errorf("TLS deadline failed: %w", err)
+	}
+	tlsConn := tls.Client(conn, tlsConfig)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		return fmt.Errorf("TLS handshake failed: %w", err)
+	}
 
-	client, err := smtp.NewClient(conn, cfg.Host)
+	client, err := smtp.NewClient(tlsConn, cfg.Host)
 	if err != nil {
 		return fmt.Errorf("SMTP client creation failed: %w", err)
 	}
 	defer client.Close()
 
-	if auth != nil {
-		if err := client.Auth(auth); err != nil {
-			return fmt.Errorf("SMTP auth failed: %w", err)
-		}
-	}
-
-	if err := client.Mail(cfg.FromEmail); err != nil {
-		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
-	}
-	if err := client.Rcpt(to); err != nil {
-		return fmt.Errorf("SMTP RCPT TO failed: %w", err)
-	}
-
-	w, err := client.Data()
-	if err != nil {
-		return fmt.Errorf("SMTP DATA failed: %w", err)
-	}
-	_, err = w.Write([]byte(msg))
-	if err != nil {
-		return fmt.Errorf("SMTP write failed: %w", err)
-	}
-	if err := w.Close(); err != nil {
-		return fmt.Errorf("SMTP close failed: %w", err)
-	}
-
-	return client.Quit()
+	return sendSMTPMessage(client, cfg, auth, to, msg)
 }
 
-func sendWithSTARTTLS(addr string, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
-	conn, err := net.Dial("tcp", addr)
+func sendWithSTARTTLS(ctx context.Context, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
+	conn, err := smtpDialContext(ctx, cfg.Host, cfg.Port)
 	if err != nil {
 		return fmt.Errorf("dial failed: %w", err)
 	}
 	defer conn.Close()
+	if err := setSMTPDeadline(ctx, conn); err != nil {
+		return fmt.Errorf("SMTP deadline failed: %w", err)
+	}
 
 	client, err := smtp.NewClient(conn, cfg.Host)
 	if err != nil {
@@ -137,31 +194,50 @@ func sendWithSTARTTLS(addr string, cfg SMTPConfig, auth smtp.Auth, to, msg strin
 		return fmt.Errorf("STARTTLS failed: %w", err)
 	}
 
+	return sendSMTPMessage(client, cfg, auth, to, msg)
+}
+
+func sendWithoutTLS(ctx context.Context, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
+	conn, err := smtpDialContext(ctx, cfg.Host, cfg.Port)
+	if err != nil {
+		return fmt.Errorf("dial failed: %w", err)
+	}
+	defer conn.Close()
+	if err := setSMTPDeadline(ctx, conn); err != nil {
+		return fmt.Errorf("SMTP deadline failed: %w", err)
+	}
+
+	client, err := smtp.NewClient(conn, cfg.Host)
+	if err != nil {
+		return fmt.Errorf("SMTP client creation failed: %w", err)
+	}
+	defer client.Close()
+
+	return sendSMTPMessage(client, cfg, auth, to, msg)
+}
+
+func sendSMTPMessage(client *smtp.Client, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
 	if auth != nil {
 		if err := client.Auth(auth); err != nil {
 			return fmt.Errorf("SMTP auth failed: %w", err)
 		}
 	}
-
 	if err := client.Mail(cfg.FromEmail); err != nil {
 		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
 	}
 	if err := client.Rcpt(to); err != nil {
 		return fmt.Errorf("SMTP RCPT TO failed: %w", err)
 	}
-
 	w, err := client.Data()
 	if err != nil {
 		return fmt.Errorf("SMTP DATA failed: %w", err)
 	}
-	_, err = w.Write([]byte(msg))
-	if err != nil {
+	if _, err := w.Write([]byte(msg)); err != nil {
 		return fmt.Errorf("SMTP write failed: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("SMTP close failed: %w", err)
 	}
-
 	return client.Quit()
 }
 
