@@ -64,7 +64,7 @@ func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, erro
 		HTTPClient: &http.Client{
 			Transport:     newLoggingTransport(tr),
 			Timeout:       0,
-			CheckRedirect: validateEgressRedirect,
+			CheckRedirect: rejectEgressRedirect,
 		},
 	}, nil
 }

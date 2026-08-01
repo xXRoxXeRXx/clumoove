@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"testing"
@@ -62,32 +63,34 @@ func TestSortIPsIPv4First(t *testing.T) {
 	}
 }
 
-func TestValidateEgressRedirectRejectsBlockedTarget(t *testing.T) {
-	orig := blockPrivateEgress
-	blockPrivateEgress = false
-	defer func() { blockPrivateEgress = orig }()
-
+func TestRejectEgressRedirect(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "http://169.254.169.254/latest/meta-data/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := validateEgressRedirect(req, nil); err == nil {
-		t.Fatal("expected redirect to metadata address to be blocked")
+	if err := rejectEgressRedirect(req, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("expected redirect to be stopped, got %v", err)
 	}
 }
 
-func TestEgressDialerRejectsBlockedLiteralDialAddress(t *testing.T) {
-	orig := blockPrivateEgress
-	blockPrivateEgress = false
-	defer func() { blockPrivateEgress = orig }()
-
+func TestEgressDialerRejectsChangedLiteralDialAddress(t *testing.T) {
 	_, err := egressDialer("8.8.8.8")(context.Background(), "tcp", "127.0.0.1:80")
 	if err == nil {
-		t.Fatal("expected loopback dial address to be blocked")
+		t.Fatal("expected changed literal dial address to be blocked")
 	}
 }
 
-func TestSSRFProtectedClientsValidateRedirects(t *testing.T) {
+func TestEgressDialerRejectsChangedHostnameDialAddress(t *testing.T) {
+	dial := egressDialer("provider.example")
+	for _, addr := range []string{"8.8.8.8:443", "redirect.example:443"} {
+		_, err := dial(context.Background(), "tcp", addr)
+		if err == nil {
+			t.Errorf("expected changed hostname endpoint to reject %q", addr)
+		}
+	}
+}
+
+func TestSSRFProtectedClientsRejectRedirects(t *testing.T) {
 	webdav, err := NewWebDAVProvider("https://8.8.8.8/dav", "user", "password")
 	if err != nil {
 		t.Fatal(err)
@@ -112,6 +115,10 @@ func TestSSRFProtectedClientsValidateRedirects(t *testing.T) {
 	if !ok {
 		t.Fatal("S3 provider does not use an *http.Client")
 	}
+	egressClient, err := NewEgressHTTPClient("https://8.8.8.8/webhook")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for name, client := range map[string]*http.Client{
 		"webdav":       webdav.HTTPClient,
@@ -119,9 +126,14 @@ func TestSSRFProtectedClientsValidateRedirects(t *testing.T) {
 		"immich":       immich.HTTPClient,
 		"magentacloud": magentacloud.HTTPClient,
 		"s3":           s3Client,
+		"egress":       egressClient,
 	} {
 		if client.CheckRedirect == nil {
-			t.Errorf("%s client does not validate redirect destinations", name)
+			t.Errorf("%s client does not reject redirects", name)
+			continue
+		}
+		if err := client.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
+			t.Errorf("%s client follows redirects: %v", name, err)
 		}
 	}
 }

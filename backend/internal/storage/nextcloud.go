@@ -139,7 +139,7 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 			HTTPClient: &http.Client{
 				Transport:     newLoggingTransport(newDAVTransport(host)),
 				Timeout:       0,
-				CheckRedirect: validateEgressRedirect,
+				CheckRedirect: rejectEgressRedirect,
 			},
 			Threads:                8,
 			UserAgent:              "Nextcloud-Migration-Worker/1.0",

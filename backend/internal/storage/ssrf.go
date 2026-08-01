@@ -60,6 +60,8 @@ func ValidateEgressHost(host string) error {
 
 // NewEgressHTTPClient returns an HTTP client that validates the requested URL
 // and re-validates its hostname immediately before every TCP connection.
+// Redirects are intentionally not followed: a user-configured endpoint must
+// not be able to select a second egress destination via a response header.
 // It is intended for user-configured webhook-style endpoints.
 func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
 	if err := validateEgressURL(rawURL); err != nil {
@@ -72,12 +74,14 @@ func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
 	}
 	transport := base.Clone()
 	transport.DialContext = egressDialer(u.Hostname())
-	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: validateEgressRedirect}, nil
+	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: rejectEgressRedirect}, nil
 }
 
-// validateEgressRedirect applies the egress policy to every redirect target.
-func validateEgressRedirect(req *http.Request, _ []*http.Request) error {
-	return validateEgressURL(req.URL.String())
+// rejectEgressRedirect returns the redirect response without issuing a request
+// to its Location target. This prevents redirects from changing an egress
+// destination after the original user-supplied URL has been validated.
+func rejectEgressRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
 }
 
 // egressDialer returns a DialContext that pins egress to a validated address.
@@ -93,24 +97,31 @@ func validateEgressRedirect(req *http.Request, _ []*http.Request) error {
 // the address we dial — certificate verification still targets the real hostname
 // while the TCP connection goes to the validated IP.
 func egressDialer(configuredHost string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	configuredIP := net.ParseIP(configuredHost)
+
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, fmt.Errorf("egress: invalid dial address %q: %w", addr, err)
 		}
 
-		// A literal initial endpoint was checked by provider construction. Retain
-		// that behaviour, but only for that exact host; a redirect destination
-		// must be independently validated before it can be dialled.
+		// A literal endpoint was checked by provider construction. Never let a
+		// request select a different literal address, even if a caller enables
+		// redirect following accidentally.
 		if ip := net.ParseIP(host); ip != nil {
-			configuredIP := net.ParseIP(configuredHost)
-			if configuredIP == nil || !configuredIP.Equal(ip) {
-				if blocked, reason := isBlockedIP(ip); blocked {
-					return nil, fmt.Errorf("egress to %s is not allowed (%s)", host, reason)
+			if configuredIP != nil {
+				if !configuredIP.Equal(ip) {
+					return nil, fmt.Errorf("egress: literal dial address %q does not match configured endpoint", host)
 				}
+				addr = net.JoinHostPort(configuredIP.String(), port)
+			} else {
+				return nil, fmt.Errorf("egress: literal dial address %q forbidden for hostname endpoint %q", host, configuredHost)
 			}
 			var d net.Dialer
 			return d.DialContext(ctx, network, addr)
+		}
+		if !strings.EqualFold(host, configuredHost) {
+			return nil, fmt.Errorf("egress: dial host %q does not match configured endpoint %q", host, configuredHost)
 		}
 
 		ips, err := resolveEgressIPs(ctx, host)

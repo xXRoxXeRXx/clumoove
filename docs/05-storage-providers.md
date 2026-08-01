@@ -137,7 +137,11 @@ the API against Server-Side Request Forgery through the connect/browse endpoints
 - **DNS-rebinding (TOCTOU) defense:** validation happens both at construction time (resolve + inspect
   every IP) **and** per-connection inside `egressDialer`'s `DialContext`, which re-resolves the hostname
   and dials only a validated IP immediately before connecting. The original hostname stays in the
-  request URL so TLS SNI/cert validation still targets the real name.
+  request URL so TLS SNI/cert validation still targets the real name. The dialer is bound to the
+  configured hostname or literal IP and rejects attempts to select a different host.
+- **Redirects:** user-configured provider, S3, and notification HTTP clients do not follow redirects.
+  Configure the canonical HTTPS endpoint and S3 regional endpoint directly; HTTP-to-HTTPS and S3
+  regional redirect responses are returned to the caller rather than followed.
 
 ### S3-specific SSRF
 

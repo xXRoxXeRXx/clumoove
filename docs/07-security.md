@@ -121,7 +121,10 @@ User-supplied provider URLs are validated before any egress (`storage/ssrf.go`):
   the tool migrates internal servers).
 - DNS-rebinding (TOCTOU) is closed by re-resolving and re-validating the address inside the transport's
   `DialContext` immediately before each connection, while keeping the real hostname for TLS SNI/cert
-  validation.
+  validation. The transport is bound to the configured hostname or literal IP and rejects a different
+  dial target.
+- User-configured provider, S3, and notification clients do not follow redirects. Configure canonical
+  HTTPS and S3 regional endpoints directly.
 - S3 `insecure=true` endpoints check literal IPs / `*.local`/`localhost` directly without DNS resolution.
 
 ---
