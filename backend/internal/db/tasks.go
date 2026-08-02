@@ -411,6 +411,9 @@ func CancelPendingTasks(db *sql.DB, migrationID string) error {
 }
 
 func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID string) (int, error) {
+	// Authentication failures used to cancel the untouched queue after marking
+	// the migration terminal.  Include those tasks so a successful reauth can
+	// resume the same migration instead of requiring a full re-index.
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -422,7 +425,7 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 	err = tx.QueryRow(`
 		SELECT COUNT(*), COALESCE(SUM(file_size), 0)
 		FROM tasks
-		WHERE migration_id = $1 AND status = 'FAILED'
+		WHERE migration_id = $1 AND status IN ('FAILED', 'CANCELLED')
 	`, migrationID).Scan(&count, &bytesSum)
 	if err != nil {
 		return 0, err
@@ -435,7 +438,7 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 	_, err = tx.Exec(`
 		UPDATE tasks
 		SET status = 'PENDING', attempts = 0, next_retry_at = NULL, worker_hash = NULL, error_message = NULL, updated_at = CURRENT_TIMESTAMP
-		WHERE migration_id = $1 AND status = 'FAILED'
+		WHERE migration_id = $1 AND status IN ('FAILED', 'CANCELLED')
 	`, migrationID)
 	if err != nil {
 		return 0, err

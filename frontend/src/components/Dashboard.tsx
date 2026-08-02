@@ -406,7 +406,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
               </button>
             )}
 
-            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED' || data.status === 'CANCELLED') && data.failed_files > 0 && (
+            {(data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS' || data.status === 'FAILED') && (data.failed_files > 0 || data.processed_files < data.total_files) && (
               <button
                 onClick={handleRetryFailed}
                 disabled={controlLoading !== null}

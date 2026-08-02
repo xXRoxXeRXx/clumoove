@@ -464,7 +464,14 @@ func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
 				COALESCE(SUM(file_size) FILTER (WHERE status = 'COMPLETED'), 0) AS done_bytes,
 				COUNT(*) FILTER (WHERE status = 'SKIPPED') AS skip_files,
 				COUNT(*) FILTER (WHERE status = 'FAILED') AS fail_files,
-				COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING')) AS active_files,
+				COUNT(*) FILTER (WHERE status = 'CANCELLED') AS cancelled_files,
+				-- A FAILED task with a retry time is still transfer work.  In
+				-- particular, an OAuth refresh deliberately parks the task in FAILED
+				-- until the retry scheduler recreates its provider.  Treating that
+				-- state as terminal can start checksum verification before the retry
+				-- is dequeued, after which workers are intentionally barred from
+				-- claiming the task.
+				COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL)) AS active_files,
 				COUNT(*) FILTER (WHERE status = 'COMPLETED' AND checksum_verified = FALSE) AS unverified_files
 			FROM tasks
 			WHERE migration_id = $1
@@ -475,16 +482,16 @@ func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
 			WHERE migration_id = $1
 		)
 		UPDATE migrations m
-		SET processed_files = t.done_files + t.skip_files + t.fail_files,
+		SET processed_files = t.done_files + t.skip_files + t.fail_files + t.cancelled_files,
 		    processed_bytes = t.done_bytes,
 		    live_bytes      = t.done_bytes,
 		    skipped_files   = t.skip_files,
-		    failed_files    = t.fail_files,
+			failed_files    = t.fail_files + t.cancelled_files,
 		    status = CASE
 		        WHEN m.status IN ('CANCELLED', 'PAUSED', 'PAUSED_CONNECTION_LOSS') THEN m.status
 		        WHEN t.active_files > 0 THEN 'RUNNING'
 		        WHEN t.unverified_files > 0 THEN 'VERIFYING'
-		        WHEN (t.fail_files + e.err_files) > 0 THEN 'COMPLETED_WITH_ERRORS'
+				WHEN (t.fail_files + t.cancelled_files + e.err_files) > 0 THEN 'COMPLETED_WITH_ERRORS'
 		        ELSE 'COMPLETED'
 		    END,
 		    updated_at = CURRENT_TIMESTAMP
