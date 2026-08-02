@@ -34,6 +34,7 @@ type SyncJob struct {
 	Threads                     int            `json:"threads"`
 	BandwidthLimitMbps          int            `json:"bandwidth_limit_mbps"`
 	Status                      string         `json:"status"` // IDLE, INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+	RunGeneration               int            `json:"run_generation"`
 	TargetDir                   string         `json:"target_dir"`
 	SelectedPaths               StringArray    `json:"selected_paths,omitempty"`
 	LastRunAt                   sql.NullTime   `json:"last_run_at,omitempty"`
@@ -183,7 +184,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		       target_url, target_username, target_password_encrypted,
 		       target_refresh_token_encrypted, target_token_expires_at,
 		       source_provider, target_provider, direction, conflict_strategy,
-		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
+		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, run_generation, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
 		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
@@ -197,7 +198,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
 		&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt,
 		&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
-		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.TargetDir,
+		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.RunGeneration, &s.TargetDir,
 		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
 		&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 		&s.CreatedAt, &s.UpdatedAt,
@@ -272,6 +273,17 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 		WHERE id = $3
 	`
 	_, err := db.Exec(query, status, errVal, id)
+	return err
+}
+
+// UpdateSyncJobStatusForGeneration prevents a late worker from changing a
+// successor pass's lifecycle state.
+func UpdateSyncJobStatusForGeneration(db *sql.DB, id string, generation int, status string, errMsg *string) error {
+	var errVal sql.NullString
+	if errMsg != nil {
+		errVal = sql.NullString{String: *errMsg, Valid: true}
+	}
+	_, err := db.Exec(`UPDATE sync_jobs SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND run_generation = $4`, status, errVal, id, generation)
 	return err
 }
 
@@ -614,6 +626,16 @@ func AddSyncJobLiveBytes(db *sql.DB, ctx context.Context, id string, bytesDelta 
 	return err
 }
 
+// AddSyncJobLiveBytesForGeneration prevents a late worker from changing the
+// live counter after its sync pass has been superseded.
+func AddSyncJobLiveBytesForGeneration(db *sql.DB, ctx context.Context, id string, generation int, bytesDelta int64) error {
+	if bytesDelta <= 0 {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, `UPDATE sync_jobs SET live_bytes = live_bytes + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND run_generation = $3 AND status = 'RUNNING'`, bytesDelta, id, generation)
+	return err
+}
+
 // UpdateSyncJobRunStats updates all statistics and final status at the end of a sync run
 func UpdateSyncJobRunStats(db *sql.DB, id string, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) error {
 	var errVal sql.NullString
@@ -793,16 +815,26 @@ func CancelRemainingPendingSyncTasks(dbsql *sql.DB, syncJobID string) (int, erro
 	return int(rows), err
 }
 
-// CancelOpenSyncTasksForPause closes the interrupted pass. Resume always
-// starts a fresh index/delta pass, so retaining its pending work would be
-// misleading and can race the next pass's task cleanup.
+func CancelRemainingPendingSyncTasksForGeneration(dbsql *sql.DB, syncJobID string, generation int) (int, error) {
+	res, err := dbsql.Exec(`UPDATE tasks SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'PENDING'`, syncJobID, generation)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// CancelOpenSyncTasksForPause cancels work that no worker owns. RUNNING rows
+// deliberately remain RUNNING: their terminal transition is the durable worker
+// acknowledgement that makes it safe to begin the next pass.
 func CancelOpenSyncTasksForPause(dbsql *sql.DB, syncJobID string) (int, error) {
 	res, err := dbsql.Exec(`
 		UPDATE tasks
 		SET status = 'CANCELLED', worker_hash = NULL, next_retry_at = NULL,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE sync_job_id = $1
-		  AND (status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
+		  AND pass_generation = (SELECT run_generation FROM sync_jobs WHERE id = $1)
+		  AND (status = 'PENDING' OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
 	`, syncJobID)
 	if err != nil {
 		return 0, err
@@ -955,6 +987,19 @@ func IncrementSyncJobProgress(db *sql.DB, ctx context.Context, id string, filesD
 	return tx.Commit()
 }
 
+func IncrementSyncJobProgressForGeneration(db *sql.DB, ctx context.Context, id string, generation, filesDelta, changedDelta, deletedDelta, failedDelta int, bytesDelta int64) error {
+	res, err := db.ExecContext(ctx, `UPDATE sync_jobs SET processed_files = processed_files + $1, processed_bytes = processed_bytes + $2, live_bytes = GREATEST(live_bytes, processed_bytes + $2), changed_files = changed_files + $3, deleted_files = deleted_files + $4, failed_files = failed_files + $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6 AND run_generation = $7 AND status = 'RUNNING'`, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, id, generation)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // UpdateSyncTaskStatusAndIncrementProgress persists a sync task's terminal
 // status and its job counters as one logical transition.  A task must never be
 // left RUNNING while its job reports that it has been processed.
@@ -969,9 +1014,9 @@ func UpdateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t
 		UPDATE tasks
 		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
 		    source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $9 AND sync_job_id = $10 AND status = 'RUNNING' AND claim_epoch = $11
+		WHERE id = $9 AND sync_job_id = $10 AND status = 'RUNNING' AND claim_epoch = $11 AND pass_generation = $12
 	`, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash,
-		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID, t.SyncJobID, t.ClaimEpoch)
+		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID, t.SyncJobID, t.ClaimEpoch, t.PassGeneration)
 	if err != nil {
 		return err
 	}
@@ -989,18 +1034,46 @@ func UpdateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t
 		    deleted_files = deleted_files + $4,
 		    failed_files = failed_files + $5,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $6
-	`, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, t.SyncJobID)
+		WHERE id = $6 AND run_generation = $7 AND status = 'RUNNING'
+	`, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, t.SyncJobID, t.PassGeneration)
 	if err != nil {
 		return err
 	}
 	if affected, err := result.RowsAffected(); err != nil {
 		return err
 	} else if affected != 1 {
-		return sql.ErrNoRows
+		// A paused pass still records the worker's terminal acknowledgement, but
+		// its counters must remain untouched.
+		var generation int
+		if err := tx.QueryRowContext(ctx, `SELECT run_generation FROM sync_jobs WHERE id = $1`, t.SyncJobID).Scan(&generation); err != nil {
+			return err
+		}
+		if generation != t.PassGeneration {
+			return sql.ErrNoRows
+		}
 	}
 
 	return tx.Commit()
+}
+
+// UpdateClaimedSyncTaskStatus records a worker acknowledgement only for the
+// coordinator pass that created the task.
+func UpdateClaimedSyncTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
+	res, err := db.ExecContext(ctx, `
+		UPDATE tasks SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4,
+			worker_hash = $5, source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $9 AND sync_job_id = $10 AND status = 'RUNNING' AND claim_epoch = $11 AND pass_generation = $12
+	`, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash, t.SourceHash, t.TargetHash, t.ChecksumVerified,
+		t.ID, t.SyncJobID, t.ClaimEpoch, t.PassGeneration)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // UpsertSyncState inserts or updates a sync state row
@@ -1109,10 +1182,9 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 		}
 		batch := tasks[start:end]
 
-		// Build a multi-row INSERT: VALUES ($1,$2,...), ($9,$10,...), ...
-		// Each row has 8 params: migration_id, sync_job_id, file_path, file_size,
-		// source_hash, status, resource_type, metadata
-		const paramsPerRow = 8
+		// Each row has 9 params: migration_id, sync_job_id, pass_generation,
+		// file_path, file_size, source_hash, status, resource_type, metadata.
+		const paramsPerRow = 9
 		args := make([]interface{}, 0, len(batch)*paramsPerRow)
 		valuesClauses := make([]string, 0, len(batch))
 
@@ -1126,15 +1198,15 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 				syncID = sql.NullString{String: t.SyncJobID, Valid: true}
 			}
 			args = append(args,
-				migID, syncID, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata,
+				migID, syncID, t.PassGeneration, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.ResourceType, t.Metadata,
 			)
 			valuesClauses = append(valuesClauses,
-				fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-					base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8),
+				fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d,$%d)",
+					base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8, base+9),
 			)
 		}
 
-		query := "INSERT INTO tasks (migration_id, sync_job_id, file_path, file_size, source_hash, status, resource_type, metadata) VALUES " +
+		query := "INSERT INTO tasks (migration_id, sync_job_id, pass_generation, file_path, file_size, source_hash, status, resource_type, metadata) VALUES " +
 			strings.Join(valuesClauses, ",")
 
 		if _, err := tx.ExecContext(dbCtx, query, args...); err != nil {

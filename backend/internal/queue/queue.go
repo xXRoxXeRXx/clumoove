@@ -111,6 +111,7 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 				SELECT 1
 				FROM tasks AS prerequisite
 				WHERE prerequisite.sync_job_id = dependent.sync_job_id
+				  AND prerequisite.pass_generation = dependent.pass_generation
 				  AND prerequisite.file_path = dependent.file_path
 				  AND prerequisite.resource_type = dependent.resource_type
 				  AND prerequisite.metadata->>'action' = 'conflict_copy'
@@ -130,6 +131,7 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 					SELECT 1
 					FROM tasks AS prerequisite
 					WHERE prerequisite.sync_job_id = t.sync_job_id
+					  AND prerequisite.pass_generation = t.pass_generation
 					  AND prerequisite.file_path = t.file_path
 					  AND prerequisite.resource_type = t.resource_type
 					  AND prerequisite.metadata->>'action' = 'conflict_copy'
@@ -146,9 +148,9 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 				-- may still hold leftover PENDING rows from the prior pass and deletes
 				-- them before enqueuing a fresh delta. Claiming early runs stale work
 				-- and races drainRemainingTasks.
-				(t.sync_job_id IS NOT NULL AND sj.status = 'RUNNING' AND (
+				(t.sync_job_id IS NOT NULL AND sj.status = 'RUNNING' AND t.pass_generation = sj.run_generation AND (
 					SELECT COUNT(*) FROM tasks t2 
-					WHERE t2.sync_job_id = sj.id AND t2.status = 'RUNNING'
+					WHERE t2.sync_job_id = sj.id AND t2.pass_generation = sj.run_generation AND t2.status = 'RUNNING'
 				) < sj.threads)
 			)
 			ORDER BY t.created_at ASC

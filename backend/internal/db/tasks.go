@@ -26,6 +26,7 @@ type Task struct {
 	WorkerHash   sql.NullString `json:"worker_hash,omitempty"`
 	// ClaimEpoch is assigned by DequeueSQL and fences a particular worker claim.
 	ClaimEpoch       int64           `json:"claim_epoch"`
+	PassGeneration   int             `json:"pass_generation"`
 	SourceHash       sql.NullString  `json:"source_hash,omitempty"`
 	TargetHash       sql.NullString  `json:"target_hash,omitempty"`
 	ChecksumVerified bool            `json:"checksum_verified"`
@@ -91,14 +92,14 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, file_size, status,
-		       attempts, error_message, next_retry_at, worker_hash, claim_epoch, source_hash, target_hash,
+		       attempts, error_message, next_retry_at, worker_hash, claim_epoch, pass_generation, source_hash, target_hash,
 		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
 		&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
-		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.ClaimEpoch, &t.SourceHash, &t.TargetHash,
+		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.ClaimEpoch, &t.PassGeneration, &t.SourceHash, &t.TargetHash,
 		&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -144,6 +145,17 @@ func UpdateClaimedTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
 // HeartbeatTaskClaim refreshes only the active fenced claim.
 func HeartbeatTaskClaim(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64) (bool, error) {
 	res, err := db.ExecContext(ctx, `UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING' AND claim_epoch = $2`, taskID, claimEpoch)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// HeartbeatSyncTaskClaim refreshes only a claim belonging to the active sync
+// generation. A superseded worker observes false and cancels its stream.
+func HeartbeatSyncTaskClaim(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, generation int) (bool, error) {
+	res, err := db.ExecContext(ctx, `UPDATE tasks AS t SET updated_at = NOW() WHERE t.id = $1 AND t.status = 'RUNNING' AND t.claim_epoch = $2 AND t.pass_generation = $3 AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.run_generation = $3)`, taskID, claimEpoch, generation)
 	if err != nil {
 		return false, err
 	}

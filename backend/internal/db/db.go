@@ -579,6 +579,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (tasks claim_epoch): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pass_generation INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (tasks pass_generation): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS indexing_errors (
 				id BIGSERIAL PRIMARY KEY,
@@ -619,9 +623,13 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (chk_task_job_type constraint): %v\n", err)
 			}
 
-			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_sync_status ON tasks(sync_job_id, status)`)
+			_, err = db.Exec(`DROP INDEX IF EXISTS idx_tasks_sync_status`)
 			if err != nil {
-				log.Printf("Failed schema migration (idx_tasks_sync_status): %v\n", err)
+				log.Printf("Failed schema migration (drop idx_tasks_sync_status): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_sync_gen_status ON tasks(sync_job_id, pass_generation, status)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_sync_gen_status): %v\n", err)
 			}
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy ON tasks ((metadata->>'wait_for_conflict_copy')) WHERE status = 'PENDING' AND metadata->>'wait_for_conflict_copy' = 'true'`)
 			if err != nil {

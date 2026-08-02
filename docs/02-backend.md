@@ -125,10 +125,14 @@ Sync tasks are eligible only while their sync job is `RUNNING`: `INDEXING` is
 reserved for listing both sides, draining and removing leftover tasks from the
 previous pass, and building the new delta. Workers are notified after the sync
 job transitions to `RUNNING`, so they can claim the freshly created tasks
-only then. Each claimed sync pass increments `sync_jobs.run_generation`; engine
+only then. Each claimed sync pass increments `sync_jobs.run_generation`; every
+task persists that value as `pass_generation`, and worker task/status/progress
+updates require the matching generation. The coordinator keeps its PostgreSQL
+advisory pass lock while its generation's running workers drain cancellation,
+with a bounded 30-second grace period. Engine
 lifecycle updates and the running-only progress reconciler compare that token,
-so a stale coordinator/reconciliation read cannot finalize a successor pass.
-without waiting for a fallback poll.
+so a stale coordinator/reconciliation read cannot finalize a successor pass without
+waiting for a fallback poll.
 
 This guarantees at-least-once delivery and per-job thread caps.
 

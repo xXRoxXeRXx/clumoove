@@ -114,8 +114,8 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	ctx, cancel := context.WithCancel(serverCtx)
 	defer cancel()
 
-	// Hold the lock through the indexing critical section. A resume waits here
-	// until a cancelled predecessor can no longer write indexing results.
+	// Hold the lock through coordinator completion. A resume waits here until a
+	// cancelled predecessor and every worker it owns have acknowledged drain.
 	unlockPass, err := e.lockPass(ctx, syncJobID)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -128,12 +128,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		}
 		return
 	}
-	passLockHeld := true
-	defer func() {
-		if passLockHeld {
-			unlockPass()
-		}
-	}()
+	defer unlockPass()
 
 	// Register only after acquiring the cross-instance pass lock. This avoids a
 	// successor overwriting the predecessor's cancel entry while it is draining.
@@ -692,13 +687,14 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		metaJSON, _ := json.Marshal(meta)
 
 		dbTasks = append(dbTasks, &db.Task{
-			SyncJobID:    job.ID,
-			FilePath:     tc.filePath,
-			FileSize:     tc.fileSize,
-			SourceHash:   sql.NullString{String: tc.sourceHash, Valid: tc.sourceHash != ""},
-			Status:       "PENDING",
-			ResourceType: tc.resourceType,
-			Metadata:     metaJSON,
+			SyncJobID:      job.ID,
+			PassGeneration: generation,
+			FilePath:       tc.filePath,
+			FileSize:       tc.fileSize,
+			SourceHash:     sql.NullString{String: tc.sourceHash, Valid: tc.sourceHash != ""},
+			Status:         "PENDING",
+			ResourceType:   tc.resourceType,
+			Metadata:       metaJSON,
 		})
 	}
 	if err := db.BulkCreateSyncTasks(ctx, e.db, dbTasks); err != nil {
@@ -726,12 +722,9 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		log.Printf("[SyncEngine] Not starting task processing for job %s; status changed during indexing\n", syncJobID)
 		return
 	}
-	// The lock protects indexing's destructive task cleanup, delta insertion,
-	// and the INDEXING -> RUNNING handoff. Once RUNNING, pause changes status
-	// before any resume can claim a successor, and the old coordinator's final
-	// CAS checks prevent it from writing outcomes for that successor.
-	unlockPass()
-	passLockHeld = false
+	// Keep the cross-instance lock while workers drain. Releasing it here would
+	// let a resume start a successor while this coordinator still owns live
+	// transfers.
 	// Wake idle worker threads only after the queue predicate permits them to
 	// claim this pass's tasks, avoiding a fallback-poll delay after indexing.
 	e.queue.NotifyTaskAvailable(ctx, e.db)
@@ -748,15 +741,24 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			// Context was cancelled (server shutdown or explicit cancel from delete/pause).
 			// Do not mark as FAILED — leave status to the caller (delete removes the row;
 			// pause has already set the status via handlePauseSync).
+			// Pause leaves RUNNING task rows in place until their worker reaches a
+			// terminal state. Give cancellation a bounded grace period so a crashed
+			// worker or unresponsive provider cannot indefinitely hold the pass lock
+			// or prevent API shutdown.
+			drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(serverCtx), 30*time.Second)
+			if err := e.drainGenerationTasks(drainCtx, job.ID, generation); err != nil {
+				log.Printf("[SyncEngine] Timed out draining cancelled pass for job %s: %v", syncJobID, err)
+			}
+			drainCancel()
 			log.Printf("[SyncEngine] Sync pass for job %s interrupted: %v\n", syncJobID, ctx.Err())
 			return
 		case <-ticker.C:
 			var openCount int
 			err := e.db.QueryRow(`
 				SELECT COUNT(*) FROM tasks 
-				WHERE sync_job_id = $1 
+				WHERE sync_job_id = $1 AND pass_generation = $2
 				  AND (status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
-			`, job.ID).Scan(&openCount)
+			`, job.ID, generation).Scan(&openCount)
 			if err != nil {
 				log.Printf("[SyncEngine] Error querying task progress for job %s: %v\n", syncJobID, err)
 				continue
@@ -772,7 +774,7 @@ SyncTasksDone:
 	log.Printf("[SyncEngine] All tasks finished for job %s. Checking verification requirements...\n", syncJobID)
 
 	var unverifiedCount int
-	_ = e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID).Scan(&unverifiedCount)
+	_ = e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&unverifiedCount)
 	if unverifiedCount > 0 {
 		log.Printf("[SyncEngine] Transitioning job %s to VERIFYING status (%d unverified tasks)...\n", syncJobID, unverifiedCount)
 		verifying, err := db.TransitionSyncJobToVerifying(e.db, job.ID)
@@ -952,6 +954,17 @@ func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 		`, jobID).Scan(&runningCount)
 		if err != nil {
 			return 0, fmt.Errorf("count running tasks for sync job %s: %w", jobID, err)
+		}
+		return runningCount, nil
+	})
+}
+
+func (e *Engine) drainGenerationTasks(ctx context.Context, jobID string, generation int) error {
+	return waitForNoRunningTasks(ctx, 3*time.Second, func() (int, error) {
+		var runningCount int
+		err := e.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'RUNNING'`, jobID, generation).Scan(&runningCount)
+		if err != nil {
+			return 0, fmt.Errorf("count running tasks for sync job %s generation %d: %w", jobID, generation, err)
 		}
 		return runningCount, nil
 	})

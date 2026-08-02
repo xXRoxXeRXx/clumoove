@@ -44,25 +44,28 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		return fmt.Errorf("failed to fetch sync job: %w", err)
 	}
 	ctx = storage.WithLocalUserScope(ctx, job.UserID)
-
-	// Re-route or requeue if paused or connection loss
-	if job.Status == "PAUSED_CONNECTION_LOSS" || job.Status == "PAUSED" {
-		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING")
-		time.Sleep(2 * time.Second)
-		return nil
-	}
-
-	if job.Status == "COMPLETED" || job.Status == "FAILED" {
-		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "SKIPPED")
-		return nil
-	}
-
-	// 2. Fetch Task
 	task, err := db.GetTask(p.db, payload.TaskID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch task: %w", err)
 	}
 	task.ClaimEpoch = payload.ClaimEpoch
+	if task.SyncJobID != payload.SyncJobID || task.PassGeneration != job.RunGeneration {
+		return nil
+	}
+
+	// A paused worker must acknowledge cancellation durably; do not return it to
+	// PENDING where a resumed pass could claim it.
+	if job.Status == "PAUSED_CONNECTION_LOSS" || job.Status == "PAUSED" {
+		task.Status = "CANCELLED"
+		_ = db.UpdateClaimedSyncTaskStatus(p.db, ctx, task)
+		return nil
+	}
+
+	if job.Status == "COMPLETED" || job.Status == "FAILED" {
+		task.Status = "SKIPPED"
+		_ = db.UpdateClaimedSyncTaskStatus(p.db, ctx, task)
+		return nil
+	}
 
 	// Parse action/metadata
 	var meta map[string]interface{}
@@ -364,7 +367,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			case bytes, ok := <-progressChan:
 				if !ok {
 					if bufferedBytes > 0 {
-						_ = db.AddSyncJobLiveBytes(p.db, ctx, job.ID, bufferedBytes)
+						_ = db.AddSyncJobLiveBytesForGeneration(p.db, ctx, job.ID, task.PassGeneration, bufferedBytes)
 						bufferedBytes = 0
 					}
 					return
@@ -373,7 +376,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 				atomic.StoreInt64(&lastByteNano, time.Now().UnixNano())
 			case <-ticker.C:
 				if bufferedBytes > 0 {
-					_ = db.AddSyncJobLiveBytes(p.db, ctx, job.ID, bufferedBytes)
+					_ = db.AddSyncJobLiveBytesForGeneration(p.db, ctx, job.ID, task.PassGeneration, bufferedBytes)
 					bufferedBytes = 0
 				}
 			}
@@ -393,7 +396,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 				stale := time.Since(taskStart) > taskHeartbeatGrace &&
 					time.Now().UnixNano()-atomic.LoadInt64(&lastByteNano) > int64(taskHeartbeatByteStale)
 				if !stale {
-					owned, err := db.HeartbeatTaskClaim(p.db, ctx, task.ID, task.ClaimEpoch)
+					owned, err := db.HeartbeatSyncTaskClaim(p.db, ctx, task.ID, task.ClaimEpoch, task.PassGeneration)
 					if err == nil && !owned {
 						cancel() // recovery or a new claim fenced this worker off
 						return
@@ -503,16 +506,19 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 	task.ClaimEpoch = payload.ClaimEpoch
 
 	job, jobErr := db.GetSyncJob(p.db, payload.SyncJobID)
-	if jobErr == nil && (job.Status == "PAUSED" || job.Status == "COMPLETED") {
+	if jobErr == nil && task.PassGeneration != job.RunGeneration {
+		return
+	}
+	if jobErr == nil && (job.Status == "PAUSED" || job.Status == "PAUSED_CONNECTION_LOSS" || job.Status == "COMPLETED") {
 		task.Status = "CANCELLED"
-		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
+		_ = db.UpdateClaimedSyncTaskStatus(p.db, ctx, task)
 		return
 	}
 
 	isShutdown := errors.Is(procErr, context.Canceled) || ctx.Err() != nil
 	if isShutdown {
 		task.Status = "PENDING"
-		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
 			log.Printf("Error returning cancelled sync task %s to pending: %v", task.ID, err)
 		}
 		return
@@ -531,20 +537,20 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 			nextRetry := time.Now().Add(backoff)
 			task.Status = "FAILED"
 			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-			if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+			if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
 				log.Printf("Error scheduling sync task %s retry after connection loss: %v", task.ID, err)
 			}
 			return
 		}
 
 		// Connection loss escalation: pause the sync job
-		_ = db.UpdateSyncJobStatus(p.db, payload.SyncJobID, "PAUSED_CONNECTION_LOSS", nil)
+		_ = db.UpdateSyncJobStatusForGeneration(p.db, payload.SyncJobID, task.PassGeneration, "PAUSED_CONNECTION_LOSS", nil)
 		p.clearConnLoss(payload.SyncJobID)
 		p.clearConnLossTask(task.ID)
 		p.recoveryAttempts.Delete(payload.SyncJobID)
 
 		task.Status = "PENDING"
-		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
 			log.Printf("Error re-queueing sync task %s after connection loss: %v", task.ID, err)
 		}
 		return
@@ -570,7 +576,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 				task.Status = "FAILED"
 				task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
 				task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
-				if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+				if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
 					log.Printf("Error scheduling sync OAuth retry for task %s: %v", task.ID, err)
 				}
 				log.Printf("[Worker %s] OAuth 401 for sync task %s (job %s, %s) — refreshed token and retrying in %ds\n",
@@ -582,7 +588,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 			}
 		}
 		authErrMsg := "Authentication failed - please check your credentials"
-		_ = db.UpdateSyncJobStatus(p.db, payload.SyncJobID, "FAILED", &authErrMsg)
+		_ = db.UpdateSyncJobStatusForGeneration(p.db, payload.SyncJobID, task.PassGeneration, "FAILED", &authErrMsg)
 		p.clearConnLoss(payload.SyncJobID)
 		p.clearConnLossTask(payload.TaskID)
 		p.recoveryAttempts.Delete(payload.SyncJobID)
@@ -595,9 +601,9 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		}
 
 		// Cancel other pending tasks
-		cancelled, cerr := db.CancelRemainingPendingSyncTasks(p.db, task.SyncJobID)
+		cancelled, cerr := db.CancelRemainingPendingSyncTasksForGeneration(p.db, task.SyncJobID, task.PassGeneration)
 		if cerr == nil && cancelled > 0 {
-			if err := db.IncrementSyncJobProgress(p.db, ctx, task.SyncJobID, 0, 0, 0, cancelled, 0); err != nil {
+			if err := db.IncrementSyncJobProgressForGeneration(p.db, ctx, task.SyncJobID, task.PassGeneration, 0, 0, 0, cancelled, 0); err != nil {
 				log.Printf("Error recording %d cancelled sync tasks for job %s: %v", cancelled, task.SyncJobID, err)
 			}
 		} else if cerr != nil {
@@ -611,7 +617,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		nextRetry := time.Now().Add(backoff)
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
 			log.Printf("Error scheduling sync task %s retry: %v", task.ID, err)
 		}
 	} else {

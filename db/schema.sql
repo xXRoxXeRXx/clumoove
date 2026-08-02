@@ -86,8 +86,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     source_hash TEXT,
     worker_hash TEXT,
     claim_epoch BIGINT NOT NULL DEFAULT 0,
+    pass_generation INT NOT NULL DEFAULT 0,
     target_hash TEXT,
-    status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
+    status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
     resource_type TEXT NOT NULL DEFAULT 'files', -- files, calendars, contacts
     metadata JSONB,
     error_message TEXT,
@@ -333,6 +334,7 @@ ALTER TABLE tasks ALTER COLUMN migration_id DROP NOT NULL;
 
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE;
 ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS pass_generation INT NOT NULL DEFAULT 0;
 
 DO $$
 BEGIN
@@ -346,7 +348,8 @@ BEGIN
     END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_tasks_sync_status ON tasks(sync_job_id, status);
+DROP INDEX IF EXISTS idx_tasks_sync_status;
+CREATE INDEX IF NOT EXISTS idx_tasks_sync_gen_status ON tasks(sync_job_id, pass_generation, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy
     ON tasks ((metadata->>'wait_for_conflict_copy'))
     WHERE status = 'PENDING' AND metadata->>'wait_for_conflict_copy' = 'true';

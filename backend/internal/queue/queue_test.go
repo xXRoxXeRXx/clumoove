@@ -28,7 +28,7 @@ func setupDequeueTestDB(t *testing.T) *sql.DB {
 	}
 	if _, err := database.Exec(`
 		CREATE TEMP TABLE migrations (id TEXT PRIMARY KEY, status TEXT NOT NULL, threads INTEGER NOT NULL);
-		CREATE TEMP TABLE sync_jobs (id TEXT PRIMARY KEY, status TEXT NOT NULL, threads INTEGER NOT NULL);
+		CREATE TEMP TABLE sync_jobs (id TEXT PRIMARY KEY, status TEXT NOT NULL, threads INTEGER NOT NULL, run_generation INTEGER NOT NULL DEFAULT 0);
 		CREATE TEMP TABLE tasks (
 			id TEXT PRIMARY KEY,
 			migration_id TEXT,
@@ -41,7 +41,8 @@ func setupDequeueTestDB(t *testing.T) *sql.DB {
 			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE,
 			worker_hash TEXT,
-			claim_epoch BIGINT NOT NULL DEFAULT 0
+			claim_epoch BIGINT NOT NULL DEFAULT 0,
+			pass_generation INTEGER NOT NULL DEFAULT 0
 		);
 	`); err != nil {
 		_ = database.Close()
