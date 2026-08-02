@@ -507,6 +507,77 @@ func useTempThenRename(target storage.StorageProvider, deleteAfterUpload bool) b
 	return deleteAfterUpload && target.SupportsAtomicRename()
 }
 
+// overwriteBackupPath is stable across retries of the same task, allowing an
+// interrupted promotion to be recovered. Keep the suffix short because many
+// filesystems limit an individual filename to 255 bytes.
+func overwriteBackupPath(targetPath, taskID string) string {
+	if len(taskID) > 8 {
+		taskID = taskID[:8]
+	}
+	return fmt.Sprintf("%s.bak-%s", targetPath, taskID)
+}
+
+func cleanupStagingUpload(ctx context.Context, target storage.StorageProvider, resourceType, uploadPath string) {
+	if err := target.DeleteFile(ctx, resourceType, uploadPath); err != nil {
+		log.Printf("Warning: failed to clean up staging upload %s: %v", uploadPath, err)
+	}
+}
+
+// promoteOverwrite replaces targetPath with uploadPath without deleting the
+// previous target until the replacement is in place. Providers that return
+// SupportsAtomicRename use a same-provider rename for each move; if promoting
+// the temporary upload fails, the original is moved back immediately. A backup
+// is intentionally left in place when its cleanup fails so a transient error
+// can never turn into data loss.
+func promoteOverwrite(ctx context.Context, target storage.StorageProvider, resourceType, targetPath, uploadPath, backupPath string) error {
+	exists, _, err := target.FileExists(ctx, resourceType, targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to check target before overwrite promotion: %w", err)
+	}
+
+	originalBackedUp := false
+	if exists {
+		backupExists, _, err := target.FileExists(ctx, resourceType, backupPath)
+		if err != nil {
+			return fmt.Errorf("failed to check overwrite backup path: %w", err)
+		}
+		if backupExists {
+			// A backup with this task's stable identifier is an artifact from an
+			// earlier attempt. The live target is still present, so remove that
+			// older recovery copy before preserving the current target again.
+			if err := target.DeleteFile(ctx, resourceType, backupPath); err != nil {
+				return fmt.Errorf("recovery backup already exists at %q and cleanup failed: %w", backupPath, err)
+			}
+		}
+		if err := target.RenameFile(ctx, resourceType, targetPath, backupPath); err != nil {
+			return fmt.Errorf("failed to preserve existing target before overwrite promotion: %w", err)
+		}
+		originalBackedUp = true
+	}
+
+	if err := target.RenameFile(ctx, resourceType, uploadPath, targetPath); err != nil {
+		cleanupStagingUpload(ctx, target, resourceType, uploadPath)
+		if originalBackedUp {
+			if rollbackErr := target.RenameFile(ctx, resourceType, backupPath, targetPath); rollbackErr != nil {
+				return fmt.Errorf("failed to promote temporary upload: %w; failed to restore preserved target from %q: %v", err, backupPath, rollbackErr)
+			}
+			return fmt.Errorf("failed to promote temporary upload; preserved target restored: %w", err)
+		}
+		return fmt.Errorf("failed to promote temporary upload: %w", err)
+	}
+
+	if originalBackedUp {
+		if err := target.DeleteFile(ctx, resourceType, backupPath); err != nil {
+			// The new target is confirmed in place and the old target remains
+			// recoverable at backupPath. Surface the failure rather than silently
+			// accepting an unexpected retained copy.
+			return fmt.Errorf("overwrite promoted target but failed to remove preserved backup %q: %w", backupPath, err)
+		}
+	}
+
+	return nil
+}
+
 func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, threadID int) (err error) {
 	// Shadow ctx with a cancelable one
 	ctx, cancel := context.WithCancel(ctx)
@@ -1066,19 +1137,16 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		return err
 	}
 
-	// OVERWRITE: now that the upload succeeded, safely delete the original and rename the temp file.
-	// If the upload succeeded but rename/metadata fails, the .tmp file must be cleaned up so it
-	// does not leak on the target and is not mistaken for a partial upload on the next retry.
+	// OVERWRITE: now that the upload succeeded, promote the temp file without
+	// deleting the original first. A failed promotion restores the original.
 	//
 	// Providers without atomic-rename support (e.g. S3, Immich) write the file
 	// directly to its final name during upload. S3 rename is copy-and-delete, so
 	// the rename step must be skipped entirely to avoid copy-and-delete loss.
 	if useTempThenRename(targetClient, deleteAfterUpload) {
-		// Attempt to delete original. Ignore not found error if it's already gone.
-		_ = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
-		if renameErr := targetClient.RenameFile(ctx, task.ResourceType, uploadPath, targetPath); renameErr != nil {
-			_ = targetClient.DeleteFile(ctx, task.ResourceType, uploadPath)
-			return fmt.Errorf("failed to rename temp file to target path: %w", renameErr)
+		backupPath := overwriteBackupPath(targetPath, task.ID)
+		if err := promoteOverwrite(ctx, targetClient, task.ResourceType, targetPath, uploadPath, backupPath); err != nil {
+			return err
 		}
 	}
 

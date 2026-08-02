@@ -177,6 +177,155 @@ func TestUseTempThenRename(t *testing.T) {
 	}
 }
 
+type promotionProvider struct {
+	fakeProvider
+	files          map[string]string
+	failRenameFrom string
+	deleteFailures int
+}
+
+func (p *promotionProvider) FileExists(_ context.Context, _, filePath string) (bool, int64, error) {
+	_, ok := p.files[filePath]
+	return ok, 0, nil
+}
+
+func (p *promotionProvider) RenameFile(_ context.Context, _, oldPath, newPath string) error {
+	if oldPath == p.failRenameFrom {
+		return errors.New("rename failed")
+	}
+	contents, ok := p.files[oldPath]
+	if !ok {
+		return errors.New("source missing")
+	}
+	delete(p.files, oldPath)
+	p.files[newPath] = contents
+	return nil
+}
+
+func (p *promotionProvider) DeleteFile(_ context.Context, _, filePath string) error {
+	if p.deleteFailures > 0 {
+		p.deleteFailures--
+		return errors.New("delete failed")
+	}
+	delete(p.files, filePath)
+	return nil
+}
+
+func TestPromoteOverwriteRestoresOriginalWhenPromotionFails(t *testing.T) {
+	const (
+		target = "/target.txt"
+		temp   = "/target.txt.tmp"
+		backup = "/target.txt.clumoove-backup-task"
+	)
+	p := &promotionProvider{
+		files:          map[string]string{target: "original", temp: "replacement"},
+		failRenameFrom: temp,
+	}
+
+	err := promoteOverwrite(context.Background(), p, "files", target, temp, backup)
+	if err == nil {
+		t.Fatal("promoteOverwrite() succeeded despite a failed promotion")
+	}
+	if got := p.files[target]; got != "original" {
+		t.Fatalf("target after rollback = %q, want original", got)
+	}
+	if _, ok := p.files[temp]; ok {
+		t.Fatalf("temporary upload %q remained after failed promotion", temp)
+	}
+	if _, ok := p.files[backup]; ok {
+		t.Fatalf("backup %q remained after successful rollback", backup)
+	}
+}
+
+func TestPromoteOverwriteRetainsBackupWhenCleanupFails(t *testing.T) {
+	const (
+		target = "/target.txt"
+		temp   = "/target.txt.tmp"
+		backup = "/target.txt.clumoove-backup-task"
+	)
+	p := &promotionProvider{
+		files:          map[string]string{target: "original", temp: "replacement"},
+		deleteFailures: 1,
+	}
+
+	if err := promoteOverwrite(context.Background(), p, "files", target, temp, backup); err == nil {
+		t.Fatal("promoteOverwrite() succeeded despite a failed backup cleanup")
+	}
+	if got := p.files[target]; got != "replacement" {
+		t.Fatalf("target = %q, want replacement", got)
+	}
+	if got := p.files[backup]; got != "original" {
+		t.Fatalf("backup = %q, want original", got)
+	}
+}
+
+func TestPromoteOverwriteHappyPath(t *testing.T) {
+	const (
+		target = "/target.txt"
+		temp   = "/target.txt.tmp"
+		backup = "/target.txt.bak-task"
+	)
+	p := &promotionProvider{files: map[string]string{target: "original", temp: "replacement"}}
+
+	if err := promoteOverwrite(context.Background(), p, "files", target, temp, backup); err != nil {
+		t.Fatalf("promoteOverwrite() error = %v", err)
+	}
+	if got := p.files[target]; got != "replacement" {
+		t.Fatalf("target = %q, want replacement", got)
+	}
+	if _, ok := p.files[backup]; ok {
+		t.Fatalf("backup %q remained after successful promotion", backup)
+	}
+}
+
+func TestPromoteOverwriteWithoutExistingTarget(t *testing.T) {
+	const (
+		target = "/target.txt"
+		temp   = "/target.txt.tmp"
+		backup = "/target.txt.bak-task"
+	)
+	p := &promotionProvider{files: map[string]string{temp: "replacement"}}
+
+	if err := promoteOverwrite(context.Background(), p, "files", target, temp, backup); err != nil {
+		t.Fatalf("promoteOverwrite() error = %v", err)
+	}
+	if got := p.files[target]; got != "replacement" {
+		t.Fatalf("target = %q, want replacement", got)
+	}
+	if _, ok := p.files[backup]; ok {
+		t.Fatalf("unexpected backup %q", backup)
+	}
+}
+
+func TestPromoteOverwriteCleansStaleBackupFromPreviousAttempt(t *testing.T) {
+	const (
+		target = "/target.txt"
+		temp   = "/target.txt.tmp"
+		backup = "/target.txt.bak-task"
+	)
+	p := &promotionProvider{files: map[string]string{
+		target: "previous replacement",
+		temp:   "current replacement",
+		backup: "original before previous attempt",
+	}}
+
+	if err := promoteOverwrite(context.Background(), p, "files", target, temp, backup); err != nil {
+		t.Fatalf("promoteOverwrite() error = %v", err)
+	}
+	if got := p.files[target]; got != "current replacement" {
+		t.Fatalf("target = %q, want current replacement", got)
+	}
+	if _, ok := p.files[backup]; ok {
+		t.Fatalf("stale backup %q remained after retry", backup)
+	}
+}
+
+func TestOverwriteBackupPathUsesShortStableSuffix(t *testing.T) {
+	if got, want := overwriteBackupPath("/target.txt", "12345678-1234-1234-1234-123456789012"), "/target.txt.bak-12345678"; got != want {
+		t.Fatalf("overwriteBackupPath() = %q, want %q", got, want)
+	}
+}
+
 func TestImmichOriginalFilenamePath(t *testing.T) {
 	for _, test := range []struct {
 		name     string

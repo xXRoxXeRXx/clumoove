@@ -447,13 +447,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if err != nil {
 		if useTempUpload {
-			_ = tgtClient.DeleteFile(ctx, task.ResourceType, uploadPath)
+			cleanupStagingUpload(ctx, tgtClient, task.ResourceType, uploadPath)
 		}
 		return fmt.Errorf("failed to upload: %w", err)
 	}
 	if err := sizedReader.VerifyComplete(); err != nil {
 		if useTempUpload {
-			_ = tgtClient.DeleteFile(ctx, task.ResourceType, uploadPath)
+			cleanupStagingUpload(ctx, tgtClient, task.ResourceType, uploadPath)
 		}
 		return err
 	}
@@ -461,16 +461,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	// Rename the staging object only when the provider guarantees an atomic
 	// replacement. Non-atomic providers uploaded directly to tgtPath above.
 	if useTempUpload {
-		// Some backends do not replace an existing destination during rename.
-		// The staging file is already complete, so unlink the old destination
-		// immediately before promoting the new one.
-		_ = tgtClient.DeleteFile(ctx, task.ResourceType, tgtPath)
-		renameCtx, renameCancel := context.WithTimeout(ctx, 30*time.Second)
-		err = tgtClient.RenameFile(renameCtx, task.ResourceType, uploadPath, tgtPath)
-		renameCancel()
-		if err != nil {
-			_ = tgtClient.DeleteFile(ctx, task.ResourceType, uploadPath)
-			return fmt.Errorf("failed to rename temp file to target path: %w", err)
+		backupPath := overwriteBackupPath(tgtPath, task.ID)
+		if err := promoteOverwrite(ctx, tgtClient, task.ResourceType, tgtPath, uploadPath, backupPath); err != nil {
+			return fmt.Errorf("failed to promote temporary upload to target path: %w", err)
 		}
 	}
 
