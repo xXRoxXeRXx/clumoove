@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,8 @@ const (
 	defaultOneDriveAPIBase          = "https://graph.microsoft.com/v1.0/me/drive"
 	oneDriveSimpleUploadLimit int64 = 4 * 1024 * 1024
 	oneDriveUploadChunkSize         = 10 * 1024 * 1024 // Graph requires multiples of 320 KiB.
+	sharedShortcutCacheTTL          = 5 * time.Minute
+	sharedShortcutErrorTTL          = 15 * time.Second
 )
 
 // OneDriveProvider accesses a personal OneDrive through Microsoft Graph.
@@ -30,6 +33,23 @@ type OneDriveProvider struct {
 	// An empty string is cached for ordinary folders, preventing one Graph
 	// shortcut probe per indexed/downloaded file.
 	shortcutCache sync.Map
+}
+
+// sharedShortcutResolutionCache shares only the resolved remote Graph item URL
+// between short-lived provider instances. Processor workers intentionally create
+// a provider per task so decrypted credentials are not retained, but doing that
+// must not make every parallel file transfer re-inspect the same shortcut.
+// Cache keys contain a SHA-256 digest of the token, never the token itself.
+var sharedShortcutResolutionCache = struct {
+	sync.Mutex
+	entries map[string]*oneDriveShortcutCacheEntry
+}{entries: make(map[string]*oneDriveShortcutCacheEntry)}
+
+type oneDriveShortcutCacheEntry struct {
+	remotePrefix string
+	err          error
+	expiresAt    time.Time
+	ready        chan struct{}
 }
 
 var _ StorageProvider = (*OneDriveProvider)(nil)
@@ -120,31 +140,10 @@ func (p *OneDriveProvider) resourceURL(ctx context.Context, filePath string) (st
 	if cached, ok := p.shortcutCache.Load(rootFolder); ok {
 		remotePrefix = cached.(string)
 	} else {
-		rootURL, err := p.itemURL("/" + rootFolder)
-		if err != nil {
-			return "", err
-		}
-		req, err := p.request(ctx, http.MethodGet, rootURL+"?$select=id,remoteItem", nil, true)
-		if err != nil {
-			return "", err
-		}
-		resp, err := p.httpClient.Do(req)
-		if err != nil {
-			return "", err
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			resp.Body.Close()
-			return "", oneDriveError("inspect shared root", resp.StatusCode)
-		}
-		var root oneDriveItem
-		decodeErr := json.NewDecoder(resp.Body).Decode(&root)
-		resp.Body.Close()
-		if decodeErr != nil {
-			return "", fmt.Errorf("decode onedrive shared root: %w", decodeErr)
-		}
-		if root.RemoteItem != nil && root.RemoteItem.ID != "" && root.RemoteItem.ParentReference.DriveID != "" {
-			graphBase := strings.TrimSuffix(p.apiBase, "/me/drive")
-			remotePrefix = graphBase + "/drives/" + url.PathEscape(root.RemoteItem.ParentReference.DriveID) + "/items/" + url.PathEscape(root.RemoteItem.ID)
+		var resolveErr error
+		remotePrefix, resolveErr = p.resolveSharedShortcut(ctx, rootFolder)
+		if resolveErr != nil {
+			return "", resolveErr
 		}
 		p.shortcutCache.Store(rootFolder, remotePrefix)
 	}
@@ -158,6 +157,105 @@ func (p *OneDriveProvider) resourceURL(ctx context.Context, filePath string) (st
 		parts[i+1] = url.PathEscape(part)
 	}
 	return remotePrefix + ":/" + strings.Join(parts[1:], "/") + ":", nil
+}
+
+func (p *OneDriveProvider) sharedShortcutCacheKey(rootFolder string) string {
+	tokenDigest := sha256.Sum256([]byte(p.accessToken))
+	return p.apiBase + "\x00" + fmt.Sprintf("%x", tokenDigest) + "\x00" + rootFolder
+}
+
+func (p *OneDriveProvider) resolveSharedShortcut(ctx context.Context, rootFolder string) (string, error) {
+	key := p.sharedShortcutCacheKey(rootFolder)
+	for {
+		sharedShortcutResolutionCache.Lock()
+		entry, found := sharedShortcutResolutionCache.entries[key]
+		if found && time.Now().Before(entry.expiresAt) {
+			ready := entry.ready
+			sharedShortcutResolutionCache.Unlock()
+			if ready != nil {
+				select {
+				case <-ready:
+					continue
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
+			}
+			return entry.remotePrefix, entry.err
+		}
+		if found {
+			delete(sharedShortcutResolutionCache.entries, key)
+		}
+		for staleKey, staleEntry := range sharedShortcutResolutionCache.entries {
+			if time.Now().After(staleEntry.expiresAt) {
+				delete(sharedShortcutResolutionCache.entries, staleKey)
+			}
+		}
+		entry = &oneDriveShortcutCacheEntry{ready: make(chan struct{}), expiresAt: time.Now().Add(sharedShortcutCacheTTL)}
+		sharedShortcutResolutionCache.entries[key] = entry
+		sharedShortcutResolutionCache.Unlock()
+
+		remotePrefix, err := p.inspectSharedShortcut(ctx, rootFolder)
+		sharedShortcutResolutionCache.Lock()
+		entry.remotePrefix = remotePrefix
+		// A 404 means this top-level name is not a shortcut. Cache that fact for
+		// later tasks, while returning the original missing-item result to this
+		// first caller so its normal create/missing path remains unchanged.
+		entry.err = err
+		if errors.Is(err, ErrNotFound) {
+			entry.err = nil
+		}
+		entry.expiresAt = time.Now().Add(sharedShortcutCacheTTL)
+		if entry.err != nil {
+			entry.expiresAt = time.Now().Add(sharedShortcutErrorTTL)
+		}
+		close(entry.ready)
+		entry.ready = nil
+		sharedShortcutResolutionCache.Unlock()
+		return remotePrefix, err
+	}
+}
+
+func (p *OneDriveProvider) inspectSharedShortcut(ctx context.Context, rootFolder string) (string, error) {
+	rootURL, err := p.itemURL("/" + rootFolder)
+	if err != nil {
+		return "", err
+	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		req, err := p.request(ctx, http.MethodGet, rootURL+"?$select=id,remoteItem", nil, true)
+		if err != nil {
+			return "", err
+		}
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			var root oneDriveItem
+			decodeErr := json.NewDecoder(resp.Body).Decode(&root)
+			resp.Body.Close()
+			if decodeErr != nil {
+				return "", fmt.Errorf("decode onedrive shared root: %w", decodeErr)
+			}
+			if root.RemoteItem == nil || root.RemoteItem.ID == "" || root.RemoteItem.ParentReference.DriveID == "" {
+				return "", nil
+			}
+			graphBase := strings.TrimSuffix(p.apiBase, "/me/drive")
+			return graphBase + "/drives/" + url.PathEscape(root.RemoteItem.ParentReference.DriveID) + "/items/" + url.PathEscape(root.RemoteItem.ID), nil
+		}
+		lastErr = oneDriveError("inspect shared root", resp.StatusCode)
+		retryAfter := resp.Header.Get("Retry-After")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+			return "", lastErr
+		}
+		if attempt < 2 {
+			if err := oneDriveWait(ctx, retryAfter, attempt); err != nil {
+				return "", err
+			}
+		}
+	}
+	return "", lastErr
 }
 
 func (p *OneDriveProvider) request(ctx context.Context, method, rawURL string, body io.Reader, authorize bool) (*http.Request, error) {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -102,6 +103,54 @@ func TestOneDriveProviderUsesRemoteDriveForSharedShortcut(t *testing.T) {
 	secondStream.Close()
 	if len(requests) != 3 || requests[0] != "/v1.0/me/drive/root:/Shared%20folder:" {
 		t.Fatalf("requests = %v, want one shortcut lookup and two remote downloads", requests)
+	}
+}
+
+func TestOneDriveProviderSharesShortcutResolutionAcrossInstances(t *testing.T) {
+	var mu sync.Mutex
+	rootLookups := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.URL.EscapedPath() == "/v1.0/me/drive/root:/Shared%20folder:":
+			rootLookups++
+			if rootLookups == 1 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			_, _ = io.WriteString(w, `{"id":"shortcut-id","remoteItem":{"id":"remote-item-id","parentReference":{"driveId":"remote-drive-id"}}}`)
+		case strings.HasPrefix(r.URL.EscapedPath(), "/v1.0/drives/remote-drive-id/items/remote-item-id:/file-"):
+			_, _ = io.WriteString(w, "shared content")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	const transfers = 8
+	errs := make(chan error, transfers)
+	for i := 0; i < transfers; i++ {
+		go func(i int) {
+			p := newOneDriveProvider("shared-token", server.URL+"/v1.0/me/drive", server.Client())
+			stream, err := p.StreamDownload(context.Background(), "files", "/Shared folder/file-"+string(rune('a'+i))+".txt")
+			if err == nil {
+				_, err = io.ReadAll(stream)
+				stream.Close()
+			}
+			errs <- err
+		}(i)
+	}
+	for i := 0; i < transfers; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if rootLookups != 2 {
+		t.Fatalf("shared shortcut lookups = %d, want 2 (one throttled retry)", rootLookups)
 	}
 }
 
