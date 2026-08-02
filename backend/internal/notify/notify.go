@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -24,6 +25,14 @@ var ErrURLBlocked = errors.New("notification URL blocked")
 
 func sanitizeSMTPValue(value string) string {
 	return strings.NewReplacer("\r", "", "\n", "", "\x00", "").Replace(strings.TrimSpace(value))
+}
+
+func sanitizeSMTPAddressValue(value string) string {
+	address, err := mail.ParseAddress(sanitizeSMTPValue(value))
+	if err != nil {
+		return ""
+	}
+	return address.Address
 }
 
 func Validate(typ string, cfg Config) error {
@@ -99,7 +108,7 @@ func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, 
 			Port:       port,
 			Username:   sanitizeSMTPValue(fmt.Sprint(cfg["smtp_username"])),
 			Password:   sanitizeSMTPValue(fmt.Sprint(cfg["smtp_password"])),
-			FromEmail:  sanitizeSMTPValue(fmt.Sprint(cfg["smtp_from_email"])),
+			FromEmail:  sanitizeSMTPAddressValue(fmt.Sprint(cfg["smtp_from_email"])),
 			FromName:   sanitizeSMTPValue(fmt.Sprint(cfg["smtp_from_name"])),
 			Encryption: sanitizeSMTPValue(fmt.Sprint(cfg["smtp_encryption"])),
 		}

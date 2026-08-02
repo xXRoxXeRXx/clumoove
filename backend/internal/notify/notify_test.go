@@ -14,6 +14,15 @@ func TestSanitizeSMTPValue(t *testing.T) {
 	}
 }
 
+func TestSanitizeSMTPAddressValue(t *testing.T) {
+	if got := sanitizeSMTPAddressValue("Sender <sender@example.com>"); got != "sender@example.com" {
+		t.Fatalf("sanitizeSMTPAddressValue() = %q", got)
+	}
+	if got := sanitizeSMTPAddressValue("not an address"); got != "" {
+		t.Fatalf("sanitizeSMTPAddressValue() = %q, want empty", got)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
