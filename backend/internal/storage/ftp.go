@@ -148,7 +148,14 @@ func (p *FTPProvider) dial(network, address string) (net.Conn, error) {
 
 	isControl := !p.controlDialed
 	p.controlDialed = true
-	if p.mode == ftpImplicitTLS || !isControl {
+	if !isControl {
+		// For passive FTPS data channels, the FTP server can wait for LIST,
+		// RETR, or STOR before it starts the TLS handshake. Returning an
+		// unhandshaken TLS connection lets the FTP client send that command
+		// first; the first data read or write then performs the handshake.
+		return tls.Client(conn, p.tlsConfig), nil
+	}
+	if p.mode == ftpImplicitTLS {
 		tlsConn := tls.Client(conn, p.tlsConfig)
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()
