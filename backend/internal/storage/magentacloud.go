@@ -29,10 +29,11 @@ func (magentaPaths) resourceURL(baseURL, username, resourceType, endpointPath st
 func (magentaPaths) uploadsURL(baseURL, username, endpointPath string) string {
 	cleanPath := strings.TrimPrefix(endpointPath, "/")
 	escapedPath := escapeDAVPath(cleanPath)
-	if baseURL == "" {
-		return "/uploads/" + escapedPath
-	}
-	return fmt.Sprintf("%s/uploads/%s", strings.TrimSuffix(baseURL, "/"), escapedPath)
+	escapedUser := escapeDAVPath(username)
+	// MagentaCLOUD exposes files at /remote.php/webdav but, like Nextcloud,
+	// exposes resumable uploads under the separate DAV root.
+	davRoot := strings.TrimSuffix(strings.TrimSuffix(baseURL, "/"), "/remote.php/webdav") + "/remote.php/dav"
+	return fmt.Sprintf("%s/uploads/%s/%s", davRoot, escapedUser, escapedPath)
 }
 
 func (magentaPaths) listingPrefix(basePath, username, resourceType string) string {

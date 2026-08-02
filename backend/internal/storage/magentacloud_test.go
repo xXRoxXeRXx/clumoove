@@ -1,7 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -82,5 +85,52 @@ func TestMagentaPaths(t *testing.T) {
 	wantAmp := "https://magentacloud.de/remote.php/webdav/Kinder%20%26%20Jugend/a%2Bb.txt"
 	if withAmp != wantAmp {
 		t.Errorf("resourceURL = %s, want %s", withAmp, wantAmp)
+	}
+
+	uploadURL := mp.uploadsURL("https://magentacloud.de/remote.php/webdav", "user+tag@telekom.de", "/upload-123")
+	wantUploadURL := "https://magentacloud.de/remote.php/dav/uploads/user%2Btag%40telekom.de/upload-123"
+	if uploadURL != wantUploadURL {
+		t.Errorf("uploadsURL = %s, want %s", uploadURL, wantUploadURL)
+	}
+}
+
+func TestMagentacloudChunkedUploadUsesDAVUploadsEndpoint(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.EscapedPath())
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", "53477376")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	p, err := NewMagentacloudProvider("user+tag@telekom.de", "pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.BaseURL = server.URL + "/remote.php/webdav"
+	p.HTTPClient = server.Client()
+
+	const largeFileSize = 51 * 1024 * 1024
+	if err := p.StreamUploadChunked(context.Background(), "files", "/large.bin", bytes.NewReader([]byte("x")), largeFileSize, nil); err != nil {
+		t.Fatalf("StreamUploadChunked: %v", err)
+	}
+
+	want := []string{
+		"MKCOL /remote.php/dav/uploads/user%2Btag%40telekom.de/upload-", // transfer ID is time-derived
+		"PUT /remote.php/dav/uploads/user%2Btag%40telekom.de/upload-",
+		"MOVE /remote.php/dav/uploads/user%2Btag%40telekom.de/upload-",
+		"HEAD /remote.php/webdav/large.bin",
+	}
+	if len(requests) != len(want) {
+		t.Fatalf("received %d requests, want %d: %v", len(requests), len(want), requests)
+	}
+	for i, prefix := range want {
+		if len(requests[i]) < len(prefix) || requests[i][:len(prefix)] != prefix {
+			t.Errorf("request %d = %q, want prefix %q", i, requests[i], prefix)
+		}
 	}
 }
