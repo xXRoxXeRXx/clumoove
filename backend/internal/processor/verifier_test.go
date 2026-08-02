@@ -13,14 +13,17 @@ import (
 
 type verifierProvider struct {
 	fakeProvider
-	hash    string
-	hashErr error
-	exists  bool
-	size    int64
+	hash            string
+	hashErr         error
+	exists          bool
+	size            int64
+	fileExistsErr   error
+	fileExistsCalls int
 }
 
 func (p *verifierProvider) FileExists(context.Context, string, string) (bool, int64, error) {
-	return p.exists, p.size, nil
+	p.fileExistsCalls++
+	return p.exists, p.size, p.fileExistsErr
 }
 
 func (p *verifierProvider) GetFileHash(context.Context, string, string) (string, error) {
@@ -254,6 +257,44 @@ func TestVerificationDifferentAlgorithmsRequiresSizeAndPersistsTargetHash(t *tes
 
 	if persistedTargetHash != "MD5:target-md5" {
 		t.Fatalf("persisted target hash = %q, want provider hash", persistedTargetHash)
+	}
+	if provider.fileExistsCalls == 0 {
+		t.Fatal("different-algorithm fallback marked verified without a target size query")
+	}
+}
+
+func TestVerificationFallbackLeavesTaskUnverifiedWhenSizeQueryFails(t *testing.T) {
+	provider := &verifierProvider{
+		hashErr:       storage.ErrHashNotSupported,
+		fileExistsErr: errors.New("target unavailable"),
+	}
+	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10}
+	verified := false
+	mismatched := false
+	p := &Processor{}
+	p.runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType:        "Migration",
+		EntityID:          "size-query-failure",
+		Threads:           1,
+		TargetProvider:    "webdav",
+		TargetClient:      provider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified: func(context.Context, *db.Task, string) (bool, error) {
+			verified = true
+			return true, nil
+		},
+		MarkMismatch: func(context.Context, *db.Task) (bool, error) {
+			mismatched = true
+			return true, nil
+		},
+	})
+
+	if provider.fileExistsCalls != 3 {
+		t.Fatalf("FileExists calls = %d, want 3 retries", provider.fileExistsCalls)
+	}
+	if verified || mismatched {
+		t.Fatal("failed fallback size query must leave the task unverified")
 	}
 }
 
