@@ -3,9 +3,11 @@ package queue
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	_ "github.com/lib/pq"
 )
@@ -147,6 +149,92 @@ func TestDequeueSQLSerializesMigrationCapacity(t *testing.T) {
 	}
 	var running int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM tasks WHERE migration_id = $1 AND status = 'RUNNING'`, migrationID).Scan(&running); err != nil {
+		t.Fatalf("count running tasks: %v", err)
+	}
+	if running != 1 {
+		t.Fatalf("running tasks = %d, want 1", running)
+	}
+}
+
+// TestDequeueSQLSerializesSyncCapacity verifies that concurrent workers cannot
+// exceed a sync pass's thread cap. The generation is part of the capacity key,
+// so tasks from a different pass must not affect this assertion.
+func TestDequeueSQLSerializesSyncCapacity(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping dequeue concurrency DB test")
+	}
+
+	database, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(4)
+	t.Cleanup(func() { _ = database.Close() })
+
+	testEmail := fmt.Sprintf("queue-sync-capacity-test-%d@example.invalid", time.Now().UnixNano())
+	var userID, syncJobID string
+	if err := database.QueryRow(`
+		INSERT INTO users (email, password_hash, display_name)
+		VALUES ($1, 'unused', 'Queue test')
+		RETURNING id
+	`, testEmail).Scan(&userID); err != nil {
+		t.Fatalf("create sync test user: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = database.Exec(`DELETE FROM users WHERE id = $1`, userID)
+	})
+	if err := database.QueryRow(`
+		INSERT INTO sync_jobs (
+			user_id, source_url, source_username, source_password_encrypted,
+			target_url, target_username, target_password_encrypted, status, threads, run_generation
+		) VALUES ($1, 'https://source.example', 'source', 'secret', 'https://target.example', 'target', 'secret', 'RUNNING', 1, 1)
+		RETURNING id
+	`, userID).Scan(&syncJobID); err != nil {
+		t.Fatalf("create sync job: %v", err)
+	}
+	if _, err := database.Exec(`
+		INSERT INTO tasks (sync_job_id, file_path, file_size, status, metadata, pass_generation)
+		VALUES ($1, '/one', 1, 'PENDING', '{}'::jsonb, 1), ($1, '/two', 1, 'PENDING', '{}'::jsonb, 1)
+	`, syncJobID); err != nil {
+		t.Fatalf("create sync tasks: %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan *Payload, 2)
+	errs := make(chan error, 2)
+	var workers sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		workers.Add(1)
+		go func(workerID string) {
+			defer workers.Done()
+			<-start
+			payload, err := (&Queue{}).DequeueSQL(context.Background(), database, workerID)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- payload
+		}("concurrent-sync-worker-" + string(rune('a'+i)))
+	}
+	close(start)
+	workers.Wait()
+	close(errs)
+	close(results)
+	for err := range errs {
+		t.Errorf("concurrent dequeue: %v", err)
+	}
+	claims := 0
+	for payload := range results {
+		if payload != nil {
+			claims++
+		}
+	}
+	if claims != 1 {
+		t.Fatalf("concurrent claims = %d, want 1 for a one-thread sync job", claims)
+	}
+	var running int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = 1 AND status = 'RUNNING'`, syncJobID).Scan(&running); err != nil {
 		t.Fatalf("count running tasks: %v", err)
 	}
 	if running != 1 {
