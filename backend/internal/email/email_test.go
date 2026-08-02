@@ -82,3 +82,19 @@ func TestSanitizeEmailContentRemovesSMTPControlCharacters(t *testing.T) {
 		t.Fatalf("sanitizeEmailContent() = %q", got)
 	}
 }
+
+func TestBuildMessagePreventsSMTPMessageInjection(t *testing.T) {
+	message := buildMessage(
+		"Clumoove <no-reply@example.com>",
+		"recipient@example.com",
+		"Status\r\nBcc: attacker@example.com",
+		"Hello\r\n\r\nBcc: attacker@example.com\x00",
+	)
+
+	if strings.Contains(message, "\r\nBcc:") {
+		t.Fatalf("buildMessage() allowed an injected header: %q", message)
+	}
+	if !strings.Contains(message, "Subject: StatusBcc: attacker@example.com\r\n") {
+		t.Fatalf("buildMessage() did not preserve the sanitized subject: %q", message)
+	}
+}

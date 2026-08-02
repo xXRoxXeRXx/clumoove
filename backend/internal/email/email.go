@@ -83,10 +83,7 @@ func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 		from = fmt.Sprintf("%s <%s>", cfg.FromName, cfg.FromEmail)
 	}
 
-	// SMTP headers end at the first blank line. Remove control characters from
-	// dynamic content before composing the message so request or job data cannot
-	// introduce a new header or alter the MIME body.
-	msg := buildMessage(from, to, sanitizeEmailContent(subject), sanitizeEmailContent(htmlBody))
+	msg := buildMessage(from, to, subject, htmlBody)
 
 	var auth smtp.Auth
 	if cfg.Username != "" {
@@ -242,6 +239,9 @@ func sendSMTPMessage(client *smtp.Client, cfg SMTPConfig, auth smtp.Auth, to, ms
 	if err != nil {
 		return fmt.Errorf("SMTP DATA failed: %w", err)
 	}
+	// codeql[go/email-injection]: buildMessage removes CR, LF, and NUL bytes from
+	// request-derived content before it reaches this SMTP DATA sink, preventing
+	// header and MIME-message injection.
 	if _, err := w.Write([]byte(msg)); err != nil {
 		return fmt.Errorf("SMTP write failed: %w", err)
 	}
@@ -252,6 +252,13 @@ func sendSMTPMessage(client *smtp.Client, cfg SMTPConfig, auth smtp.Auth, to, ms
 }
 
 func buildMessage(from, to, subject, htmlBody string) string {
+	// SMTP headers end at the first blank line. Remove control characters from
+	// dynamic content before composing the message so request or job data cannot
+	// introduce a new header or alter the MIME body. Keep this at the message
+	// construction boundary so every caller receives the same protection.
+	subject = sanitizeEmailContent(subject)
+	htmlBody = sanitizeEmailContent(htmlBody)
+
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("From: %s\r\n", encodeFromHeader(from)))
 	b.WriteString(fmt.Sprintf("To: %s\r\n", to))
