@@ -75,3 +75,10 @@ func TestSendMailRejectsReboundPrivateAddress(t *testing.T) {
 		t.Fatalf("expected host to be resolved before validation and dialing, got %d lookups", lookups)
 	}
 }
+
+func TestSanitizeEmailContentRemovesSMTPControlCharacters(t *testing.T) {
+	got := sanitizeEmailContent("Hello\r\nBcc: attacker@example.com\x00")
+	if got != "HelloBcc: attacker@example.com" {
+		t.Fatalf("sanitizeEmailContent() = %q", got)
+	}
+}

@@ -83,7 +83,10 @@ func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 		from = fmt.Sprintf("%s <%s>", cfg.FromName, cfg.FromEmail)
 	}
 
-	msg := buildMessage(from, to, subject, htmlBody)
+	// SMTP headers end at the first blank line. Remove control characters from
+	// dynamic content before composing the message so request or job data cannot
+	// introduce a new header or alter the MIME body.
+	msg := buildMessage(from, to, sanitizeEmailContent(subject), sanitizeEmailContent(htmlBody))
 
 	var auth smtp.Auth
 	if cfg.Username != "" {
@@ -98,6 +101,13 @@ func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 	default:
 		return sendWithoutTLS(ctx, cfg, auth, to, msg)
 	}
+}
+
+// sanitizeEmailContent removes characters that have special meaning in an SMTP
+// message. HTML templates do not require line breaks, so stripping them is safe
+// and prevents CRLF-based message and header injection.
+func sanitizeEmailContent(value string) string {
+	return strings.NewReplacer("\r", "", "\n", "", "\x00", "").Replace(value)
 }
 
 func smtpDialContext(ctx context.Context, host, port string) (net.Conn, error) {
