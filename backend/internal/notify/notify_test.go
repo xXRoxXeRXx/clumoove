@@ -7,6 +7,13 @@ import (
 	"unicode/utf8"
 )
 
+func TestSanitizeSMTPValue(t *testing.T) {
+	got := sanitizeSMTPValue(" \r\nsmtp.example\x00 \n")
+	if got != "smtp.example" {
+		t.Fatalf("sanitizeSMTPValue() = %q", got)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string

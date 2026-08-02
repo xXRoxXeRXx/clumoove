@@ -22,6 +22,10 @@ type Config map[string]any
 
 var ErrURLBlocked = errors.New("notification URL blocked")
 
+func sanitizeSMTPValue(value string) string {
+	return strings.NewReplacer("\r", "", "\n", "", "\x00", "").Replace(strings.TrimSpace(value))
+}
+
 func Validate(typ string, cfg Config) error {
 	required := func(keys ...string) bool {
 		for _, k := range keys {
@@ -86,13 +90,22 @@ func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, 
 		text = truncate(text, 4096)
 	}
 	if typ == "email" {
-		port := fmt.Sprint(cfg["smtp_port"])
+		port := sanitizeSMTPValue(fmt.Sprint(cfg["smtp_port"]))
 		if port == "" || port == "<nil>" {
 			port = "587"
 		}
+		smtpCfg := email.SMTPConfig{
+			Host:       sanitizeSMTPValue(fmt.Sprint(cfg["smtp_host"])),
+			Port:       port,
+			Username:   sanitizeSMTPValue(fmt.Sprint(cfg["smtp_username"])),
+			Password:   sanitizeSMTPValue(fmt.Sprint(cfg["smtp_password"])),
+			FromEmail:  sanitizeSMTPValue(fmt.Sprint(cfg["smtp_from_email"])),
+			FromName:   sanitizeSMTPValue(fmt.Sprint(cfg["smtp_from_name"])),
+			Encryption: sanitizeSMTPValue(fmt.Sprint(cfg["smtp_encryption"])),
+		}
 		var p map[string]any
 		_ = json.Unmarshal(payload, &p)
-		return email.SendMail(email.SMTPConfig{Host: fmt.Sprint(cfg["smtp_host"]), Port: port, Username: fmt.Sprint(cfg["smtp_username"]), Password: fmt.Sprint(cfg["smtp_password"]), FromEmail: fmt.Sprint(cfg["smtp_from_email"]), FromName: fmt.Sprint(cfg["smtp_from_name"]), Encryption: fmt.Sprint(cfg["smtp_encryption"])}, recipient, notificationSubject(language), email.BuildNotificationEmailLocalized(fmt.Sprint(p["kind"]), fmt.Sprint(p["name"]), fmt.Sprint(p["status"]), fmt.Sprint(p["processed"]), fmt.Sprint(p["total"]), fmt.Sprint(p["failed"]), fmt.Sprint(p["skipped"]), language))
+		return email.SendMail(smtpCfg, recipient, notificationSubject(language), email.BuildNotificationEmailLocalized(fmt.Sprint(p["kind"]), fmt.Sprint(p["name"]), fmt.Sprint(p["status"]), fmt.Sprint(p["processed"]), fmt.Sprint(p["total"]), fmt.Sprint(p["failed"]), fmt.Sprint(p["skipped"]), language))
 	}
 	var endpoint string
 	var body any
