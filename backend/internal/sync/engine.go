@@ -158,8 +158,28 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		return
 	}
 	indexCtx = storage.WithLocalUserScope(indexCtx, job.UserID)
-	if job.Status != "INDEXING" {
-		log.Printf("[SyncEngine] Refusing pass for %s: expected INDEXING, got %s\n", syncJobID, job.Status)
+	if job.Status != "INDEXING" || job.RunGeneration != generation {
+		log.Printf("[SyncEngine] Refusing stale pass for %s: expected INDEXING generation %d, got %s generation %d\n", syncJobID, generation, job.Status, job.RunGeneration)
+		return
+	}
+
+	// A predecessor can outlive its cancelled coordinator while it is blocked in
+	// provider I/O. Drain before decrypting credentials or rotating OAuth tokens:
+	// a long drain must neither retain plaintext secrets nor rotate credentials
+	// for a pass that cannot proceed. It must also precede both provider scans so
+	// the predecessor cannot change the target after this pass observes it.
+	if err := e.drainRemainingTasks(indexCtx, job.ID); err != nil {
+		if indexCtx.Err() != nil {
+			// A cancelled coordinator must preserve a concurrent pause or deletion.
+			if errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
+				e.failSync(syncJobID, generation, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
+			} else {
+				log.Printf("[SyncEngine] Drain interrupted for job %s: %v\n", syncJobID, err)
+			}
+			return
+		}
+		// The database could not establish that no prior worker owns a task.
+		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to determine whether previous tasks drained: %v", err))
 		return
 	}
 
@@ -350,25 +370,6 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 
 	// isFirstPass is true when no sync state exists yet (initial run).
 	isFirstPass := len(prevStates) == 0
-
-	// Wait for any tasks that may still be RUNNING from a previous pass before
-	// clearing them. A successor must not enqueue its delta while an old worker
-	// may still mutate the same target path. This also prevents deleting a task
-	// row that a worker thread currently holds, causing counter drift.
-	if err := e.drainRemainingTasks(indexCtx, job.ID); err != nil {
-		if indexCtx.Err() != nil {
-			// A cancelled coordinator must preserve a concurrent pause or deletion.
-			if errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
-				e.failSync(syncJobID, generation, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
-			} else {
-				log.Printf("[SyncEngine] Drain interrupted for job %s: %v\n", syncJobID, err)
-			}
-			return
-		}
-		// The database could not establish that no prior worker owns a task.
-		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to determine whether previous tasks drained: %v", err))
-		return
-	}
 
 	// Only delete terminal tasks from the previous pass. PENDING tasks that
 	// survived the drain (e.g. from a prior incomplete pass) are also cleared
@@ -948,25 +949,31 @@ SyncTasksDone:
 // must reach a terminal state before a later pass can begin.
 func (e *Engine) drainRemainingTasks(ctx context.Context, jobID string) error {
 	return waitForNoRunningTasks(ctx, 3*time.Second, func() (int, error) {
-		var runningCount int
+		var running bool
 		err := e.db.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING'
-		`, jobID).Scan(&runningCount)
+			SELECT EXISTS(SELECT 1 FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING')
+		`, jobID).Scan(&running)
 		if err != nil {
-			return 0, fmt.Errorf("count running tasks for sync job %s: %w", jobID, err)
+			return 0, fmt.Errorf("check running tasks for sync job %s: %w", jobID, err)
 		}
-		return runningCount, nil
+		if running {
+			return 1, nil
+		}
+		return 0, nil
 	})
 }
 
 func (e *Engine) drainGenerationTasks(ctx context.Context, jobID string, generation int) error {
 	return waitForNoRunningTasks(ctx, 3*time.Second, func() (int, error) {
-		var runningCount int
-		err := e.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'RUNNING'`, jobID, generation).Scan(&runningCount)
+		var running bool
+		err := e.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'RUNNING')`, jobID, generation).Scan(&running)
 		if err != nil {
-			return 0, fmt.Errorf("count running tasks for sync job %s generation %d: %w", jobID, generation, err)
+			return 0, fmt.Errorf("check running tasks for sync job %s generation %d: %w", jobID, generation, err)
 		}
-		return runningCount, nil
+		if running {
+			return 1, nil
+		}
+		return 0, nil
 	})
 }
 
