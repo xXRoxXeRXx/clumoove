@@ -15,10 +15,14 @@ func T(language, key string) string {
 	return translations["en"][key]
 }
 
+func sanitizeReplacementValue(value string) string {
+	return strings.NewReplacer("\r", "", "\n", "", "\x00", "").Replace(value)
+}
+
 func Format(language, key string, values map[string]string) string {
 	value := T(language, key)
 	for name, replacement := range values {
-		value = strings.ReplaceAll(value, "{{"+name+"}}", replacement)
+		value = strings.ReplaceAll(value, "{{"+name+"}}", sanitizeReplacementValue(replacement))
 	}
 	return value
 }

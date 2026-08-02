@@ -1,6 +1,9 @@
 package i18n
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTUsesRequestedLanguageAndFallsBackToEnglish(t *testing.T) {
 	if got := T("de", "delivery.notification.processed"); got != "Verarbeitet" {
@@ -19,5 +22,12 @@ func TestFormatReplacesNamedPlaceholders(t *testing.T) {
 	want := "You requested to change your email address to <strong>person@example.com</strong>."
 	if got != want {
 		t.Fatalf("Format() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatSanitizesReplacementValues(t *testing.T) {
+	got := Format("en", "delivery.emailChange.message", map[string]string{"email": "user@example.com\r\nBcc: attacker@example.com\x00"})
+	if strings.ContainsAny(got, "\r\n\x00") {
+		t.Fatalf("Format() retained SMTP control characters: %q", got)
 	}
 }
