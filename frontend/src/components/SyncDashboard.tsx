@@ -8,6 +8,7 @@ import { useTransferMetrics } from '../hooks/useTransferMetrics';
 import { Badge, StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
+import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { ErrorOverview } from './ErrorOverview';
 import { TransferDetailHeader } from './TransferDetailHeader';
 import { TransferProgress } from './TransferProgress';
@@ -45,6 +46,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const { formatDateTime } = useFormat();
   const translateApiError = useApiError();
   const toast = useToast();
+  const { openOAuthPopup } = useOAuthPopup(apiUrl);
   const { speed, eta, updateMetrics } = useTransferMetrics();
 
   useEffect(() => {
@@ -197,6 +199,25 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     }
   };
 
+  const handleReauth = () => {
+    if (!job) return;
+    const oauthProviders = ['dropbox', 'google', 'onedrive', 'hidrive'];
+    const role = oauthProviders.includes(job.source_provider) ? 'source' : 'target';
+    const provider = role === 'source' ? job.source_provider : job.target_provider;
+    if (!oauthProviders.includes(provider)) return;
+    setActionLoading(true);
+    openOAuthPopup(provider, `sync-reauth-${syncId}-${role}`, {
+      onSuccess: async (msg) => {
+        try {
+          const res = await apiFetch(`${apiUrl}/api/sync/${syncId}/reauth`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ role, access_token: msg.token, refresh_token: msg.refreshToken, expires_in: msg.expiresIn }) });
+          if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error_code ? translateApiError(body.error_code) : t('sync.startFailed')); }
+          await handleTriggerStart();
+        } catch (err) { toast(err instanceof Error ? err.message : t('sync.startFailed')); } finally { setActionLoading(false); }
+      },
+      onError: (code) => { toast(translateApiError(code)); setActionLoading(false); },
+    });
+  };
+
   const handlePause = async () => {
     setActionLoading(true);
     try {
@@ -319,12 +340,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
             {canStart && (
               <button
-              onClick={handleTriggerStart}
+              onClick={job.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(job.error_message || '') ? handleReauth : handleTriggerStart}
               disabled={actionLoading}
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {actionLoading && `${t('common.loading')} `}
-                {t('sync.syncNow')}
+                {job.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(job.error_message || '') ? t('settings.connections.reauthenticate') : t('sync.syncNow')}
               </button>
             )}
           </>

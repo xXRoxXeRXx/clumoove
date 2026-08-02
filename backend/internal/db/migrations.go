@@ -645,6 +645,18 @@ func UpdateMigrationOAuthTokens(db *sql.DB, u OAuthTokenUpdate, expectedRefreshT
 	return nil
 }
 
+func UpdateMigrationOAuthTokensForReauth(db *sql.DB, u OAuthTokenUpdate) error {
+	if u.Role != "source" && u.Role != "target" {
+		return fmt.Errorf("invalid oauth token role %q", u.Role)
+	}
+	columns := "source_password_encrypted = $1, source_refresh_token_encrypted = $2, source_token_expires_at = $3"
+	if u.Role == "target" {
+		columns = "target_password_encrypted = $1, target_refresh_token_encrypted = $2, target_token_expires_at = $3"
+	}
+	_, err := db.Exec("UPDATE migrations SET "+columns+", updated_at = CURRENT_TIMESTAMP WHERE id = $4", u.AccessTokenEncrypted, u.RefreshTokenEncrypted, u.ExpiresAt, u.MigrationID)
+	return err
+}
+
 func GetExpiringOAuthMigrations(db *sql.DB) ([]ExpiringOAuthMigration, error) {
 	threshold := time.Now().Add(15 * time.Minute)
 	query := `

@@ -547,6 +547,23 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		strings.Contains(errStr, "Invalid Credentials")
 
 	if isAuthError {
+		if role := oauthSyncAuthFailureRole(job, errStr); role != "" && task.Attempts <= 3 {
+			if _, refreshErr := p.refreshSyncOAuthToken(ctx, job, role); refreshErr == nil {
+				backoff := retryBackoff(task.Attempts)
+				task.Status = "FAILED"
+				task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
+				task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
+				if err := db.UpdateTaskStatus(p.db, task); err != nil {
+					log.Printf("Error scheduling sync OAuth retry for task %s: %v", task.ID, err)
+				}
+				log.Printf("[Worker %s] OAuth 401 for sync task %s (job %s, %s) — refreshed token and retrying in %ds\n",
+					p.workerID, payload.TaskID, payload.SyncJobID, role, int(backoff.Seconds()))
+				return
+			} else {
+				log.Printf("[Worker %s] OAuth 401 recovery refresh failed for sync task %s (job %s, %s): %v\n",
+					p.workerID, payload.TaskID, payload.SyncJobID, role, refreshErr)
+			}
+		}
 		authErrMsg := "Authentication failed - please check your credentials"
 		_ = db.UpdateSyncJobStatus(p.db, payload.SyncJobID, "FAILED", &authErrMsg)
 		p.clearConnLoss(payload.SyncJobID)

@@ -411,6 +411,7 @@
       "profileNamePlaceholder": "Profilname eingeben (z. B. Meine Cloud)",
       "saveProfileHint": "Die eingegebenen Zugangsdaten werden verschlüsselt für spätere Übertragungen gespeichert.",
       "oauthConnectedAs": "Verbunden als {{user}}",
+      "reauthenticate": "Verbindung erneut herstellen & fortsetzen",
       "tokenExpiresIn": "Token läuft in {{days}} Tagen ab"
     },
     "profile": "Profil",

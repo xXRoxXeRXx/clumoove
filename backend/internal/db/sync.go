@@ -454,6 +454,18 @@ func UpdateSyncJobOAuthTokens(db *sql.DB, id, role, accessTokenEncrypted, refres
 	return nil
 }
 
+func UpdateSyncJobOAuthTokensForReauth(db *sql.DB, id, role, accessTokenEncrypted, refreshTokenEncrypted string, expiresAt time.Time) error {
+	if role != "source" && role != "target" {
+		return fmt.Errorf("invalid oauth token role %q", role)
+	}
+	columns := "source_password_encrypted = $1, source_refresh_token_encrypted = $2, source_token_expires_at = $3"
+	if role == "target" {
+		columns = "target_password_encrypted = $1, target_refresh_token_encrypted = $2, target_token_expires_at = $3"
+	}
+	_, err := db.Exec("UPDATE sync_jobs SET "+columns+", updated_at = CURRENT_TIMESTAMP WHERE id = $4", accessTokenEncrypted, refreshTokenEncrypted, expiresAt, id)
+	return err
+}
+
 // ExpiringOAuthSyncJob describes a sync job credential near OAuth token expiry.
 type ExpiringOAuthSyncJob struct {
 	SyncJobID             string

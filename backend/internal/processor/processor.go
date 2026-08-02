@@ -1217,6 +1217,24 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		strings.Contains(errStr, "invalid authentication credentials")
 
 	if isAuthError {
+		// Providers may revoke an access token before its persisted expiry. Refresh
+		// the affected OAuth side once and let the normal retry scheduler recreate
+		// a provider with the new token instead of failing the whole migration.
+		if role := oauthAuthFailureRole(mig, errStr); role != "" && task.Attempts <= 3 {
+			if _, refreshErr := p.refreshOAuthToken(ctx, mig, role); refreshErr == nil {
+				backoff := retryBackoff(task.Attempts)
+				task.Status = "FAILED"
+				task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
+				task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
+				_ = db.UpdateTaskStatus(p.db, task)
+				log.Printf("[Worker %s] OAuth 401 for task %s (migration %s, %s) — refreshed token and retrying in %ds\n",
+					p.workerID, payload.TaskID, payload.MigrationID, role, int(backoff.Seconds()))
+				return
+			} else {
+				log.Printf("[Worker %s] OAuth 401 recovery refresh failed for task %s (migration %s, %s): %v\n",
+					p.workerID, payload.TaskID, payload.MigrationID, role, refreshErr)
+			}
+		}
 		log.Printf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n",
 			p.workerID, payload.TaskID, payload.MigrationID)
 		authErrMsg := "Authentication failed — please check your credentials and start a new migration"
@@ -1277,6 +1295,45 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	}
 }
 
+// oauthAuthFailureRole identifies which OAuth side rejected the transfer. The
+// wrapped transfer errors retain source/target context, so a valid credential
+// on the other side is never rotated unnecessarily.
+func oauthAuthFailureRole(mig *db.Migration, errText string) string {
+	errText = strings.ToLower(errText)
+	sourceOAuth := oauth.IsProvider(mig.SourceProvider)
+	targetOAuth := oauth.IsProvider(mig.TargetProvider)
+	switch {
+	case sourceOAuth && strings.Contains(errText, "source"):
+		return "source"
+	case targetOAuth && strings.Contains(errText, "target"):
+		return "target"
+	case sourceOAuth && !targetOAuth:
+		return "source"
+	case targetOAuth && !sourceOAuth:
+		return "target"
+	default:
+		return ""
+	}
+}
+
+func oauthSyncAuthFailureRole(job *db.SyncJob, errText string) string {
+	errText = strings.ToLower(errText)
+	sourceOAuth := oauth.IsProvider(job.SourceProvider)
+	targetOAuth := oauth.IsProvider(job.TargetProvider)
+	switch {
+	case sourceOAuth && strings.Contains(errText, "source"):
+		return "source"
+	case targetOAuth && strings.Contains(errText, "target"):
+		return "target"
+	case sourceOAuth && !targetOAuth:
+		return "source"
+	case targetOAuth && !sourceOAuth:
+		return "target"
+	default:
+		return ""
+	}
+}
+
 // ProgressReader wraps io.Reader to notify bytes read
 type ProgressReader struct {
 	Reader       io.Reader
@@ -1323,6 +1380,16 @@ func isNetworkError(err error) bool {
 // For non-OAuth providers (no refresh token stored) the original accessToken is returned
 // unchanged, making this a safe no-op for Nextcloud/WebDAV.
 func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration, role string, accessToken string) (string, error) {
+	return p.refreshOAuthTokenIfNeeded(ctx, mig, role, accessToken, false)
+}
+
+// refreshOAuthToken forces a refresh after an OAuth provider has returned 401,
+// even if the stored expiry timestamp still lies in the future.
+func (p *Processor) refreshOAuthToken(ctx context.Context, mig *db.Migration, role string) (string, error) {
+	return p.refreshOAuthTokenIfNeeded(ctx, mig, role, "", true)
+}
+
+func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migration, role string, accessToken string, force bool) (string, error) {
 	tokenSet := func(m *db.Migration) struct {
 		refreshEnc sql.NullString
 		expiresAt  sql.NullTime
@@ -1349,10 +1416,13 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	refreshTokenEnc, expiresAt, provider := initial.refreshEnc, initial.expiresAt, initial.provider
 
 	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
+		if force {
+			return "", fmt.Errorf("no OAuth refresh token is stored for %s", role)
+		}
 		return accessToken, nil
 	}
 
-	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+	if !force && expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
 		return accessToken, nil
 	}
 
@@ -1403,7 +1473,15 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 	}
 	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
 
-	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+	// Another task or the rotation daemon may already have recovered this
+	// credential while this task waited for the distributed refresh lock. Reuse
+	// the newer access token instead of rotating a freshly issued refresh token
+	// again (Microsoft can invalidate older refresh tokens during rotation).
+	if force && latestMig.UpdatedAt.After(mig.UpdatedAt) {
+		return accessToken, nil
+	}
+
+	if !force && expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
 		return accessToken, nil
 	}
 
@@ -1467,6 +1545,14 @@ func (p *Processor) ensureFreshOAuthToken(ctx context.Context, mig *db.Migration
 // (or within 2 minutes of expiry) and, if so, performs an inline token refresh under
 // a per-job/role distributed lock before provider construction.
 func (p *Processor) ensureFreshSyncOAuthToken(ctx context.Context, job *db.SyncJob, role string, currentToken string) (string, error) {
+	return p.refreshSyncOAuthTokenIfNeeded(ctx, job, role, currentToken, false)
+}
+
+func (p *Processor) refreshSyncOAuthToken(ctx context.Context, job *db.SyncJob, role string) (string, error) {
+	return p.refreshSyncOAuthTokenIfNeeded(ctx, job, role, "", true)
+}
+
+func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.SyncJob, role string, currentToken string, force bool) (string, error) {
 	tokenSet := func(j *db.SyncJob) struct {
 		refreshEnc sql.NullString
 		expiresAt  sql.NullTime
@@ -1493,10 +1579,13 @@ func (p *Processor) ensureFreshSyncOAuthToken(ctx context.Context, job *db.SyncJ
 	refreshTokenEnc, expiresAt, provider := initial.refreshEnc, initial.expiresAt, initial.provider
 
 	if !refreshTokenEnc.Valid || refreshTokenEnc.String == "" {
+		if force {
+			return "", fmt.Errorf("no OAuth refresh token is stored for %s", role)
+		}
 		return currentToken, nil
 	}
 
-	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+	if !force && expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
 		return currentToken, nil
 	}
 
@@ -1545,7 +1634,11 @@ func (p *Processor) ensureFreshSyncOAuthToken(ctx context.Context, job *db.SyncJ
 	}
 	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
 
-	if expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
+	if force && latestJob.UpdatedAt.After(job.UpdatedAt) {
+		return currentToken, nil
+	}
+
+	if !force && expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) {
 		return currentToken, nil
 	}
 

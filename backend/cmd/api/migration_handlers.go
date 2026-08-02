@@ -16,6 +16,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/processor"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
@@ -854,6 +855,17 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetProvider == "" {
 		req.TargetProvider = "nextcloud"
+	}
+	// Long-running migrations must be able to recover from short-lived OAuth
+	// access tokens. Reject incomplete OAuth credentials up front rather than
+	// allowing a migration that is guaranteed to fail roughly an hour later.
+	if oauth.IsProvider(req.SourceProvider) && req.SourceRefreshToken == "" {
+		writeValidationError(w, ErrRefreshTokenMissing)
+		return
+	}
+	if oauth.IsProvider(req.TargetProvider) && req.TargetRefreshToken == "" {
+		writeValidationError(w, ErrRefreshTokenMissing)
+		return
 	}
 	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
 	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)

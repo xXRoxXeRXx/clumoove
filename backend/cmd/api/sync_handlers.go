@@ -12,6 +12,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/storage"
 )
@@ -129,6 +130,14 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TargetProvider == "" {
 		req.TargetProvider = "nextcloud"
+	}
+	if oauth.IsProvider(req.SourceProvider) && req.SourceRefreshToken == "" {
+		writeValidationError(w, ErrRefreshTokenMissing)
+		return
+	}
+	if oauth.IsProvider(req.TargetProvider) && req.TargetRefreshToken == "" {
+		writeValidationError(w, ErrRefreshTokenMissing)
+		return
 	}
 	req.SourceURL = normalizeProviderURL(req.SourceProvider, req.SourceURL)
 	req.TargetURL = normalizeProviderURL(req.TargetProvider, req.TargetURL)

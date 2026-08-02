@@ -45,6 +45,34 @@ func TestExpectedSizeReader(t *testing.T) {
 	}
 }
 
+func TestOAuthAuthFailureRole(t *testing.T) {
+	tests := []struct {
+		name string
+		mig  db.Migration
+		err  string
+		want string
+	}{
+		{name: "onedrive source download", mig: db.Migration{SourceProvider: "onedrive", TargetProvider: "nextcloud"}, err: "failed to download from source: onedrive download: authentication failed", want: "source"},
+		{name: "onedrive target upload", mig: db.Migration{SourceProvider: "nextcloud", TargetProvider: "onedrive"}, err: "upload to target failed: onedrive upload: authentication failed", want: "target"},
+		{name: "only oauth side without direction", mig: db.Migration{SourceProvider: "onedrive", TargetProvider: "nextcloud"}, err: "authentication failed", want: "source"},
+		{name: "ambiguous two oauth sides", mig: db.Migration{SourceProvider: "onedrive", TargetProvider: "dropbox"}, err: "authentication failed", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := oauthAuthFailureRole(&tt.mig, tt.err); got != tt.want {
+				t.Fatalf("oauthAuthFailureRole() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOAuthSyncAuthFailureRole(t *testing.T) {
+	job := &db.SyncJob{SourceProvider: "nextcloud", TargetProvider: "onedrive"}
+	if got := oauthSyncAuthFailureRole(job, "failed to upload to target: authentication failed"); got != "target" {
+		t.Fatalf("oauthSyncAuthFailureRole() = %q, want target", got)
+	}
+}
+
 func TestExpectedSizeReaderVerifyCompleteWithoutRead(t *testing.T) {
 	nonEmpty := newExpectedSizeReader(bytes.NewBufferString("data"), 0)
 	if err := nonEmpty.VerifyComplete(); err == nil {

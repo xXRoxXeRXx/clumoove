@@ -15,6 +15,7 @@ import { TransferProgress } from './TransferProgress';
 import { TransferEndpoints } from './TransferEndpoints';
 import { ActiveTransfersPanel, TransferStatusPanel } from './TransferRunSummary';
 import { connectSseLoop } from '../utils/sse';
+import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import {
   QueueListIcon,
   SignalIcon,
@@ -101,6 +102,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   const translateApiError = useApiError();
   const confirm = useConfirm();
   const toast = useToast();
+  const { openOAuthPopup } = useOAuthPopup(apiUrl);
   const { speed, eta, updateMetrics, reset: resetMetrics, prevStatusRef } = useTransferMetrics();
 
   const [data, setData] = useState<ProgressData | null>(null);
@@ -212,6 +214,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   };
 
   const handleRetryFailed = async () => {
+    const authFailed = data?.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(data.error_message || '');
+    const role = data?.source_provider && ['dropbox', 'google', 'onedrive', 'hidrive'].includes(data.source_provider) ? 'source' : 'target';
+    const provider = role === 'source' ? data?.source_provider : data?.target_provider;
+    if (authFailed && provider) {
+      setControlLoading('retry');
+      openOAuthPopup(provider, `migration-reauth-${migrationId}-${role}`, {
+        onSuccess: async (msg) => {
+          try {
+            const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/reauth`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ role, access_token: msg.token, refresh_token: msg.refreshToken, expires_in: msg.expiresIn }) });
+            if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(translateApiError(body.error_code)); }
+            setReconnectNonce((n) => n + 1);
+          } catch (err) { toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action: 'reauth' })); } finally { setControlLoading(null); }
+        }, onError: (code) => { toast(translateApiError(code)); setControlLoading(null); },
+      });
+      return;
+    }
     const ok = await confirm({ message: t('dashboard.retryConfirm') });
     if (!ok) return;
 
@@ -395,7 +413,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {controlLoading === 'retry' && `${t('common.loading')} `}
-                {t('dashboard.retryFailed')}
+                {data.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(data.error_message || '') ? t('settings.connections.reauthenticate') : t('dashboard.retryFailed')}
               </button>
             )}
           </>
