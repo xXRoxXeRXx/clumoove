@@ -256,6 +256,8 @@ func buildMessage(from, to, subject, htmlBody string) string {
 	// dynamic content before composing the message so request or job data cannot
 	// introduce a new header or alter the MIME body. Keep this at the message
 	// construction boundary so every caller receives the same protection.
+	from = sanitizeEmailContent(from)
+	to = sanitizeEmailContent(to)
 	subject = sanitizeEmailContent(subject)
 	htmlBody = sanitizeEmailContent(htmlBody)
 
