@@ -90,25 +90,21 @@ func (p *LocalProvider) GetDirectoryListing(ctx context.Context, resourceType, d
 		return nil, err
 	}
 	defer dir.Close()
-	entries, err := dir.ReadDir(-1)
+	entries, err := dir.Readdir(-1)
 	if err != nil {
 		return nil, err
 	}
 	cleanDir := strings.Join(parts, "/")
 	var resources []CloudResource
-	for _, e := range entries {
-		info, ierr := e.Info()
-		if ierr != nil {
-			continue
-		}
-		relPath := e.Name()
+	for _, info := range entries {
+		relPath := info.Name()
 		if cleanDir != "" {
-			relPath = cleanDir + "/" + e.Name()
+			relPath = cleanDir + "/" + info.Name()
 		}
 		res := CloudResource{
 			Path:  relPath,
-			Name:  e.Name(),
-			IsDir: e.IsDir(),
+			Name:  info.Name(),
+			IsDir: info.IsDir(),
 			Size:  info.Size(),
 		}
 		res.LastModified = info.ModTime()
