@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,32 @@ import (
 	"backend/internal/queue"
 )
 
+const defaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=require"
+
+type workerConfig struct {
+	databaseURL   string
+	redisURL      string
+	encryptionKey string
+}
+
+func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
+	config := workerConfig{
+		databaseURL:   getenv("DATABASE_URL"),
+		redisURL:      getenv("REDIS_URL"),
+		encryptionKey: getenv("ENCRYPTION_SECRET_KEY"),
+	}
+	if config.databaseURL == "" {
+		config.databaseURL = defaultDatabaseURL
+	}
+	if config.redisURL == "" {
+		config.redisURL = "localhost:6379"
+	}
+	if config.encryptionKey == "" {
+		return workerConfig{}, errors.New("ENCRYPTION_SECRET_KEY is required")
+	}
+	return config, nil
+}
+
 func main() {
 	log.Println("Starting Migration Worker...")
 
@@ -22,26 +49,18 @@ func main() {
 	oauth.InitConfigs()
 
 	// Read environment variables
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
+	if os.Getenv("DATABASE_URL") == "" {
 		// No explicit DATABASE_URL: default to TLS-required rather than
 		// silently falling back to an unencrypted connection.
 		log.Println("WARNING: DATABASE_URL not set — defaulting to sslmode=require. Set DATABASE_URL explicitly to override (e.g. for a local dev database).")
-		dbURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=require"
 	}
-
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		redisURL = "localhost:6379"
-	}
-
-	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
-	if encryptionKey == "" {
+	config, err := loadWorkerConfig(os.Getenv)
+	if err != nil {
 		log.Fatal("ENCRYPTION_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
 	}
 
 	// 1. Initialize PostgreSQL
-	database, err := db.InitDB(dbURL)
+	database, err := db.InitDB(config.databaseURL)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -49,7 +68,7 @@ func main() {
 	log.Println("Connected to PostgreSQL database.")
 
 	// 2. Initialize Redis Queue
-	q, err := queue.NewQueue(redisURL)
+	q, err := queue.NewQueue(config.redisURL)
 	if err != nil {
 		log.Fatalf("Failed to initialize Redis queue: %v", err)
 	}
@@ -64,8 +83,8 @@ func main() {
 
 	// The worker only processes queued tasks. Sync-pass coordinators are owned
 	// by API instances and started exclusively by the API scheduler.
-	proc := processor.NewProcessor(database, q, workerID, encryptionKey)
-	proc.SetDBConnStr(dbURL) // Enable pg_notify-based wake-up for idle worker threads
+	proc := processor.NewProcessor(database, q, workerID, config.encryptionKey)
+	proc.SetDBConnStr(config.databaseURL) // Enable pg_notify-based wake-up for idle worker threads
 
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
