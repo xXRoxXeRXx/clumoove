@@ -182,6 +182,13 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 	refreshToken = stripScriptTerminator(refreshToken)
 	username = stripScriptTerminator(username)
 
+	// targetOrigin is embedded in the callback's inline script. Keep this
+	// sink-level guard even though callback callers validate the state origin,
+	// so future call paths cannot reflect an untrusted value into JavaScript.
+	if !allowedOrigins[targetOrigin] {
+		targetOrigin = "http://localhost:5173"
+	}
+
 	var errCode string
 	if len(errorCode) > 0 {
 		errCode = string(errorCode[0])
