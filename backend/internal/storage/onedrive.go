@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,10 @@ type OneDriveProvider struct {
 	accessToken string
 	apiBase     string
 	httpClient  *http.Client
+	// shortcutCache maps a top-level folder name to its remote-drive item URL.
+	// An empty string is cached for ordinary folders, preventing one Graph
+	// shortcut probe per indexed/downloaded file.
+	shortcutCache sync.Map
 }
 
 var _ StorageProvider = (*OneDriveProvider)(nil)
@@ -100,6 +105,61 @@ func (p *OneDriveProvider) itemURL(filePath string) (string, error) {
 	return p.apiBase + "/root:/" + escaped + ":", nil
 }
 
+// resourceURL resolves a path that starts with a shared OneDrive shortcut to
+// the owning drive and item. Graph exposes the shortcut in the user's drive,
+// but its descendants must be addressed through the remote drive; resolving
+// them again via /me/drive/root:/... causes the later transfer to return 404.
+func (p *OneDriveProvider) resourceURL(ctx context.Context, filePath string) (string, error) {
+	clean, err := oneDrivePath(filePath)
+	if err != nil || clean == "/" {
+		return p.itemURL(clean)
+	}
+	parts := strings.Split(strings.TrimPrefix(clean, "/"), "/")
+	rootFolder := parts[0]
+	remotePrefix := ""
+	if cached, ok := p.shortcutCache.Load(rootFolder); ok {
+		remotePrefix = cached.(string)
+	} else {
+		rootURL, err := p.itemURL("/" + rootFolder)
+		if err != nil {
+			return "", err
+		}
+		req, err := p.request(ctx, http.MethodGet, rootURL+"?$select=id,remoteItem", nil, true)
+		if err != nil {
+			return "", err
+		}
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			return "", oneDriveError("inspect shared root", resp.StatusCode)
+		}
+		var root oneDriveItem
+		decodeErr := json.NewDecoder(resp.Body).Decode(&root)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return "", fmt.Errorf("decode onedrive shared root: %w", decodeErr)
+		}
+		if root.RemoteItem != nil && root.RemoteItem.ID != "" && root.RemoteItem.ParentReference.DriveID != "" {
+			graphBase := strings.TrimSuffix(p.apiBase, "/me/drive")
+			remotePrefix = graphBase + "/drives/" + url.PathEscape(root.RemoteItem.ParentReference.DriveID) + "/items/" + url.PathEscape(root.RemoteItem.ID)
+		}
+		p.shortcutCache.Store(rootFolder, remotePrefix)
+	}
+	if remotePrefix == "" {
+		return p.itemURL(clean)
+	}
+	if len(parts) == 1 {
+		return remotePrefix, nil
+	}
+	for i, part := range parts[1:] {
+		parts[i+1] = url.PathEscape(part)
+	}
+	return remotePrefix + ":/" + strings.Join(parts[1:], "/") + ":", nil
+}
+
 func (p *OneDriveProvider) request(ctx context.Context, method, rawURL string, body io.Reader, authorize bool) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
@@ -152,6 +212,15 @@ type oneDriveItem struct {
 	ETag                 string    `json:"eTag"`
 	LastModifiedDateTime string    `json:"lastModifiedDateTime"`
 	Folder               *struct{} `json:"folder"`
+	RemoteItem           *struct {
+		ID              string `json:"id"`
+		ParentReference struct {
+			DriveID string `json:"driveId"`
+		} `json:"parentReference"`
+	} `json:"remoteItem"`
+	SpecialFolder *struct {
+		Name string `json:"name"`
+	} `json:"specialFolder"`
 }
 
 func oneDriveResource(item oneDriveItem, parentPath string) CloudResource {
@@ -160,7 +229,11 @@ func oneDriveResource(item oneDriveItem, parentPath string) CloudResource {
 		resourcePath = "/" + resourcePath
 	}
 	modified, _ := time.Parse(time.RFC3339, item.LastModifiedDateTime)
-	return CloudResource{Path: resourcePath, Name: item.Name, Size: item.Size, IsDir: item.Folder != nil, ETag: item.ETag, LastModified: modified}
+	metadata := FileMetadata{}
+	if item.SpecialFolder != nil && item.SpecialFolder.Name != "" {
+		metadata.CustomProps = map[string]string{"onedrive_special_folder": item.SpecialFolder.Name}
+	}
+	return CloudResource{Path: resourcePath, Name: item.Name, Size: item.Size, IsDir: item.Folder != nil, ETag: item.ETag, LastModified: modified, Metadata: metadata}
 }
 
 func (p *OneDriveProvider) Connect(ctx context.Context) (bool, error) {
@@ -191,11 +264,11 @@ func (p *OneDriveProvider) GetDirectoryListing(ctx context.Context, resourceType
 	if err != nil {
 		return nil, err
 	}
-	itemURL, err := p.itemURL(clean)
+	itemURL, err := p.resourceURL(ctx, clean)
 	if err != nil {
 		return nil, err
 	}
-	nextURL := itemURL + "/children?$select=id,name,size,eTag,lastModifiedDateTime,folder"
+	nextURL := itemURL + "/children?$select=id,name,size,eTag,lastModifiedDateTime,folder,specialFolder"
 	var result []CloudResource
 	for nextURL != "" {
 		req, err := p.request(ctx, http.MethodGet, nextURL, nil, true)
@@ -244,11 +317,11 @@ func (p *OneDriveProvider) InspectResource(ctx context.Context, resourceType, fi
 	if err != nil {
 		return CloudResource{}, err
 	}
-	itemURL, err := p.itemURL(clean)
+	itemURL, err := p.resourceURL(ctx, clean)
 	if err != nil {
 		return CloudResource{}, err
 	}
-	req, err := p.request(ctx, http.MethodGet, itemURL+"?$select=id,name,size,eTag,lastModifiedDateTime,folder", nil, true)
+	req, err := p.request(ctx, http.MethodGet, itemURL+"?$select=id,name,size,eTag,lastModifiedDateTime,folder,specialFolder", nil, true)
 	if err != nil {
 		return CloudResource{}, err
 	}
@@ -274,7 +347,7 @@ func (p *OneDriveProvider) StreamDownload(ctx context.Context, resourceType, fil
 	if err := oneDriveFilesOnly(resourceType); err != nil {
 		return nil, err
 	}
-	itemURL, err := p.itemURL(filePath)
+	itemURL, err := p.resourceURL(ctx, filePath)
 	if err != nil {
 		return nil, err
 	}

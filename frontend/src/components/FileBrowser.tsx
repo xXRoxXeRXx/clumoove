@@ -64,6 +64,9 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
   });
 };
 
+const isOneDrivePersonalVault = (file: CloudFile) =>
+  file.metadata?.custom_props?.onedrive_special_folder === 'vault';
+
 const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
   if (!fileName) return <File className={`${className} ui-file-default`} />;
   if (fileName.endsWith('/')) return <Folder className={`${className} ui-file-folder`} />;
@@ -139,7 +142,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // entries so the selection checkboxes render checked on first paint.
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>(() =>
     initialFiles.reduce((acc, f) => {
-      acc[f.path] = !isImmichSource || f.path === '/Timeline';
+      acc[f.path] = (!isImmichSource || f.path === '/Timeline') && !isOneDrivePersonalVault(f);
       return acc;
     }, {} as Record<string, boolean>)
   );
@@ -473,7 +476,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         setSelectedPaths((prev) => {
           const next = { ...prev };
           for (const child of items) {
-            if (next[child.path] === undefined) next[child.path] = true;
+            if (next[child.path] === undefined) next[child.path] = !isOneDrivePersonalVault(child);
           }
           return next;
         });
@@ -646,6 +649,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const isSelected = !!selectedPaths[file.path];
     const isLoading = !!loadingPaths[file.path];
     const children = directoryContents[file.path] || [];
+	const isPersonalVault = isOneDrivePersonalVault(file);
 
     return (
       <div key={file.path} className="select-none font-sans text-xs">
@@ -661,7 +665,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             <button
               type="button"
               className="w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
-              onClick={() => toggleExpand(file.path)}
+              onClick={() => !isPersonalVault && toggleExpand(file.path)}
+              disabled={isPersonalVault}
               aria-label={isExpanded ? t('common.collapse', { name: file.name }) : t('common.expand', { name: file.name })}
             >
               {isLoading ? (
@@ -681,10 +686,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              toggleSelect(file.path);
+              if (!isPersonalVault) toggleSelect(file.path);
             }}
+            disabled={isPersonalVault}
             className="flex items-center justify-center"
-            aria-label={`${t('common.select')} ${file.name}`}
+			aria-label={isPersonalVault ? t('fileBrowser.personalVaultUnavailable') : `${t('common.select')} ${file.name}`}
+			title={isPersonalVault ? t('fileBrowser.personalVaultUnavailable') : undefined}
           >
             <div className={`w-4.5 h-4.5 border rounded flex items-center justify-center transition-all duration-200 ${
               isSelected 
@@ -710,9 +717,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
           {/* Name & Size */}
           <span className={`text-[12px] truncate flex-grow leading-normal py-0.5 ${
-            isSelected ? 'text-[var(--color-text-primary)] font-bold' : 'text-[var(--color-text-primary)]'
+            isPersonalVault ? 'text-[var(--color-text-muted)]' : isSelected ? 'text-[var(--color-text-primary)] font-bold' : 'text-[var(--color-text-primary)]'
           }`}>
             {file.name}
+			{isPersonalVault && <span className="ml-2 text-[10px]">{t('fileBrowser.personalVaultUnavailable')}</span>}
           </span>
           
           {!file.is_dir && (

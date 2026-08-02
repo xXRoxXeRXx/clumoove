@@ -635,6 +635,19 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
 		return nil
 	}
+	// Existing jobs may have been indexed before Personal Vault exclusion was
+	// introduced. When Graph still exposes its metadata, turn such a task into
+	// a deliberate skip instead of retrying an interactive-only vault download.
+	if mig.SourceProvider == "onedrive" && task.ResourceType == "files" {
+		if resource, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil && resource.IsPersonalVault() {
+			task.Status = "SKIPPED"
+			task.ErrorMessage = sql.NullString{String: "OneDrive Personal Vault cannot be migrated through the API", Valid: true}
+			_ = db.UpdateTaskStatus(p.db, task)
+			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
+			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+			return nil
+		}
+	}
 
 	// Handle directory creation tasks (action == "mkdir").
 	// These are emitted by the indexer for every directory encountered so that

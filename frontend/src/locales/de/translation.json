@@ -222,6 +222,7 @@
     "noCalendars": "Keine Kalender gefunden",
     "noContacts": "Keine Adressbücher gefunden",
     "noSubdirs": "Keine Unterordner vorhanden",
+    "personalVaultUnavailable": "Der Persönliche Tresor kann nicht über die OneDrive-API migriert werden.",
     "loadingCalendars": "Kalender werden geladen...",
     "loadingContacts": "Adressbücher werden geladen...",
     "startTransfer": "Übertragung starten",

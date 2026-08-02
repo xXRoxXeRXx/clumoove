@@ -69,7 +69,9 @@ func InitConfigs() {
 		ClientSecret: os.Getenv("ONEDRIVE_CLIENT_SECRET"),
 		AuthURL:      "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
 		TokenURL:     "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
-		Scopes:       []string{"openid", "profile", "offline_access", "User.Read", "Files.ReadWrite"},
+		// Files.ReadWrite.All is required to access files shared with the user;
+		// Files.ReadWrite alone is insufficient for remote OneDrive items.
+		Scopes:       []string{"openid", "profile", "offline_access", "User.Read", "Files.ReadWrite.All"},
 	}
 	// Note: HiDrive OAuth requires comma-separated scopes ("admin,rw"), joined as single string.
 	configs["hidrive"] = ProviderConfig{

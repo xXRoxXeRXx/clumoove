@@ -53,6 +53,13 @@ type CloudResource struct {
 	Metadata     FileMetadata `json:"metadata"`
 }
 
+// IsPersonalVault reports whether a resource is OneDrive's special Personal
+// Vault. Its contents require an interactive unlock and cannot be transferred
+// by the background Microsoft Graph OAuth flow.
+func (r CloudResource) IsPersonalVault() bool {
+	return r.Metadata.CustomProps != nil && r.Metadata.CustomProps["onedrive_special_folder"] == "vault"
+}
+
 type FileInfo struct {
 	Path    string    `json:"path"`
 	Size    int64     `json:"size"`

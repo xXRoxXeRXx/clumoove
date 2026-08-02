@@ -5,6 +5,7 @@ export interface CloudFile {
   is_dir: boolean;
   hash: string;
   last_modified: string;
+  metadata?: { custom_props?: Record<string, string> };
 }
 
 export type Provider =

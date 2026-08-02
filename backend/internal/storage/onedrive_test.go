@@ -41,6 +41,10 @@ func TestOneDriveProviderListingPaginationAndEncoding(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer token" {
 			t.Error("Graph request did not carry bearer token")
 		}
+		if r.URL.EscapedPath() == "/v1.0/me/drive/root:/folder%20one:" {
+			_, _ = io.WriteString(w, `{"id":"folder-id"}`)
+			return
+		}
 		if r.URL.EscapedPath() == "/v1.0/me/drive/root:/folder%20one:/children" {
 			_, _ = io.WriteString(w, `{"value":[{"name":"first.txt","size":5,"eTag":"etag-1","lastModifiedDateTime":"2026-01-02T03:04:05Z"}],"@odata.nextLink":"`+server.URL+`/next"}`)
 			return
@@ -61,8 +65,63 @@ func TestOneDriveProviderListingPaginationAndEncoding(t *testing.T) {
 	if len(resources) != 2 || resources[0].Path != "/folder one/first.txt" || resources[0].ETag != "etag-1" || !resources[1].IsDir {
 		t.Fatalf("unexpected resources: %#v", resources)
 	}
-	if len(requests) != 2 || requests[0] != "/v1.0/me/drive/root:/folder%20one:/children" {
+	if len(requests) != 3 || requests[0] != "/v1.0/me/drive/root:/folder%20one:" || requests[1] != "/v1.0/me/drive/root:/folder%20one:/children" {
 		t.Fatalf("unexpected Graph request paths: %v", requests)
+	}
+}
+
+func TestOneDriveProviderUsesRemoteDriveForSharedShortcut(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.EscapedPath())
+		switch r.URL.EscapedPath() {
+		case "/v1.0/me/drive/root:/Shared%20folder:":
+			_, _ = io.WriteString(w, `{"id":"shortcut-id","remoteItem":{"id":"remote-item-id","parentReference":{"driveId":"remote-drive-id"}}}`)
+		case "/v1.0/drives/remote-drive-id/items/remote-item-id:/notes.txt:/content", "/v1.0/drives/remote-drive-id/items/remote-item-id:/agenda.txt:/content":
+			_, _ = io.WriteString(w, "shared content")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	p := newOneDriveProvider("token", server.URL+"/v1.0/me/drive", server.Client())
+	stream, err := p.StreamDownload(context.Background(), "files", "/Shared folder/notes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	content, err := io.ReadAll(stream)
+	if err != nil || string(content) != "shared content" {
+		t.Fatalf("download = %q, %v", content, err)
+	}
+	secondStream, err := p.StreamDownload(context.Background(), "files", "/Shared folder/agenda.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondStream.Close()
+	if len(requests) != 3 || requests[0] != "/v1.0/me/drive/root:/Shared%20folder:" {
+		t.Fatalf("requests = %v, want one shortcut lookup and two remote downloads", requests)
+	}
+}
+
+func TestOneDriveProviderMarksPersonalVault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() == "/v1.0/me/drive/root/children" {
+			_, _ = io.WriteString(w, `{"value":[{"id":"vault-id","name":"Persönlicher Tresor","folder":{},"specialFolder":{"name":"vault"}}]}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	p := newOneDriveProvider("token", server.URL+"/v1.0/me/drive", server.Client())
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !items[0].IsPersonalVault() {
+		t.Fatalf("items = %#v, want marked Personal Vault", items)
 	}
 }
 

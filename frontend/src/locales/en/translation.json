@@ -222,6 +222,7 @@
     "noCalendars": "No calendars found",
     "noContacts": "No address books found",
     "noSubdirs": "No subfolders available",
+    "personalVaultUnavailable": "Personal Vault cannot be migrated through the OneDrive API.",
     "loadingCalendars": "Loading calendars...",
     "loadingContacts": "Loading address books...",
     "startTransfer": "Start transfer",

@@ -23,7 +23,7 @@ func TestOneDriveOAuthFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := u.Query()
-	if u.Host != "login.microsoftonline.com" || q.Get("state") != "csrf-state" || q.Get("scope") != "openid profile offline_access User.Read Files.ReadWrite" {
+	if u.Host != "login.microsoftonline.com" || q.Get("state") != "csrf-state" || q.Get("scope") != "openid profile offline_access User.Read Files.ReadWrite.All" {
 		t.Fatalf("unexpected OneDrive authorization URL: %s", authURL)
 	}
 

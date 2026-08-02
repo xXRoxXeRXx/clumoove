@@ -119,6 +119,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			log.Printf("Indexing: skipping path %s (failed to inspect): %v", p, err)
 			continue
 		}
+		if res.IsPersonalVault() {
+			indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: "OneDrive Personal Vault cannot be migrated through the API"})
+			continue
+		}
 
 		if res.IsDir {
 			// Emit a mkdir task for the root selected directory itself (unless it
@@ -508,6 +512,12 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 		}
 
 		for _, file := range files {
+			if file.IsPersonalVault() {
+				// A vault found while traversing a selected parent is expected and
+				// intentionally excluded. Only an explicitly selected vault is
+				// reported above, so ordinary root migrations stay clean.
+				continue
+			}
 			if file.IsDir {
 				// Emit a mkdir task for every sub-directory encountered so that
 				// empty directories (no files inside) are created on the target.
@@ -635,5 +645,3 @@ func marshalString(s string) string {
 func sanitizeError(msg string) string {
 	return sanitize.SanitizeError(msg)
 }
-
-
