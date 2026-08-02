@@ -204,13 +204,16 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 	w.Header().Set("Content-Security-Policy", "script-src 'nonce-"+nonce+"'; frame-ancestors 'none'; object-src 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	// Marshal every dynamic script value as a JSON string literal. Unlike
-	// fmt's %q, encoding/json escapes HTML-significant characters such as '<',
-	// preventing a value containing </script> from terminating the element.
+	/* Legacy inline-data script retained for reference while the callback result
+	 * is emitted as an inert JSON element below.
 	encodedErrCode, err := json.Marshal(errCode)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
+	}
+	statusMessage := "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
+	if errCode != "" {
+		statusMessage = "<h3 style='color: #ef4444;'>Authorization Failed</h3><p>Authorization could not be completed.</p>"
 	}
 	encodedTargetOrigin, err := json.Marshal(targetOrigin)
 	if err != nil {
@@ -243,6 +246,7 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 		return
 	}
 
+	 * The dynamic script construction below is intentionally disabled.
 	var script string
 	if errCode != "" {
 		script = fmt.Sprintf(`
@@ -294,6 +298,29 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 			}
 		`, encodedTargetOrigin, encodedProvider, encodedPurpose, encodedToken, encodedRefreshToken, expiresIn, encodedUsername, encodedTargetOrigin)
 	}
+	*/
+
+	// Keep request-influenced data out of executable JavaScript. The browser
+	// reads this inert JSON element from a fixed script template below.
+	oauthResultData := struct {
+		ErrorCode    string `json:"errorCode"`
+		TargetOrigin string `json:"targetOrigin"`
+		Provider     string `json:"provider"`
+		Purpose      string `json:"purpose"`
+		Token        string `json:"token"`
+		RefreshToken string `json:"refreshToken"`
+		ExpiresIn    int    `json:"expiresIn"`
+		Username     string `json:"username"`
+	}{errCode, targetOrigin, provider, purpose, token, refreshToken, expiresIn, username}
+	encodedData, err := json.Marshal(oauthResultData)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	statusMessage := "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
+	if errCode != "" {
+		statusMessage = "<h3 style='color: #ef4444;'>Authorization Failed</h3><p>Authorization could not be completed.</p>"
+	}
 
 	fmt.Fprintf(w, `
 		<!DOCTYPE html>
@@ -324,15 +351,49 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 			<div class="card">
 				%s
 			</div>
-			<script nonce="%s">%s</script>
+			<script id="oauth-result" type="application/json" nonce="%s">`, statusMessage, nonce)
+	_, _ = w.Write(encodedData)
+	fmt.Fprintf(w, `</script>
+			<script nonce="%s">
+				const oauthResult = JSON.parse(document.getElementById("oauth-result").textContent);
+				if (oauthResult.errorCode) {
+					try {
+						if (!window.opener) {
+							console.error("window.opener is null on error page!");
+						} else {
+							window.opener.postMessage({ type: "oauth-error", error_code: oauthResult.errorCode }, oauthResult.targetOrigin);
+						}
+					} catch (e) {
+						console.error("Failed to post oauth-error:", e);
+					}
+					setTimeout(() => { window.close(); }, 1000);
+				} else {
+					try {
+						if (!window.opener) {
+							const errMsg = document.createElement("p");
+							errMsg.style.color = "red";
+							errMsg.innerText = "Fehler: window.opener ist null.";
+							document.querySelector(".card").appendChild(errMsg);
+						} else {
+							window.opener.postMessage({
+								type: "oauth-success",
+								provider: oauthResult.provider,
+								purpose: oauthResult.purpose,
+								token: oauthResult.token,
+								refreshToken: oauthResult.refreshToken,
+								expiresIn: oauthResult.expiresIn,
+								username: oauthResult.username
+							}, oauthResult.targetOrigin);
+							window.close();
+						}
+					} catch (e) {
+						console.error("Failed to post oauth-success:", e);
+					}
+				}
+			</script>
 		</body>
 		</html>
-	`, func() string {
-		if errCode != "" {
-			return "<h3 style='color: #ef4444;'>Authorization Failed</h3><p>Authorization could not be completed.</p>"
-		}
-		return "<h3>Authorization Successful</h3><p>You can close this window now.</p>"
-	}(), nonce, script)
+	`, nonce)
 }
 
 type RegisterRequest struct {
