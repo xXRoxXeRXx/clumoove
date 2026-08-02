@@ -7,6 +7,7 @@ import (
 	"html"
 	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"sort"
 	"strings"
@@ -256,8 +257,8 @@ func buildMessage(from, to, subject, htmlBody string) string {
 	// dynamic content before composing the message so request or job data cannot
 	// introduce a new header or alter the MIME body. Keep this at the message
 	// construction boundary so every caller receives the same protection.
-	from = sanitizeEmailContent(from)
-	to = sanitizeEmailContent(to)
+	from = normalizeMailboxHeader(from)
+	to = normalizeRecipientHeader(to)
 	subject = sanitizeEmailContent(subject)
 	htmlBody = sanitizeEmailContent(htmlBody)
 
@@ -270,6 +271,22 @@ func buildMessage(from, to, subject, htmlBody string) string {
 	b.WriteString("\r\n")
 	b.WriteString(htmlBody)
 	return b.String()
+}
+
+// normalizeMailboxHeader accepts one RFC 5322 mailbox and returns the
+// canonical representation used in a message header. The sanitized fallback
+// preserves compatibility with legacy configurations that net/mail rejects.
+func normalizeMailboxHeader(value string) string {
+	value = sanitizeEmailContent(value)
+	address, err := mail.ParseAddress(value)
+	if err != nil {
+		return value
+	}
+	return address.String()
+}
+
+func normalizeRecipientHeader(value string) string {
+	return normalizeMailboxHeader(value)
 }
 
 // encodeFromHeader RFC 2047-encodes the display name portion of a

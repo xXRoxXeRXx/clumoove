@@ -83,6 +83,13 @@ func TestSanitizeEmailContentRemovesSMTPControlCharacters(t *testing.T) {
 	}
 }
 
+func TestNormalizeMailboxHeaderCanonicalizesAddress(t *testing.T) {
+	got := normalizeMailboxHeader("Clumoove Support <support@example.com>")
+	if got != `"Clumoove Support" <support@example.com>` {
+		t.Fatalf("normalizeMailboxHeader() = %q", got)
+	}
+}
+
 func TestBuildMessagePreventsSMTPMessageInjection(t *testing.T) {
 	message := buildMessage(
 		"Clumoove\r\nBcc: attacker@example.com <no-reply@example.com>",
