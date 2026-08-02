@@ -1,13 +1,11 @@
-networks:
-  clumoove-network:
-    driver: bridge
-
 services:
+  # ── Database ────────────────────────────────────────────────────────────────
   postgres-db:
-    image: postgres:15-alpine
     container_name: clumoove-postgres-dev
+    image: postgres:15-alpine
     restart: unless-stopped
     # Internal only; do not publish a host port.
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
@@ -15,13 +13,13 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
-    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
     networks:
       - clumoove-network
 
+  # ── Redis Queue ─────────────────────────────────────────────────────────────
   redis-queue:
-    image: redis:7-alpine
     container_name: clumoove-redis-dev
+    image: redis:7-alpine
     restart: unless-stopped
     # Internal only; REDIS_PASSWORD must be a strong deployment-specific secret.
     command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}" --bind 0.0.0.0
@@ -30,89 +28,106 @@ services:
     networks:
       - clumoove-network
 
+  # ── API Gateway (Dev Live Reload via Air) ───────────────────────────────────
   api-backend:
+    container_name: clumoove-api-dev
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: dev
-    container_name: clumoove-api-dev
     restart: unless-stopped
+    command: ["air", "-c", "/app/backend/.air.api.toml"]
     ports:
       - "8001:8000"
     environment:
+      # Database & Queue Connections
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
+      - PORT=8000
+
+      # Security & Keys
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-}
-      - PORT=8000
+
+      # OAuth 2.0 Credentials
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - ONEDRIVE_CLIENT_ID=${ONEDRIVE_CLIENT_ID:-}
       - ONEDRIVE_CLIENT_SECRET=${ONEDRIVE_CLIENT_SECRET:-}
-      - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID:-}
-      - GOOGLE_PHOTOS_CLIENT_SECRET=${GOOGLE_PHOTOS_CLIENT_SECRET:-}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID:-}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET:-}
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID:-}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET:-}
       - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI:-}
+
+      # Security & Reverse Proxy
+      - TRUSTED_PROXY=${TRUSTED_PROXY:-0}
+      - MIGRATION_BLOCK_PRIVATE=${MIGRATION_BLOCK_PRIVATE:-0}
+
+      # Local Storage Sandbox
       - LOCAL_STORAGE_ROOT=/clumoove
-    depends_on:
-      - postgres-db
-      - redis-queue
-    command: ["air", "-c", "/app/backend/.air.api.toml"]
     volumes:
       - ./backend:/app/backend
       - ./frontend/src/locales:/app/frontend/src/locales:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
+    depends_on:
+      - postgres-db
+      - redis-queue
     networks:
       - clumoove-network
 
+  # ── Migration Worker (Dev Live Reload via Air) ──────────────────────────────
   migration-worker:
+    container_name: clumoove-worker-dev
     build:
       context: .
       dockerfile: backend/Dockerfile
       target: dev
-    container_name: clumoove-worker-dev
     restart: unless-stopped
+    command: ["air", "-c", "/app/backend/.air.worker.toml"]
     environment:
+      # Database & Queue Connections
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
+
+      # Security & Workers
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
       - MAX_THREADS=${MAX_THREADS:-16}
+
+      # OAuth 2.0 Credentials
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - ONEDRIVE_CLIENT_ID=${ONEDRIVE_CLIENT_ID:-}
       - ONEDRIVE_CLIENT_SECRET=${ONEDRIVE_CLIENT_SECRET:-}
-      - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID:-}
-      - GOOGLE_PHOTOS_CLIENT_SECRET=${GOOGLE_PHOTOS_CLIENT_SECRET:-}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID:-}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET:-}
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID:-}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET:-}
+
+      # Local Storage Sandbox
       - LOCAL_STORAGE_ROOT=/clumoove
-    command: ["air", "-c", "/app/backend/.air.worker.toml"]
-    depends_on:
-      - postgres-db
-      - redis-queue
     volumes:
       - ./backend:/app/backend
       - ./frontend/src/locales:/app/frontend/src/locales:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
+    depends_on:
+      - postgres-db
+      - redis-queue
     networks:
       - clumoove-network
 
+  # ── Web Frontend (Dev Server with HMR) ──────────────────────────────────────
   frontend:
+    container_name: clumoove-frontend-dev
     build:
       context: ./frontend
       dockerfile: Dockerfile
       target: dev
-    container_name: clumoove-frontend-dev
     restart: unless-stopped
+    command: node node_modules/vite/bin/vite.js --host --port 3000
     ports:
       - "3001:3000"
-    command: node node_modules/vite/bin/vite.js --host --port 3000
     environment:
       - VITE_API_URL=http://localhost:8001
       - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-}
@@ -127,6 +142,10 @@ services:
       - api-backend
     networks:
       - clumoove-network
+
+networks:
+  clumoove-network:
+    driver: bridge
 
 volumes:
   postgres_data:

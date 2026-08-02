@@ -1,25 +1,23 @@
-networks:
-  clumoove-network:
-    driver: bridge
-
 services:
+  # ── Database ────────────────────────────────────────────────────────────────
   postgres-db:
-    image: postgres:15-alpine
     container_name: clumoove-postgres
+    image: postgres:15-alpine
     restart: always
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
       POSTGRES_DB: cloud_migration_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
     networks:
       - clumoove-network
 
+  # ── Redis Queue ─────────────────────────────────────────────────────────────
   redis-queue:
-    image: redis:7-alpine
     container_name: clumoove-redis
+    image: redis:7-alpine
     restart: always
     command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}" --bind 0.0.0.0
     volumes:
@@ -27,30 +25,40 @@ services:
     networks:
       - clumoove-network
 
+  # ── API Gateway ─────────────────────────────────────────────────────────────
   api-backend:
-    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}api:latest
     container_name: clumoove-api
+    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}api:latest
     restart: always
     ports:
       - "8001:8000"
     environment:
+      # Database & Queue Connections
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
+      - PORT=8000
+
+      # Security & Keys
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CORS_ALLOWED_ORIGIN=${CORS_ALLOWED_ORIGIN:-}
-      - PORT=8000
+
+      # OAuth 2.0 Credentials
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - ONEDRIVE_CLIENT_ID=${ONEDRIVE_CLIENT_ID:-}
       - ONEDRIVE_CLIENT_SECRET=${ONEDRIVE_CLIENT_SECRET:-}
-      - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID:-}
-      - GOOGLE_PHOTOS_CLIENT_SECRET=${GOOGLE_PHOTOS_CLIENT_SECRET:-}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID:-}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET:-}
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID:-}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET:-}
       - OAUTH_REDIRECT_URI=${OAUTH_REDIRECT_URI:-}
+
+      # Security & Reverse Proxy
+      - TRUSTED_PROXY=${TRUSTED_PROXY:-0}
+      - MIGRATION_BLOCK_PRIVATE=${MIGRATION_BLOCK_PRIVATE:-0}
+
+      # Mailer & Frontend
       - FRONTEND_URL=${FRONTEND_URL:-}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -59,6 +67,8 @@ services:
       - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
       - SMTP_FROM_NAME=${SMTP_FROM_NAME:-Clumoove}
       - SMTP_ENCRYPTION=${SMTP_ENCRYPTION:-starttls}
+
+      # Performance & Timeouts
       - INDEXING_TIMEOUT_MINUTES=${INDEXING_TIMEOUT_MINUTES:-60}
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
@@ -69,26 +79,32 @@ services:
     networks:
       - clumoove-network
 
+  # ── Migration Worker ────────────────────────────────────────────────────────
   migration-worker:
-    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}worker:latest
     container_name: clumoove-worker
+    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}worker:latest
     restart: always
     command: ["/app/worker"]
     environment:
+      # Database & Queue Connections
       - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis-queue:6379
+
+      # Security & Workers
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
       - MAX_THREADS=${MAX_THREADS:-50}
+
+      # OAuth 2.0 Credentials
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - ONEDRIVE_CLIENT_ID=${ONEDRIVE_CLIENT_ID:-}
       - ONEDRIVE_CLIENT_SECRET=${ONEDRIVE_CLIENT_SECRET:-}
-      - GOOGLE_PHOTOS_CLIENT_ID=${GOOGLE_PHOTOS_CLIENT_ID:-}
-      - GOOGLE_PHOTOS_CLIENT_SECRET=${GOOGLE_PHOTOS_CLIENT_SECRET:-}
       - DROPBOX_CLIENT_ID=${DROPBOX_CLIENT_ID:-}
       - DROPBOX_CLIENT_SECRET=${DROPBOX_CLIENT_SECRET:-}
       - HIDRIVE_CLIENT_ID=${HIDRIVE_CLIENT_ID:-}
       - HIDRIVE_CLIENT_SECRET=${HIDRIVE_CLIENT_SECRET:-}
+
+      # Local Storage Sandbox
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
@@ -98,9 +114,10 @@ services:
     networks:
       - clumoove-network
 
+  # ── Web Frontend ────────────────────────────────────────────────────────────
   frontend:
-    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}frontend:latest
     container_name: clumoove-frontend
+    image: ${DOCKER_IMAGE_PREFIX:-ghcr.io/xxroxxerxx/clumoove-}frontend:latest
     restart: always
     ports:
       - "3001:3000"
@@ -115,6 +132,10 @@ services:
       - api-backend
     networks:
       - clumoove-network
+
+networks:
+  clumoove-network:
+    driver: bridge
 
 volumes:
   postgres_data:
