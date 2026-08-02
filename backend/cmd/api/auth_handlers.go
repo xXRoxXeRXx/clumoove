@@ -72,19 +72,13 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isSecure := s.isSecure(r)
-	sameSite := http.SameSiteLaxMode
-	if isSecure {
-		sameSite = http.SameSiteNoneMode
-	}
-
 	cookie := &http.Cookie{
 		Name:     "oauth_state",
 		Value:    stateToken,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: sameSite,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
 		MaxAge:   300,
 	}
 	http.SetCookie(w, cookie)
@@ -147,19 +141,13 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	isSecure := s.isSecure(r)
-	sameSite := http.SameSiteLaxMode
-	if isSecure {
-		sameSite = http.SameSiteNoneMode
-	}
-
 	clearCookie := &http.Cookie{
 		Name:     "oauth_state",
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   isSecure,
-		SameSite: sameSite,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
 		MaxAge:   -1,
 	}
 	http.SetCookie(w, clearCookie)

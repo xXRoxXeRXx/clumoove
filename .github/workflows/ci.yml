@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master]
 
+# CI only reads the checked-out repository and dependency metadata.
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Backend (Go)
