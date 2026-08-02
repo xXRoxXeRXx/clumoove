@@ -12,7 +12,9 @@ import (
 	"unsafe"
 )
 
-// deriveKey ensures the key is exactly 32 bytes using SHA-256
+// deriveKey ensures the key is exactly 32 bytes using SHA-256. The input is
+// the deployment's high-entropy ENCRYPTION_SECRET_KEY, not a user password;
+// this is key derivation for AES, never password verification.
 func deriveKey(secret string) []byte {
 	hash := sha256.Sum256([]byte(secret))
 	return hash[:]
@@ -24,6 +26,7 @@ func Encrypt(plainText string, secretKey string) (string, error) {
 		return "", nil
 	}
 
+	// codeql[go/weak-sensitive-data-hashing]: secretKey is a deployment encryption key; SHA-256 derives a fixed-size AES key and is not used for password hashing.
 	key := deriveKey(secretKey)
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -54,6 +57,7 @@ func Decrypt(cipherTextHex string, secretKey string) (string, error) {
 		return "", nil
 	}
 
+	// codeql[go/weak-sensitive-data-hashing]: secretKey is a deployment encryption key; SHA-256 derives a fixed-size AES key and is not used for password hashing.
 	key := deriveKey(secretKey)
 	combined, err := hex.DecodeString(cipherTextHex)
 	if err != nil {
