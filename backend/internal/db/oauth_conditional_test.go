@@ -81,6 +81,77 @@ func TestErrOAuthTokenConflictSentinel(t *testing.T) {
 	}
 }
 
+// A migration must retain OAuth credentials from creation through the worker's
+// GetMigration lookup. The worker refreshes after that lookup, so dropping
+// either set of columns makes every OAuth provider fail at its first 401.
+func TestCreateMigrationPersistsOAuthTokens(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping migration OAuth persistence test")
+	}
+	database, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := database.Ping(); err != nil {
+		t.Fatalf("ping db: %v", err)
+	}
+	if _, err := database.Exec(`
+		CREATE TEMP TABLE migrations (
+			id TEXT PRIMARY KEY DEFAULT 'migration-oauth-persistence', user_id TEXT,
+			source_url TEXT, source_username TEXT, source_password_encrypted TEXT, source_provider TEXT,
+			source_refresh_token_encrypted TEXT, source_token_expires_at TIMESTAMP WITH TIME ZONE,
+			target_url TEXT, target_username TEXT, target_password_encrypted TEXT, target_provider TEXT,
+			target_refresh_token_encrypted TEXT, target_token_expires_at TIMESTAMP WITH TIME ZONE,
+			status TEXT, conflict_strategy TEXT, total_files INT DEFAULT 0, total_bytes BIGINT DEFAULT 0,
+			processed_files INT DEFAULT 0, processed_bytes BIGINT DEFAULT 0, live_bytes BIGINT DEFAULT 0,
+			skipped_files INT DEFAULT 0, failed_files INT DEFAULT 0, error_message TEXT,
+			created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+			target_dir TEXT, threads INT, bandwidth_limit_mbps INT, picker_session_id TEXT,
+			selected_paths JSONB, selected_calendars JSONB, selected_contacts JSONB
+		)`); err != nil {
+		t.Fatalf("create temp migrations table: %v", err)
+	}
+
+	expiresAt := time.Now().Add(time.Hour).Truncate(time.Second)
+	migration := &Migration{
+		UserID:                      sql.NullString{String: "user-1", Valid: true},
+		SourceURL:                   "oauth://onedrive",
+		SourceUsername:              "source-user",
+		SourcePasswordEncrypted:     "source-access",
+		SourceProvider:              "onedrive",
+		SourceRefreshTokenEncrypted: sql.NullString{String: "source-refresh", Valid: true},
+		SourceTokenExpiresAt:        sql.NullTime{Time: expiresAt, Valid: true},
+		TargetURL:                   "https://target.example",
+		TargetUsername:              "target-user",
+		TargetPasswordEncrypted:     "target-access",
+		TargetProvider:              "google",
+		TargetRefreshTokenEncrypted: sql.NullString{String: "target-refresh", Valid: true},
+		TargetTokenExpiresAt:        sql.NullTime{Time: expiresAt, Valid: true},
+		Status:                      "INDEXING",
+		ConflictStrategy:            "SKIP",
+		TargetDir:                   "/",
+		Threads:                     1,
+	}
+	if _, err := CreateMigration(database, migration); err != nil {
+		t.Fatalf("create migration: %v", err)
+	}
+
+	stored, err := GetMigration(database, migration.ID)
+	if err != nil {
+		t.Fatalf("get migration: %v", err)
+	}
+	if !stored.SourceRefreshTokenEncrypted.Valid || stored.SourceRefreshTokenEncrypted.String != "source-refresh" ||
+		!stored.TargetRefreshTokenEncrypted.Valid || stored.TargetRefreshTokenEncrypted.String != "target-refresh" {
+		t.Fatalf("OAuth refresh tokens were not retained: source=%+v target=%+v", stored.SourceRefreshTokenEncrypted, stored.TargetRefreshTokenEncrypted)
+	}
+	if !stored.SourceTokenExpiresAt.Valid || !stored.TargetTokenExpiresAt.Valid {
+		t.Fatalf("OAuth token expiry was not retained: source=%+v target=%+v", stored.SourceTokenExpiresAt, stored.TargetTokenExpiresAt)
+	}
+}
+
 func TestConditionalOAuthTokenUpdate(t *testing.T) {
 	database := setupOAuthTestDB(t)
 

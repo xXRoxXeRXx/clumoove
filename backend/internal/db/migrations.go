@@ -134,10 +134,12 @@ type PendingEmailNotification struct {
 const createMigrationQuery = `
 		INSERT INTO migrations (
 			user_id, source_url, source_username, source_password_encrypted, source_provider,
+			source_refresh_token_encrypted, source_token_expires_at,
 			target_url, target_username, target_password_encrypted, target_provider,
+			target_refresh_token_encrypted, target_token_expires_at,
 			status, conflict_strategy, target_dir, threads, bandwidth_limit_mbps,
 			picker_session_id, selected_paths, selected_calendars, selected_contacts
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -152,7 +154,9 @@ func insertMigration(database queryExecer, m *Migration) error {
 	return database.QueryRow(
 		createMigrationQuery,
 		m.UserID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted, m.SourceProvider,
+		m.SourceRefreshTokenEncrypted, m.SourceTokenExpiresAt,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted, m.TargetProvider,
+		m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt,
 		m.Status, m.ConflictStrategy, m.TargetDir, m.Threads, m.BandwidthLimitMbps,
 		m.PickerSessionID, m.SelectedPaths, m.SelectedCalendars, m.SelectedContacts,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
@@ -201,7 +205,9 @@ func resetMigrationAndSchedule(migration *Migration, schedule *Schedule) {
 func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted, source_provider,
+		       source_refresh_token_encrypted, source_token_expires_at,
 		       target_url, target_username, target_password_encrypted, target_provider,
+		       target_refresh_token_encrypted, target_token_expires_at,
 		       status, conflict_strategy, total_files, total_bytes, processed_files,
 		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
 		       created_at, updated_at, target_dir, threads, bandwidth_limit_mbps,
@@ -211,7 +217,9 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	var m Migration
 	err := db.QueryRow(query, id).Scan(
 		&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted, &m.SourceProvider,
+		&m.SourceRefreshTokenEncrypted, &m.SourceTokenExpiresAt,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,
+		&m.TargetRefreshTokenEncrypted, &m.TargetTokenExpiresAt,
 		&m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
 		&m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
 		&m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads, &m.BandwidthLimitMbps,
