@@ -22,7 +22,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 
 ## Features
 
-- **Twelve storage providers** as any source/target combination: Nextcloud, MagentaCLOUD, generic WebDAV, Dropbox, Google Drive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, FTPS, Local server sandbox, and Immich (files-only one-time migrations).
+- **Thirteen storage providers** as any source/target combination: Nextcloud, MagentaCLOUD, generic WebDAV, Dropbox, Google Drive, Microsoft OneDrive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, FTPS, Local server sandbox, and Immich (files-only one-time migrations).
 - **Sync Engine & Migration Engine** — full support for one-shot/scheduled migrations as well as recurring one-way and two-way folder synchronizations.
 - **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations and sync jobs.
 - **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic worker-recovery, exponential backoff, and connection-loss auto-pause.
@@ -47,7 +47,7 @@ durable, multi-user jobs.
 | **Durable execution** | A PostgreSQL task queue persists individual transfer tasks, progress, errors, schedules, and reports. Multiple workers can claim work atomically; liveness, retry, orphan recovery, and connection-loss recovery are built in. | Commands and RC jobs run in a process. The RC documentation describes finished asynchronous jobs as retained for 60 seconds; longer-running automation is normally composed around rclone. |
 | **Scheduling and operations** | Deferred and recurring migrations plus interval-based syncs are first-class persisted jobs, with overlap protection, distributed schedule locks, live authenticated progress, downloadable CSV reports, and durable completion notifications. | rclone supports the transfer commands and `bisync`; its `bisync` guide recommends configuring cron for recurring runs. |
 | **Migration semantics** | Purpose-built conflict choices (`SKIP`, `OVERWRITE`, `RENAME`), pre-transfer inventory, case-collision handling, selected-path workflows, and a provider-aware three-way source/in-memory/target hash check with safe fallbacks. | Flexible commands and flags support copy, sync, bisync, checksums, filters, metadata, and backend-specific behaviour; verification depends on command options and the capabilities shared by the chosen backends. |
-| **Supported data** | Twelve selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
+| **Supported data** | Thirteen selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
 
 This comparison describes product scope rather than claiming that rclone lacks a GUI, API, checksums, or bidirectional
 sync. Consult the [rclone usage documentation](https://rclone.org/docs/), [GUI documentation](https://rclone.org/gui/),
@@ -63,6 +63,7 @@ sync. Consult the [rclone usage documentation](https://rclone.org/docs/), [GUI d
 | **Generic WebDAV** | WebDAV | User / password | Files |
 | **Dropbox** | Dropbox API v2 | OAuth2 | Files |
 | **Google Drive** | Google Drive API v3 | OAuth2 | Files, calendars, contacts |
+| **Microsoft OneDrive** | Microsoft Graph API | OAuth2 | Files |
 | **Strato HiDrive** | REST API v2.1 | OAuth2 | Files |
 | **S3-compatible** | S3 (Wasabi, MinIO, B2…) | Access / secret key | Files |
 | **SMB / CIFS** | SMB2/SMB3 | User / password | Files |
@@ -146,6 +147,7 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | `REDIS_PASSWORD` | Redis password. **Required** — no default; the server refuses to start with an empty/known value. |
 | `DATABASE_URL` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials (Drive/Calendar/Contacts). |
+| `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` | OneDrive OAuth2 credentials. |
 | `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. |
 | `HIDRIVE_CLIENT_ID` / `HIDRIVE_CLIENT_SECRET` | Strato HiDrive OAuth2 credentials. |
 | `MAX_THREADS` | Global max parallelism per worker process (default `16`). |
