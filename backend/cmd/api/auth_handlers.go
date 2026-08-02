@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -203,6 +204,45 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 	w.Header().Set("Content-Security-Policy", "script-src 'nonce-"+nonce+"'; frame-ancestors 'none'; object-src 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
+	// Marshal every dynamic script value as a JSON string literal. Unlike
+	// fmt's %q, encoding/json escapes HTML-significant characters such as '<',
+	// preventing a value containing </script> from terminating the element.
+	encodedErrCode, err := json.Marshal(errCode)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	encodedTargetOrigin, err := json.Marshal(targetOrigin)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	encodedProvider, err := json.Marshal(provider)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	encodedPurpose, err := json.Marshal(purpose)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	encodedToken, err := json.Marshal(token)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	encodedRefreshToken, err := json.Marshal(refreshToken)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	encodedUsername, err := json.Marshal(username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
 	var script string
 	if errCode != "" {
 		script = fmt.Sprintf(`
@@ -212,17 +252,17 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 				} else {
 					window.opener.postMessage({
 						type: "oauth-error",
-						error_code: %q
-					}, %q);
+						error_code: %s
+					}, %s);
 				}
 			} catch (e) {
 				console.error("Failed to post oauth-error:", e);
 			}
 			setTimeout(() => { window.close(); }, 1000);
-		`, errCode, targetOrigin)
+		`, encodedErrCode, encodedTargetOrigin)
 	} else {
 		script = fmt.Sprintf(`
-			console.log("OAuth successful. Sending credentials to opener at", %q);
+			console.log("OAuth successful. Sending credentials to opener at", %s);
 			try {
 				if (!window.opener) {
 					console.error("window.opener is null!");
@@ -235,13 +275,13 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 				} else {
 					window.opener.postMessage({
 						type: "oauth-success",
-						provider: %q,
-						purpose: %q,
-						token: %q,
-						refreshToken: %q,
+						provider: %s,
+						purpose: %s,
+						token: %s,
+						refreshToken: %s,
 						expiresIn: %d,
-						username: %q
-					}, %q);
+						username: %s
+					}, %s);
 					console.log("postMessage sent successfully.");
 					window.close();
 				}
@@ -252,7 +292,7 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 				errMsg.innerText = "Fehler beim Senden der Anmeldedaten: " + e.message;
 				document.querySelector(".card").appendChild(errMsg);
 			}
-		`, targetOrigin, provider, purpose, token, refreshToken, expiresIn, username, targetOrigin)
+		`, encodedTargetOrigin, encodedProvider, encodedPurpose, encodedToken, encodedRefreshToken, expiresIn, encodedUsername, encodedTargetOrigin)
 	}
 
 	fmt.Fprintf(w, `
