@@ -544,11 +544,11 @@ func BuildNotificationEmailLocalized(kind, name, status, processed, total, faile
 
 	var table strings.Builder
 	for _, row := range rows {
-		table.WriteString(fmt.Sprintf(`<tr><td style="padding:10px 0;border-top:1px solid #e4e4e7;color:#71717a;font-size:13px">%s</td><td style="padding:10px 0;border-top:1px solid #e4e4e7;color:#18181b;font-size:13px;font-weight:600;text-align:right">%s</td></tr>`, html.EscapeString(row.label), html.EscapeString(row.value)))
+		table.WriteString(fmt.Sprintf(`<tr><td class="summary-label" style="padding:10px 0;border-top:1px solid #e4e4e7;color:#71717a;font-size:13px;line-height:1.5">%s</td><td class="summary-value" style="padding:10px 0;border-top:1px solid #e4e4e7;color:#18181b;font-size:13px;font-weight:600;line-height:1.5;text-align:right;word-break:break-word;overflow-wrap:anywhere">%s</td></tr>`, html.EscapeString(row.label), html.EscapeString(row.value)))
 	}
 
 	title := fmt.Sprintf("%s · %s", i18n.T(language, "delivery.notification.kind."+kind), name)
-	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0 0 20px;color:#52525b;font-size:14px;line-height:1.6">%s</p><table role="presentation" style="width:100%%;border-collapse:collapse">%s</table>`, html.EscapeString(title), table.String()))
+	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0 0 20px;color:#52525b;font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p><table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;border-collapse:collapse">%s</table>`, html.EscapeString(title), table.String()))
 }
 
 func PasswordResetSubject(language string) string {
@@ -565,25 +565,46 @@ func SMTPTestSubject(language string) string { return i18n.T(language, "delivery
 func buildActionEmail(title, message, action, actionURL, note string) string {
 	button := ""
 	if action != "" && actionURL != "" {
-		button = fmt.Sprintf(`<p style="margin:24px 0;text-align:center"><a href="%s" style="display:inline-block;padding:12px 20px;background:#18181b;border:1px solid #18181b;border-radius:4px;color:#ffffff;font-size:14px;font-weight:600;line-height:20px;text-decoration:none">%s</a></p>`, html.EscapeString(actionURL), html.EscapeString(action))
+		button = fmt.Sprintf(`<table role="presentation" class="cta-table" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;margin:24px 0"><tr><td align="center"><a class="cta-link" href="%s" style="display:inline-block;padding:12px 20px;background:#18181b;border:1px solid #18181b;border-radius:4px;color:#ffffff;font-size:14px;font-weight:600;line-height:20px;text-align:center;text-decoration:none;word-break:break-word;overflow-wrap:anywhere">%s</a></td></tr></table>`, html.EscapeString(actionURL), html.EscapeString(action))
 	}
 	noteBlock := ""
 	if note != "" {
-		noteBlock = fmt.Sprintf(`<p style="margin:20px 0 0;color:#71717a;font-size:12px;line-height:1.6">%s</p>`, html.EscapeString(note))
+		noteBlock = fmt.Sprintf(`<p style="margin:20px 0 0;color:#71717a;font-size:12px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p>`, html.EscapeString(note))
 	}
-	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0;color:#52525b;font-size:14px;line-height:1.6">%s</p>%s%s`, message, button, noteBlock))
+	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0;color:#52525b;font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p>%s%s`, message, button, noteBlock))
 }
 
 func buildEmailShell(title, content string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    @media screen and (max-width: 640px) {
+      .email-outer { padding: 16px 12px !important; }
+      .email-card { width: 100%% !important; }
+      .email-header { padding: 18px 20px !important; }
+      .email-body { padding: 24px 20px !important; }
+      .email-footer { padding: 14px 20px !important; }
+      .cta-table { margin: 20px 0 !important; }
+      .cta-link { display: block !important; width: 100%% !important; box-sizing: border-box !important; }
+      .summary-label, .summary-value { display: block !important; padding: 8px 0 !important; text-align: left !important; }
+      .summary-value { border-top: 0 !important; padding-top: 0 !important; }
+    }
+  </style>
+</head>
 <body style="margin:0;padding:0;background:#fafafa;color:#18181b;font-family:Arial,Helvetica,sans-serif">
-  <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;background:#fafafa"><tr><td style="padding:32px 16px">
-    <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e4e4e7;border-radius:6px">
-      <tr><td style="padding:24px 28px;border-bottom:1px solid #e4e4e7"><p style="margin:0;color:#18181b;font-size:20px;font-weight:700;letter-spacing:-0.3px">Clumoove</p></td></tr>
-      <tr><td style="padding:28px"><h1 style="margin:0 0 16px;color:#18181b;font-size:20px;font-weight:700;line-height:1.3">%s</h1>%s</td></tr>
-      <tr><td style="padding:16px 28px;border-top:1px solid #e4e4e7;color:#71717a;font-size:12px;line-height:1.5">Clumoove</td></tr>
+  <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;background:#fafafa"><tr><td class="email-outer" style="padding:32px 16px">
+    <table role="presentation" class="email-card" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e4e4e7;border-radius:6px">
+      <tr><td class="email-header" style="padding:20px 28px;border-bottom:1px solid #e4e4e7">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr>
+          <td style="padding:0 10px 0 0;vertical-align:middle"><img src="https://clumoove.com/clumoove_logo.svg" width="28" height="28" alt="Clumoove" style="display:block;border:0;outline:none;text-decoration:none" /></td>
+          <td style="vertical-align:middle"><p style="margin:0;color:#18181b;font-size:18px;font-weight:700;letter-spacing:-0.3px;line-height:28px">Clumoove</p></td>
+        </tr></table>
+      </td></tr>
+      <tr><td class="email-body" style="padding:28px"><h1 style="margin:0 0 16px;color:#18181b;font-size:20px;font-weight:700;line-height:1.3;word-break:break-word;overflow-wrap:anywhere">%s</h1>%s</td></tr>
+      <tr><td class="email-footer" style="padding:16px 28px;border-top:1px solid #e4e4e7;color:#71717a;font-size:12px;line-height:1.5">Clumoove</td></tr>
     </table>
   </td></tr></table>
 </body>

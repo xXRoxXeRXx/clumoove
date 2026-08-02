@@ -115,3 +115,43 @@ func TestBuildMessagePreventsSMTPMessageInjection(t *testing.T) {
 		t.Fatalf("buildMessage() did not preserve the sanitized subject: %q", message)
 	}
 }
+
+func TestLocalizedActionEmailUsesResponsiveBrandedShell(t *testing.T) {
+	body := BuildEmailChangeEmailLocalized("https://clumoove.com/confirm?token=very-long-token", "name<script>@example.com", "en")
+
+	for _, want := range []string{
+		`<meta name="viewport" content="width=device-width, initial-scale=1.0">`,
+		`https://clumoove.com/clumoove_logo.svg`,
+		`alt="Clumoove"`,
+		`@media screen and (max-width: 640px)`,
+		`.cta-link { display: block !important; width: 100% !important;`,
+		`class="cta-link"`,
+		`name&lt;script&gt;@example.com`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("action email missing %q", want)
+		}
+	}
+	if strings.Contains(body, "name<script>@example.com") {
+		t.Fatalf("action email included unescaped dynamic email: %q", body)
+	}
+}
+
+func TestLocalizedNotificationEmailEscapesResponsiveSummary(t *testing.T) {
+	body := BuildNotificationEmailLocalized("migration", `Project <script>alert(1)</script>`, `<failed>`, "1", "2", "0", "0", "en")
+
+	for _, want := range []string{
+		`class="summary-label"`,
+		`class="summary-value"`,
+		`overflow-wrap:anywhere`,
+		`Project &lt;script&gt;alert(1)&lt;/script&gt;`,
+		`&lt;failed&gt;`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("notification email missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Project <script>") || strings.Contains(body, "<failed>") {
+		t.Fatalf("notification email included unescaped dynamic content: %q", body)
+	}
+}
