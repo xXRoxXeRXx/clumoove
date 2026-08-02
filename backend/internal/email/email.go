@@ -101,11 +101,19 @@ func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 	}
 }
 
-// sanitizeEmailContent removes characters that have special meaning in an SMTP
-// message. HTML templates do not require line breaks, so stripping them is safe
-// and prevents CRLF-based message and header injection.
+// sanitizeEmailContent removes ASCII control characters from SMTP header and
+// body values. HTML templates do not require those characters, so stripping
+// them prevents header/message injection before MIME assembly.
 func sanitizeEmailContent(value string) string {
-	return strings.NewReplacer("\r", "", "\n", "", "\x00", "").Replace(value)
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		if r <= 0x1f || r == 0x7f {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func smtpDialContext(ctx context.Context, host, port string) (net.Conn, error) {

@@ -77,7 +77,7 @@ func TestSendMailRejectsReboundPrivateAddress(t *testing.T) {
 }
 
 func TestSanitizeEmailContentRemovesSMTPControlCharacters(t *testing.T) {
-	got := sanitizeEmailContent("Hello\r\nBcc: attacker@example.com\x00")
+	got := sanitizeEmailContent(" \tHello\r\nBcc: attacker@example.com\x00\x7f ")
 	if got != "HelloBcc: attacker@example.com" {
 		t.Fatalf("sanitizeEmailContent() = %q", got)
 	}
