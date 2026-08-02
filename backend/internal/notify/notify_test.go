@@ -23,6 +23,13 @@ func TestSanitizeSMTPAddressValue(t *testing.T) {
 	}
 }
 
+func TestSMTPPasswordIsNotNormalized(t *testing.T) {
+	password := "  password with spaces  "
+	if got := smtpConfig(Config{"smtp_password": password}).Password; got != password {
+		t.Fatalf("SMTP password = %q, want %q", got, password)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
