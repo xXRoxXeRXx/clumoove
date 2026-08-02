@@ -81,3 +81,16 @@ func TestDecodeJSONBodyUsesDedicatedAvatarLimit(t *testing.T) {
 		t.Fatal("expected avatar-sized body to be accepted by its dedicated limit")
 	}
 }
+
+func TestOAuthCallbackDoesNotReflectUntrustedOrigin(t *testing.T) {
+	server := &APIServer{}
+	maliciousOrigin := `</script><script>window.xss=true</script>`
+	req := httptest.NewRequest(http.MethodGet, "/api/oauth/callback?code=code&state=token:google:login:"+maliciousOrigin, nil)
+	rec := httptest.NewRecorder()
+
+	server.handleOAuthCallback(rec, req)
+
+	if strings.Contains(rec.Body.String(), maliciousOrigin) {
+		t.Fatal("OAuth callback reflected an untrusted origin")
+	}
+}

@@ -134,7 +134,9 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	if !allowedOrigins[origin] {
 		log.Printf("handleOAuthCallback: rejected untrusted origin %q in state", origin)
-		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthOriginUntrusted)
+		// Never reflect an untrusted origin into the callback document. Besides not
+		// being a valid postMessage target, it would be embedded in an inline script.
+		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthOriginUntrusted)
 		return
 	}
 
