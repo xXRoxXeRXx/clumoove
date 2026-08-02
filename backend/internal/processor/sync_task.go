@@ -279,9 +279,12 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		return fmt.Errorf("failed to create target directories: %w", err)
 	}
 
-	// Use temporary path if atomic rename is supported
+	// Sync updates may replace an existing destination. Use the same staging
+	// decision as migrations so providers whose RenameFile is non-atomic (such
+	// as S3's copy-and-delete implementation) upload directly to the final key.
+	useTempUpload := useTempThenRename(tgtClient, true)
 	uploadPath := tgtPath
-	if tgtClient.SupportsAtomicRename() {
+	if useTempUpload {
 		uploadPath = tgtPath + ".tmp"
 	}
 
@@ -443,18 +446,30 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	}
 
 	if err != nil {
+		if useTempUpload {
+			_ = tgtClient.DeleteFile(ctx, task.ResourceType, uploadPath)
+		}
 		return fmt.Errorf("failed to upload: %w", err)
 	}
 	if err := sizedReader.VerifyComplete(); err != nil {
+		if useTempUpload {
+			_ = tgtClient.DeleteFile(ctx, task.ResourceType, uploadPath)
+		}
 		return err
 	}
 
-	// Rename temp file if necessary
-	if tgtClient.SupportsAtomicRename() {
+	// Rename the staging object only when the provider guarantees an atomic
+	// replacement. Non-atomic providers uploaded directly to tgtPath above.
+	if useTempUpload {
+		// Some backends do not replace an existing destination during rename.
+		// The staging file is already complete, so unlink the old destination
+		// immediately before promoting the new one.
+		_ = tgtClient.DeleteFile(ctx, task.ResourceType, tgtPath)
 		renameCtx, renameCancel := context.WithTimeout(ctx, 30*time.Second)
 		err = tgtClient.RenameFile(renameCtx, task.ResourceType, uploadPath, tgtPath)
 		renameCancel()
 		if err != nil {
+			_ = tgtClient.DeleteFile(ctx, task.ResourceType, uploadPath)
 			return fmt.Errorf("failed to rename temp file to target path: %w", err)
 		}
 	}
