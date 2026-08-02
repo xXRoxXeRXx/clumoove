@@ -13,17 +13,19 @@ import (
 )
 
 type Task struct {
-	ID               string          `json:"id"`
-	MigrationID      string          `json:"migration_id,omitempty"`
-	SyncJobID        string          `json:"sync_job_id,omitempty"`
-	ResourceType     string          `json:"resource_type"` // files, calendars, contacts
-	FilePath         string          `json:"file_path"`
-	FileSize         int64           `json:"file_size"`
-	Status           string          `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
-	Attempts         int             `json:"attempts"`
-	ErrorMessage     sql.NullString  `json:"error_message,omitempty"`
-	NextRetryAt      sql.NullTime    `json:"next_retry_at,omitempty"`
-	WorkerHash       sql.NullString  `json:"worker_hash,omitempty"`
+	ID           string         `json:"id"`
+	MigrationID  string         `json:"migration_id,omitempty"`
+	SyncJobID    string         `json:"sync_job_id,omitempty"`
+	ResourceType string         `json:"resource_type"` // files, calendars, contacts
+	FilePath     string         `json:"file_path"`
+	FileSize     int64          `json:"file_size"`
+	Status       string         `json:"status"` // PENDING, RUNNING, COMPLETED, FAILED, SKIPPED, CANCELLED
+	Attempts     int            `json:"attempts"`
+	ErrorMessage sql.NullString `json:"error_message,omitempty"`
+	NextRetryAt  sql.NullTime   `json:"next_retry_at,omitempty"`
+	WorkerHash   sql.NullString `json:"worker_hash,omitempty"`
+	// ClaimEpoch is assigned by DequeueSQL and fences a particular worker claim.
+	ClaimEpoch       int64           `json:"claim_epoch"`
 	SourceHash       sql.NullString  `json:"source_hash,omitempty"`
 	TargetHash       sql.NullString  `json:"target_hash,omitempty"`
 	ChecksumVerified bool            `json:"checksum_verified"`
@@ -89,14 +91,14 @@ func CreateTask(db *sql.DB, t *Task) (string, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, COALESCE(migration_id::text, ''), COALESCE(sync_job_id::text, ''), resource_type, file_path, file_size, status,
-		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
+		       attempts, error_message, next_retry_at, worker_hash, claim_epoch, source_hash, target_hash,
 		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks WHERE id = $1
 	`
 	var t Task
 	err := db.QueryRow(query, id).Scan(
 		&t.ID, &t.MigrationID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
-		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
+		&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.ClaimEpoch, &t.SourceHash, &t.TargetHash,
 		&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -115,6 +117,53 @@ func UpdateTaskStatus(db *sql.DB, t *Task) error {
 	_, err := db.Exec(query, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash,
 		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID)
 	return err
+}
+
+// UpdateClaimedTaskStatus changes a task only while this exact dequeue claim
+// still owns it. sql.ErrNoRows means the task was recovered or reclaimed and
+// the caller must stop work rather than committing stale results.
+func UpdateClaimedTaskStatus(db *sql.DB, ctx context.Context, t *Task) error {
+	res, err := db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
+		    source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $9 AND status = 'RUNNING' AND claim_epoch = $10
+	`, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash,
+		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID, t.ClaimEpoch)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// HeartbeatTaskClaim refreshes only the active fenced claim.
+func HeartbeatTaskClaim(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64) (bool, error) {
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING' AND claim_epoch = $2`, taskID, claimEpoch)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// TransitionClaimedTask applies an early worker transition before a Task has
+// been loaded, while still fencing it to the payload's dequeue claim.
+func TransitionClaimedTask(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, status string) error {
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET status = $1, worker_hash = NULL, updated_at = NOW() WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, status, taskID, claimEpoch)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func GetUnverifiedCompletedTasks(db *sql.DB, ctx context.Context, migrationID string) ([]*Task, error) {
@@ -220,6 +269,55 @@ func UpdateTaskFilePath(db *sql.DB, taskID, newFilePath string) error {
 	query := `UPDATE tasks SET file_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	_, err := db.Exec(query, newFilePath, taskID)
 	return err
+}
+
+func UpdateClaimedTaskFilePath(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, newFilePath string) error {
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET file_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, newFilePath, taskID, claimEpoch)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateMigrationTaskAndProgress commits a fenced terminal task transition and
+// its migration counters together, so a crash cannot leave them divergent.
+func UpdateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, filesDelta int, bytesDelta int64, skippedDelta, failedDelta int, liveBytesDelta int64) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
+			source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $9 AND migration_id = $10 AND status = 'RUNNING' AND claim_epoch = $11
+	`, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash, t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID, t.MigrationID, t.ClaimEpoch)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	res, err = tx.ExecContext(ctx, `UPDATE migrations SET processed_files = processed_files + $1,
+		processed_bytes = processed_bytes + $2, live_bytes = live_bytes + $2 + $3,
+		skipped_files = skipped_files + $4, failed_files = failed_files + $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6`,
+		filesDelta, bytesDelta, liveBytesDelta, skippedDelta, failedDelta, t.MigrationID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
 }
 
 func GetActiveTaskPath(db *sql.DB, ctx context.Context, migrationID string) (string, error) {

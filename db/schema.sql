@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     file_size BIGINT NOT NULL,
     source_hash TEXT,
     worker_hash TEXT,
+    claim_epoch BIGINT NOT NULL DEFAULT 0,
     target_hash TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING', -- PENDING, RUNNING, COMPLETED, FAILED, SKIPPED
     resource_type TEXT NOT NULL DEFAULT 'files', -- files, calendars, contacts

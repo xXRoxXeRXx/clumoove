@@ -40,7 +40,8 @@ func setupDequeueTestDB(t *testing.T) *sql.DB {
 			error_message TEXT,
 			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP WITH TIME ZONE,
-			worker_hash TEXT
+			worker_hash TEXT,
+			claim_epoch BIGINT NOT NULL DEFAULT 0
 		);
 	`); err != nil {
 		_ = database.Close()

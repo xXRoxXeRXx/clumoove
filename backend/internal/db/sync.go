@@ -969,9 +969,9 @@ func UpdateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t
 		UPDATE tasks
 		SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
 		    source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $9 AND sync_job_id = $10
+		WHERE id = $9 AND sync_job_id = $10 AND status = 'RUNNING' AND claim_epoch = $11
 	`, t.Status, t.Attempts, t.ErrorMessage, t.NextRetryAt, t.WorkerHash,
-		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID, t.SyncJobID)
+		t.SourceHash, t.TargetHash, t.ChecksumVerified, t.ID, t.SyncJobID, t.ClaimEpoch)
 	if err != nil {
 		return err
 	}

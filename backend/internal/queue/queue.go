@@ -20,6 +20,9 @@ type Payload struct {
 	MigrationID string `json:"migration_id"`
 	SyncJobID   string `json:"sync_job_id"`
 	TaskID      string `json:"task_id"`
+	// ClaimEpoch fences this execution attempt. A task may be reclaimed while a
+	// prior worker is still alive, so every worker-side mutation must match it.
+	ClaimEpoch int64 `json:"claim_epoch"`
 }
 
 // BandwidthEvent updates exactly one job's throttler. Exactly one of
@@ -153,13 +156,14 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 			FOR UPDATE OF t SKIP LOCKED
 		)
 		UPDATE tasks
-		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1
+		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1,
+		    claim_epoch = claim_epoch + 1
 		WHERE id = (SELECT id FROM candidate)
-		RETURNING id, migration_id, sync_job_id
+		RETURNING id, migration_id, sync_job_id, claim_epoch
 	`
 	var payload Payload
 	var migID, syncID sql.NullString
-	err := dbCon.QueryRowContext(ctx, query, workerID).Scan(&payload.TaskID, &migID, &syncID)
+	err := dbCon.QueryRowContext(ctx, query, workerID).Scan(&payload.TaskID, &migID, &syncID, &payload.ClaimEpoch)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No tasks available

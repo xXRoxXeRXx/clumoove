@@ -535,7 +535,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// But just in case status changed right after dequeue:
 	if mig.Status == "PAUSED_CONNECTION_LOSS" || mig.Status == "PAUSED" {
 		// Set back to pending
-		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL WHERE id=$1", payload.TaskID)
+		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING")
 		time.Sleep(2 * time.Second)
 		return nil
 	}
@@ -543,19 +543,19 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	// If migration is in a terminal state (COMPLETED, COMPLETED_WITH_ERRORS or FAILED), mark task as skipped/failed
 	if mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" {
-		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='SKIPPED', worker_hash=NULL WHERE id=$1", payload.TaskID)
+		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "SKIPPED")
 		return nil
 	}
 
 	// If migration was cancelled, mark the task cancelled and stop
 	if mig.Status == "CANCELLED" {
-		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='CANCELLED', worker_hash=NULL WHERE id=$1", payload.TaskID)
+		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "CANCELLED")
 		return nil
 	}
 
 	// If migration is in any other non-running state, requeue and return error
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
-		_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL WHERE id=$1", payload.TaskID)
+		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING")
 		return fmt.Errorf("migration is in state %s, task skipped for now", mig.Status)
 	}
 
@@ -564,6 +564,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if err != nil {
 		return fmt.Errorf("failed to fetch task: %w", err)
 	}
+	task.ClaimEpoch = payload.ClaimEpoch
 
 	logPath := task.FilePath
 	if task.ResourceType == "files" {
@@ -624,15 +625,15 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	// Update task status to RUNNING in DB
 	task.Status = "RUNNING"
-	_ = db.UpdateTaskStatus(p.db, task)
+	_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
 
 	// Skip read-only system or app-generated calendar/contact collections
 	if task.ResourceType != "files" && storage.IsSystemOrAppGeneratedPath(task.FilePath) {
 		task.Status = "SKIPPED"
 		task.ErrorMessage = sql.NullString{String: "Skipped read-only system or app-generated collection (SKIP)", Valid: true}
-		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
-		_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); err != nil {
+			return err
+		}
 		return nil
 	}
 	// Existing jobs may have been indexed before Personal Vault exclusion was
@@ -642,9 +643,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		if resource, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil && resource.IsPersonalVault() {
 			task.Status = "SKIPPED"
 			task.ErrorMessage = sql.NullString{String: "OneDrive Personal Vault cannot be migrated through the API", Valid: true}
-			_ = db.UpdateTaskStatus(p.db, task)
-			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
-			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+			if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
@@ -675,8 +676,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 					// Skip this directory to avoid conflicts
 					task.Status = "SKIPPED"
 					task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Directory skipped due to case collision with %s", collision), Valid: true}
-					_ = db.UpdateTaskStatus(p.db, task)
-					_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, 0, 0, 0)
+					if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, 0, 0, 0, 0); err != nil {
+						return err
+					}
 					return nil
 				}
 			}
@@ -686,11 +688,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 		task.Status = "COMPLETED"
 		task.ErrorMessage = sql.NullString{}
-		_ = db.UpdateTaskStatus(p.db, task)
+		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, 0, 0, 0, 0); err != nil {
+			return err
+		}
 		p.clearConnLoss(mig.ID)
 		p.clearConnLossTask(task.ID)
-		// Count the directory creation as 1 processed item with 0 bytes.
-		_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, 0, 0, 0)
 		return nil
 	}
 
@@ -713,7 +715,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			targetPath = path.Join(dir, result.SanitizedName)
 			log.Printf("[SANITIZE] %s: \"%s\" → \"%s\" (%s)",
 				task.ID, result.OriginalName, result.SanitizedName, strings.Join(result.Reasons, ", "))
-			_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
+			_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 		}
 
 		if sanitize.IsCaseInsensitive(mig.TargetProvider) {
@@ -730,7 +732,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				targetPath = path.Join(path.Dir(targetPath), resolved)
 				log.Printf("[COLLISION] %s: case collision with \"%s\" → \"%s\"",
 					task.ID, collision, path.Base(targetPath))
-				_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
+				_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 			}
 		}
 	}
@@ -765,9 +767,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 					if isWebDAVSystemConflict(err) {
 						task.Status = "SKIPPED"
 						task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(fmt.Sprintf("Skipped calendar/contact entry: %v", err)), Valid: true}
-						_ = db.UpdateTaskStatus(p.db, task)
-						_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
-						_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+						if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); err != nil {
+							return err
+						}
 						return nil
 					}
 					return fmt.Errorf("failed to delete existing calendar/contact entry for overwrite: %w", err)
@@ -780,9 +782,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 					} else if exists && task.FileSize == existingSize {
 						task.Status = "SKIPPED"
 						task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
-						_ = db.UpdateTaskStatus(p.db, task)
-						_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
-						_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+						if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); err != nil {
+							return err
+						}
 						return nil
 					}
 					deleteAfterUpload = true
@@ -802,7 +804,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 						}
 						if !candidateExists {
 							targetPath = candidatePath
-							_ = db.UpdateTaskFilePath(p.db, task.ID, targetPath)
+							_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 							break
 						}
 						counter++
@@ -953,6 +955,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
+		consecutiveFailures := 0
 		for {
 			select {
 			case <-heartbeatStop:
@@ -961,7 +964,21 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				stale := time.Since(taskStart) > taskHeartbeatGrace &&
 					time.Now().UnixNano()-atomic.LoadInt64(&lastByteNano) > int64(taskHeartbeatByteStale)
 				if !stale {
-					_, _ = p.db.ExecContext(ctx, "UPDATE tasks SET updated_at = NOW() WHERE id = $1 AND status = 'RUNNING'", task.ID)
+					owned, err := db.HeartbeatTaskClaim(p.db, ctx, task.ID, task.ClaimEpoch)
+					if err == nil && !owned {
+						cancel() // recovery or a new claim fenced this worker off
+						return
+					}
+					if err != nil {
+						consecutiveFailures++
+						log.Printf("[Worker %s] heartbeat error for task %s (failure %d/5): %v", p.workerID, task.ID, consecutiveFailures, err)
+						if consecutiveFailures >= 5 {
+							cancel()
+							return
+						}
+					} else {
+						consecutiveFailures = 0
+					}
 				}
 			}
 		}
@@ -1030,17 +1047,17 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		if errors.Is(err, storage.ErrNativeDuplicate) {
 			task.Status = "SKIPPED"
 			task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError("Asset already exists in Immich; duplicate handled natively (SKIP)"), Valid: true}
-			_ = db.UpdateTaskStatus(p.db, task)
-			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
-			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+			if claimErr := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); claimErr != nil {
+				return claimErr
+			}
 			return nil
 		}
 		if errors.Is(err, storage.ErrDuplicateUID) || (task.ResourceType != "files" && isWebDAVSystemConflict(err)) {
 			task.Status = "SKIPPED"
 			task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(fmt.Sprintf("Sabredav/WebDAV: calendar/contact entry skipped (%v)", err)), Valid: true}
-			_ = db.UpdateTaskStatus(p.db, task)
-			_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 1, 0)
-			_ = db.AddLiveBytes(p.db, ctx, mig.ID, task.FileSize)
+			if claimErr := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); claimErr != nil {
+				return claimErr
+			}
 			return nil
 		}
 		return fmt.Errorf("upload to target failed: %w", err)
@@ -1109,7 +1126,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// Update task to COMPLETED
 	task.Status = "COMPLETED"
 	task.ErrorMessage = sql.NullString{}
-	_ = db.UpdateTaskStatus(p.db, task)
+	if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 0, 0, 0); err != nil {
+		return err
+	}
 
 	// A successful transfer breaks the "consecutive connection loss" streak (P1-4).
 	p.clearConnLoss(mig.ID)
@@ -1119,7 +1138,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// completion. Bytes are booked here (not via the progress channel) so that a
 	// retried upload (hash mismatch etc.) cannot double-count the same file and
 	// push processed_bytes above total_bytes.
-	_ = db.IncrementMigrationProgress(p.db, ctx, mig.ID, 1, task.FileSize, 0, 0)
 	// Re-sync the live counter to the now-authoritative processed_bytes so the
 	// speed/ETA display cannot stay above total_bytes after a retried upload.
 	_ = db.ResetLiveBytes(p.db, ctx, mig.ID)
@@ -1134,13 +1152,14 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		log.Printf("Error fetching task on failure handler: %v\n", err)
 		return
 	}
+	task.ClaimEpoch = payload.ClaimEpoch
 
 	// Check if migration was manually cancelled
 	mig, migErr := db.GetMigration(p.db, payload.MigrationID)
 	if migErr == nil && mig.Status == "CANCELLED" {
 		log.Printf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
 		task.Status = "CANCELLED"
-		_ = db.UpdateTaskStatus(p.db, task)
+		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
 		return
 	}
 
@@ -1150,7 +1169,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		log.Printf("[Worker %s] Shutdown detected. Requeueing task %s...\n", p.workerID, payload.TaskID)
 
 		task.Status = "PENDING"
-		_ = db.UpdateTaskStatus(p.db, task)
+		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
 		return
 	}
 
@@ -1183,7 +1202,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 			nextRetry := time.Now().Add(backoff)
 			task.Status = "FAILED"
 			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-			_ = db.UpdateTaskStatus(p.db, task)
+			_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
 			log.Printf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task conn-loss attempts %d)\n",
 				p.workerID, payload.TaskID, payload.MigrationID, int(backoff.Seconds()),
 				lossCount, connLossEscalationThreshold, taskConnLoss)
@@ -1198,7 +1217,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		p.recoveryAttempts.Delete(payload.MigrationID)
 		// Task is set back to PENDING so it can be retried immediately upon resume
 		task.Status = "PENDING"
-		_ = db.UpdateTaskStatus(p.db, task)
+		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
 		return
 	}
 
@@ -1239,7 +1258,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 				task.Status = "FAILED"
 				task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
 				task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
-				_ = db.UpdateTaskStatus(p.db, task)
+				_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
 				log.Printf("[Worker %s] OAuth 401 for task %s (migration %s, %s) — refreshed token and retrying in %ds\n",
 					p.workerID, payload.TaskID, payload.MigrationID, role, int(backoff.Seconds()))
 				return
@@ -1260,8 +1279,9 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		// Mark this individual task failed too so progress counters stay accurate
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
-		_ = db.UpdateTaskStatus(p.db, task)
-		_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 1, task.FileSize, 0, 1)
+		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 0, 1, 0); err != nil {
+			return
+		}
 		// Cancel any remaining PENDING tasks so they are not orphaned: the dequeue
 		// query only selects PENDING while RUNNING/INDEXING, so they would otherwise
 		// stay stuck forever (processed_files never reaches total_files, live stream
@@ -1290,20 +1310,20 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		nextRetry := time.Now().Add(backoff)
 		task.Status = "FAILED" // Kept as failed until cron schedules retry
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-		_ = db.UpdateTaskStatus(p.db, task)
+		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 0, 1, 0); err != nil {
+			return
+		}
 
 		log.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, int(backoff.Seconds()), task.Attempts)
 	} else {
 		// Max retries reached, fail permanently
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
-		_ = db.UpdateTaskStatus(p.db, task)
+		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
 		// Task is now terminal: drop its per-task connection-loss counter so the
 		// in-memory map does not grow unbounded across a long-running worker.
 		p.clearConnLossTask(task.ID)
 
-		// Increment migration failed files
-		_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 1, task.FileSize, 0, 1)
 		log.Printf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
 	}
 }

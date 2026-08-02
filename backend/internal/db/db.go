@@ -575,6 +575,11 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (tasks checksum_verified): %v\n", err)
 			}
 
+			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS claim_epoch BIGINT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (tasks claim_epoch): %v\n", err)
+			}
+
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS indexing_errors (
 				id BIGSERIAL PRIMARY KEY,
 				migration_id UUID NOT NULL REFERENCES migrations(id) ON DELETE CASCADE,
