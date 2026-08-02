@@ -290,6 +290,20 @@ func resourceFromFTPEntry(parent string, entry *ftp.Entry) CloudResource {
 	}
 }
 
+// isSafeFTPListingEntry excludes FTP's pseudo-directory entries and malformed
+// names. Unlike most provider APIs, FTP LIST responses may contain "." and
+// "..". Passing either to the client creates a path that points to the current
+// or parent directory, which can turn a lazily expanded file tree into a cycle.
+func isSafeFTPListingEntry(entry *ftp.Entry) bool {
+	if entry == nil || entry.Name == "." || entry.Name == ".." {
+		return false
+	}
+	// A LIST item names exactly one child of the requested directory. Reject
+	// path-like names from non-conforming servers so path.Join cannot normalize
+	// them into another directory.
+	return entry.Name != "" && path.Base(entry.Name) == entry.Name
+}
+
 func (p *FTPProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 	if err := requireFTPFiles(resourceType); err != nil {
 		return nil, err
@@ -309,6 +323,9 @@ func (p *FTPProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 	}
 	resources := make([]CloudResource, 0, len(entries))
 	for _, entry := range entries {
+		if !isSafeFTPListingEntry(entry) {
+			continue
+		}
 		resources = append(resources, resourceFromFTPEntry(clean, entry))
 	}
 	return resources, nil

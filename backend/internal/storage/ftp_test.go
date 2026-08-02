@@ -77,6 +77,30 @@ func TestFTPPath(t *testing.T) {
 	}
 }
 
+func TestIsSafeFTPListingEntry(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry *ftp.Entry
+		want  bool
+	}{
+		{name: "normal file", entry: &ftp.Entry{Name: "report.pdf"}, want: true},
+		{name: "normal folder", entry: &ftp.Entry{Name: "documents", Type: ftp.EntryTypeFolder}, want: true},
+		{name: "current directory", entry: &ftp.Entry{Name: "."}, want: false},
+		{name: "parent directory", entry: &ftp.Entry{Name: ".."}, want: false},
+		{name: "empty name", entry: &ftp.Entry{}, want: false},
+		{name: "nested path", entry: &ftp.Entry{Name: "folder/child"}, want: false},
+		{name: "nil entry", entry: nil, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSafeFTPListingEntry(tt.entry); got != tt.want {
+				t.Errorf("isSafeFTPListingEntry(%#v) = %v, want %v", tt.entry, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFTPAuthenticationError(t *testing.T) {
 	if !isFTPAuthError(&textproto.Error{Code: 530, Msg: "login incorrect"}) {
 		t.Fatal("530 must be classified as authentication failure")
