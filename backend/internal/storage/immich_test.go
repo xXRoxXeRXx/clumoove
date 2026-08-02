@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,6 +58,38 @@ func TestImmichStreamDownloadReadsOriginal(t *testing.T) {
 	body, err := io.ReadAll(stream)
 	if err != nil || string(body) != "asset bytes" {
 		t.Fatalf("body = %q, err = %v", body, err)
+	}
+}
+
+func TestImmichStreamUploadChunkedLeavesProgressChannelOpen(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/assets" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Errorf("ParseMultipartForm() error = %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"asset-id"}`))
+	}))
+	defer server.Close()
+
+	p := &ImmichProvider{BaseURL: server.URL, APIKey: "key", HTTPClient: server.Client()}
+	progress := make(chan int64, 16)
+	const largeFileSize = 50*1024*1024 + 1 // processor's chunked-upload threshold plus one byte
+	if err := p.StreamUploadChunked(context.Background(), "files", "/large.jpg", bytes.NewReader([]byte("asset bytes")), largeFileSize, progress); err != nil {
+		t.Fatalf("StreamUploadChunked() error = %v", err)
+	}
+
+	// Progress channel lifecycle belongs to the caller. This would panic if the
+	// provider closed it after completing the chunked upload.
+	close(progress)
+	var reported int64
+	for n := range progress {
+		reported += n
+	}
+	if reported != int64(len("asset bytes")) {
+		t.Errorf("reported progress = %d, want %d", reported, len("asset bytes"))
 	}
 }
 
