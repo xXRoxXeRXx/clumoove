@@ -338,6 +338,13 @@ func TestLocalProviderRootListing(t *testing.T) {
 	if len(list) != 1 || list[0].Name != "rootfile.txt" {
 		t.Fatalf("unexpected root listing: %+v", list)
 	}
+	list, err = p.GetDirectoryListing(ctx, "files", "")
+	if err != nil {
+		t.Fatalf("second root listing: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "rootfile.txt" {
+		t.Fatalf("unexpected second root listing: %+v", list)
+	}
 }
 
 func TestLocalProviderCreateParentDirectories(t *testing.T) {

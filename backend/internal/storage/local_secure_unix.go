@@ -150,6 +150,13 @@ func (r *localRoot) openDirectory(parts []string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	// dup(2) shares the directory stream position with the tenant-root
+	// descriptor. Reset the duplicate before handing it to ReadDir so a prior
+	// root listing cannot make a later listing appear empty.
+	if _, err := unix.Seek(fd, 0, io.SeekStart); err != nil {
+		unix.Close(fd)
+		return nil, err
+	}
 	return os.NewFile(uintptr(fd), "local directory"), nil
 }
 
