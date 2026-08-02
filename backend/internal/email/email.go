@@ -230,10 +230,12 @@ func sendSMTPMessage(client *smtp.Client, cfg SMTPConfig, auth smtp.Auth, to, ms
 			return fmt.Errorf("SMTP auth failed: %w", err)
 		}
 	}
-	if err := client.Mail(cfg.FromEmail); err != nil {
+	mailFrom := normalizeEnvelopeAddress(cfg.FromEmail)
+	rcptTo := normalizeEnvelopeAddress(to)
+	if err := client.Mail(mailFrom); err != nil {
 		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
 	}
-	if err := client.Rcpt(to); err != nil {
+	if err := client.Rcpt(rcptTo); err != nil {
 		return fmt.Errorf("SMTP RCPT TO failed: %w", err)
 	}
 	w, err := client.Data()
@@ -250,6 +252,18 @@ func sendSMTPMessage(client *smtp.Client, cfg SMTPConfig, auth smtp.Auth, to, ms
 		return fmt.Errorf("SMTP close failed: %w", err)
 	}
 	return client.Quit()
+}
+
+// normalizeEnvelopeAddress canonicalizes one SMTP envelope address. Unlike a
+// MIME header, the envelope permits only the mailbox address, never a display
+// name. The sanitized fallback keeps legacy integrations working.
+func normalizeEnvelopeAddress(value string) string {
+	value = sanitizeEmailContent(value)
+	address, err := mail.ParseAddress(value)
+	if err != nil {
+		return value
+	}
+	return address.Address
 }
 
 func buildMessage(from, to, subject, htmlBody string) string {

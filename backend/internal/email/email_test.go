@@ -90,6 +90,13 @@ func TestNormalizeMailboxHeaderCanonicalizesAddress(t *testing.T) {
 	}
 }
 
+func TestNormalizeEnvelopeAddressReturnsMailboxOnly(t *testing.T) {
+	got := normalizeEnvelopeAddress("Clumoove Support <support@example.com>")
+	if got != "support@example.com" {
+		t.Fatalf("normalizeEnvelopeAddress() = %q", got)
+	}
+}
+
 func TestBuildMessagePreventsSMTPMessageInjection(t *testing.T) {
 	message := buildMessage(
 		"Clumoove\r\nBcc: attacker@example.com <no-reply@example.com>",
