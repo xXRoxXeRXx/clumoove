@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"sync"
 	"testing"
 
 	_ "github.com/lib/pq"
@@ -50,6 +51,107 @@ func setupDequeueTestDB(t *testing.T) *sql.DB {
 	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestDequeueSQLSkipsSaturatedJobToClaimNext(t *testing.T) {
+	database := setupDequeueTestDB(t)
+	if _, err := database.Exec(`
+		INSERT INTO migrations (id, status, threads) VALUES
+			('migration-a', 'RUNNING', 1),
+			('migration-b', 'RUNNING', 1);
+		INSERT INTO tasks (id, migration_id, status, metadata, created_at) VALUES
+			('a-running', 'migration-a', 'RUNNING', '{}', '2020-01-01'),
+			('a-pending', 'migration-a', 'PENDING', '{}', '2020-01-02'),
+			('b-pending', 'migration-b', 'PENDING', '{}', '2020-01-03');
+	`); err != nil {
+		t.Fatalf("create saturated and eligible migrations: %v", err)
+	}
+
+	payload, err := (&Queue{}).DequeueSQL(context.Background(), database, "worker-1")
+	if err != nil {
+		t.Fatalf("dequeue after saturated migration: %v", err)
+	}
+	if payload == nil || payload.TaskID != "b-pending" || payload.MigrationID != "migration-b" {
+		t.Fatalf("dequeue = %+v, want pending task from migration-b", payload)
+	}
+}
+
+// TestDequeueSQLSerializesMigrationCapacity uses separate PostgreSQL
+// connections.  A thread cap of one must permit exactly one concurrent claim.
+func TestDequeueSQLSerializesMigrationCapacity(t *testing.T) {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		t.Skip("DATABASE_URL not set; skipping dequeue concurrency DB test")
+	}
+
+	database, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	database.SetMaxOpenConns(4)
+	t.Cleanup(func() { _ = database.Close() })
+
+	var migrationID string
+	err = database.QueryRow(`
+		INSERT INTO migrations (
+			source_url, source_username, source_password_encrypted,
+			target_url, target_username, target_password_encrypted, status, threads
+		) VALUES ('https://source.example', 'source', 'secret', 'https://target.example', 'target', 'secret', 'RUNNING', 1)
+		RETURNING id
+	`).Scan(&migrationID)
+	if err != nil {
+		t.Fatalf("create migration: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = database.Exec(`DELETE FROM migrations WHERE id = $1`, migrationID)
+	})
+	if _, err := database.Exec(`
+		INSERT INTO tasks (migration_id, file_path, file_size, status, metadata)
+		VALUES ($1, '/one', 1, 'PENDING', '{}'::jsonb), ($1, '/two', 1, 'PENDING', '{}'::jsonb)
+	`, migrationID); err != nil {
+		t.Fatalf("create tasks: %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan *Payload, 2)
+	errs := make(chan error, 2)
+	var workers sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		workers.Add(1)
+		go func(workerID string) {
+			defer workers.Done()
+			<-start
+			payload, err := (&Queue{}).DequeueSQL(context.Background(), database, workerID)
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- payload
+		}("concurrent-worker-" + string(rune('a'+i)))
+	}
+	close(start)
+	workers.Wait()
+	close(errs)
+	close(results)
+	for err := range errs {
+		t.Errorf("concurrent dequeue: %v", err)
+	}
+	claims := 0
+	for payload := range results {
+		if payload != nil {
+			claims++
+		}
+	}
+	if claims != 1 {
+		t.Fatalf("concurrent claims = %d, want 1 for a one-thread migration", claims)
+	}
+	var running int
+	if err := database.QueryRow(`SELECT COUNT(*) FROM tasks WHERE migration_id = $1 AND status = 'RUNNING'`, migrationID).Scan(&running); err != nil {
+		t.Fatalf("count running tasks: %v", err)
+	}
+	if running != 1 {
+		t.Fatalf("running tasks = %d, want 1", running)
+	}
 }
 
 func TestDequeueSQLConflictCopyDependency(t *testing.T) {

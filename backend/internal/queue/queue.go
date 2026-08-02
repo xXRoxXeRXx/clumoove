@@ -94,13 +94,26 @@ func NewQueue(redisAddr string) (*Queue, error) {
 
 // DequeueSQL pops a task from the database queue natively respecting migration/sync thread limits.
 func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) (*Payload, error) {
-	query := `
+	tx, err := dbCon.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin dequeue transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	commitEmpty := func() (*Payload, error) {
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit empty dequeue: %w", err)
+		}
+		return nil, nil
+	}
+
+	// Keep failed conflict dependents out of the candidate set before selecting
+	// a task. This is deliberately in the same transaction as the claim.
+	if _, err := tx.ExecContext(ctx, `
 		-- A RENAME conflict produces a target-side conflict_copy followed by an
 		-- upload at the same path.  Keep the upload unclaimable until that exact
 		-- rename has completed, otherwise separate workers can rename the newly
 		-- uploaded file and lose the original target version.
-		WITH failed_conflict_dependents AS (
-			UPDATE tasks AS dependent
+		UPDATE tasks AS dependent
 			SET status = 'SKIPPED',
 			    worker_hash = NULL,
 			    error_message = 'conflict_copy prerequisite failed; upload skipped',
@@ -116,46 +129,103 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 				  AND prerequisite.resource_type = dependent.resource_type
 				  AND prerequisite.metadata->>'action' = 'conflict_copy'
 				  AND prerequisite.status IN ('FAILED', 'CANCELLED', 'SKIPPED')
-			  )
-		), candidate AS (
+			  )`); err != nil {
+		return nil, fmt.Errorf("skip failed conflict dependents: %w", err)
+	}
+
+	// Lock a candidate task first, then lock its parent below. A task lock alone
+	// is insufficient: different workers can lock different tasks for the same
+	// job. The parent lock serializes their capacity check and claim.
+	candidateQuery := `
+		SELECT t.id, t.migration_id, t.sync_job_id, t.pass_generation
+		FROM tasks t
+		LEFT JOIN migrations m ON t.migration_id = m.id
+		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
+		WHERE t.status = 'PENDING'
+		AND (
+			COALESCE(t.metadata->>'wait_for_conflict_copy', 'false') <> 'true'
+			OR EXISTS (
+				SELECT 1 FROM tasks AS prerequisite
+				WHERE prerequisite.sync_job_id = t.sync_job_id
+				  AND prerequisite.pass_generation = t.pass_generation
+				  AND prerequisite.file_path = t.file_path
+				  AND prerequisite.resource_type = t.resource_type
+				  AND prerequisite.metadata->>'action' = 'conflict_copy'
+				  AND prerequisite.status = 'COMPLETED'
+			)
+		)
+		-- This is an optimistic filter to avoid head-of-line blocking on jobs
+		-- that are inactive or already saturated. The parent lock and count
+		-- below remain authoritative for concurrent claims.
+		AND (
+			(t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING') AND (
+				SELECT COUNT(*) FROM tasks t2
+				WHERE t2.migration_id = m.id AND t2.status = 'RUNNING'
+			) < m.threads)
+			OR
+			(t.sync_job_id IS NOT NULL AND sj.status = 'RUNNING' AND t.pass_generation = sj.run_generation AND (
+				SELECT COUNT(*) FROM tasks t2
+				WHERE t2.sync_job_id = sj.id AND t2.pass_generation = sj.run_generation AND t2.status = 'RUNNING'
+			) < sj.threads)
+		)
+		ORDER BY t.created_at ASC
+		LIMIT 1
+		FOR UPDATE OF t SKIP LOCKED
+	`
+	var taskID string
+	var migID, syncID sql.NullString
+	var taskGeneration int
+	if err := tx.QueryRowContext(ctx, candidateQuery).Scan(&taskID, &migID, &syncID, &taskGeneration); err != nil {
+		if err == sql.ErrNoRows {
+			return commitEmpty()
+		}
+		return nil, fmt.Errorf("select dequeue candidate: %w", err)
+	}
+
+	var capacity int
+	if migID.Valid {
+		var status string
+		var threads int
+		if err := tx.QueryRowContext(ctx, `SELECT status, threads FROM migrations WHERE id = $1 FOR UPDATE`, migID.String).Scan(&status, &threads); err != nil {
+			return nil, fmt.Errorf("lock migration dequeue parent: %w", err)
+		}
+		if status != "RUNNING" && status != "INDEXING" {
+			return commitEmpty()
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE migration_id = $1 AND status = 'RUNNING'`, migID.String).Scan(&capacity); err != nil {
+			return nil, fmt.Errorf("count running migration tasks: %w", err)
+		}
+		if capacity >= threads {
+			return commitEmpty()
+		}
+	} else if syncID.Valid {
+		var status string
+		var generation int
+		var threads int
+		if err := tx.QueryRowContext(ctx, `SELECT status, threads, run_generation FROM sync_jobs WHERE id = $1 FOR UPDATE`, syncID.String).Scan(&status, &threads, &generation); err != nil {
+			return nil, fmt.Errorf("lock sync dequeue parent: %w", err)
+		}
+		if status != "RUNNING" {
+			return commitEmpty()
+		}
+		if taskGeneration != generation {
+			return commitEmpty()
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'RUNNING'`, syncID.String, generation).Scan(&capacity); err != nil {
+			return nil, fmt.Errorf("count running sync tasks: %w", err)
+		}
+		if capacity >= threads {
+			return commitEmpty()
+		}
+	} else {
+		return nil, fmt.Errorf("dequeue candidate %s has no parent", taskID)
+	}
+
+	query := `
+		WITH candidate AS (
 			SELECT t.id
 			FROM tasks t
-			LEFT JOIN migrations m ON t.migration_id = m.id
-			LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
-			WHERE t.status = 'PENDING'
-			AND (
-				-- A missing JSON key yields SQL NULL. Coalesce it so ordinary
-				-- upload/mkdir tasks remain eligible for dequeue.
-				COALESCE(t.metadata->>'wait_for_conflict_copy', 'false') <> 'true'
-				OR EXISTS (
-					SELECT 1
-					FROM tasks AS prerequisite
-					WHERE prerequisite.sync_job_id = t.sync_job_id
-					  AND prerequisite.pass_generation = t.pass_generation
-					  AND prerequisite.file_path = t.file_path
-					  AND prerequisite.resource_type = t.resource_type
-					  AND prerequisite.metadata->>'action' = 'conflict_copy'
-					  AND prerequisite.status = 'COMPLETED'
-				)
-			)
-			AND (
-				(t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING') AND (
-					SELECT COUNT(*) FROM tasks t2 
-					WHERE t2.migration_id = m.id AND t2.status = 'RUNNING'
-				) < m.threads)
-				OR
-				-- Do not claim PENDING tasks while the sync job is INDEXING: the pass
-				-- may still hold leftover PENDING rows from the prior pass and deletes
-				-- them before enqueuing a fresh delta. Claiming early runs stale work
-				-- and races drainRemainingTasks.
-				(t.sync_job_id IS NOT NULL AND sj.status = 'RUNNING' AND t.pass_generation = sj.run_generation AND (
-					SELECT COUNT(*) FROM tasks t2 
-					WHERE t2.sync_job_id = sj.id AND t2.pass_generation = sj.run_generation AND t2.status = 'RUNNING'
-				) < sj.threads)
-			)
-			ORDER BY t.created_at ASC
-			LIMIT 1
-			FOR UPDATE OF t SKIP LOCKED
+			WHERE t.id = $2 AND t.status = 'PENDING'
 		)
 		UPDATE tasks
 		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP, worker_hash = $1,
@@ -164,13 +234,15 @@ func (q *Queue) DequeueSQL(ctx context.Context, dbCon *sql.DB, workerID string) 
 		RETURNING id, migration_id, sync_job_id, claim_epoch
 	`
 	var payload Payload
-	var migID, syncID sql.NullString
-	err := dbCon.QueryRowContext(ctx, query, workerID).Scan(&payload.TaskID, &migID, &syncID, &payload.ClaimEpoch)
+	err = tx.QueryRowContext(ctx, query, workerID, taskID).Scan(&payload.TaskID, &migID, &syncID, &payload.ClaimEpoch)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil // No tasks available
+			return commitEmpty() // No tasks available
 		}
 		return nil, fmt.Errorf("failed to dequeue task from sql: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit dequeue task: %w", err)
 	}
 	if migID.Valid {
 		payload.MigrationID = migID.String
