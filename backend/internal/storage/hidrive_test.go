@@ -157,6 +157,40 @@ func TestHiDriveProviderDirectoryListing(t *testing.T) {
 	}
 }
 
+func TestHiDriveProviderDirectoryListingDecodesResponseNames(t *testing.T) {
+	requests := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/dir" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		requests++
+		switch requests {
+		case 1:
+			_ = json.NewEncoder(w).Encode(hidriveDirResponse{Members: []hidriveDirMember{{Name: "folder%2Bname", Type: "dir"}}})
+		case 2:
+			if got := r.URL.Query().Get("path"); got != "/folder+name" {
+				t.Errorf("path = %q, want decoded name", got)
+			}
+			_ = json.NewEncoder(w).Encode(hidriveDirResponse{})
+		}
+	}))
+	defer ts.Close()
+	p, _ := NewHiDriveProvider("mock-token")
+	p.BaseURL = ts.URL
+	entries, err := p.GetDirectoryListing(context.Background(), "files", "/")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("first listing = %#v, %v", entries, err)
+	}
+	if entries[0].Path != "/folder+name" {
+		t.Fatalf("decoded path = %q", entries[0].Path)
+	}
+	_, err = p.GetDirectoryListing(context.Background(), "files", entries[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHiDriveProviderFileExistsAndInspect(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/meta" {

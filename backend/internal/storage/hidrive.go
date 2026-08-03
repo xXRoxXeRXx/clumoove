@@ -73,6 +73,17 @@ func (p *HiDriveProvider) cleanPath(filePath string) string {
 	return path.Clean(filePath)
 }
 
+// HiDrive serializes path and name fields URL-escaped in JSON responses. Paths
+// must be decoded before being handed back to the indexer; otherwise the next
+// request escapes '%' again (%2B -> %252B) and the API reports a false 404.
+func decodeHiDrivePath(value string) (string, error) {
+	decoded, err := url.PathUnescape(value)
+	if err != nil {
+		return "", fmt.Errorf("decode hidrive path: %w", err)
+	}
+	return decoded, nil
+}
+
 func (p *HiDriveProvider) apiURL(endpoint string) string {
 	base := p.BaseURL
 	if base == "" {
@@ -190,9 +201,13 @@ func (p *HiDriveProvider) GetDirectoryListing(ctx context.Context, resourceType,
 
 	var resources []CloudResource
 	for _, m := range allMembers {
+		name, err := decodeHiDrivePath(m.Name)
+		if err != nil {
+			return nil, err
+		}
 		res := CloudResource{
-			Path:  strings.TrimSuffix(hdPath, "/") + "/" + m.Name,
-			Name:  m.Name,
+			Path:  strings.TrimSuffix(hdPath, "/") + "/" + name,
+			Name:  name,
 			IsDir: m.Type == "dir",
 			Size:  m.Size,
 			Hash:  hidriveHash(m.ContentHash),
@@ -265,10 +280,18 @@ func (p *HiDriveProvider) InspectResource(ctx context.Context, resourceType, res
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return CloudResource{}, err
 	}
+	metaPath, err := decodeHiDrivePath(meta.Path)
+	if err != nil {
+		return CloudResource{}, err
+	}
+	metaName, err := decodeHiDrivePath(meta.Name)
+	if err != nil {
+		return CloudResource{}, err
+	}
 
 	res := CloudResource{
-		Path:  meta.Path,
-		Name:  meta.Name,
+		Path:  metaPath,
+		Name:  metaName,
 		IsDir: meta.Type == "dir",
 		Size:  meta.Size,
 		Hash:  hidriveHash(meta.ContentHash),
