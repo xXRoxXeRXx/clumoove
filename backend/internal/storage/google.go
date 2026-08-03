@@ -51,14 +51,14 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 	}
 
 	tr := &http.Transport{
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          1000,
-		MaxIdleConnsPerHost:   500,
-		MaxConnsPerHost:       500,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ReadBufferSize:        256 * 1024,
-		WriteBufferSize:       256 * 1024,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        1000,
+		MaxIdleConnsPerHost: 500,
+		MaxConnsPerHost:     500,
+		IdleConnTimeout:     120 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		ReadBufferSize:      256 * 1024,
+		WriteBufferSize:     256 * 1024,
 	}
 	baseClient := &http.Client{Transport: tr}
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, baseClient)
@@ -535,6 +535,12 @@ func (p *GoogleProvider) StreamUpload(ctx context.Context, resourceType, filePat
 func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
 	switch resourceType {
 	case "files":
+		// File and directory tasks are processed concurrently. Do not rely on a
+		// separate mkdir task having completed before this upload starts.
+		if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
+			return err
+		}
+
 		lastSlash := strings.LastIndex(filePath, "/")
 		dirPath := filePath[:lastSlash]
 		fileName := filePath[lastSlash+1:]
@@ -568,7 +574,7 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 			if err != nil {
 				return fmt.Errorf("failed to parse ICS: %w", err)
 			}
-			
+
 			// Overwrite conflict strategy (Finding 15)
 			if event.ICalUID != "" {
 				existingList, err := p.calendarService.Events.List(calendarID).ICalUID(event.ICalUID).Context(ctx).Do()
@@ -577,7 +583,7 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 					return err
 				}
 			}
-			
+
 			_, err = p.calendarService.Events.Insert(calendarID, event).Context(ctx).Do()
 			return err
 		}
@@ -588,7 +594,7 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 		if err != nil {
 			return fmt.Errorf("failed to parse VCF: %w", err)
 		}
-		
+
 		// Overwrite conflict strategy (Finding 15)
 		resourceName, err := p.findExistingContact(ctx, person)
 		if err == nil && resourceName != "" {
@@ -599,7 +605,7 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 				return err
 			}
 		}
-		
+
 		_, err = p.peopleService.People.CreateContact(person).Context(ctx).Do()
 		return err
 
@@ -704,8 +710,6 @@ func (p *GoogleProvider) CreateParentDirectories(ctx context.Context, resourceTy
 	return p.CreateDirectory(ctx, resourceType, dirPath)
 }
 
-var globalGoogleCreatedDirs = newBoundedDirCache(5000)
-
 func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -713,16 +717,17 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 		return fmt.Errorf("CreateDirectory not implemented for %s", resourceType)
 	}
 
-	globalDirKey := dirPath
-	if globalGoogleCreatedDirs.Contains(globalDirKey) {
-		return nil
-	}
-
 	parts := strings.Split(strings.Trim(dirPath, "/"), "/")
 	currentID := "root"
+	currentPath := ""
 	for _, part := range parts {
 		if part == "" {
 			continue
+		}
+		if currentPath == "" {
+			currentPath = part
+		} else {
+			currentPath += "/" + part
 		}
 		query := driveFolderQuery(currentID, part)
 		res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
@@ -743,12 +748,10 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 		} else {
 			currentID = res.Files[0].Id
 		}
+		p.pathCache.Store(currentPath, currentID)
 	}
-	globalGoogleCreatedDirs.Add(globalDirKey)
 	return nil
 }
-
-
 
 // Helpers for ICS/VCF conversions
 
