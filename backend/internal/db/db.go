@@ -401,6 +401,15 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (selected_contacts): %v\n", err)
 			}
 
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_generation INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations verification_generation): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_lease_until TIMESTAMP WITH TIME ZONE`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations verification_lease_until): %v\n", err)
+			}
+
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS schedules (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 				user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

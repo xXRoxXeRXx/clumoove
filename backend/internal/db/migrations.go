@@ -457,6 +457,23 @@ func ResetLiveBytes(db *sql.DB, ctx context.Context, id string) error {
 }
 
 func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
+	_, err := reconcileMigrationProgress(dbsql, migrationID, nil)
+	return err
+}
+
+// ReconcileMigrationProgressWhileVerifying finalizes a verification pass only
+// while its generation still owns the active lease.
+func ReconcileMigrationProgressWhileVerifying(dbsql *sql.DB, migrationID string, generation int) (bool, error) {
+	return reconcileMigrationProgress(dbsql, migrationID, &generation)
+}
+
+func reconcileMigrationProgress(dbsql *sql.DB, migrationID string, generation *int) (bool, error) {
+	// A false, nil result for a fenced caller means its lease expired or was
+	// superseded; another verifier owns finalization and this caller must no-op.
+	var verificationGeneration sql.NullInt64
+	if generation != nil {
+		verificationGeneration = sql.NullInt64{Int64: int64(*generation), Valid: true}
+	}
 	query := `
 		WITH task_stats AS (
 			SELECT
@@ -497,25 +514,29 @@ func ReconcileMigrationProgress(dbsql *sql.DB, migrationID string) error {
 		    updated_at = CURRENT_TIMESTAMP
 		FROM task_stats t, error_stats e
 		WHERE m.id = $1
+		  AND ($2::bigint IS NULL OR (m.status = 'VERIFYING' AND m.verification_generation = $2 AND m.verification_lease_until > NOW()))
 	`
-	res, err := dbsql.Exec(query, migrationID)
+	res, err := dbsql.Exec(query, migrationID, verificationGeneration)
 	if err != nil {
-		return fmt.Errorf("ReconcileMigrationProgress exec failed for %s: %w", migrationID, err)
+		return false, fmt.Errorf("ReconcileMigrationProgress exec failed for %s: %w", migrationID, err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("ReconcileMigrationProgress: migration %s not found", migrationID)
+		if generation != nil {
+			return false, nil
+		}
+		return false, fmt.Errorf("ReconcileMigrationProgress: migration %s not found", migrationID)
 	}
 	var status string
 	if err := dbsql.QueryRow(`SELECT status FROM migrations WHERE id = $1`, migrationID).Scan(&status); err != nil {
-		return err
+		return false, err
 	}
 	if status == "COMPLETED" || status == "COMPLETED_WITH_ERRORS" || status == "FAILED" {
 		if notifyErr := CreateMigrationNotificationEvent(dbsql, migrationID); notifyErr != nil {
 			log.Printf("notification event creation for reconciled migration %s failed: %v", migrationID, notifyErr)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func CountActiveMigrationsForUser(db *sql.DB, userID string) (int, error) {

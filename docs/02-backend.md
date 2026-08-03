@@ -201,6 +201,11 @@ For each task:
   moves the job out of `VERIFYING`, which cancels the worker verifier across processes. Verifier
   task writes are conditional on that persisted status, so an in-flight provider call cannot mutate
   tasks after the engine has aborted the verification pass.
+- Migration checksum verification is single-writer across worker processes. A PostgreSQL lease and
+  monotonically increasing verification generation claim each `VERIFYING` migration; every task write
+  requires the active generation, an unexpired lease, and an unverified `COMPLETED` task. A stale
+  verifier therefore cannot overwrite a re-copy or mutate a cancelled migration, and only the lease
+  holder may reconcile/finalize the pass.
 
 ### Failure handling (`handleTaskFailure`)
 

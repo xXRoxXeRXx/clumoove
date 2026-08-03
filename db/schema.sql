@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS migrations (
     error_message TEXT,
     threads INT NOT NULL DEFAULT 8,
     bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
+    verification_generation INT NOT NULL DEFAULT 0,
+    verification_lease_until TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -382,6 +384,8 @@ CREATE TABLE IF NOT EXISTS notification_events (
     UNIQUE (sync_job_id, run_at)
 );
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS notification_generation INT NOT NULL DEFAULT 0;
+ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_generation INT NOT NULL DEFAULT 0;
+ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_lease_until TIMESTAMP WITH TIME ZONE;
 ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_migration_id_key;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_migration_generation ON notification_events(migration_id, run_generation);

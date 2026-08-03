@@ -26,7 +26,7 @@
   - `RunRetryScheduler` — re-enqueues tasks whose `next_retry_at <= NOW()` every 10 s
   - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s; for sync jobs it only returns the job to `IDLE` and makes its active schedule due, so the API scheduler exclusively starts the pass
   - `RunOrphanedRunningTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
-  - `RunChecksumVerifier` — performs automated post-migration cryptographic checksum validation for `VERIFYING` migrations every 10 s
+  - `RunChecksumVerifier` — performs automated post-migration cryptographic checksum validation for `VERIFYING` migrations every 10 s; PostgreSQL lease/generation fencing makes each migration verification pass single-writer across worker processes
 - **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google/Google Photos refresh tokens before expiry.
 - **Public website**: `website/` is an independent static Vite package served separately from the authenticated SPA. In production, the public host must not be allowed by application CORS or proxy authenticated API routes.
 - **Core Scheduler Engine**: A background daemon in `cmd/api` (`scheduler.Run`) checks for due schedules every minute and triggers the linked job (migration/sync/backup). It uses `github.com/robfig/cron/v3` for cron parsing/next-run calculation. Schedules live in the `schedules` table; a Redis `SET NX` lock (`schedule:lock:{id}`, 2-min TTL) ensures only one API instance triggers a given schedule in a multi-instance deployment.

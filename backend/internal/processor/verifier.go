@@ -136,10 +136,14 @@ type verificationPassConfig struct {
 	// callers leave it nil and construct a scoped provider below.
 	TargetClient      storage.StorageProvider
 	GetTasks          func(ctx context.Context) ([]*db.Task, error)
-	OnVerified        func(task *db.Task, targetPath string, targetHash string)
 	ReconcileProgress func() error
 	MarkVerified      func(ctx context.Context, task *db.Task, targetHash string) (bool, error)
 	MarkMismatch      func(ctx context.Context, task *db.Task) (bool, error)
+	Release           func(ctx context.Context)
+	// RenewLease is the side-effecting heartbeat for a migration verification
+	// claim. CanWrite reads its result without issuing a DB query.
+	RenewLease func(ctx context.Context) (bool, error)
+	CanWrite   func() bool
 	// IsStillVerifying is used for sync jobs, whose engine can cancel a
 	// cross-process verifier by moving the persisted status out of VERIFYING.
 	IsStillVerifying func(ctx context.Context) (bool, error)
@@ -152,11 +156,24 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		return
 	}
 	defer p.verifyingEntities.Delete(guardKey)
+	if cfg.Release != nil {
+		defer func() {
+			releaseCtx, cancelRelease := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancelRelease()
+			cfg.Release(releaseCtx)
+		}()
+	}
 
 	passCtx, cancelPass := context.WithCancel(ctx)
 	defer cancelPass()
-	if cfg.IsStillVerifying != nil {
-		stillVerifying, err := cfg.IsStillVerifying(passCtx)
+	if cfg.IsStillVerifying != nil || cfg.RenewLease != nil {
+		stillVerifying := true
+		var err error
+		if cfg.RenewLease != nil {
+			stillVerifying, err = cfg.RenewLease(passCtx)
+		} else {
+			stillVerifying, err = cfg.IsStillVerifying(passCtx)
+		}
 		if err != nil {
 			log.Printf("[VERIFIER] Cannot confirm verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 			return
@@ -167,7 +184,11 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		stopWatch := make(chan struct{})
 		defer close(stopWatch)
 		go func() {
-			ticker := time.NewTicker(250 * time.Millisecond)
+			interval := 250 * time.Millisecond
+			if cfg.RenewLease != nil {
+				interval = 15 * time.Second
+			}
+			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
 			for {
 				select {
@@ -176,7 +197,13 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				case <-passCtx.Done():
 					return
 				case <-ticker.C:
-					stillVerifying, err := cfg.IsStillVerifying(passCtx)
+					stillVerifying := true
+					var err error
+					if cfg.RenewLease != nil {
+						stillVerifying, err = cfg.RenewLease(passCtx)
+					} else {
+						stillVerifying, err = cfg.IsStillVerifying(passCtx)
+					}
 					if err != nil {
 						log.Printf("[VERIFIER] Cannot refresh verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 						continue
@@ -192,6 +219,9 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	}
 	canWrite := func() bool {
 		if passCtx.Err() != nil {
+			return false
+		}
+		if cfg.CanWrite != nil && !cfg.CanWrite() {
 			return false
 		}
 		if cfg.IsStillVerifying == nil {
@@ -383,9 +413,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						if isComparableHash(sourceAlgo) && isComparableHash(targetAlgo) && sourceAlgo == targetAlgo {
 							if cleanSource == cleanTarget {
 								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
-								if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
-									cfg.OnVerified(task, targetPath, targetHash)
-								}
+								_ = markVerifiedForFile(targetHash)
 							} else {
 								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
@@ -394,21 +422,15 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
 							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
 								targetPath, sourceAlgo, cleanSource, cleanTarget, task.FileSize)
-							if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
-								cfg.OnVerified(task, targetPath, targetHash)
-							}
+							_ = markVerifiedForFile(targetHash)
 						} else {
 							log.Printf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — size (%d bytes) verified\n",
 								targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget, task.FileSize)
-							if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
-								cfg.OnVerified(task, targetPath, targetHash)
-							}
+							_ = markVerifiedForFile(targetHash)
 						}
 					} else {
 						log.Printf("[VERIFIER] [NO_SOURCE_HASH] %s | Target (%s): %s — registered target hash\n", targetPath, targetAlgo, cleanTarget)
-						if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {
-							cfg.OnVerified(task, targetPath, targetHash)
-						}
+						_ = markVerifiedForFile(targetHash)
 					}
 				} else {
 					reason := "checksum not available"
@@ -447,10 +469,21 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 }
 
 func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID string) {
-	mig, err := db.GetMigration(p.db, migrationID)
-	if err != nil || mig.Status != "VERIFYING" {
+	generation, claimed, err := db.ClaimMigrationVerification(p.db, ctx, migrationID)
+	if err != nil {
+		log.Printf("[VERIFIER] Cannot claim verification for migration %s: %v\n", migrationID, err)
 		return
 	}
+	if !claimed {
+		return
+	}
+	mig, err := db.GetMigration(p.db, migrationID)
+	if err != nil {
+		_ = db.ReleaseMigrationVerificationLease(p.db, context.Background(), migrationID, generation)
+		return
+	}
+	var leaseOwned atomic.Bool
+	leaseOwned.Store(true)
 
 	targetPass := ""
 	if mig.TargetPasswordEncrypted != "" {
@@ -479,9 +512,26 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
 			return db.GetUnverifiedCompletedTasks(p.db, ctx, migrationID)
 		},
-		OnVerified: nil,
+		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
+			return db.MarkMigrationTaskChecksumVerifiedWhileVerifying(p.db, ctx, task.ID, targetHash, generation)
+		},
+		MarkMismatch: func(ctx context.Context, task *db.Task) (bool, error) {
+			return db.MarkMigrationTaskChecksumMismatchWhileVerifying(p.db, ctx, task, generation)
+		},
 		ReconcileProgress: func() error {
-			return db.ReconcileMigrationProgress(p.db, migrationID)
+			_, err := db.ReconcileMigrationProgressWhileVerifying(p.db, migrationID, generation)
+			return err
+		},
+		RenewLease: func(ctx context.Context) (bool, error) {
+			owned, err := db.RenewMigrationVerificationLease(p.db, ctx, migrationID, generation)
+			leaseOwned.Store(owned && err == nil)
+			return owned, err
+		},
+		CanWrite: leaseOwned.Load,
+		Release: func(ctx context.Context) {
+			if err := db.ReleaseMigrationVerificationLease(p.db, ctx, migrationID, generation); err != nil {
+				log.Printf("[VERIFIER] Cannot release verification lease for migration %s: %v\n", migrationID, err)
+			}
 		},
 	}
 
@@ -529,7 +579,6 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		},
 		// The engine applies all durable sync-state changes after it owns the
 		// successful finalization, so verification itself only changes tasks.
-		OnVerified: nil,
 		ReconcileProgress: func() error {
 			// The sync engine owns the pass lifecycle and writes the final stats.
 			// The verifier only marks task checksums; changing status here can race
