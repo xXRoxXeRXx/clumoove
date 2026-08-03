@@ -82,7 +82,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 ### Notification outbox
 
 `notification_channels` stores one encrypted, global configuration per user and channel (`email`,
-`gotify`, `ntfy`, `telegram`, `discord`). `notification_events` snapshots a terminal migration or
+`gotify`, `ntfy`, `telegram`, `discord`). If the instance mailer is configured, email defaults to enabled until a user saves an explicit email preference; a saved disabled row is an opt-out. `notification_events` snapshots a terminal migration or
 sync pass; migrations are unique by `(migration_id, run_generation)` and sync runs by
 `(sync_job_id, run_at)`. `notification_deliveries` copies the encrypted channel configuration and
 tracks `PENDING`, `RUNNING`, `SENT`, or `FAILED`, attempts, retry time, and a non-sensitive error

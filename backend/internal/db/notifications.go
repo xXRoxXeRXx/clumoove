@@ -51,6 +51,22 @@ func UpsertNotificationChannel(database *sql.DB, userID, typ string, enabled boo
 	return err
 }
 
+// createNotificationDeliveries snapshots enabled channels for an event. Email
+// defaults to enabled when the instance mailer exists, unless the user has
+// explicitly saved an email preference (including an opt-out).
+func createNotificationDeliveries(tx *sql.Tx, eventID, userID string) error {
+	_, err := tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted)
+		SELECT $1, type, CASE WHEN type='email' THEN '' ELSE config_encrypted END
+		FROM notification_channels
+		WHERE user_id=$2 AND enabled=TRUE
+		UNION ALL
+		SELECT $1, 'email', ''
+		WHERE EXISTS (SELECT 1 FROM instance_smtp_settings WHERE id=1)
+		  AND NOT EXISTS (SELECT 1 FROM notification_channels WHERE user_id=$2 AND type='email')
+		ON CONFLICT (event_id,channel_type) DO NOTHING`, eventID, userID)
+	return err
+}
+
 // CreateMigrationNotificationEvent snapshots active channel configuration.
 // The unique migration constraint makes terminal state updates idempotent.
 func CreateMigrationNotificationEvent(database *sql.DB, migrationID string) error {
@@ -81,8 +97,7 @@ func CreateMigrationNotificationEvent(database *sql.DB, migrationID string) erro
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted) SELECT $1,type,CASE WHEN type='email' THEN '' ELSE config_encrypted END FROM notification_channels WHERE user_id=$2 AND enabled=TRUE`, eventID, userID)
-	if err != nil {
+	if err = createNotificationDeliveries(tx, eventID, userID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -116,8 +131,7 @@ func CreateSyncNotificationEvent(database *sql.DB, syncJobID string) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted) SELECT $1,type,CASE WHEN type='email' THEN '' ELSE config_encrypted END FROM notification_channels WHERE user_id=$2 AND enabled=TRUE`, eventID, userID)
-	if err != nil {
+	if err = createNotificationDeliveries(tx, eventID, userID); err != nil {
 		return err
 	}
 	return tx.Commit()

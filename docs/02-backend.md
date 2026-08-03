@@ -216,7 +216,7 @@ For each task:
 - **Permanent errors** (Google export limits, not-found, etc.) → `FAILED` immediately (no retry).
 - **Transient** → exponential backoff `10, 30, 90`s, max 3 attempts; `FAILED` after exhaustion.
 
-`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. Email deliveries do not snapshot SMTP credentials: the worker loads the current instance mailer immediately before sending. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
+`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. When an instance mailer exists, completion email is enabled by default unless a user has explicitly saved an email preference (including an opt-out). Email deliveries do not snapshot SMTP credentials: the worker loads the current instance mailer immediately before sending. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
 
 ---
 
