@@ -89,7 +89,7 @@ func TestBestSourceHash(t *testing.T) {
 	}
 }
 
-func TestIsCryptographicHash(t *testing.T) {
+func TestIsComparableHash(t *testing.T) {
 	tests := []struct {
 		algo string
 		want bool
@@ -100,6 +100,7 @@ func TestIsCryptographicHash(t *testing.T) {
 		{"MD5", true},
 		{"SHA512", true},
 		{"DROPBOX", true},
+		{"QUICKXOR", true},
 		{"ETAG", false},
 		{"ETAG_MATCH", false},
 		{"UNKNOWN", false},
@@ -108,8 +109,8 @@ func TestIsCryptographicHash(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.algo, func(t *testing.T) {
-			if got := isCryptographicHash(tc.algo); got != tc.want {
-				t.Errorf("isCryptographicHash(%q) = %v, want %v", tc.algo, got, tc.want)
+			if got := isComparableHash(tc.algo); got != tc.want {
+				t.Errorf("isComparableHash(%q) = %v, want %v", tc.algo, got, tc.want)
 			}
 		})
 	}

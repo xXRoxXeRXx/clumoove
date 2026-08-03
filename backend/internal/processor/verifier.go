@@ -17,9 +17,12 @@ import (
 	"backend/internal/storage"
 )
 
-func isCryptographicHash(algo string) bool {
+// isComparableHash returns whether we can calculate and compare the algorithm
+// during streaming. QuickXor is intentionally included although it is not
+// cryptographic: it is OneDrive's provider-specific integrity signal.
+func isComparableHash(algo string) bool {
 	switch strings.ToUpper(algo) {
-	case "SHA1", "SHA256", "MD5", "SHA512", "DROPBOX", "HIDRIVE":
+	case "SHA1", "SHA256", "MD5", "SHA512", "DROPBOX", "HIDRIVE", "QUICKXOR":
 		return true
 	default:
 		return false
@@ -378,7 +381,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					if srcHash != "" {
 						sourceAlgo, cleanSource := storage.ParseHashString(srcHash)
 
-						if isCryptographicHash(sourceAlgo) && isCryptographicHash(targetAlgo) && sourceAlgo == targetAlgo {
+						if isComparableHash(sourceAlgo) && isComparableHash(targetAlgo) && sourceAlgo == targetAlgo {
 							if cleanSource == cleanTarget {
 								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
 								if markVerifiedForFile(targetHash) && cfg.OnVerified != nil {

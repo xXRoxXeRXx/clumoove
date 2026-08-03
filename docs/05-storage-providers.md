@@ -153,7 +153,7 @@ Immich is files-only and supports one-time migrations only: calendars, contacts,
 
 ### OneDrive Personal
 
-`onedrive` uses fixed Microsoft Graph endpoints and the `consumers` OAuth authority, so it supports personal accounts and files only. Shared folders exposed as shortcuts in the user's root are supported: Clumoove resolves the shortcut's remote drive and item identity before listing, inspecting, or downloading descendants. Personal Vault is identified by Graph's `specialFolder.name = vault` facet and is excluded from selection/indexing because its interactive unlock cannot be performed by a background OAuth job. SharePoint, organizational accounts, calendars, and contacts are intentionally excluded. Graph `eTag` values are retained for sync change detection; its non-portable QuickXor hash is never exposed as a checksum, so verification safely falls back to size. Target filenames follow OneDrive's Windows-style forbidden-character, reserved-name, trailing-punctuation, 255-character segment, 400-character path, and case-insensitive rules.
+`onedrive` uses fixed Microsoft Graph endpoints and the `consumers` OAuth authority, so it supports personal accounts and files only. Shared folders exposed as shortcuts in the user's root are supported: Clumoove resolves the shortcut's remote drive and item identity before listing, inspecting, or downloading descendants. Personal Vault is identified by Graph's `specialFolder.name = vault` facet and is excluded from selection/indexing because its interactive unlock cannot be performed by a background OAuth job. SharePoint, organizational accounts, calendars, and contacts are intentionally excluded. Graph `eTag` values are retained for sync change detection. When Graph exposes a file's non-cryptographic QuickXor hash, Clumoove calculates the same algorithm while streaming and uses it for provider-specific verification; unavailable hashes still fall back to size verification. Target filenames follow OneDrive's Windows-style forbidden-character, reserved-name, trailing-punctuation, 255-character segment, 400-character path, and case-insensitive rules.
 
 Provider URL normalization: `normalizeProviderURL` substitutes the constant MagentaCLOUD URL when the
 provider is `magentacloud` (the frontend sends an empty URL).
@@ -195,7 +195,7 @@ construction-time check and the per-connection check agree.
 
 ## 5. Hash Parsing
 
-`ParseHashString` extracts the algorithm + clean hash from provider hash strings (e.g.
+`ParseHashString` in `backend/internal/storage/hash.go` extracts the algorithm + clean hash from provider hash strings (e.g.
 `SHA1:abc123`, `MD5:…`, `SHA256:…`). The processor selects the per-provider hasher accordingly and only
 computes a second (target) hasher when algorithms differ (CPU optimization).
 

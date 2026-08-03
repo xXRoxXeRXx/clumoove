@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"path"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -1262,36 +1261,3 @@ type NextcloudProvider struct {
 }
 
 var _ StorageProvider = (*NextcloudProvider)(nil)
-
-var hexRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
-
-func ParseHashString(hashStr string) (string, string) {
-	hashStr = strings.Trim(hashStr, "\"")
-	parts := strings.SplitN(hashStr, ":", 2)
-	if len(parts) == 2 {
-		algo := strings.ToUpper(parts[0])
-		if algo == "SHA-256" || algo == "SHA256" {
-			algo = "SHA256"
-		}
-		if algo == "SHA-1" || algo == "SHA1" {
-			algo = "SHA1"
-		}
-		if algo == "MD-5" || algo == "MD5" {
-			algo = "MD5"
-		}
-		return algo, strings.ToLower(parts[1])
-	}
-
-	if hexRegexp.MatchString(hashStr) {
-		if len(hashStr) == 32 {
-			return "MD5", strings.ToLower(hashStr)
-		}
-		if len(hashStr) == 40 {
-			return "SHA1", strings.ToLower(hashStr)
-		}
-		if len(hashStr) == 64 {
-			return "SHA256", strings.ToLower(hashStr)
-		}
-	}
-	return "UNKNOWN", hashStr
-}

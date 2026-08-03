@@ -933,6 +933,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		sourceAlgo = "DROPBOX"
 	} else if mig.SourceProvider == "google" {
 		sourceAlgo = "MD5"
+	} else if mig.SourceProvider == "onedrive" {
+		sourceAlgo = "QUICKXOR"
 	}
 
 	// Instantiate source hasher
@@ -942,6 +944,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		sourceHasher = storage.NewDropboxHasher()
 	} else if sourceAlgo == "SHA256" {
 		sourceHasher = sha256.New()
+	} else if sourceAlgo == "QUICKXOR" {
+		sourceHasher = storage.NewQuickXorHasher()
 	} else {
 		sourceHasher = sha1.New()
 		sourceAlgo = "SHA1"
@@ -962,6 +966,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	} else if mig.TargetProvider == "hidrive" {
 		targetAlgo = "HIDRIVE"
 		targetHasher = storage.NewHiDriveHasher()
+	} else if mig.TargetProvider == "onedrive" {
+		targetAlgo = "QUICKXOR"
+		targetHasher = storage.NewQuickXorHasher()
 	} else {
 		targetAlgo = "SHA1"
 		targetHasher = sha1.New()

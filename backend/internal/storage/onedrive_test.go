@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -212,8 +213,46 @@ func TestOneDriveProviderAuthAndMissingResource(t *testing.T) {
 	if _, err := p.InspectResource(context.Background(), "files", "/missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("inspect missing error = %v, want ErrNotFound", err)
 	}
-	if _, err := p.GetFileHash(context.Background(), "files", "/missing"); !errors.Is(err, ErrHashNotSupported) {
-		t.Fatalf("GetFileHash error = %v, want ErrHashNotSupported", err)
+	if _, err := p.GetFileHash(context.Background(), "files", "/missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetFileHash error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestOneDriveProviderReturnsQuickXorHash(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		selectFields := r.URL.Query().Get("$select")
+		if selectFields == "id,remoteItem" {
+			_, _ = io.WriteString(w, `{"id":"item"}`)
+			return
+		}
+		if selectFields != "id,name,size,eTag,lastModifiedDateTime,folder,specialFolder,file" {
+			t.Fatalf("unexpected select: %q", r.URL.Query().Get("$select"))
+		}
+		_, _ = io.WriteString(w, `{"id":"item","name":"file.txt","size":3,"file":{"hashes":{"quickXorHash":"AQID"}}}`)
+	}))
+	defer server.Close()
+
+	p := newOneDriveProvider("token", server.URL+"/v1.0/me/drive", server.Client())
+	hash, err := p.GetFileHash(context.Background(), "files", "/file.txt")
+	if err != nil || hash != "QUICKXOR:AQID" {
+		t.Fatalf("GetFileHash = %q, %v", hash, err)
+	}
+}
+
+func TestQuickXorHasherStreamingAndEmptyValue(t *testing.T) {
+	empty := NewQuickXorHasher()
+	if got := base64.StdEncoding.EncodeToString(empty.Sum(nil)); got != "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" {
+		t.Fatalf("empty QuickXor hash = %q", got)
+	}
+
+	whole := NewQuickXorHasher()
+	_, _ = whole.Write([]byte("OneDrive QuickXorHash streaming test"))
+	chunked := NewQuickXorHasher()
+	_, _ = chunked.Write([]byte("OneDrive "))
+	_, _ = chunked.Write([]byte("QuickXorHash "))
+	_, _ = chunked.Write([]byte("streaming test"))
+	if got, want := base64.StdEncoding.EncodeToString(chunked.Sum(nil)), base64.StdEncoding.EncodeToString(whole.Sum(nil)); got != want {
+		t.Fatalf("streamed QuickXor hash = %q, want %q", got, want)
 	}
 }
 

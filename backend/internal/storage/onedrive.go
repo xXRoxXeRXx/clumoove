@@ -319,6 +319,11 @@ type oneDriveItem struct {
 	SpecialFolder *struct {
 		Name string `json:"name"`
 	} `json:"specialFolder"`
+	File *struct {
+		Hashes struct {
+			QuickXorHash string `json:"quickXorHash"`
+		} `json:"hashes"`
+	} `json:"file"`
 }
 
 func oneDriveResource(item oneDriveItem, parentPath string) CloudResource {
@@ -331,7 +336,11 @@ func oneDriveResource(item oneDriveItem, parentPath string) CloudResource {
 	if item.SpecialFolder != nil && item.SpecialFolder.Name != "" {
 		metadata.CustomProps = map[string]string{"onedrive_special_folder": item.SpecialFolder.Name}
 	}
-	return CloudResource{Path: resourcePath, Name: item.Name, Size: item.Size, IsDir: item.Folder != nil, ETag: item.ETag, LastModified: modified, Metadata: metadata}
+	hash := ""
+	if item.File != nil && item.File.Hashes.QuickXorHash != "" {
+		hash = "QUICKXOR:" + item.File.Hashes.QuickXorHash
+	}
+	return CloudResource{Path: resourcePath, Name: item.Name, Size: item.Size, IsDir: item.Folder != nil, Hash: hash, ETag: item.ETag, LastModified: modified, Metadata: metadata}
 }
 
 func (p *OneDriveProvider) Connect(ctx context.Context) (bool, error) {
@@ -366,7 +375,7 @@ func (p *OneDriveProvider) GetDirectoryListing(ctx context.Context, resourceType
 	if err != nil {
 		return nil, err
 	}
-	nextURL := itemURL + "/children?$select=id,name,size,eTag,lastModifiedDateTime,folder,specialFolder"
+	nextURL := itemURL + "/children?$select=id,name,size,eTag,lastModifiedDateTime,folder,specialFolder,file"
 	var result []CloudResource
 	for nextURL != "" {
 		req, err := p.request(ctx, http.MethodGet, nextURL, nil, true)
@@ -419,7 +428,7 @@ func (p *OneDriveProvider) InspectResource(ctx context.Context, resourceType, fi
 	if err != nil {
 		return CloudResource{}, err
 	}
-	req, err := p.request(ctx, http.MethodGet, itemURL+"?$select=id,name,size,eTag,lastModifiedDateTime,folder,specialFolder", nil, true)
+	req, err := p.request(ctx, http.MethodGet, itemURL+"?$select=id,name,size,eTag,lastModifiedDateTime,folder,specialFolder,file", nil, true)
 	if err != nil {
 		return CloudResource{}, err
 	}
@@ -670,7 +679,14 @@ func (p *OneDriveProvider) GetFileHash(ctx context.Context, resourceType, filePa
 	if err := oneDriveFilesOnly(resourceType); err != nil {
 		return "", err
 	}
-	return "", ErrHashNotSupported
+	res, err := p.InspectResource(ctx, resourceType, filePath)
+	if err != nil {
+		return "", err
+	}
+	if res.Hash == "" {
+		return "", ErrChecksumNotAvailable
+	}
+	return res.Hash, nil
 }
 
 func (p *OneDriveProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
