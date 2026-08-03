@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, DocumentTextIcon as ScrollText, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
 import { useApiError } from '../utils/apiError';
@@ -695,8 +695,74 @@ function SystemTab({ apiUrl, token, onMessage }: {
           label={t('settings.allowRegistrations')}
         />
       </div>
+
+      <SMTPSettingsCard apiUrl={apiUrl} token={token} onMessage={onMessage} />
     </SectionCard>
   );
+}
+
+function SMTPSettingsCard({ apiUrl, token, onMessage }: { apiUrl: string; token: string; onMessage: (m: { text: string; type: 'success' | 'error' } | null) => void }) {
+  const { t } = useTranslation();
+  const translateApiError = useApiError();
+  const confirm = useConfirm();
+  const onMessageRef = useRef(onMessage);
+  const translateApiErrorRef = useRef(translateApiError);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [configured, setConfigured] = useState(false);
+  const [passwordSet, setPasswordSet] = useState(false);
+  const [form, setForm] = useState({ smtp_host: '', smtp_port: '587', smtp_username: '', smtp_password: '', smtp_from_email: '', smtp_from_name: '', smtp_encryption: 'starttls' as 'tls' | 'starttls' });
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+    translateApiErrorRef.current = translateApiError;
+  }, [onMessage, translateApiError]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const result = await adminApi.getSMTP(apiUrl, token);
+    if (!result.ok) { onMessageRef.current({ text: translateApiErrorRef.current(result.errorCode), type: 'error' }); setLoading(false); return; }
+    const cfg = result.data!;
+    setConfigured(cfg.configured);
+    setPasswordSet(cfg.smtp_password_set);
+    setForm({ smtp_host: cfg.smtp_host ?? '', smtp_port: String(cfg.smtp_port ?? 587), smtp_username: cfg.smtp_username ?? '', smtp_password: '', smtp_from_email: cfg.smtp_from_email ?? '', smtp_from_name: cfg.smtp_from_name ?? '', smtp_encryption: cfg.smtp_encryption ?? 'starttls' });
+    setLoading(false);
+  }, [apiUrl, token]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+  const update = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const port = Number(form.smtp_port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) { onMessage({ text: t('settings.messages.smtpPortRange'), type: 'error' }); return; }
+    setSaving(true);
+    const body = { ...form, smtp_port: port };
+    if (!body.smtp_password) delete (body as { smtp_password?: string }).smtp_password;
+    const result = await adminApi.updateSMTP(apiUrl, token, body);
+    setSaving(false);
+    if (!result.ok) { onMessage({ text: translateApiError(result.errorCode), type: 'error' }); return; }
+    setConfigured(true); setPasswordSet(true); setForm((current) => ({ ...current, smtp_password: '' }));
+    onMessage({ text: t('admin.system.smtp.saved'), type: 'success' });
+  };
+  const test = async () => { setSaving(true); const result = await adminApi.testSMTP(apiUrl, token); setSaving(false); onMessage(result.ok ? { text: t('admin.system.smtp.testSent'), type: 'success' } : { text: translateApiError(result.errorCode), type: 'error' }); };
+  const remove = async () => { if (!await confirm({ message: t('admin.system.smtp.removeConfirm'), confirmLabel: t('admin.system.smtp.remove') })) return; setSaving(true); const result = await adminApi.deleteSMTP(apiUrl, token); setSaving(false); if (!result.ok) { onMessage({ text: translateApiError(result.errorCode), type: 'error' }); return; } setConfigured(false); setPasswordSet(false); setForm({ smtp_host: '', smtp_port: '587', smtp_username: '', smtp_password: '', smtp_from_email: '', smtp_from_name: '', smtp_encryption: 'starttls' }); onMessage({ text: t('admin.system.smtp.removed'), type: 'success' }); };
+
+  return <div className="border-t border-[var(--color-border-light)] pt-5 space-y-4">
+    <div className="flex items-center justify-between gap-3"><h4 className="font-display font-semibold text-sm text-[var(--color-text-primary)]">{t('admin.system.smtp.title')}</h4><Badge variant={configured ? 'success' : 'muted'} label={configured ? t('admin.system.smtp.configured') : t('admin.system.smtp.notConfigured')} /></div>
+    {!loading && <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpHost')}<input required value={form.smtp_host} onChange={(e) => update('smtp_host', e.target.value)} className={`${inputCls} mt-1`} /></label>
+      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpPort')}<input required type="number" min="1" max="65535" value={form.smtp_port} onChange={(e) => update('smtp_port', e.target.value)} className={`${inputCls} mt-1`} /></label>
+      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpUsername')}<input required value={form.smtp_username} onChange={(e) => update('smtp_username', e.target.value)} className={`${inputCls} mt-1`} /></label>
+      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpPassword')}<input type="password" required={!passwordSet} value={form.smtp_password} placeholder={passwordSet ? t('settings.smtpPasswordUnchanged') : ''} onChange={(e) => update('smtp_password', e.target.value)} className={`${inputCls} mt-1`} /></label>
+      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpFromEmail')}<input required type="email" value={form.smtp_from_email} onChange={(e) => update('smtp_from_email', e.target.value)} className={`${inputCls} mt-1`} /></label>
+      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpFromName')}<input value={form.smtp_from_name} onChange={(e) => update('smtp_from_name', e.target.value)} className={`${inputCls} mt-1`} /></label>
+      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpEncryption')}<select value={form.smtp_encryption} onChange={(e) => update('smtp_encryption', e.target.value)} className={`${selectCls} mt-1 w-full`}><option value="starttls">STARTTLS</option><option value="tls">TLS</option></select></label>
+      <div className="flex flex-wrap items-end gap-2"><button disabled={saving} className={primaryBtnCls}>{t('admin.system.smtp.save')}</button>{configured && <><button type="button" disabled={saving} onClick={() => void test()} className={secondaryBtnCls}>{t('admin.system.smtp.test')}</button><button type="button" disabled={saving} onClick={() => void remove()} className="ui-button-danger px-3 py-2 text-sm">{t('admin.system.smtp.remove')}</button></>}</div>
+    </form>}
+  </div>;
 }
 
 // ---------------------------------------------------------------------------

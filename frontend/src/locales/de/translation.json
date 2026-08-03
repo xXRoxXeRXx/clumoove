@@ -678,7 +678,20 @@
   "admin": {
     "title": "Verwaltung",
     "system": {
-      "title": "Systemsteuerung"
+      "title": "Systemsteuerung",
+      "smtp": {
+        "title": "E-Mail-Server",
+        "configured": "Eingerichtet",
+        "notConfigured": "Nicht eingerichtet",
+        "passwordSet": "Passwort gesetzt",
+        "save": "E-Mail-Server speichern",
+        "test": "Test-E-Mail senden",
+        "remove": "Konfiguration entfernen",
+        "removeConfirm": "Zentrale E-Mail-Server-Konfiguration entfernen? Passwort-Reset und E-Mail-Benachrichtigungen sind dann nicht verfügbar.",
+        "saved": "E-Mail-Server-Konfiguration gespeichert.",
+        "removed": "E-Mail-Server-Konfiguration entfernt.",
+        "testSent": "Test-E-Mail gesendet."
+      }
     },
     "tabs": {
       "users": "Benutzer",

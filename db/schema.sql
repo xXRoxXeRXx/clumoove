@@ -169,24 +169,25 @@ CREATE OR REPLACE TRIGGER update_schedules_updated_at
 -- Email sent flag for migration completion notifications
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS email_sent BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Per-user SMTP settings for migration completion emails
-CREATE TABLE IF NOT EXISTS user_smtp_settings (
-    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+-- Singleton instance mailer. Credentials never leave the server decrypted.
+CREATE TABLE IF NOT EXISTS instance_smtp_settings (
+    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     smtp_host TEXT NOT NULL,
     smtp_port INT NOT NULL DEFAULT 587,
     smtp_username TEXT NOT NULL,
     smtp_password_encrypted TEXT NOT NULL,
     smtp_from_email TEXT NOT NULL,
     smtp_from_name TEXT NOT NULL DEFAULT '',
-    smtp_encryption TEXT NOT NULL DEFAULT 'tls',
-    notify_on_completion BOOLEAN NOT NULL DEFAULT TRUE,
+    smtp_encryption TEXT NOT NULL DEFAULT 'tls' CHECK (smtp_encryption IN ('tls', 'starttls')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE OR REPLACE TRIGGER update_user_smtp_settings_updated_at
-    BEFORE UPDATE ON user_smtp_settings
+CREATE OR REPLACE TRIGGER update_instance_smtp_settings_updated_at
+    BEFORE UPDATE ON instance_smtp_settings
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
 
 -- Password reset tokens
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -362,6 +363,16 @@ CREATE TABLE IF NOT EXISTS notification_channels (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (user_id, type)
 );
 CREATE INDEX IF NOT EXISTS idx_notification_channels_user ON notification_channels(user_id);
+
+-- Preserve only the old email preference while the legacy table is present.
+-- The guard makes this destructive cleanup a one-time upgrade migration.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'user_smtp_settings') THEN
+        UPDATE notification_channels SET config_encrypted = '' WHERE type = 'email';
+        DROP TABLE user_smtp_settings;
+    END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS notification_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('migration','sync')), migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE, run_generation INT NOT NULL DEFAULT 0,

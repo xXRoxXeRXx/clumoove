@@ -69,7 +69,7 @@ Responsibilities:
 migrations** so the schema self-heals on first boot:
 
 - `CREATE TABLE IF NOT EXISTS` for `users`, `refresh_tokens`, `settings`, `schedules`, `audit_log`,
-  `user_smtp_settings` (legacy SMTP compatibility), `notification_channels`, `notification_events`,
+  `instance_smtp_settings`, `notification_channels`, `notification_events`,
   `notification_deliveries`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`,
   `connection_profiles`, `sync_jobs`, `sync_state`.
 - `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for every new column added over time (e.g.
@@ -211,7 +211,7 @@ For each task:
 - **Permanent errors** (Google export limits, not-found, etc.) → `FAILED` immediately (no retry).
 - **Transient** → exponential backoff `10, 30, 90`s, max 3 attempts; `FAILED` after exhaustion.
 
-`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
+`RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. Email deliveries do not snapshot SMTP credentials: the worker loads the current instance mailer immediately before sending. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
 
 ---
 
@@ -314,7 +314,8 @@ size-comparison fallback.
 
 ## 13. Email (`internal/email`)
 
-- `SMTPConfig` + `SendMail` — sends mail via the user's own per-user SMTP (or system SMTP settings).
+- `SMTPConfig` + `SendMail` — sends mail through the administrator-managed instance SMTP configuration.
+- Password-reset, email-change, test, and outbox paths load the singleton configuration from the database and decrypt its password only immediately before sending.
 - `BuildMigrationReportEmail` — HTML migration summary used by the completion notifier.
 
 User-facing email and notification strings are not defined in Go. They are sourced from `delivery.*` in

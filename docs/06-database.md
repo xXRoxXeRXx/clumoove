@@ -19,7 +19,7 @@ encrypted-password fields persist its FTPS connection details.
 > `InitDB()` for automatic migration on startup.
 
 A shared trigger function `update_updated_at_column()` keeps `updated_at` current on several tables
-(`users`, `migrations`, `schedules`, `user_smtp_settings`).
+(`users`, `migrations`, `schedules`, `instance_smtp_settings`).
 
 ---
 
@@ -171,16 +171,17 @@ from `delivery.*` locale keys.
 | `is_active` | BOOLEAN NOT NULL DEFAULT TRUE | |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
-### `user_smtp_settings`
+### `instance_smtp_settings`
 | Column | Type | Notes |
 | :----- | :--- | :---- |
-| `user_id` | UUID PK → `users` ON DELETE CASCADE | |
+| `id` | SMALLINT PK | fixed singleton value `1` |
 | `smtp_host` / `smtp_username` / `smtp_password_encrypted` / `smtp_from_email` | TEXT | password AES-GCM |
 | `smtp_port` | INT NOT NULL DEFAULT 587 | |
 | `smtp_from_name` | TEXT NOT NULL DEFAULT `''` | |
 | `smtp_encryption` | TEXT NOT NULL DEFAULT `tls` | `tls` / `starttls` |
-| `notify_on_completion` | BOOLEAN NOT NULL DEFAULT TRUE | |
-| `updated_at` | TIMESTAMPTZ | |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+This table is a singleton (`id = 1`) managed only through the administrator SMTP endpoints. The password is AES-GCM encrypted; email notification preferences remain per-user `notification_channels` rows and never contain SMTP credentials.
 
 ### `password_reset_tokens` / `email_change_tokens`
 | Column | Type | Notes |
@@ -258,7 +259,7 @@ API/worker instances) safely share the same PostgreSQL queue without a broker.
 ## 4. Cascade & Cleanup Behavior
 
 - Deleting a `user` cascades to `refresh_tokens`, `migrations` → `tasks`, `schedules`,
-  `user_smtp_settings`, `password_reset_tokens`, `email_change_tokens`.
+  `password_reset_tokens`, `email_change_tokens`.
 - Deleting a `migration` cascades to its `tasks` and `indexing_errors`.
 - `DeleteOldMigrations` (historical) pruned migrations older than 24h; the GC is currently disabled in
   favor of **permanent history until manual deletion** (see `main.go` note).

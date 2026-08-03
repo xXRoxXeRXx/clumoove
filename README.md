@@ -30,6 +30,7 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 - **Scheduler engine** for one-shot (deferred) and recurring (`cron`) migrations and syncs, with overlap protection and multi-instance safety.
 - **Live control** — pause, resume, cancel, adjust thread count and bandwidth limit, and watch progress over an authenticated SSE feed.
 - **Multi-tenancy & security** — per-user isolation, TOTP 2FA, AES-256-GCM credential encryption, JWT key segregation, CORS whitelist, refresh-token rotation and rate limiting.
+- **Central email delivery** — administrators configure one encrypted instance mailer for account emails and optional per-user completion notifications.
 - **i18n** — the frontend is localized (`de` fallback, `en`) via `i18next`/`react-i18next`.
 
 ## How Clumoove differs from rclone

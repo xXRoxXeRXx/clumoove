@@ -95,6 +95,27 @@ export interface AuditLogResult {
   total: number;
 }
 
+export interface InstanceSMTPSettings {
+  configured: boolean;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_username?: string;
+  smtp_from_email?: string;
+  smtp_from_name?: string;
+  smtp_encryption?: 'tls' | 'starttls';
+  smtp_password_set: boolean;
+}
+
+export interface InstanceSMTPUpdate {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_username: string;
+  smtp_password?: string;
+  smtp_from_email: string;
+  smtp_from_name: string;
+  smtp_encryption: 'tls' | 'starttls';
+}
+
 function buildQuery(params: Record<string, string | number | undefined | null>): string {
   const sp = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
@@ -150,4 +171,8 @@ export const adminApi = {
     call<ListSyncsResult>(apiUrl, token, 'GET', `/api/admin/syncs${buildQuery(params)}`),
   auditLog: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
     call<AuditLogResult>(apiUrl, token, 'GET', `/api/audit/log${buildQuery(params)}`),
+  getSMTP: (apiUrl: string, token: string) => call<InstanceSMTPSettings>(apiUrl, token, 'GET', '/api/admin/settings/smtp'),
+  updateSMTP: (apiUrl: string, token: string, body: InstanceSMTPUpdate) => call(apiUrl, token, 'PUT', '/api/admin/settings/smtp', body),
+  testSMTP: (apiUrl: string, token: string) => call(apiUrl, token, 'POST', '/api/admin/settings/smtp/test', {}),
+  deleteSMTP: (apiUrl: string, token: string) => call(apiUrl, token, 'DELETE', '/api/admin/settings/smtp'),
 };

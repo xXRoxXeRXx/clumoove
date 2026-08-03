@@ -14,17 +14,16 @@ type RefreshToken struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-type UserSMTPSettings struct {
-	UserID             string    `json:"user_id"`
-	SMTPHost           string    `json:"smtp_host"`
-	SMTPPort           int       `json:"smtp_port"`
-	SMTPUsername       string    `json:"smtp_username"`
-	SMTPPasswordEnc    string    `json:"-"`
-	SMTPFromEmail      string    `json:"smtp_from_email"`
-	SMTPFromName       string    `json:"smtp_from_name"`
-	SMTPEncryption     string    `json:"smtp_encryption"`
-	NotifyOnCompletion bool      `json:"notify_on_completion"`
-	UpdatedAt          time.Time `json:"updated_at"`
+type InstanceSMTPSettings struct {
+	SMTPHost        string    `json:"smtp_host"`
+	SMTPPort        int       `json:"smtp_port"`
+	SMTPUsername    string    `json:"smtp_username"`
+	SMTPPasswordEnc string    `json:"-"`
+	SMTPFromEmail   string    `json:"smtp_from_email"`
+	SMTPFromName    string    `json:"smtp_from_name"`
+	SMTPEncryption  string    `json:"smtp_encryption"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type PasswordResetToken struct {
@@ -101,16 +100,18 @@ func GetUserIDByRefreshToken(db *sql.DB, tokenHash string) (string, error) {
 	return userID, nil
 }
 
-func GetUserSMTPSettings(db *sql.DB, userID string) (*UserSMTPSettings, error) {
+// GetInstanceSMTPSettings returns the singleton mailer, including its encrypted password.
+// Callers must never serialize SMTPPasswordEnc.
+func GetInstanceSMTPSettings(db *sql.DB) (*InstanceSMTPSettings, error) {
 	query := `
-		SELECT user_id, smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
-		       smtp_from_email, smtp_from_name, smtp_encryption, notify_on_completion, updated_at
-		FROM user_smtp_settings WHERE user_id = $1
+		SELECT smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
+		       smtp_from_email, smtp_from_name, smtp_encryption, created_at, updated_at
+		FROM instance_smtp_settings WHERE id = 1
 	`
-	var s UserSMTPSettings
-	err := db.QueryRow(query, userID).Scan(
-		&s.UserID, &s.SMTPHost, &s.SMTPPort, &s.SMTPUsername, &s.SMTPPasswordEnc,
-		&s.SMTPFromEmail, &s.SMTPFromName, &s.SMTPEncryption, &s.NotifyOnCompletion, &s.UpdatedAt,
+	var s InstanceSMTPSettings
+	err := db.QueryRow(query).Scan(
+		&s.SMTPHost, &s.SMTPPort, &s.SMTPUsername, &s.SMTPPasswordEnc,
+		&s.SMTPFromEmail, &s.SMTPFromName, &s.SMTPEncryption, &s.CreatedAt, &s.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -118,13 +119,13 @@ func GetUserSMTPSettings(db *sql.DB, userID string) (*UserSMTPSettings, error) {
 	return &s, nil
 }
 
-func UpsertUserSMTPSettings(db *sql.DB, s *UserSMTPSettings) error {
+func UpsertInstanceSMTPSettings(db *sql.DB, s *InstanceSMTPSettings) error {
 	query := `
-		INSERT INTO user_smtp_settings (
-			user_id, smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
-			smtp_from_email, smtp_from_name, smtp_encryption, notify_on_completion
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		ON CONFLICT (user_id) DO UPDATE SET
+		INSERT INTO instance_smtp_settings (
+			id, smtp_host, smtp_port, smtp_username, smtp_password_encrypted,
+			smtp_from_email, smtp_from_name, smtp_encryption
+		) VALUES (1, $1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (id) DO UPDATE SET
 			smtp_host = EXCLUDED.smtp_host,
 			smtp_port = EXCLUDED.smtp_port,
 			smtp_username = EXCLUDED.smtp_username,
@@ -132,14 +133,24 @@ func UpsertUserSMTPSettings(db *sql.DB, s *UserSMTPSettings) error {
 			smtp_from_email = EXCLUDED.smtp_from_email,
 			smtp_from_name = EXCLUDED.smtp_from_name,
 			smtp_encryption = EXCLUDED.smtp_encryption,
-			notify_on_completion = EXCLUDED.notify_on_completion,
 			updated_at = CURRENT_TIMESTAMP
 	`
 	_, err := db.Exec(query,
-		s.UserID, s.SMTPHost, s.SMTPPort, s.SMTPUsername, s.SMTPPasswordEnc,
-		s.SMTPFromEmail, s.SMTPFromName, s.SMTPEncryption, s.NotifyOnCompletion,
+		s.SMTPHost, s.SMTPPort, s.SMTPUsername, s.SMTPPasswordEnc,
+		s.SMTPFromEmail, s.SMTPFromName, s.SMTPEncryption,
 	)
 	return err
+}
+
+func DeleteInstanceSMTPSettings(db *sql.DB) error {
+	_, err := db.Exec(`DELETE FROM instance_smtp_settings WHERE id = 1`)
+	return err
+}
+
+func IsInstanceSMTPConfigured(db *sql.DB) (bool, error) {
+	var configured bool
+	err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM instance_smtp_settings WHERE id = 1)`).Scan(&configured)
+	return configured, err
 }
 
 func CreatePasswordResetToken(db *sql.DB, tokenHash, userID string, expiresAt time.Time) error {

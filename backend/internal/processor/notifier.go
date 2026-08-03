@@ -65,6 +65,25 @@ func (p *Processor) sendPendingNotifications(ctx context.Context) {
 		return
 	}
 	for _, d := range deliveries {
+		if d.ChannelType == "email" {
+			settings, err := db.GetInstanceSMTPSettings(p.db)
+			if err != nil {
+				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_NOT_CONFIGURED")
+				continue
+			}
+			password, err := crypto.Decrypt(settings.SMTPPasswordEnc, p.secretKey)
+			if err != nil {
+				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_DECRYPT_FAILED")
+				continue
+			}
+			cfg := notify.Config{"smtp_host": settings.SMTPHost, "smtp_port": settings.SMTPPort, "smtp_username": settings.SMTPUsername, "smtp_password": password, "smtp_from_email": settings.SMTPFromEmail, "smtp_from_name": settings.SMTPFromName, "smtp_encryption": settings.SMTPEncryption}
+			if err := notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language); err != nil {
+				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
+				continue
+			}
+			_ = db.CompleteNotificationDelivery(p.db, d.ID, true, "")
+			continue
+		}
 		plain, err := crypto.Decrypt(d.ConfigEncrypted, p.secretKey)
 		if err != nil {
 			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_DECRYPT_FAILED")

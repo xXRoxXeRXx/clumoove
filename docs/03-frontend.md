@@ -137,8 +137,8 @@ A console warning is emitted when the API is reached over plaintext HTTP on a no
 | `Dashboard` | Live progress for a migration via authenticated `/migration/{id}/stream` SSE using `connectSseLoop`; shows files/calendars/contacts stats, pause/resume/cancel, threads/bandwidth controls, a paginated in-app error overview, and CSV report download. |
 | `MigrationsDashboard` | Lists the user's migrations and sync jobs with status; opens a selected migration/sync or starts a new one. |
 | `SyncDashboard` | Live progress and details for synchronization jobs (delta stats, changed/deleted files, pause/resume, threads and bandwidth controls) plus a paginated in-app error overview. |
-| `SettingsPage` | Display name, password change, avatar (cropper), 2FA setup/enable/disable, email change, per-user SMTP settings + test, connection profile management. |
-| `AdminPanel` | (ADMIN) user list/suspend/reactivate/delete/role, global stats, all-migrations view, all-syncs view, audit log. |
+| `SettingsPage` | Display name, password change, avatar (cropper), 2FA setup/enable/disable, email change, an email-notification toggle when the instance mailer is available, connection profile management. |
+| `AdminPanel` | (ADMIN) user list/suspend/reactivate/delete/role, global stats, all-migrations view, all-syncs view, audit log, and central SMTP configuration/test/removal. |
 | `LanguageSwitcher` | Switch `de`/`en`; persisted locally and to the authenticated account. |
 
 ---

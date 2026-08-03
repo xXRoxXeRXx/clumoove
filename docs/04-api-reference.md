@@ -37,7 +37,7 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | `POST` | `/auth/2fa/enable` | JWT | Enable 2FA (verify first code + backup codes). |
 | `POST` | `/auth/2fa/disable` | JWT | Disable 2FA. |
 | `GET` | `/auth/2fa/status` | JWT | 2FA enabled? |
-| `GET` | `/auth/password-reset-available` | public | Whether system SMTP is configured. |
+| `GET` | `/auth/password-reset-available` | public | Whether the database-backed instance mailer is configured. |
 | `POST` | `/auth/forgot-password` | public | Send reset email (rate-limited). |
 | `PUT` | `/auth/me/language` | JWT | Persist the user's notification and email language (`de` or `en`). |
 | `POST` | `/auth/reset-password` | public | Set new password via token. |
@@ -125,9 +125,9 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | :----- | :--- | :--------- | :---------- |
 | `GET` | `/settings` | public | Read instance setting(s). |
 | `PUT` | `/settings` | JWT | Update a setting. |
-| `GET` | `/settings/smtp` | JWT | Read per-user SMTP settings. |
-| `PUT` | `/settings/smtp` | JWT | Save per-user SMTP settings (password encrypted). |
-| `POST` | `/settings/smtp/test` | JWT | Send a test email. |
+| `GET` | `/settings/notifications` | JWT | List notification preferences; includes `email_available` and returns the email channel only when the instance mailer is configured. |
+| `PUT` | `/settings/notifications` | JWT | Update a channel. The `email` channel accepts only `{ type, enabled }`; other channels retain their user configuration. |
+| `POST` | `/settings/notifications/test` | JWT | Send a test through a configured non-email notification channel. Instance-mailer tests are admin-only. |
 | `POST` | `/user/avatar` | JWT | Upload avatar. |
 | `DELETE` | `/user/avatar` | JWT | Remove avatar. |
 
@@ -146,6 +146,10 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | `GET` | `/admin/stats` | admin | Global stats (users, migrations/tasks by status). |
 | `GET` | `/admin/migrations` | admin | All migrations across users (with owner email). |
 | `GET` | `/admin/syncs` | admin | All sync jobs across users (with owner email). |
+| `GET` | `/admin/settings/smtp` | admin | Read the instance SMTP configuration without its password; includes `configured` and `smtp_password_set`. |
+| `PUT` | `/admin/settings/smtp` | admin | Create or update the instance SMTP configuration. Password may be omitted after initial setup; only `tls` and `starttls` are accepted. |
+| `POST` | `/admin/settings/smtp/test` | admin | Send a localized test email to the authenticated administrator. |
+| `DELETE` | `/admin/settings/smtp` | admin | Remove the instance SMTP configuration. |
 | `GET` | `/audit/log` | admin | Paginated/filtered audit log. |
 
 If a user suspension commits but a Redis sync-cancellation event cannot be published, the endpoint still returns `200` with `partial: true`; the affected sync-job IDs are recorded in the suspension audit entry for operator follow-up.

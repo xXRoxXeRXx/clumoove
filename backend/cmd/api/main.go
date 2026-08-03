@@ -180,9 +180,6 @@ func main() {
 	mux.Handle("POST /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleSetAvatar)))
 	mux.Handle("DELETE /api/user/avatar", jwtMiddleware(http.HandlerFunc(server.handleDeleteAvatar)))
 	mux.Handle("PUT /api/settings", jwtMiddleware(http.HandlerFunc(server.handleUpdateSetting)))
-	mux.Handle("GET /api/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleGetSMTPSettings)))
-	mux.Handle("PUT /api/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleUpdateSMTPSettings)))
-	mux.Handle("POST /api/settings/smtp/test", jwtMiddleware(http.HandlerFunc(server.handleTestSMTP)))
 	mux.Handle("GET /api/settings/notifications", jwtMiddleware(http.HandlerFunc(server.handleGetNotificationSettings)))
 	mux.Handle("PUT /api/settings/notifications", jwtMiddleware(http.HandlerFunc(server.handleUpdateNotificationSettings)))
 	mux.Handle("POST /api/settings/notifications/test", jwtMiddleware(http.HandlerFunc(server.handleTestNotification)))
@@ -255,6 +252,10 @@ func main() {
 	mux.Handle("GET /api/admin/stats", jwtMiddleware(http.HandlerFunc(server.handleAdminStats)))
 	mux.Handle("GET /api/admin/migrations", jwtMiddleware(http.HandlerFunc(server.handleAdminListMigrations)))
 	mux.Handle("GET /api/admin/syncs", jwtMiddleware(http.HandlerFunc(server.handleAdminListSyncs)))
+	mux.Handle("GET /api/admin/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleAdminGetSMTP)))
+	mux.Handle("PUT /api/admin/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleAdminPutSMTP)))
+	mux.Handle("POST /api/admin/settings/smtp/test", jwtMiddleware(http.HandlerFunc(server.handleAdminTestSMTP)))
+	mux.Handle("DELETE /api/admin/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleAdminDeleteSMTP)))
 	mux.Handle("GET /api/audit/log", jwtMiddleware(http.HandlerFunc(server.handleAdminAuditLog)))
 
 	// OAuth callbacks use their own state validation.

@@ -678,7 +678,20 @@
   "admin": {
     "title": "Administration",
     "system": {
-      "title": "System control"
+      "title": "System control",
+      "smtp": {
+        "title": "Email server",
+        "configured": "Configured",
+        "notConfigured": "Not configured",
+        "passwordSet": "Password set",
+        "save": "Save email server",
+        "test": "Send test email",
+        "remove": "Remove configuration",
+        "removeConfirm": "Remove the central email server configuration? Password reset and email notifications will become unavailable.",
+        "saved": "Email server configuration saved.",
+        "removed": "Email server configuration removed.",
+        "testSent": "Test email sent."
+      }
     },
     "tabs": {
       "users": "Users",

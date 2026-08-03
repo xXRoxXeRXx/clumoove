@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -21,8 +22,6 @@ type notificationRequest struct {
 
 func secretKeys(typ string) map[string]bool {
 	switch typ {
-	case "email":
-		return map[string]bool{"smtp_password": true}
 	case "gotify":
 		return map[string]bool{"token": true}
 	case "ntfy":
@@ -49,7 +48,7 @@ func publicConfig(typ string, cfg map[string]any) map[string]any {
 }
 
 func allowedNotificationConfig(typ string, cfg map[string]any) map[string]any {
-	allowed := map[string][]string{"email": {"smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_from_email", "smtp_from_name", "smtp_encryption"}, "gotify": {"url", "token"}, "ntfy": {"url", "topic", "token", "priority"}, "telegram": {"bot_token", "chat_id"}, "discord": {"webhook_url"}}[typ]
+	allowed := map[string][]string{"gotify": {"url", "token"}, "ntfy": {"url", "topic", "token", "priority"}, "telegram": {"bot_token", "chat_id"}, "discord": {"webhook_url"}}[typ]
 	out := map[string]any{}
 	for _, key := range allowed {
 		if value, ok := cfg[key]; ok {
@@ -83,8 +82,19 @@ func (s *APIServer) handleGetNotificationSettings(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+	emailAvailable, err := db.IsInstanceSMTPConfigured(s.db)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 	out := make([]map[string]any, 0, len(channels))
 	for _, c := range channels {
+		if c.Type == "email" {
+			if emailAvailable {
+				out = append(out, map[string]any{"type": c.Type, "enabled": c.Enabled, "config": map[string]any{}})
+			}
+			continue
+		}
 		plain, err := crypto.Decrypt(c.ConfigEncrypted, s.encryptionKey)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrNotificationDecryptFailed)
@@ -97,7 +107,7 @@ func (s *APIServer) handleGetNotificationSettings(w http.ResponseWriter, r *http
 		}
 		out = append(out, map[string]any{"type": c.Type, "enabled": c.Enabled, "config": publicConfig(c.Type, cfg)})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"channels": out})
+	writeJSON(w, http.StatusOK, map[string]any{"channels": out, "email_available": emailAvailable})
 }
 
 func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +127,30 @@ func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *h
 	}
 	if req.Config == nil {
 		req.Config = map[string]any{}
+	}
+	if req.Type == "email" {
+		available, err := db.IsInstanceSMTPConfigured(s.db)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		if !available {
+			writeError(w, http.StatusBadRequest, ErrSmtpNotConfigured)
+			return
+		}
+		enc, err := crypto.Encrypt("{}", s.encryptionKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		if err := db.UpsertNotificationChannel(s.db, userID, "email", req.Enabled, enc); err != nil {
+			log.Printf("handleUpdateNotificationSettings: upsert email channel failed: %v", err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		s.writeAudit(r, db.AuditSettingUpdated, "notification:email", userID, map[string]interface{}{"enabled": req.Enabled})
+		writeJSON(w, http.StatusOK, map[string]any{"success": true})
+		return
 	}
 	req.Config = allowedNotificationConfig(req.Type, req.Config)
 	old, err := db.GetNotificationChannel(s.db, userID, req.Type)

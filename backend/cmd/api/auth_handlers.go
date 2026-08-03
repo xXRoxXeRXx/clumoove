@@ -927,8 +927,24 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 }
 
 func (s *APIServer) handlePasswordResetAvailable(w http.ResponseWriter, r *http.Request) {
-	available := os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_FROM_EMAIL") != ""
+	available, err := db.IsInstanceSMTPConfigured(s.db)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"available": available})
+}
+
+func (s *APIServer) instanceSMTPConfig() (email.SMTPConfig, error) {
+	settings, err := db.GetInstanceSMTPSettings(s.db)
+	if err != nil {
+		return email.SMTPConfig{}, err
+	}
+	password, err := crypto.Decrypt(settings.SMTPPasswordEnc, s.encryptionKey)
+	if err != nil {
+		return email.SMTPConfig{}, err
+	}
+	return email.SMTPConfig{Host: settings.SMTPHost, Port: strconv.Itoa(settings.SMTPPort), Username: settings.SMTPUsername, Password: password, FromEmail: settings.SMTPFromEmail, FromName: settings.SMTPFromName, Encryption: settings.SMTPEncryption}, nil
 }
 
 func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
@@ -952,9 +968,8 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	smtpHost := os.Getenv("SMTP_HOST")
-	smtpFromEmail := os.Getenv("SMTP_FROM_EMAIL")
-	if smtpHost == "" || smtpFromEmail == "" {
+	smtpCfg, smtpErr := s.instanceSMTPConfig()
+	if smtpErr != nil {
 		log.Printf("handleForgotPassword: SMTP not configured, skipping\n")
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
@@ -991,27 +1006,6 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 		frontendURL = "http://localhost:5173"
 	}
 	resetURL := fmt.Sprintf("%s/?reset-token=%s", strings.TrimRight(frontendURL, "/"), rawToken)
-
-	smtpEncryption := os.Getenv("SMTP_ENCRYPTION")
-	if smtpEncryption == "" {
-		smtpEncryption = "starttls"
-	}
-
-	smtpCfg := email.SMTPConfig{
-		Host:       smtpHost,
-		Port:       os.Getenv("SMTP_PORT"),
-		Username:   os.Getenv("SMTP_USERNAME"),
-		Password:   os.Getenv("SMTP_PASSWORD"),
-		FromEmail:  smtpFromEmail,
-		FromName:   os.Getenv("SMTP_FROM_NAME"),
-		Encryption: smtpEncryption,
-	}
-	if smtpCfg.Port == "" {
-		smtpCfg.Port = "587"
-	}
-	if smtpCfg.FromName == "" {
-		smtpCfg.FromName = "Clumoove"
-	}
 
 	htmlBody := email.BuildPasswordResetEmailLocalized(resetURL, u.Language)
 	if err := email.SendMail(smtpCfg, u.Email, email.PasswordResetSubject(u.Language), htmlBody); err != nil {
@@ -1077,7 +1071,11 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleEmailChangeAvailable(w http.ResponseWriter, r *http.Request) {
-	available := os.Getenv("SMTP_HOST") != "" && os.Getenv("SMTP_FROM_EMAIL") != ""
+	available, err := db.IsInstanceSMTPConfigured(s.db)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"available": available})
 }
 
@@ -1126,9 +1124,8 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	smtpHost := os.Getenv("SMTP_HOST")
-	smtpFromEmail := os.Getenv("SMTP_FROM_EMAIL")
-	if smtpHost == "" || smtpFromEmail == "" {
+	smtpCfg, smtpErr := s.instanceSMTPConfig()
+	if smtpErr != nil {
 		writeError(w, http.StatusBadRequest, ErrMailNotConfigured)
 		return
 	}
@@ -1153,27 +1150,6 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 		frontendURL = "http://localhost:5173"
 	}
 	confirmURL := fmt.Sprintf("%s/?email-change-token=%s", strings.TrimRight(frontendURL, "/"), rawToken)
-
-	smtpEncryption := os.Getenv("SMTP_ENCRYPTION")
-	if smtpEncryption == "" {
-		smtpEncryption = "starttls"
-	}
-
-	smtpCfg := email.SMTPConfig{
-		Host:       smtpHost,
-		Port:       os.Getenv("SMTP_PORT"),
-		Username:   os.Getenv("SMTP_USERNAME"),
-		Password:   os.Getenv("SMTP_PASSWORD"),
-		FromEmail:  smtpFromEmail,
-		FromName:   os.Getenv("SMTP_FROM_NAME"),
-		Encryption: smtpEncryption,
-	}
-	if smtpCfg.Port == "" {
-		smtpCfg.Port = "587"
-	}
-	if smtpCfg.FromName == "" {
-		smtpCfg.FromName = "Clumoove"
-	}
 
 	htmlBody := email.BuildEmailChangeEmailLocalized(confirmURL, req.NewEmail, u.Language)
 	if err := email.SendMail(smtpCfg, u.Email, email.EmailChangeSubject(u.Language), htmlBody); err != nil {
@@ -1226,29 +1202,7 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 		log.Printf("handleConfirmEmailChange: failed to revoke refresh tokens for user %s: %v\n", userID, err)
 	}
 
-	smtpHost := os.Getenv("SMTP_HOST")
-	smtpFromEmail := os.Getenv("SMTP_FROM_EMAIL")
-	if smtpHost != "" && smtpFromEmail != "" {
-		smtpEncryption := os.Getenv("SMTP_ENCRYPTION")
-		if smtpEncryption == "" {
-			smtpEncryption = "starttls"
-		}
-		smtpCfg := email.SMTPConfig{
-			Host:       smtpHost,
-			Port:       os.Getenv("SMTP_PORT"),
-			Username:   os.Getenv("SMTP_USERNAME"),
-			Password:   os.Getenv("SMTP_PASSWORD"),
-			FromEmail:  smtpFromEmail,
-			FromName:   os.Getenv("SMTP_FROM_NAME"),
-			Encryption: smtpEncryption,
-		}
-		if smtpCfg.Port == "" {
-			smtpCfg.Port = "587"
-		}
-		if smtpCfg.FromName == "" {
-			smtpCfg.FromName = "Clumoove"
-		}
-
+	if smtpCfg, smtpErr := s.instanceSMTPConfig(); smtpErr == nil {
 		u, lookupErr := db.GetUserByID(s.db, userID)
 		language := "en"
 		if lookupErr == nil {

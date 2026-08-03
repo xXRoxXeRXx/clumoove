@@ -40,8 +40,9 @@ For OneDrive, register a confidential Microsoft application restricted to **pers
 | `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` (`50` in production Compose) |
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
 | `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting). | off |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM_EMAIL` / `SMTP_FROM_NAME` / `SMTP_ENCRYPTION` | System SMTP (password reset, etc.). | – |
 | `FRONTEND_URL` | Frontend base URL (used in reset/email-change links). | `http://localhost:5173` |
+
+SMTP is configured by an administrator in **Administration → System → Email server**. The configuration, including its password, is encrypted with `ENCRYPTION_SECRET_KEY` in PostgreSQL; no `SMTP_*` environment variables are used.
 
 ---
 

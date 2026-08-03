@@ -242,20 +242,25 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (login_locked_until): %v\n", err)
 			}
 
-			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS user_smtp_settings (
-				user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS instance_smtp_settings (
+				id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 				smtp_host VARCHAR(255) NOT NULL,
 				smtp_port INT NOT NULL DEFAULT 587,
 				smtp_username VARCHAR(255) NOT NULL DEFAULT '',
 				smtp_password_encrypted TEXT NOT NULL DEFAULT '',
 				smtp_from_email VARCHAR(255) NOT NULL DEFAULT '',
 				smtp_from_name VARCHAR(255) NOT NULL DEFAULT '',
-				smtp_encryption VARCHAR(16) NOT NULL DEFAULT 'tls',
-				notify_on_completion BOOLEAN NOT NULL DEFAULT TRUE,
+				smtp_encryption VARCHAR(16) NOT NULL DEFAULT 'tls' CHECK (smtp_encryption IN ('tls', 'starttls')),
+				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 			)`)
 			if err != nil {
-				log.Printf("Failed schema migration (user_smtp_settings): %v\n", err)
+				log.Printf("Failed schema migration (instance_smtp_settings): %v\n", err)
+			}
+			_, err = db.Exec(`DROP TRIGGER IF EXISTS update_instance_smtp_settings_updated_at ON instance_smtp_settings;
+				CREATE TRIGGER update_instance_smtp_settings_updated_at BEFORE UPDATE ON instance_smtp_settings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`)
+			if err != nil {
+				log.Printf("Failed schema migration (instance_smtp_settings trigger): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -649,6 +654,17 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_notification_channels_user ON notification_channels(user_id)`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_notification_channels_user): %v\n", err)
+			}
+			var legacySMTPTabExists bool
+			err = db.QueryRow(`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'user_smtp_settings')`).Scan(&legacySMTPTabExists)
+			if err != nil {
+				log.Printf("Failed legacy SMTP migration check: %v\n", err)
+			} else if legacySMTPTabExists {
+				if _, err = db.Exec(`UPDATE notification_channels SET config_encrypted = '' WHERE type = 'email'`); err != nil {
+					log.Printf("Failed email notification migration: %v\n", err)
+				} else if _, err = db.Exec(`DROP TABLE user_smtp_settings`); err != nil {
+					log.Printf("Failed schema cleanup (user_smtp_settings): %v\n", err)
+				}
 			}
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS notification_events (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

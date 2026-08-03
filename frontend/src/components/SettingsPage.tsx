@@ -215,18 +215,10 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     return () => { cancelled = true; };
   }, [apiUrl]);
 
-  // SMTP settings state
-  const [smtpHost, setSmtpHost] = useState<string>('');
-  const [smtpPort, setSmtpPort] = useState<string>('587');
-  const [smtpUsername, setSmtpUsername] = useState<string>('');
-  const [smtpPassword, setSmtpPassword] = useState<string>('');
-  const [smtpFromEmail, setSmtpFromEmail] = useState<string>('');
-  const [smtpFromName, setSmtpFromName] = useState<string>('');
-  const [smtpEncryption, setSmtpEncryption] = useState<string>('tls');
-  const [smtpNotify, setSmtpNotify] = useState<boolean>(true);
-  const [smtpHasConfig, setSmtpHasConfig] = useState<boolean>(false);
   const [smtpLoading, setSmtpLoading] = useState<boolean>(false);
   const [smtpMessage, setSmtpMessage] = useState<MessageState>(null);
+  const [emailAvailable, setEmailAvailable] = useState(false);
+  const [smtpNotify, setSmtpNotify] = useState(true);
   type PushChannel = 'gotify' | 'ntfy' | 'telegram' | 'discord';
   const [pushConfigs, setPushConfigs] = useState<Record<PushChannel, Record<string, string>>>({
     gotify: { url: '', token: '' }, ntfy: { url: '', topic: '', token: '', priority: '' },
@@ -236,119 +228,36 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const [pushLoading, setPushLoading] = useState<PushChannel | null>(null);
   const [pushMessage, setPushMessage] = useState<MessageState>(null);
 
-  // The email card is one of the notification channels. Other channels can be
-  // added without changing the legacy SMTP-shaped form fields below.
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/settings/notifications`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-    })
-      .then((res) => {
-        if (res.ok) return res.json();
-        throw new Error('no-smtp');
-      })
+    apiFetch(`${apiUrl}/api/settings/notifications`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((data) => {
         if (cancelled) return;
+        setEmailAvailable(Boolean(data.email_available));
         const email = (data.channels || []).find((channel: { type: string }) => channel.type === 'email');
-        if (!email) { setSmtpHasConfig(false); } else {
-          const config = email.config || {};
-          setSmtpHasConfig(true);
-          setSmtpHost(config.smtp_host || '');
-          setSmtpPort(String(config.smtp_port || '587'));
-          setSmtpUsername(config.smtp_username || '');
-          setSmtpFromEmail(config.smtp_from_email || '');
-          setSmtpFromName(config.smtp_from_name || '');
-          setSmtpEncryption(config.smtp_encryption || 'tls');
-          setSmtpNotify(email.enabled !== false);
-        }
+        setSmtpNotify(email?.enabled !== false);
         (['gotify', 'ntfy', 'telegram', 'discord'] as PushChannel[]).forEach((type) => {
           const channel = (data.channels || []).find((item: { type: string }) => item.type === type);
-          if (channel) {
-            setPushEnabled((current) => ({ ...current, [type]: channel.enabled }));
-            const editable = Object.fromEntries(Object.entries(channel.config || {}).filter(([key]) => !key.endsWith('_set')));
-            setPushConfigs((current) => ({ ...current, [type]: { ...current[type], ...editable } }));
-          }
+          if (!channel) return;
+          setPushEnabled((current) => ({ ...current, [type]: channel.enabled }));
+          const editable = Object.fromEntries(Object.entries(channel.config || {}).filter(([key]) => !key.endsWith('_set')));
+          setPushConfigs((current) => ({ ...current, [type]: { ...current[type], ...editable } }));
         });
       })
-      .catch(() => {
-        if (!cancelled) setSmtpHasConfig(false);
-      });
+      .catch(() => { if (!cancelled) setEmailAvailable(false); });
     return () => { cancelled = true; };
   }, [apiUrl, token]);
 
-  const handleSaveSMTP = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSmtpMessage(null);
-    setSmtpLoading(true);
+	const handleEmailNotificationToggle = async (enabled: boolean) => {
+		setSmtpLoading(true);
+		try {
+			const res = await apiFetch(`${apiUrl}/api/settings/notifications`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'email', enabled }) });
+			if (!res.ok) { const body = await res.json().catch(() => ({})) as ApiErrBody; throw new Error(translateApiError(body.error_code)); }
+			setSmtpNotify(enabled);
+		} catch (err) { setSmtpMessage({ text: (err as Error).message, type: 'error' }); } finally { setSmtpLoading(false); }
+	};
 
-    const portNum = parseInt(smtpPort, 10);
-    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-      setSmtpMessage({ text: t('settings.messages.smtpPortRange'), type: 'error' });
-      setSmtpLoading(false);
-      return;
-    }
-
-    const config: Record<string, string | number> = {
-      smtp_host: smtpHost,
-      smtp_port: portNum,
-      smtp_username: smtpUsername,
-      smtp_from_email: smtpFromEmail,
-      smtp_from_name: smtpFromName,
-      smtp_encryption: smtpEncryption,
-    };
-    // Only send the password when the user entered a new one (existing password is kept otherwise)
-    if (smtpPassword) {
-      config.smtp_password = smtpPassword;
-    }
-
-    try {
-      const res = await apiFetch(`${apiUrl}/api/settings/notifications`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ type: 'email', enabled: smtpNotify, config }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}) as ApiErrBody);
-        throw new Error(translateApiError((data as ApiErrBody).error_code));
-      }
-
-      setSmtpHasConfig(true);
-      setSmtpPassword('');
-      setSmtpMessage({ text: t('settings.messages.smtpSaved'), type: 'success' });
-    } catch (err) {
-      setSmtpMessage({ text: (err as Error).message, type: 'error' });
-    } finally {
-      setSmtpLoading(false);
-    }
-  };
-
-  const handleTestSMTP = async () => {
-    setSmtpMessage(null);
-    setSmtpLoading(true);
-    try {
-      const res = await apiFetch(`${apiUrl}/api/settings/notifications/test`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ type: 'email', config: {
-          smtp_host: smtpHost, smtp_port: parseInt(smtpPort, 10), smtp_username: smtpUsername,
-          smtp_password: smtpPassword, smtp_from_email: smtpFromEmail, smtp_from_name: smtpFromName, smtp_encryption: smtpEncryption,
-        } }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(translateApiError(data.error_code));
-      }
-      setSmtpMessage({ text: t('settings.messages.smtpTestSent'), type: 'success' });
-    } catch (err) {
-      setSmtpMessage({ text: (err as Error).message, type: 'error' });
-    } finally {
-      setSmtpLoading(false);
-    }
-  };
 
   const savePushChannel = async (type: PushChannel, test = false) => {
     setPushMessage(null);
@@ -1024,7 +933,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       {/* Appearance Tab */}
       {tab === 'appearance' && (
         <div className="grid md:grid-cols-2 gap-6">
-          <div className={cardCls}>
+			<div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <Palette className="w-4 h-4 text-[var(--color-text-muted)]" />
               <h3 className={sectionTitleCls}>{t('settings.appearance')}</h3>
@@ -1099,154 +1008,21 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       {/* Notifications Tab (SMTP) */}
       {tab === 'notifications' && (
         <div className="grid md:grid-cols-2 gap-6">
-          <div className={cardCls}>
-            <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Mail className="w-4 h-4 text-[var(--color-text-muted)]" />
-              <h3 className={sectionTitleCls}>{t('settings.emailNotifications')}</h3>
+          {emailAvailable && (
+            <div className={cardCls}>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-[var(--color-text-muted)]" />
+                    <h3 className={sectionTitleCls}>{t('settings.emailNotifications')}</h3>
+                  </div>
+                  <p className="mt-2 text-xs text-[var(--color-text-muted)]">{t('settings.smtpNotifyHint')}</p>
+                </div>
+                <Toggle checked={smtpNotify} disabled={smtpLoading} onChange={handleEmailNotificationToggle} label={t('settings.smtpNotify')} />
+              </div>
+              <MessageBanner message={smtpMessage} />
             </div>
-
-            <MessageBanner message={smtpMessage} />
-
-            <form onSubmit={handleSaveSMTP} className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <div className="space-y-1.5 sm:col-span-2">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    {t('settings.smtpHost')}
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={smtpHost}
-                    onChange={(e) => setSmtpHost(e.target.value)}
-                    placeholder="smtp.example.com"
-                    className={inputCls}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    {t('settings.smtpPort')}
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    max={65535}
-                    value={smtpPort}
-                    onChange={(e) => setSmtpPort(e.target.value)}
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  {t('settings.smtpUsername')}
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={smtpUsername}
-                  onChange={(e) => setSmtpUsername(e.target.value)}
-                  placeholder="user@example.com"
-                  className={inputCls}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  {t('settings.smtpPassword')}
-                </label>
-                <div className="relative group">
-                  <input
-                    type="password"
-                    autoComplete="current-password"
-                    name="smtp_password"
-                    required={!smtpHasConfig}
-                    value={smtpPassword}
-                    onChange={(e) => setSmtpPassword(e.target.value)}
-                    placeholder={smtpHasConfig ? `•••••••• ${t('settings.smtpPasswordUnchanged')}` : '••••••••'}
-                    className={`${inputCls} font-mono`}
-                  />
-                </div>
-                {smtpHasConfig && (
-                  <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
-                    {t('settings.smtpPasswordHint')}
-                  </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    {t('settings.smtpFromEmail')}
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={smtpFromEmail}
-                    onChange={(e) => setSmtpFromEmail(e.target.value)}
-                    placeholder="noreply@example.com"
-                    className={inputCls}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                    {t('settings.smtpFromName')}
-                  </label>
-                  <input
-                    type="text"
-                    value={smtpFromName}
-                    onChange={(e) => setSmtpFromName(e.target.value)}
-                    placeholder="Clumoove"
-                    className={inputCls}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  {t('settings.smtpEncryption')}
-                </label>
-                <select
-                  value={smtpEncryption}
-                  onChange={(e) => setSmtpEncryption(e.target.value)}
-                  className={inputCls}
-                >
-                  <option value="tls">TLS (Implicit)</option>
-                  <option value="starttls">STARTTLS</option>
-                  <option value="none">{t('settings.smtpEncryptionNone')}</option>
-                </select>
-              </div>
-
-              <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-lg">
-                <div className="text-left space-y-1 pr-4">
-                  <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.smtpNotify')}</h4>
-                  <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
-                    {t('settings.smtpNotifyHint')}
-                  </p>
-                </div>
-                <Toggle checked={smtpNotify} onChange={setSmtpNotify} label={t('settings.smtpNotify')} />
-              </div>
-
-              <div className="flex flex-wrap gap-2.5">
-                <button
-                  type="submit"
-                  disabled={smtpLoading || !smtpHost || !smtpUsername || !smtpFromEmail}
-                  className={`flex-1 ${primaryBtnCls}`}
-                >
-                  {smtpLoading ? t('settings.saving') : t('settings.saveSmtp')}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleTestSMTP}
-                  disabled={smtpLoading}
-                  className={secondaryBtnCls}
-                >
-                  {t('settings.testSmtp')}
-                </button>
-              </div>
-            </form>
-          </div>
+          )}
           <div className="space-y-6">
             <MessageBanner message={pushMessage} />
             {renderPushChannel('gotify', [

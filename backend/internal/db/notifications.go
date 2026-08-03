@@ -81,7 +81,7 @@ func CreateMigrationNotificationEvent(database *sql.DB, migrationID string) erro
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted) SELECT $1,type,config_encrypted FROM notification_channels WHERE user_id=$2 AND enabled=TRUE`, eventID, userID)
+	_, err = tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted) SELECT $1,type,CASE WHEN type='email' THEN '' ELSE config_encrypted END FROM notification_channels WHERE user_id=$2 AND enabled=TRUE`, eventID, userID)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func CreateSyncNotificationEvent(database *sql.DB, syncJobID string) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted) SELECT $1,type,config_encrypted FROM notification_channels WHERE user_id=$2 AND enabled=TRUE`, eventID, userID)
+	_, err = tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted) SELECT $1,type,CASE WHEN type='email' THEN '' ELSE config_encrypted END FROM notification_channels WHERE user_id=$2 AND enabled=TRUE`, eventID, userID)
 	if err != nil {
 		return err
 	}

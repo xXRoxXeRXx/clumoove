@@ -77,10 +77,9 @@ func Validate(typ string, cfg Config) error {
 	}
 	switch typ {
 	case "email":
-		if !required("smtp_host", "smtp_username", "smtp_password", "smtp_from_email") {
-			return fmt.Errorf("incomplete")
-		}
-		return email.ValidateSMTPHost(fmt.Sprint(cfg["smtp_host"]))
+		// Email is a preference-only channel. Its empty config is valid because
+		// the worker loads and validates the instance mailer at send time.
+		return nil
 	case "gotify":
 		if !required("url", "token") {
 			return fmt.Errorf("incomplete")

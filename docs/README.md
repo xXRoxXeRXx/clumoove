@@ -36,6 +36,7 @@ There is also a conceptual document:
   worker heartbeats, distributed recovery locks (`SET NX`), and cancel/bandwidth Pub/Sub.
 - **Frontend:** React 19 + TypeScript SPA, bundled with Vite 8, Tailwind CSS v4.
 - **Data:** PostgreSQL 15 (metadata, users, migrations, sync jobs, sync state, profiles, tasks, schedules, audit log) + Redis 7 (coordination).
+- **Email:** One administrator-managed SMTP configuration is encrypted in PostgreSQL and serves account mail plus optional email notifications.
 - **Languages:** `de` (fallback) and `en`, localized via `i18next`/`react-i18next`.
 
 ---
