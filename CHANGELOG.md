@@ -5,6 +5,23 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-03
+
+### Added
+- **Centralized Instance SMTP Configuration**: Replaced environment variable SMTP configuration with encrypted database-backed instance SMTP settings, manageable via the Admin UI with test mail delivery functionality and per-user email notification preferences.
+- **OneDrive QuickXor Hash Verification**: Implemented non-cryptographic QuickXor checksum computation and streaming verification for Microsoft OneDrive file transfers.
+
+### Improved & Security Hardened
+- **Multi-Provider Data Integrity Engine**: Retains target native streaming hashes (including HiDrive `chash` and OneDrive `QuickXor`) when source and target providers use different hash algorithms, enabling precise post-transfer checksum verification.
+- **HiDrive Integration**: Enhanced HiDrive provider with native target `chash` validation and automatic URL-decoding of directory listing paths to prevent path mismatch 404 errors.
+
+### Fixed
+- **Google Drive Uploads**: Ensured target directory hierarchy is created prior to file streaming to prevent missing parent folder errors.
+- **HiDrive Concurrent Upload Directory Race**: Fixed race condition handling when creating parent directories during concurrent file uploads on HiDrive.
+
+### Documentation
+- Updated `README.md` and provider documentation for Microsoft OneDrive and HiDrive native content hashing.
+
 ## [0.9.0] - 2026-08-02
 
 ### Added
