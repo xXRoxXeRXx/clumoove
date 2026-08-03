@@ -19,7 +19,7 @@ import (
 
 func isCryptographicHash(algo string) bool {
 	switch strings.ToUpper(algo) {
-	case "SHA1", "SHA256", "MD5", "SHA512", "DROPBOX":
+	case "SHA1", "SHA256", "MD5", "SHA512", "DROPBOX", "HIDRIVE":
 		return true
 	default:
 		return false
@@ -364,6 +364,16 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				if errHash == nil && targetHash != "" {
 					targetAlgo, cleanTarget := storage.ParseHashString(targetHash)
 					srcHash := bestSourceHash(task)
+					// For a HiDrive target the streaming worker calculated the same
+					// hierarchical chash. Prefer it over a differently-algorithmed
+					// source provider hash so this is a real checksum comparison.
+					if task.WorkerHash.Valid {
+						workerAlgo, _ := storage.ParseHashString(task.WorkerHash.String)
+						sourceAlgo, _ := storage.ParseHashString(srcHash)
+						if workerAlgo == targetAlgo && sourceAlgo != targetAlgo {
+							srcHash = task.WorkerHash.String
+						}
+					}
 
 					if srcHash != "" {
 						sourceAlgo, cleanSource := storage.ParseHashString(srcHash)

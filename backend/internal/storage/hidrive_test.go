@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -117,12 +118,17 @@ func TestHiDriveProviderConnect(t *testing.T) {
 func TestHiDriveProviderDirectoryListing(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/dir" {
+			fields := r.URL.Query().Get("fields")
+			if strings.Contains(fields, "sha1") || !strings.Contains(fields, "members.chash") {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			resp := hidriveDirResponse{
 				Path: "/",
 				Name: "",
 				Members: []hidriveDirMember{
 					{Name: "folder1", Type: "dir"},
-					{Name: "file1.txt", Type: "file", Size: 1024, Mtime: 1600000000, SHA1: "abc123sha1"},
+					{Name: "file1.txt", Type: "file", Size: 1024, Mtime: 1600000000, ContentHash: "abc123hidrivehash"},
 				},
 			}
 			w.WriteHeader(http.StatusOK)
@@ -146,7 +152,7 @@ func TestHiDriveProviderDirectoryListing(t *testing.T) {
 	if !resources[0].IsDir || resources[0].Name != "folder1" {
 		t.Errorf("unexpected first item: %+v", resources[0])
 	}
-	if resources[1].IsDir || resources[1].Name != "file1.txt" || resources[1].Size != 1024 || resources[1].Hash != "abc123sha1" {
+	if resources[1].IsDir || resources[1].Name != "file1.txt" || resources[1].Size != 1024 || resources[1].Hash != "HIDRIVE:abc123hidrivehash" {
 		t.Errorf("unexpected second item: %+v", resources[1])
 	}
 }
@@ -157,12 +163,12 @@ func TestHiDriveProviderFileExistsAndInspect(t *testing.T) {
 			p := r.URL.Query().Get("path")
 			if p == "/exists.txt" {
 				meta := hidriveMetaResponse{
-					Path:  "/exists.txt",
-					Name:  "exists.txt",
-					Type:  "file",
-					Size:  2048,
-					SHA1:  "deadbeef",
-					Mtime: 1600000000,
+					Path:        "/exists.txt",
+					Name:        "exists.txt",
+					Type:        "file",
+					Size:        2048,
+					ContentHash: "deadbeef",
+					Mtime:       1600000000,
 				}
 				w.WriteHeader(http.StatusOK)
 				_ = json.NewEncoder(w).Encode(meta)
@@ -193,12 +199,12 @@ func TestHiDriveProviderFileExistsAndInspect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InspectResource failed: %v", err)
 	}
-	if res.Name != "exists.txt" || res.Size != 2048 || res.Hash != "deadbeef" {
+	if res.Name != "exists.txt" || res.Size != 2048 || res.Hash != "HIDRIVE:deadbeef" {
 		t.Errorf("InspectResource returned unexpected resource: %+v", res)
 	}
 
 	hash, err := p.GetFileHash(ctx, "files", "/exists.txt")
-	if err != nil || hash != "deadbeef" {
+	if err != nil || hash != "HIDRIVE:deadbeef" {
 		t.Errorf("GetFileHash failed: hash=%q, err=%v", hash, err)
 	}
 }

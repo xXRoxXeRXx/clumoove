@@ -124,7 +124,9 @@ type hidriveDirMember struct {
 	Writable bool   `json:"writable"`
 	ID       string `json:"id,omitempty"`
 	MimeType string `json:"mime_type,omitempty"`
-	SHA1     string `json:"sha1,omitempty"`
+	// chash is HiDrive's native content hash.  It is not a SHA-1 digest even
+	// though it is 40 characters long, so preserve its algorithm identity.
+	ContentHash string `json:"chash,omitempty"`
 }
 
 func (p *HiDriveProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
@@ -150,7 +152,9 @@ func (p *HiDriveProvider) GetDirectoryListing(ctx context.Context, resourceType,
 		q := req.URL.Query()
 		q.Set("path", hdPath)
 		q.Set("members", "file,dir")
-		q.Set("fields", "path,name,members.name,members.type,members.size,members.mtime,members.readable,members.writable,members.id,members.mime_type,members.sha1")
+		// HiDrive v2.1 exposes its native content checksum as chash.  sha1 is
+		// not a valid field and makes the complete listing request fail with 400.
+		q.Set("fields", "path,name,members.name,members.type,members.size,members.mtime,members.readable,members.writable,members.id,members.mime_type,members.chash")
 		q.Set("limit", fmt.Sprintf("%d,%d", offset, pageSize))
 		q.Set("sort", "name")
 		req.URL.RawQuery = q.Encode()
@@ -191,7 +195,7 @@ func (p *HiDriveProvider) GetDirectoryListing(ctx context.Context, resourceType,
 			Name:  m.Name,
 			IsDir: m.Type == "dir",
 			Size:  m.Size,
-			Hash:  m.SHA1,
+			Hash:  hidriveHash(m.ContentHash),
 		}
 		if m.Mtime > 0 {
 			res.LastModified = time.Unix(m.Mtime, 0)
@@ -203,15 +207,22 @@ func (p *HiDriveProvider) GetDirectoryListing(ctx context.Context, resourceType,
 }
 
 type hidriveMetaResponse struct {
-	Path     string `json:"path"`
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Size     int64  `json:"size,omitempty"`
-	Mtime    int64  `json:"mtime,omitempty"`
-	Readable bool   `json:"readable"`
-	Writable bool   `json:"writable"`
-	ID       string `json:"id,omitempty"`
-	SHA1     string `json:"sha1,omitempty"`
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Size        int64  `json:"size,omitempty"`
+	Mtime       int64  `json:"mtime,omitempty"`
+	Readable    bool   `json:"readable"`
+	Writable    bool   `json:"writable"`
+	ID          string `json:"id,omitempty"`
+	ContentHash string `json:"chash,omitempty"`
+}
+
+func hidriveHash(contentHash string) string {
+	if contentHash == "" {
+		return ""
+	}
+	return "HIDRIVE:" + contentHash
 }
 
 func (p *HiDriveProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
@@ -234,7 +245,7 @@ func (p *HiDriveProvider) InspectResource(ctx context.Context, resourceType, res
 	req.Header.Set("Authorization", "Bearer "+p.AccessToken)
 	q := req.URL.Query()
 	q.Set("path", hdPath)
-	q.Set("fields", "path,name,type,size,mtime,readable,writable,id,sha1")
+	q.Set("fields", "path,name,type,size,mtime,readable,writable,id,chash")
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := p.HTTPClient.Do(req)
@@ -260,7 +271,7 @@ func (p *HiDriveProvider) InspectResource(ctx context.Context, resourceType, res
 		Name:  meta.Name,
 		IsDir: meta.Type == "dir",
 		Size:  meta.Size,
-		Hash:  meta.SHA1,
+		Hash:  hidriveHash(meta.ContentHash),
 	}
 	if meta.Mtime > 0 {
 		res.LastModified = time.Unix(meta.Mtime, 0)
@@ -339,6 +350,7 @@ func (p *HiDriveProvider) deleteIfExists(ctx context.Context, filePath string) e
 }
 
 func (p *HiDriveProvider) uploadFile(ctx context.Context, filePath string, stream io.Reader, size int64) error {
+	filePath = p.cleanPath(filePath)
 	dir := path.Dir(filePath)
 	name := path.Base(filePath)
 
@@ -418,6 +430,7 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		return err
 	}
 
+	filePath = p.cleanPath(filePath)
 	dir := path.Dir(filePath)
 	name := path.Base(filePath)
 
@@ -431,15 +444,25 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 			return fmt.Errorf("hidrive chunked read: %w", readErr)
 		}
 		chunkData := buf[:n]
-		chunkStart := uploaded
-		chunkEnd := uploaded + int64(n) - 1
 		chunkSizeActual := int64(n)
 
 		timeout := 10 * time.Minute
 		uploadCtx, cancel := context.WithTimeout(ctx, timeout)
 
 		body := bytes.NewReader(chunkData)
-		req, err := http.NewRequestWithContext(uploadCtx, "POST", p.apiURL("/file"), body)
+		method := http.MethodPatch
+		q := url.Values{}
+		if uploaded == 0 {
+			// POST creates the object; following chunks update it at an explicit
+			// byte offset. Content-Range is not part of the HiDrive API.
+			method = http.MethodPost
+			q.Set("dir", p.cleanPath(dir))
+			q.Set("name", name)
+		} else {
+			q.Set("path", filePath)
+			q.Set("offset", fmt.Sprintf("%d", uploaded))
+		}
+		req, err := http.NewRequestWithContext(uploadCtx, method, p.apiURL("/file"), body)
 		if err != nil {
 			cancel()
 			return err
@@ -447,12 +470,6 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		req.Header.Set("Authorization", "Bearer "+p.AccessToken)
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = chunkSizeActual
-		contentRange := fmt.Sprintf("bytes %d-%d/%d", chunkStart, chunkEnd, size)
-		req.Header.Set("Content-Range", contentRange)
-
-		q := req.URL.Query()
-		q.Set("dir", p.cleanPath(dir))
-		q.Set("name", name)
 		req.URL.RawQuery = q.Encode()
 
 		resp, err := p.HTTPClient.Do(req)
@@ -471,7 +488,7 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 			cancel()
 			return fmt.Errorf("hidrive chunked upload chunk %d conflict, status: %d, body: %s", chunkIndex, resp.StatusCode, string(bodyBytes))
 		}
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 			bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
 			cancel()
@@ -488,6 +505,9 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		}
 
 		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
+			if uploaded != size {
+				return io.ErrUnexpectedEOF
+			}
 			break
 		}
 	}
@@ -691,6 +711,10 @@ func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	q := req.URL.Query()
 	q.Set("src", srcPath)
 	q.Set("dst", dstPath)
+	// The processor's overwrite flow uploads to a temporary name and then
+	// atomically moves it into place. Ask HiDrive to replace a raced existing
+	// destination instead of failing the finalisation.
+	q.Set("on_exist", "overwrite")
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := p.HTTPClient.Do(req)

@@ -312,7 +312,8 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if task.SourceHash.Valid && task.SourceHash.String != "" && srcProvider != "webdav" {
 		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
-		if algo != "ETAG" {
+		// HiDrive's native chash cannot be recomputed by the streaming hasher.
+		if algo == "SHA1" || algo == "SHA256" || algo == "MD5" || algo == "DROPBOX" {
 			sourceHashStr = cleanHash
 			sourceAlgo = algo
 		}
@@ -341,6 +342,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	} else if tgtProvider == "s3" {
 		targetAlgo = "SHA256"
 		targetHasher = sha256.New()
+	} else if tgtProvider == "hidrive" {
+		targetAlgo = "HIDRIVE"
+		targetHasher = storage.NewHiDriveHasher()
 	} else {
 		targetAlgo = "SHA1"
 		targetHasher = sha1.New()

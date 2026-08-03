@@ -921,7 +921,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	if task.SourceHash.Valid && task.SourceHash.String != "" && mig.SourceProvider != "webdav" {
 		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
-		if algo != "ETAG" {
+		// HiDrive's native chash is only comparable with another HiDrive
+		// chash; it cannot be recreated while streaming to another provider.
+		if algo == "SHA1" || algo == "SHA256" || algo == "MD5" || algo == "DROPBOX" {
 			sourceHashStr = cleanHash
 			sourceAlgo = algo
 		}
@@ -957,6 +959,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	} else if mig.TargetProvider == "google" {
 		targetAlgo = "MD5"
 		targetHasher = md5.New()
+	} else if mig.TargetProvider == "hidrive" {
+		targetAlgo = "HIDRIVE"
+		targetHasher = storage.NewHiDriveHasher()
 	} else {
 		targetAlgo = "SHA1"
 		targetHasher = sha1.New()

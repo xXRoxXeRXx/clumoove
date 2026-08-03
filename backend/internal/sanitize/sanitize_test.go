@@ -147,10 +147,10 @@ func TestSanitizeFilename_LengthTruncation(t *testing.T) {
 }
 
 func TestSanitizeFilename_HiDriveLengthTruncation(t *testing.T) {
-	longName := strings.Repeat("a", 250) + ".pdf" // 254 chars total
+	longName := strings.Repeat("a", 252) + ".pdf" // 256 chars total
 	result := SanitizeFilename(longName, "hidrive")
-	if len(result.SanitizedName) > 251 {
-		t.Errorf("expected HiDrive filename length <= 251, got %d", len(result.SanitizedName))
+	if len(result.SanitizedName) > 255 {
+		t.Errorf("expected HiDrive filename length <= 255, got %d", len(result.SanitizedName))
 	}
 	if !strings.HasSuffix(result.SanitizedName, ".pdf") {
 		t.Error("expected extension .pdf to be preserved")
