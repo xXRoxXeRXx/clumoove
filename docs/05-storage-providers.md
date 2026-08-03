@@ -129,6 +129,21 @@ attacker-controlled path. Local-provider mutations are intentionally unavailable
 implementation exists. Creating a local provider without a valid user scope fails. It supports only the
 `files` resource type; calendars/contacts are not applicable.
 
+## 2.3. HiDrive Provider (`hidrive`)
+
+HiDrive uses its fixed REST v2.1 endpoint and OAuth2 bearer tokens. It supports files only. API response
+names and paths are URL-escaped; `hidrive.go` decodes them before they reach the indexer, so a name such as
+`deprecated%2Bbuild.9` is subsequently requested as `deprecated+build.9`, never double-escaped to `%252B`.
+
+HiDrive's `chash` is a provider-specific hierarchical content hash, not SHA-1 despite its 20-byte length.
+`hidrivehash.go` calculates it while streaming to a HiDrive target: SHA-1 is calculated for each 4096-byte
+block (with zero padding for the final block); up to 256 position-bound child hashes are SHA-1 transformed
+and added modulo 2^160, recursively. All-zero blocks are represented as empty slots, as specified by
+HiDrive. The generated `HIDRIVE:<chash>` is compared with the target's server-side `chash` after upload.
+This applies to migrations and sync passes. HiDrive-to-HiDrive transfers compare the native source and
+target `chash` values directly. For a non-HiDrive source, the worker-generated HiDrive hash is used instead
+of falling back to a size-only comparison.
+
 The `Local` option appears in the UI **only** when `LOCAL_STORAGE_ROOT` is configured (`local_storage_enabled`
 in `GET /api/settings`). `NewProvider("local")` returns an error if the variable is unset or not a
 directory. `LOCAL_STORAGE_ROOT` must be set on **both** the api-backend and the worker (the worker
@@ -195,8 +210,8 @@ construction-time check and the per-connection check agree.
 
 ## 5. Hash Parsing
 
-`ParseHashString` in `backend/internal/storage/hash.go` extracts the algorithm + clean hash from provider hash strings (e.g.
-`SHA1:abc123`, `MD5:…`, `SHA256:…`). The processor selects the per-provider hasher accordingly and only
+`ParseHashString` in `backend/internal/storage/nextcloud.go` extracts the algorithm + clean hash from provider hash strings (e.g.
+`SHA1:abc123`, `MD5:…`, `SHA256:…`, `HIDRIVE:…`). The processor selects the per-provider hasher accordingly and only
 computes a second (target) hasher when algorithms differ (CPU optimization).
 
 ---

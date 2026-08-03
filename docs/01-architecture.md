@@ -140,11 +140,12 @@ To prevent silent data corruption, every file is mathematically verified:
 1. **Source hash** — Captured before transfer via WebDAV PROPFIND (`OC-Checksums` / `getcontenthash`),
    or via a direct `GetFileHash` fallback.
 2. **In-memory hash** — An `io.TeeReader` intercepts the data stream during the volatile pass through the
-   worker's RAM and computes the SHA-1/SHA-256/MD5 hash live.
+   worker's RAM and computes the SHA-1/SHA-256/MD5 hash live. For a HiDrive target it also computes the
+   native hierarchical `HIDRIVE` `chash` (4096-byte blocks and recursive modulo-2^160 aggregation).
 3. **Target hash** — After upload, the hash of the written file is queried from the target server.
 4. **Validation** — A task is complete only when the hashes match
    ($\text{Hash}_{\text{source}} \equiv \text{Hash}_{\text{worker}} \equiv \text{Hash}_{\text{target}}$).
-   Where a provider exposes no usable hash, the system falls back to size + timestamp comparison.
+   Where a provider exposes no usable comparable hash, the system falls back to size + timestamp comparison.
 
 See [Backend](./02-backend.md#integrity-verification) and
 [Security](./07-security.md) for details on the verification fallbacks that avoid false "corrupted"

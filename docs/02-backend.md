@@ -185,7 +185,9 @@ For each task:
 ### Integrity verification
 
 - A `io.TeeReader` computes the source-side hash while streaming (`SHA1` default; `MD5`, `SHA256`, or
-  `DROPBOX` per provider). The target hash is queried after upload (retried 3× against transient
+  `DROPBOX` per provider). For a HiDrive target, `storage.NewHiDriveHasher` simultaneously computes the
+  native hierarchical `HIDRIVE` `chash`; the verifier compares it to the target's server-side `chash`.
+  The target hash is queried after upload (retried 3× against transient
   Nextcloud errors).
 - When hashes can't be compared (algorithm mismatch, WebDAV, dynamic sizes), the system falls back to
   **size comparison**; a failed *size query* is treated as success because the chunked-upload commit
