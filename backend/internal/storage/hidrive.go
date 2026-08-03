@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -335,43 +334,6 @@ func (p *HiDriveProvider) StreamDownload(ctx context.Context, resourceType, file
 	return resp.Body, nil
 }
 
-func (p *HiDriveProvider) deleteIfExists(ctx context.Context, filePath string) error {
-	hdPath := p.cleanPath(filePath)
-
-	exists, _, err := p.FileExists(ctx, "files", hdPath)
-	if err != nil {
-		if errors.Is(err, ErrAuth) {
-			return err
-		}
-	}
-	if !exists {
-		return nil
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "DELETE", p.apiURL("/file"), nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+p.AccessToken)
-	q := req.URL.Query()
-	q.Set("path", hdPath)
-	req.URL.RawQuery = q.Encode()
-
-	resp, err := p.HTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("hidrive deleteIfExists: %w", ErrAuth)
-	}
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("hidrive deleteIfExists failed, status: %d", resp.StatusCode)
-	}
-	return nil
-}
-
 func (p *HiDriveProvider) uploadFile(ctx context.Context, filePath string, stream io.Reader, size int64) error {
 	filePath = p.cleanPath(filePath)
 	dir := path.Dir(filePath)
@@ -427,10 +389,9 @@ func (p *HiDriveProvider) StreamUpload(ctx context.Context, resourceType, filePa
 		return err
 	}
 
-	if err := p.deleteIfExists(ctx, filePath); err != nil {
-		return err
-	}
-
+	// POST /file is create-only: HiDrive returns 409 if the name appeared
+	// after the processor's conflict check. Do not pre-delete it here; doing
+	// so would turn SKIP and RENAME races into unintended overwrites.
 	return p.uploadFile(ctx, filePath, stream, size)
 }
 
@@ -446,10 +407,6 @@ func (p *HiDriveProvider) StreamUploadChunked(ctx context.Context, resourceType,
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
-		return err
-	}
-
-	if err := p.deleteIfExists(ctx, filePath); err != nil {
 		return err
 	}
 

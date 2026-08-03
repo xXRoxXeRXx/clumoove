@@ -340,3 +340,38 @@ func TestHiDriveProviderDownloadUploadDeleteRename(t *testing.T) {
 		t.Fatalf("DeleteFile failed: %v", err)
 	}
 }
+
+func TestHiDriveProviderUploadDoesNotPreflightOrDeleteExistingFile(t *testing.T) {
+	var metaRequests, deleteRequests int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/meta":
+			metaRequests++
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/file":
+			switch r.Method {
+			case http.MethodDelete:
+				deleteRequests++
+				w.WriteHeader(http.StatusNoContent)
+			case http.MethodPost:
+				// POST /file is create-only according to the HiDrive API.
+				w.WriteHeader(http.StatusConflict)
+			default:
+				w.WriteHeader(http.StatusMethodNotAllowed)
+			}
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	p, _ := NewHiDriveProvider("mock-token")
+	p.BaseURL = ts.URL
+	err := p.StreamUpload(context.Background(), "files", "/already-there.txt", bytes.NewReader([]byte("new")), 3)
+	if err == nil {
+		t.Fatal("StreamUpload succeeded despite HiDrive create conflict")
+	}
+	if metaRequests != 0 || deleteRequests != 0 {
+		t.Fatalf("upload made preflight requests: meta=%d delete=%d", metaRequests, deleteRequests)
+	}
+}

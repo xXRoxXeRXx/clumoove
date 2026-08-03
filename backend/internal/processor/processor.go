@@ -833,7 +833,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		// network query (PROPFIND/HEAD) since the file will be overwritten regardless.
 		deleteAfterUpload = true
 	} else {
-		exists, existingSize, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
+		exists, _, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 		if err != nil {
 			return fmt.Errorf("failed to check if target file exists: %w", err)
 		}
@@ -857,9 +857,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			} else {
 				switch mig.ConflictStrategy {
 				case "SKIP":
-					if task.Attempts > 0 {
-						deleteAfterUpload = true
-					} else if exists && task.FileSize == existingSize {
+					// An existing target must never be overwritten under SKIP,
+					// including after a create-only HiDrive POST reports a race.
+					if exists {
 						task.Status = "SKIPPED"
 						task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
 						if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); err != nil {
@@ -867,7 +867,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 						}
 						return nil
 					}
-					deleteAfterUpload = true
 
 				case "RENAME":
 					// Generate new target name
