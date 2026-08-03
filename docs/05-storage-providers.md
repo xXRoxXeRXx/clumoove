@@ -144,6 +144,8 @@ This applies to migrations and sync passes. HiDrive-to-HiDrive transfers compare
 target `chash` values directly. For a non-HiDrive source, the worker-generated HiDrive hash is used instead
 of falling back to a size-only comparison.
 
+QuickXor hashes are base64 values and remain case-sensitive when normalised for comparison.
+
 The `Local` option appears in the UI **only** when `LOCAL_STORAGE_ROOT` is configured (`local_storage_enabled`
 in `GET /api/settings`). `NewProvider("local")` returns an error if the variable is unset or not a
 directory. `LOCAL_STORAGE_ROOT` must be set on **both** the api-backend and the worker (the worker
@@ -210,7 +212,7 @@ construction-time check and the per-connection check agree.
 
 ## 5. Hash Parsing
 
-`ParseHashString` in `backend/internal/storage/nextcloud.go` extracts the algorithm + clean hash from provider hash strings (e.g.
+`ParseHashString` in `backend/internal/storage/hash.go` extracts the algorithm + clean hash from provider hash strings (e.g.
 `SHA1:abc123`, `MD5:…`, `SHA256:…`, `HIDRIVE:…`). The processor selects the per-provider hasher accordingly and only
 computes a second (target) hasher when algorithms differ (CPU optimization).
 

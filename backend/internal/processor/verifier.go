@@ -30,9 +30,9 @@ func isComparableHash(algo string) bool {
 }
 
 // bestSourceHash selects the best available source hash for checksum verification.
-// Provider metadata describes the indexed source object, while WorkerHash only
-// describes bytes observed during the transfer; therefore a cryptographic
-// SourceHash is the stronger reference when both are available.
+// Provider metadata describes the indexed source object. WorkerHash describes
+// bytes observed during transfer and can use the target's native algorithm, so
+// the verifier promotes it only when that algorithm matches the target hash.
 func bestSourceHash(task *db.Task) string {
 	workerHash := ""
 	if task.WorkerHash.Valid {
@@ -367,9 +367,8 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				if errHash == nil && targetHash != "" {
 					targetAlgo, cleanTarget := storage.ParseHashString(targetHash)
 					srcHash := bestSourceHash(task)
-					// For a HiDrive target the streaming worker calculated the same
-					// hierarchical chash. Prefer it over a differently-algorithmed
-					// source provider hash so this is a real checksum comparison.
+					// Prefer a streaming hash calculated in the target's native
+					// algorithm over a differently-algorithmed source provider hash.
 					if task.WorkerHash.Valid {
 						workerAlgo, _ := storage.ParseHashString(task.WorkerHash.String)
 						sourceAlgo, _ := storage.ParseHashString(srcHash)

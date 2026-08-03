@@ -184,9 +184,11 @@ For each task:
 
 ### Integrity verification
 
-- A `io.TeeReader` computes the source-side hash while streaming (`SHA1` default; `MD5`, `SHA256`, or
-  `DROPBOX` per provider). For a HiDrive target, `storage.NewHiDriveHasher` simultaneously computes the
-  native hierarchical `HIDRIVE` `chash`; the verifier compares it to the target's server-side `chash`.
+- A `io.TeeReader` computes provider-specific hashes while streaming (`SHA1` default; `MD5`, `SHA256`,
+  `DROPBOX`, or `QUICKXOR` per provider). For a target using a different native algorithm, its streaming
+  hash is retained: `storage.NewHiDriveHasher` computes HiDrive's hierarchical `HIDRIVE` `chash`, and
+  `storage.NewQuickXorHasher` computes OneDrive's `QUICKXOR`; the verifier compares either to the
+  target's server-side hash.
   The target hash is queried after upload (retried 3× against transient
   Nextcloud errors).
 - When hashes can't be compared (algorithm mismatch, WebDAV, dynamic sizes), the system falls back to

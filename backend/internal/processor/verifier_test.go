@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"testing"
@@ -10,6 +11,14 @@ import (
 	"backend/internal/db"
 	"backend/internal/storage"
 )
+
+func TestFormatWorkerHashValueUsesQuickXorBase64(t *testing.T) {
+	h := storage.NewQuickXorHasher()
+	_, _ = h.Write([]byte("quickxor"))
+	if got, want := formatWorkerHashValue("QUICKXOR", h), base64.StdEncoding.EncodeToString(h.Sum(nil)); got != want {
+		t.Fatalf("formatWorkerHashValue() = %q, want %q", got, want)
+	}
+}
 
 type verifierProvider struct {
 	fakeProvider

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"crypto/sha1"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -15,6 +16,19 @@ func TestHiDriveHasherDocumentationVector(t *testing.T) {
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != "09f077820a8a41f34a639f2172f1133b1eafe4e6" {
 		t.Fatalf("chash = %s", got)
+	}
+}
+
+func TestHiDriveHasherFinalizesCarryLevelsAddedDuringSum(t *testing.T) {
+	// 255 full L1 slots plus one incomplete L0 slot. Finalising that slot
+	// fills L1 and creates L2, which Sum must also visit.
+	h := &HiDriveHasher{}
+	node := sha1.Sum([]byte("block"))
+	for i := 0; i < 255*256+1; i++ {
+		h.add(0, node)
+	}
+	if got := h.Sum(nil); string(got) == string(make([]byte, sha1.Size)) {
+		t.Fatal("chash is zero after final carry propagation")
 	}
 }
 

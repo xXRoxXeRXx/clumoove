@@ -23,7 +23,13 @@ func ParseHashString(hashStr string) (string, string) {
 		case "QUICKXOR", "QUICKXORHASH":
 			algo = "QUICKXOR"
 		}
-		return algo, strings.ToLower(parts[1])
+		// Provider hashes are conventionally hex and case-insensitive, except
+		// QuickXor, which Microsoft Graph returns as case-sensitive base64.
+		hashValue := parts[1]
+		if algo != "QUICKXOR" {
+			hashValue = strings.ToLower(hashValue)
+		}
+		return algo, hashValue
 	}
 
 	if hexRegexp.MatchString(hashStr) {

@@ -93,13 +93,17 @@ func (h *HiDriveHasher) Sum(b []byte) []byte {
 		clone.commitBlock()
 	}
 	checksum := [sha1.Size]byte{}
-	for i := range clone.levels {
+	// add may create a new parent level while finalising an incomplete child
+	// level. Use an index loop so that newly created levels are finalised too.
+	for i := 0; i < len(clone.levels); i++ {
 		l := &clone.levels[i]
 		if i < len(clone.levels)-1 {
 			if l.count > 0 {
 				node := l.sum
+				// Clear before add: add can append and reallocate levels, which
+				// would otherwise leave l pointing at the old backing array.
+				clone.levels[i] = hiDriveHashLevel{}
 				clone.add(i+1, node)
-				*l = hiDriveHashLevel{}
 			}
 		} else if l.count > 1 {
 			checksum = l.sum

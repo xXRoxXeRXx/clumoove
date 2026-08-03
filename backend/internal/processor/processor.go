@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,14 @@ import (
 	"backend/internal/storage"
 	"backend/internal/throttle"
 )
+
+func formatWorkerHashValue(algo string, hasher hash.Hash) string {
+	sum := hasher.Sum(nil)
+	if algo == "QUICKXOR" {
+		return base64.StdEncoding.EncodeToString(sum)
+	}
+	return fmt.Sprintf("%x", sum)
+}
 
 type activeTaskInfo struct {
 	migrationID string
@@ -1194,8 +1203,16 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// the transfer phase for maximum speed. Full checksum verification is performed
 	// post-transfer by the Verifier daemon.
 	if task.ResourceType == "files" {
-		workerSourceHashVal := fmt.Sprintf("%x", sourceHasher.Sum(nil))
-		workerHash := fmt.Sprintf("%s:%s", sourceAlgo, workerSourceHashVal)
+		workerHashAlgo := sourceAlgo
+		workerHashVal := formatWorkerHashValue(sourceAlgo, sourceHasher)
+		// When source and target use different algorithms, retain the hash
+		// calculated for the bytes written to the target. The verifier promotes
+		// this value when it matches the target provider's native algorithm.
+		if targetHasher != nil {
+			workerHashAlgo = targetAlgo
+			workerHashVal = formatWorkerHashValue(targetAlgo, targetHasher)
+		}
+		workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, workerHashVal)
 		task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 		task.TargetHash = sql.NullString{String: workerHash, Valid: true}
 	} else {

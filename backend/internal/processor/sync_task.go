@@ -321,6 +321,10 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if srcProvider == "dropbox" {
 		sourceAlgo = "DROPBOX"
+	} else if srcProvider == "google" {
+		sourceAlgo = "MD5"
+	} else if srcProvider == "onedrive" {
+		sourceAlgo = "QUICKXOR"
 	}
 
 	if sourceAlgo == "MD5" {
@@ -329,6 +333,8 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		sourceHasher = storage.NewDropboxHasher()
 	} else if sourceAlgo == "SHA256" {
 		sourceHasher = sha256.New()
+	} else if sourceAlgo == "QUICKXOR" {
+		sourceHasher = storage.NewQuickXorHasher()
 	} else {
 		sourceHasher = sha1.New()
 		sourceAlgo = "SHA1"
@@ -342,9 +348,15 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	} else if tgtProvider == "s3" {
 		targetAlgo = "SHA256"
 		targetHasher = sha256.New()
+	} else if tgtProvider == "google" {
+		targetAlgo = "MD5"
+		targetHasher = md5.New()
 	} else if tgtProvider == "hidrive" {
 		targetAlgo = "HIDRIVE"
 		targetHasher = storage.NewHiDriveHasher()
+	} else if tgtProvider == "onedrive" {
+		targetAlgo = "QUICKXOR"
+		targetHasher = storage.NewQuickXorHasher()
 	} else {
 		targetAlgo = "SHA1"
 		targetHasher = sha1.New()
@@ -495,11 +507,15 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	// Stream Hash Registration & Fast Task Completion
 	var finalTargetHashVal string
 	if targetHasher != nil {
-		finalTargetHashVal = fmt.Sprintf("%x", targetHasher.Sum(nil))
+		finalTargetHashVal = formatWorkerHashValue(targetAlgo, targetHasher)
 	} else if sourceHasher != nil {
-		finalTargetHashVal = fmt.Sprintf("%x", sourceHasher.Sum(nil))
+		finalTargetHashVal = formatWorkerHashValue(sourceAlgo, sourceHasher)
 	}
-	workerHash := fmt.Sprintf("%s:%s", sourceAlgo, finalTargetHashVal)
+	workerHashAlgo := sourceAlgo
+	if targetHasher != nil {
+		workerHashAlgo = targetAlgo
+	}
+	workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, finalTargetHashVal)
 
 	// Success
 	task.Status = "COMPLETED"
