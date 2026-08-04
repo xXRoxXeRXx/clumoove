@@ -419,6 +419,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (migrations verification_lease_until): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS failed_retry_done BOOLEAN NOT NULL DEFAULT FALSE`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations failed_retry_done): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS schedules (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -434,6 +438,17 @@ func InitDB(connStr string) (*sql.DB, error) {
 			)`)
 			if err != nil {
 				log.Printf("Failed schema migration (schedules): %v\n", err)
+			}
+
+			// Add task_type CHECK constraint idempotently (missing from the original CREATE TABLE).
+			_, err = db.Exec(`DO $$ BEGIN
+				IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'schedules'::regclass AND conname = 'chk_schedules_task_type') THEN
+					ALTER TABLE schedules ADD CONSTRAINT chk_schedules_task_type
+						CHECK (task_type IN ('migration', 'sync', 'backup'));
+				END IF;
+			END $$`)
+			if err != nil {
+				log.Printf("Failed schema migration (schedules task_type constraint): %v\n", err)
 			}
 
 			// Sync schedules are duration-based. Clear legacy cron expressions so
@@ -707,9 +722,16 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (notification_events old migration uniqueness): %v\n", err)
 			}
-			_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_migration_generation ON notification_events(migration_id, run_generation)`)
+			// Partial unique indexes replace the old table-level UNIQUE (sync_job_id, run_at).
+			// NULL != NULL in SQL unique constraints, so the table constraint was toothless
+			// for migration-kind rows where sync_job_id IS NULL. Partial indexes are precise.
+			_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_migration_uniq ON notification_events(migration_id, run_generation) WHERE migration_id IS NOT NULL`)
 			if err != nil {
-				log.Printf("Failed schema migration (notification_events migration generation uniqueness): %v\n", err)
+				log.Printf("Failed schema migration (notification_events migration uniqueness): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_sync_uniq ON notification_events(sync_job_id, run_at) WHERE sync_job_id IS NOT NULL`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_events sync uniqueness): %v\n", err)
 			}
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS notification_deliveries (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), event_id UUID NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
@@ -724,6 +746,13 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_notification_deliveries_pending ON notification_deliveries(state, next_retry_at)`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_notification_deliveries_pending): %v\n", err)
+			}
+			// notification_deliveries has an updated_at column: add the trigger that was
+			// missing from the original schema so every UPDATE reflects actual modification time.
+			_, err = db.Exec(`DROP TRIGGER IF EXISTS update_notification_deliveries_updated_at ON notification_deliveries;
+				CREATE TRIGGER update_notification_deliveries_updated_at BEFORE UPDATE ON notification_deliveries FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_deliveries trigger): %v\n", err)
 			}
 
 			if schemaErr != nil {

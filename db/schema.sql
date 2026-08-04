@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE, -- forced rotation on first login
     avatar BYTEA,
     avatar_mime TEXT,
-    totp_secret_encrypted TEXT,
+    totp_secret_enc TEXT,
     totp_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     totp_backup_codes JSONB,
     totp_failed_attempts INTEGER NOT NULL DEFAULT 0,
@@ -46,10 +46,10 @@ CREATE TABLE IF NOT EXISTS settings (
 -- Table for Migrations (Main Jobs)
 CREATE TABLE IF NOT EXISTS migrations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    source_url TEXT NOT NULL,
-    source_username TEXT NOT NULL,
-    source_password_encrypted TEXT NOT NULL,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_url TEXT NOT NULL DEFAULT '',
+    source_username TEXT NOT NULL DEFAULT '',
+    source_password_encrypted TEXT NOT NULL DEFAULT '',
     source_refresh_token_encrypted TEXT,
     source_token_expires_at TIMESTAMP WITH TIME ZONE,
     target_url TEXT NOT NULL,
@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
     verification_generation INT NOT NULL DEFAULT 0,
     verification_lease_until TIMESTAMP WITH TIME ZONE,
+    failed_retry_done BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -147,7 +148,9 @@ CREATE TABLE IF NOT EXISTS schedules (
 );
 
 -- Sync schedules use interval_minutes from their linked sync job, never cron.
--- Also cleans databases initialized from an older schema revision.
+-- NOTE: The UPDATE below is a one-time data migration. It is safe to re-apply
+-- (idempotent) but should not be executed against a live database that was
+-- already cleaned up. In production the equivalent runs inside InitDB().
 UPDATE schedules
 SET cron_expression = NULL
 WHERE task_type = 'sync' AND cron_expression IS NOT NULL;
@@ -215,11 +218,11 @@ CREATE TABLE IF NOT EXISTS email_change_tokens (
 
 -- Per-folder indexing errors (resilient indexing: skipped folders are recorded, not fatal)
 CREATE TABLE IF NOT EXISTS indexing_errors (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id BIGSERIAL PRIMARY KEY,
     migration_id UUID NOT NULL REFERENCES migrations(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
     resource_type TEXT NOT NULL DEFAULT 'files',
-    error_message TEXT NOT NULL,
+    error_message TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -228,15 +231,15 @@ CREATE INDEX IF NOT EXISTS idx_indexing_errors_migration_id ON indexing_errors(m
 -- Audit Log: immutable, instance-wide record of security-relevant events.
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
-    user_id UUID,                  -- actor (NULL for failed logins)
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,  -- actor (NULL for failed logins)
     action  TEXT NOT NULL,
-    target  TEXT,                  -- migration_id / user_id / email / setting key
-    ip      TEXT,
+    target  TEXT NOT NULL DEFAULT '',  -- migration_id / user_id / email / setting key
+    ip      TEXT NOT NULL DEFAULT '',
     details JSONB,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
 CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id);
 
@@ -246,12 +249,12 @@ CREATE TABLE IF NOT EXISTS connection_profiles (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     provider TEXT NOT NULL,
-    url TEXT,
-    username TEXT,
-    password_encrypted TEXT,
-    refresh_token_encrypted TEXT,
+    url TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL DEFAULT '',
+    password_encrypted TEXT NOT NULL DEFAULT '',
+    refresh_token_encrypted TEXT NOT NULL DEFAULT '',
     token_expires_at TIMESTAMP WITH TIME ZONE,
-    oauth_user TEXT,
+    oauth_user TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, name)
@@ -362,10 +365,14 @@ CREATE INDEX IF NOT EXISTS idx_tasks_wait_conflict_copy
 
 -- Multi-channel completion notification outbox (after migrations and sync_jobs).
 CREATE TABLE IF NOT EXISTS notification_channels (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('email','gotify','ntfy','telegram','discord')), enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    config_encrypted TEXT NOT NULL, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (user_id, type)
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK (type IN ('email','gotify','ntfy','telegram','discord')),
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    config_encrypted TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, type)
 );
 CREATE INDEX IF NOT EXISTS idx_notification_channels_user ON notification_channels(user_id);
 
@@ -378,27 +385,61 @@ BEGIN
         DROP TABLE user_smtp_settings;
     END IF;
 END $$;
+
 CREATE TABLE IF NOT EXISTS notification_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('migration','sync')), migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE, run_generation INT NOT NULL DEFAULT 0,
-    sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE, run_at TIMESTAMP WITH TIME ZONE NOT NULL, payload JSONB NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('migration','sync')),
+    migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE,
+    run_generation INT NOT NULL DEFAULT 0,
+    sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE,
+    run_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    payload JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK ((kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL AND migration_id IS NULL)),
-    UNIQUE (sync_job_id, run_at)
+    -- XOR: exactly one of migration_id / sync_job_id must be set
+    CHECK (
+        (kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL) OR
+        (kind = 'sync'      AND sync_job_id  IS NOT NULL AND migration_id IS NULL)
+    )
 );
+
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS notification_generation INT NOT NULL DEFAULT 0;
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_generation INT NOT NULL DEFAULT 0;
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_lease_until TIMESTAMP WITH TIME ZONE;
 ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_migration_id_key;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_migration_generation ON notification_events(migration_id, run_generation);
+
+-- Partial unique indexes replace the old table-level UNIQUE (sync_job_id, run_at).
+-- NULL != NULL in SQL unique constraints, so the table constraint was toothless
+-- for migration-kind rows where sync_job_id IS NULL. Partial indexes are precise.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_migration_uniq
+    ON notification_events(migration_id, run_generation)
+    WHERE migration_id IS NOT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_sync_uniq
+    ON notification_events(sync_job_id, run_at)
+    WHERE sync_job_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS notification_deliveries (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), event_id UUID NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
-    channel_type TEXT NOT NULL CHECK (channel_type IN ('email','gotify','ntfy','telegram','discord')), config_encrypted TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','RUNNING','SENT','FAILED')), attempts INT NOT NULL DEFAULT 0,
-    next_retry_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, last_error_code TEXT, sent_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
+    channel_type TEXT NOT NULL CHECK (channel_type IN ('email','gotify','ntfy','telegram','discord')),
+    config_encrypted TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','RUNNING','SENT','FAILED')),
+    attempts INT NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_error_code TEXT,
+    sent_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (event_id, channel_type)
 );
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_pending ON notification_deliveries(state, next_retry_at);
+
+-- notification_deliveries has an updated_at column but no trigger was originally
+-- added. Add it here so every UPDATE reflects the actual modification time.
+CREATE OR REPLACE TRIGGER update_notification_deliveries_updated_at
+    BEFORE UPDATE ON notification_deliveries
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 

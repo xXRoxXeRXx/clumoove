@@ -160,6 +160,14 @@ func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
 	}
 
 	for _, id := range ids {
+		requeued, err := db.MaybeRetryFailedMigrationTasks(p.db, ctx, id)
+		if err != nil {
+			log.Printf("[ProgressReconciler] error checking failed tasks retry for migration %s: %v\n", id, err)
+		}
+		if requeued {
+			p.queue.NotifyTaskAvailable(ctx, p.db)
+			continue
+		}
 		if err := db.ReconcileMigrationProgress(p.db, id); err != nil {
 			log.Printf("[ProgressReconciler] error reconciling migration %s: %v\n", id, err)
 		}

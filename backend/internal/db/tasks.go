@@ -476,6 +476,7 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 		    processed_bytes = processed_bytes - $2,
 		    live_bytes = processed_bytes,
 		    notification_generation = notification_generation + 1,
+		    failed_retry_done = FALSE,
 		    status = 'RUNNING',
 		    error_message = NULL,
 		    updated_at = CURRENT_TIMESTAMP

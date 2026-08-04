@@ -394,7 +394,7 @@ func claimSucceeded(rowsAffected int64) bool {
 func TransitionMigrationIndexingToRunning(db *sql.DB, id string) error {
 	query := `
 		UPDATE migrations
-		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP
+		SET status = 'RUNNING', failed_retry_done = FALSE, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status = 'INDEXING'
 	`
 	result, err := db.Exec(query, id)
@@ -412,6 +412,64 @@ func TransitionMigrationIndexingToRunning(db *sql.DB, id string) error {
 	// only for terminal migration states.
 	return nil
 }
+
+// MaybeRetryFailedMigrationTasks performs a single-shot final retry for terminally
+// failed tasks (status = 'FAILED' AND next_retry_at IS NULL) before the migration
+// transitions to verification or completion. Returns true if tasks were requeued.
+func MaybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID string) (bool, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+
+	// Atomically claim the final retry phase for this RUNNING migration if terminally failed tasks exist.
+	claimQuery := `
+		UPDATE migrations
+		SET failed_retry_done = TRUE, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'RUNNING' AND failed_retry_done = FALSE
+		  AND EXISTS (
+			SELECT 1 FROM tasks t
+			WHERE t.migration_id = migrations.id
+			  AND t.status = 'FAILED'
+			  AND t.next_retry_at IS NULL
+		  )
+	`
+	res, err := tx.ExecContext(ctx, claimQuery, migrationID)
+	if err != nil {
+		return false, fmt.Errorf("failed to claim final retry for migration %s: %w", migrationID, err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rowsAffected == 0 {
+		return false, nil
+	}
+
+	// Reset terminally failed tasks to PENDING.
+	updateTasksQuery := `
+		UPDATE tasks
+		SET status = 'PENDING',
+		    attempts = 0,
+		    next_retry_at = NULL,
+		    worker_hash = NULL,
+		    error_message = NULL,
+		    checksum_verified = FALSE,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE migration_id = $1 AND status = 'FAILED' AND next_retry_at IS NULL
+	`
+	_, err = tx.ExecContext(ctx, updateTasksQuery, migrationID)
+	if err != nil {
+		return false, fmt.Errorf("failed to requeue terminally failed tasks for migration %s: %w", migrationID, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("failed to commit final retry transaction for migration %s: %w", migrationID, err)
+	}
+	return true, nil
+}
+
 
 // TransitionMigrationIndexingToCompleted completes an empty migration without
 // allowing an indexer that lost its lifecycle claim to overwrite cancellation.
