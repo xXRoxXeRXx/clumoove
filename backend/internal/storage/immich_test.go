@@ -3,11 +3,14 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -21,7 +24,7 @@ func TestNewImmichProviderNormalizesAPIBase(t *testing.T) {
 	if p.BaseURL != "https://photos.example.test/immich/api" {
 		t.Errorf("BaseURL = %q", p.BaseURL)
 	}
-	if !p.UsesNativeDuplicateDetection() || p.SupportsAtomicRename() {
+	if !p.UsesNativeDuplicateDetection() || p.SupportsAtomicRename() || p.VerificationMode() != VerificationCryptographicHash {
 		t.Error("Immich capabilities are incorrect")
 	}
 }
@@ -31,11 +34,89 @@ func TestImmichUnsupportedOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.GetFileHash(context.Background(), "files", "/asset"); !errors.Is(err, ErrHashNotSupported) {
-		t.Errorf("GetFileHash() error = %v, want ErrHashNotSupported", err)
+	if _, err := p.GetFileHash(context.Background(), "files", "/asset"); !errors.Is(err, ErrChecksumNotAvailable) {
+		t.Errorf("GetFileHash() error = %v, want ErrChecksumNotAvailable", err)
 	}
 	if err := p.DeleteFile(context.Background(), "files", "/asset"); err == nil {
 		t.Error("DeleteFile() unexpectedly succeeded")
+	}
+}
+
+func TestSetImmichTargetAssetIDPreservesSourceMetadata(t *testing.T) {
+	meta := FileMetadata{CustomProps: map[string]string{
+		"immich_asset_id":   "source-asset",
+		"immich_album_name": "Holiday",
+	}}
+	SetImmichTargetAssetID(&meta, "target-asset")
+	if meta.CustomProps["immich_asset_id"] != "source-asset" || meta.CustomProps["immich_album_name"] != "Holiday" {
+		t.Fatalf("source metadata was changed: %#v", meta.CustomProps)
+	}
+	if meta.CustomProps["immich_target_asset_id"] != "target-asset" {
+		t.Fatalf("target asset ID = %q", meta.CustomProps["immich_target_asset_id"])
+	}
+}
+
+func TestImmichVerificationUsesPersistedTargetAssetID(t *testing.T) {
+	checksum := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xab}, sha1.Size))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/assets/target-asset" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if r.Header.Get("x-api-key") != "test-key" {
+			t.Errorf("x-api-key = %q", r.Header.Get("x-api-key"))
+		}
+		w.Header().Set("ETag", `"not-a-checksum"`)
+		_, _ = w.Write([]byte(`{"id":"target-asset","checksum":"` + checksum + `","exifInfo":{"fileSizeInByte":123}}`))
+	}))
+	defer server.Close()
+
+	p := &ImmichProvider{BaseURL: server.URL + "/api", APIKey: "test-key", HTTPClient: server.Client()}
+	ctx := WithTargetResourceID(context.Background(), "target-asset")
+	hash, err := p.GetFileHash(ctx, "files", "/album/photo.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "SHA1:" + strings.Repeat("ab", sha1.Size); hash != want {
+		t.Fatalf("GetFileHash() = %q, want %q", hash, want)
+	}
+	exists, size, err := p.FileExists(ctx, "files", "/album/photo.jpg")
+	if err != nil || !exists || size != 123 {
+		t.Fatalf("FileExists() = (%v, %d, %v)", exists, size, err)
+	}
+}
+
+func TestImmichVerificationAssetLookupEdgeCases(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		response   string
+		status     int
+		wantExists bool
+		wantErr    error
+	}{
+		{name: "missing asset", status: http.StatusNotFound, wantExists: false},
+		{name: "invalid checksum", status: http.StatusOK, response: `{"id":"asset","checksum":"invalid","exifInfo":{"fileSizeInByte":1}}`, wantExists: true, wantErr: ErrChecksumNotAvailable},
+		{name: "trashed asset", status: http.StatusOK, response: `{"id":"asset","isTrashed":true,"checksum":"` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{1}, sha1.Size)) + `","exifInfo":{"fileSizeInByte":1}}`, wantExists: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.response))
+			}))
+			defer server.Close()
+			p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
+			ctx := WithTargetResourceID(context.Background(), "asset")
+			exists, _, err := p.FileExists(ctx, "files", "/ignored")
+			if err != nil || exists != tc.wantExists {
+				t.Fatalf("FileExists() = (%v, _, %v), want (%v, _, nil)", exists, err, tc.wantExists)
+			}
+			_, err = p.GetFileHash(ctx, "files", "/ignored")
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("GetFileHash() error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.status == http.StatusNotFound && !errors.Is(err, ErrNotFound) {
+				t.Fatalf("GetFileHash() error = %v, want ErrNotFound", err)
+			}
+		})
 	}
 }
 
@@ -70,15 +151,20 @@ func TestImmichStreamUploadChunkedLeavesProgressChannelOpen(t *testing.T) {
 			t.Errorf("ParseMultipartForm() error = %v", err)
 		}
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"id":"asset-id"}`))
+		_, _ = w.Write([]byte(`{"id":"asset-id","status":"created"}`))
 	}))
 	defer server.Close()
 
 	p := &ImmichProvider{BaseURL: server.URL, APIKey: "key", HTTPClient: server.Client()}
 	progress := make(chan int64, 16)
 	const largeFileSize = 50*1024*1024 + 1 // processor's chunked-upload threshold plus one byte
-	if err := p.StreamUploadChunked(context.Background(), "files", "/large.jpg", bytes.NewReader([]byte("asset bytes")), largeFileSize, progress); err != nil {
+	receipt := &UploadReceipt{}
+	ctx := WithUploadReceipt(context.Background(), receipt)
+	if err := p.StreamUploadChunked(ctx, "files", "/large.jpg", bytes.NewReader([]byte("asset bytes")), largeFileSize, progress); err != nil {
 		t.Fatalf("StreamUploadChunked() error = %v", err)
+	}
+	if receipt.TargetResourceID != "asset-id" {
+		t.Fatalf("receipt target resource ID = %q", receipt.TargetResourceID)
 	}
 
 	// Progress channel lifecycle belongs to the caller. This would panic if the
@@ -90,6 +176,41 @@ func TestImmichStreamUploadChunkedLeavesProgressChannelOpen(t *testing.T) {
 	}
 	if reported != int64(len("asset bytes")) {
 		t.Errorf("reported progress = %d, want %d", reported, len("asset bytes"))
+	}
+}
+
+func TestImmichStreamUploadDuplicateDoesNotPopulateReceipt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"existing-asset","status":"duplicate"}`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
+	receipt := &UploadReceipt{}
+	err := p.StreamUpload(WithUploadReceipt(context.Background(), receipt), "files", "/photo.jpg", bytes.NewReader([]byte("bytes")), 5)
+	if !errors.Is(err, ErrNativeDuplicate) {
+		t.Fatalf("StreamUpload() error = %v, want ErrNativeDuplicate", err)
+	}
+	if receipt.TargetResourceID != "" {
+		t.Fatalf("duplicate upload populated receipt with %q", receipt.TargetResourceID)
+	}
+}
+
+func TestImmichStreamUploadChunkedDuplicateDoesNotPopulateReceipt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"existing-asset","status":"duplicate"}`))
+	}))
+	defer server.Close()
+	p := &ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client(), albums: map[string]string{}, albumIDs: map[string]string{}}
+	receipt := &UploadReceipt{}
+	progress := make(chan int64, 1)
+	err := p.StreamUploadChunked(WithUploadReceipt(context.Background(), receipt), "files", "/photo.jpg", bytes.NewReader([]byte("bytes")), 5, progress)
+	if !errors.Is(err, ErrNativeDuplicate) {
+		t.Fatalf("StreamUploadChunked() error = %v, want ErrNativeDuplicate", err)
+	}
+	if receipt.TargetResourceID != "" {
+		t.Fatalf("duplicate upload populated receipt with %q", receipt.TargetResourceID)
 	}
 }
 

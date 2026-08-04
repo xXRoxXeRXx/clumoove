@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -44,7 +45,7 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 
 func (p *ImmichProvider) Close() error                       { p.HTTPClient.CloseIdleConnections(); return nil }
 func (p *ImmichProvider) SupportsAtomicRename() bool         { return false }
-func (p *ImmichProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+func (p *ImmichProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
 func (p *ImmichProvider) UsesNativeDuplicateDetection() bool { return true }
 func (p *ImmichProvider) checkType(t string) error {
 	if t != "files" {
@@ -110,10 +111,36 @@ type immichAlbum struct {
 func parseImmichTime(s string) time.Time { t, _ := time.Parse(time.RFC3339, s); return t }
 func immichHash(encoded string) string {
 	b, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
+	if err != nil || len(b) != sha1.Size {
 		return ""
 	}
 	return "SHA1:" + fmt.Sprintf("%x", b)
+}
+
+func (p *ImmichProvider) lookupVerificationAsset(ctx context.Context, typ string) (immichAsset, bool, error) {
+	if err := p.checkType(typ); err != nil {
+		return immichAsset{}, false, err
+	}
+	assetID, ok := TargetResourceIDFromContext(ctx)
+	if !ok {
+		return immichAsset{}, false, fmt.Errorf("immich target asset ID unavailable for verification")
+	}
+	r, err := p.request(ctx, http.MethodGet, "/assets/"+url.PathEscape(assetID), nil)
+	if err != nil {
+		return immichAsset{}, false, err
+	}
+	defer r.Body.Close()
+	if r.StatusCode == http.StatusNotFound {
+		return immichAsset{}, false, nil
+	}
+	if r.StatusCode != http.StatusOK {
+		return immichAsset{}, false, immichStatus(r, "get asset")
+	}
+	var asset immichAsset
+	if err := json.NewDecoder(r.Body).Decode(&asset); err != nil {
+		return immichAsset{}, false, err
+	}
+	return asset, true, nil
 }
 func resourceForAsset(a immichAsset, virtualPath, albumID, albumName string) CloudResource {
 	props := map[string]string{"immich_asset_id": a.ID, "immich_filename": a.OriginalFileName, "immich_mime_type": a.OriginalMimeType, "immich_file_created_at": a.FileCreatedAt, "immich_file_modified_at": a.FileModifiedAt}
@@ -391,18 +418,27 @@ func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string,
 		return immichStatus(r, "upload")
 	}
 	var asset struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
+		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&asset); err != nil {
 		return err
 	}
-	if asset.ID != "" {
-		if err := p.assignTargetAlbum(ctx, path.Dir(filePath), asset.ID); err != nil {
-			return err
-		}
+	asset.ID = strings.TrimSpace(asset.ID)
+	if asset.ID == "" {
+		return fmt.Errorf("immich upload response missing asset ID")
 	}
-	if r.StatusCode == 200 {
+	if r.StatusCode == http.StatusOK || asset.Status == "duplicate" {
 		return ErrNativeDuplicate
+	}
+	if asset.Status != "" && asset.Status != "created" {
+		return fmt.Errorf("immich upload returned unexpected status %q", asset.Status)
+	}
+	if err := p.assignTargetAlbum(ctx, path.Dir(filePath), asset.ID); err != nil {
+		return err
+	}
+	if receipt, ok := UploadReceiptFromContext(ctx); ok {
+		receipt.TargetResourceID = asset.ID
 	}
 	return nil
 }
@@ -454,14 +490,34 @@ func (p *ImmichProvider) assignTargetAlbum(ctx context.Context, dir, assetID str
 func (p *ImmichProvider) StreamUploadChunked(ctx context.Context, t, filePath string, stream io.Reader, size int64, progress chan<- int64) error {
 	return p.StreamUpload(ctx, t, filePath, &ProgressReader{Reader: stream, ProgressChan: progress}, size)
 }
-func (p *ImmichProvider) FileExists(context.Context, string, string) (bool, int64, error) {
-	return false, 0, nil
+func (p *ImmichProvider) FileExists(ctx context.Context, typ, _ string) (bool, int64, error) {
+	asset, found, err := p.lookupVerificationAsset(ctx, typ)
+	if err != nil || !found || asset.IsTrashed {
+		return false, 0, err
+	}
+	return true, asset.ExifInfo.FileSizeInByte, nil
 }
 func (p *ImmichProvider) DeleteFile(context.Context, string, string) error {
 	return errors.New("Immich does not support filename deletion")
 }
-func (p *ImmichProvider) GetFileHash(context.Context, string, string) (string, error) {
-	return "", ErrHashNotSupported
+func (p *ImmichProvider) GetFileHash(ctx context.Context, typ, _ string) (string, error) {
+	if err := p.checkType(typ); err != nil {
+		return "", err
+	}
+	if _, ok := TargetResourceIDFromContext(ctx); !ok {
+		return "", ErrChecksumNotAvailable
+	}
+	asset, found, err := p.lookupVerificationAsset(ctx, typ)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", ErrNotFound
+	}
+	if hash := immichHash(asset.Checksum); hash != "" {
+		return hash, nil
+	}
+	return "", ErrChecksumNotAvailable
 }
 func (p *ImmichProvider) CreateParentDirectories(context.Context, string, string) error { return nil }
 func (p *ImmichProvider) CreateDirectory(ctx context.Context, typ, dir string) error {

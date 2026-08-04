@@ -1112,6 +1112,12 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		_ = json.Unmarshal(task.Metadata, &transferMeta)
 	}
 	uploadCtx = storage.WithTransferMetadata(uploadCtx, transferMeta)
+	verificationCtx := ctx
+	var uploadReceipt *storage.UploadReceipt
+	if mig.TargetProvider == "immich" {
+		uploadReceipt = &storage.UploadReceipt{}
+		uploadCtx = storage.WithUploadReceipt(uploadCtx, uploadReceipt)
+	}
 	if sourceHashStr != "" && sourceAlgo != "ETAG" {
 		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
 	}
@@ -1156,6 +1162,21 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if err := sizedReader.VerifyComplete(); err != nil {
 		return err
 	}
+	if uploadReceipt != nil {
+		if uploadReceipt.TargetResourceID == "" {
+			return fmt.Errorf("immich upload completed without target asset ID")
+		}
+		storage.SetImmichTargetAssetID(&transferMeta, uploadReceipt.TargetResourceID)
+		metadata, err := json.Marshal(transferMeta)
+		if err != nil {
+			return fmt.Errorf("marshal immich target asset metadata: %w", err)
+		}
+		task.Metadata = metadata
+		if err := db.UpdateClaimedTaskMetadata(p.db, ctx, task.ID, task.ClaimEpoch, task.Metadata); err != nil {
+			return fmt.Errorf("persist immich target asset ID: %w", err)
+		}
+		verificationCtx = storage.WithTargetResourceID(ctx, uploadReceipt.TargetResourceID)
+	}
 
 	// OVERWRITE: now that the upload succeeded, promote the temp file without
 	// deleting the original first. A failed promotion restores the original.
@@ -1188,7 +1209,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}
 
 	if task.ResourceType == "files" {
-		exists, targetSize, err := verifyTargetSize(ctx, targetClient, task.ResourceType, targetPath)
+		exists, targetSize, err := verifyTargetSize(verificationCtx, targetClient, task.ResourceType, targetPath)
 		if err != nil {
 			return fmt.Errorf("failed to verify target size: %w", err)
 		}

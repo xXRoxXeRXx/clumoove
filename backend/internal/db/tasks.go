@@ -299,6 +299,22 @@ func UpdateClaimedTaskFilePath(db *sql.DB, ctx context.Context, taskID string, c
 	return nil
 }
 
+// UpdateClaimedTaskMetadata persists task metadata only while this exact
+// worker claim remains RUNNING. It prevents a recovered worker from attaching
+// target identity to a later transfer attempt.
+func UpdateClaimedTaskMetadata(db *sql.DB, ctx context.Context, taskID string, claimEpoch int64, metadata json.RawMessage) error {
+	res, err := db.ExecContext(ctx, `UPDATE tasks SET metadata = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND status = 'RUNNING' AND claim_epoch = $3`, metadata, taskID, claimEpoch)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // UpdateMigrationTaskAndProgress commits a fenced terminal task transition and
 // its migration counters together, so a crash cannot leave them divergent.
 func UpdateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, filesDelta int, bytesDelta int64, skippedDelta, failedDelta int, liveBytesDelta int64) error {

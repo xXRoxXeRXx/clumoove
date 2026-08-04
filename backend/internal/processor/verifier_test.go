@@ -1,11 +1,14 @@
 package processor
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"backend/internal/db"
@@ -144,6 +147,7 @@ func TestIsNonRetryableHashError(t *testing.T) {
 		{"nil error", nil, true},
 		{"sentinel ErrChecksumNotAvailable", storage.ErrChecksumNotAvailable, true},
 		{"sentinel ErrHashNotSupported", storage.ErrHashNotSupported, true},
+		{"ErrNotFound remains retryable", storage.ErrNotFound, false},
 		{"wrapped ErrChecksumNotAvailable", fmt.Errorf("provider error: %w", storage.ErrChecksumNotAvailable), true},
 		{"substring checksum not available", errors.New("webdav: checksum not available"), true},
 		{"substring hash not supported", errors.New("sftp: hash not supported for resource"), true},
@@ -364,6 +368,28 @@ func TestVerificationFallbackLeavesTaskUnverifiedWhenSizeQueryFails(t *testing.T
 	}
 }
 
+func TestVerificationRetriesNonImmichNotFoundHash(t *testing.T) {
+	provider := &verifierProvider{
+		hashErr: storage.ErrNotFound,
+		exists:  true,
+		size:    10,
+	}
+	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10}
+	verified := false
+	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType: "Migration", EntityID: "retry-not-found", TargetProvider: "nextcloud", Threads: 1, TargetClient: provider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+	})
+	if provider.hashCalls != 3 {
+		t.Fatalf("GetFileHash calls = %d, want 3", provider.hashCalls)
+	}
+	if !verified {
+		t.Fatal("non-Immich not-found hash fallback should verify the target size")
+	}
+}
+
 func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
 	var requestedPath string
 	provider := &verifierProvider{
@@ -413,6 +439,116 @@ func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
 	wantPath := "/Immich Alben/Albums/Vacation/sunset.jpg"
 	if requestedPath != wantPath {
 		t.Fatalf("verifier requested path %q, want %q", requestedPath, wantPath)
+	}
+}
+
+func TestVerificationPassImmichUsesPersistedTargetAssetID(t *testing.T) {
+	checksum := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0xab}, 20))
+	canonicalHash := "SHA1:" + "abababababababababababababababababababab"
+	for _, tc := range []struct {
+		name       string
+		status     int
+		checksum   string
+		sourceHash sql.NullString
+		workerHash sql.NullString
+		wantVerify bool
+		wantFail   bool
+		wantCalls  int
+	}{
+		{
+			name:       "sha1 match",
+			status:     http.StatusOK,
+			checksum:   checksum,
+			sourceHash: sql.NullString{String: canonicalHash, Valid: true},
+			wantVerify: true,
+			wantCalls:  1,
+		},
+		{
+			name:       "sha1 mismatch",
+			status:     http.StatusOK,
+			checksum:   checksum,
+			sourceHash: sql.NullString{String: "SHA1:0000000000000000000000000000000000000000", Valid: true},
+			wantFail:   true,
+			wantCalls:  1,
+		},
+		{
+			name:       "checksum unavailable uses size",
+			status:     http.StatusOK,
+			sourceHash: sql.NullString{String: canonicalHash, Valid: true},
+			wantVerify: true,
+			wantCalls:  2,
+		},
+		{
+			name:      "missing target asset mismatches",
+			status:    http.StatusNotFound,
+			wantFail:  true,
+			wantCalls: 2,
+		},
+		{
+			name:       "worker sha1 preferred over source md5",
+			status:     http.StatusOK,
+			checksum:   checksum,
+			sourceHash: sql.NullString{String: "MD5:source-md5", Valid: true},
+			workerHash: sql.NullString{String: canonicalHash, Valid: true},
+			wantVerify: true,
+			wantCalls:  1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.URL.Path != "/assets/target-asset" {
+					t.Errorf("request path = %q", r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				if tc.status == http.StatusOK {
+					_, _ = w.Write([]byte(`{"id":"target-asset","checksum":"` + tc.checksum + `","exifInfo":{"fileSizeInByte":10}}`))
+				}
+			}))
+			defer server.Close()
+
+			provider := &storage.ImmichProvider{BaseURL: server.URL, HTTPClient: server.Client()}
+			task := &db.Task{
+				ID:           "immich-task",
+				ResourceType: "files",
+				FilePath:     "/photo.jpg",
+				FileSize:     10,
+				Metadata:     []byte(`{"custom_props":{"immich_target_asset_id":"target-asset"}}`),
+				SourceHash:   tc.sourceHash,
+				WorkerHash:   tc.workerHash,
+			}
+			verified, failed := false, false
+			(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+				EntityType: "Migration", EntityID: tc.name, TargetProvider: "immich", Threads: 1, TargetClient: provider,
+				GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+				ReconcileProgress: func() error { return nil },
+				MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+				MarkMismatch:      func(context.Context, *db.Task) (bool, error) { failed = true; return true, nil },
+			})
+			if verified != tc.wantVerify || failed != tc.wantFail {
+				t.Fatalf("verified = %v, failed = %v; want %v, %v", verified, failed, tc.wantVerify, tc.wantFail)
+			}
+			if calls != tc.wantCalls {
+				t.Fatalf("Immich asset requests = %d, want %d", calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestVerificationPassImmichWithoutTargetAssetIDLeavesTaskUnverified(t *testing.T) {
+	provider := &verifierProvider{hash: "SHA1:target", exists: true, size: 10}
+	task := &db.Task{ID: "immich-task", ResourceType: "files", FilePath: "/photo.jpg", FileSize: 10, Metadata: []byte(`{"custom_props":{}}`)}
+	verified, failed := false, false
+	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType: "Migration", EntityID: "immich-missing-id", TargetProvider: "immich", Threads: 1, TargetClient: provider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+		MarkMismatch:      func(context.Context, *db.Task) (bool, error) { failed = true; return true, nil },
+	})
+	if verified || failed || provider.hashCalls != 0 || provider.fileExistsCalls != 0 {
+		t.Fatal("Immich task without a target asset ID must remain unverified without provider lookups")
 	}
 }
 

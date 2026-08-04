@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -344,6 +345,22 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				}
 
 				targetPath := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, cfg.TargetDir, cfg.SourceProvider, cfg.TargetProvider)
+				taskCtx := passCtx
+				if cfg.TargetProvider == "immich" {
+					var metadata storage.FileMetadata
+					if err := json.Unmarshal(task.Metadata, &metadata); err != nil {
+						log.Printf("[VERIFIER] Immich task %s has invalid metadata; leaving it unverified: %v\n", task.ID, err)
+						processedCount.Add(1)
+						continue
+					}
+					assetID := metadata.CustomProps["immich_target_asset_id"]
+					if strings.TrimSpace(assetID) == "" {
+						log.Printf("[VERIFIER] Immich task %s has no persisted target asset ID; leaving it unverified until retransfer.\n", task.ID)
+						processedCount.Add(1)
+						continue
+					}
+					taskCtx = storage.WithTargetResourceID(passCtx, assetID)
+				}
 
 				var targetHash string
 				var errHash error
@@ -364,7 +381,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						log.Printf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
 						return markVerified(task, targetHash)
 					}
-					exists, targetSize, sizeErr := verifyTargetSize(passCtx, targetClient, task.ResourceType, targetPath)
+					exists, targetSize, sizeErr := verifyTargetSize(taskCtx, targetClient, task.ResourceType, targetPath)
 					if sizeErr != nil {
 						if isDirErr(sizeErr) {
 							log.Printf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
@@ -397,11 +414,12 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					continue
 				}
 				for attempt := 0; attempt < 3; attempt++ {
-					taskCtx, taskCancel := context.WithTimeout(passCtx, 15*time.Second)
-					targetHash, errHash = targetClient.GetFileHash(taskCtx, task.ResourceType, targetPath)
+					hashCtx, taskCancel := context.WithTimeout(taskCtx, 15*time.Second)
+					targetHash, errHash = targetClient.GetFileHash(hashCtx, task.ResourceType, targetPath)
 					taskCancel()
 
-					if (errHash == nil && targetHash != "") || isNonRetryableHashError(errHash) {
+					if (errHash == nil && targetHash != "") || isNonRetryableHashError(errHash) ||
+						(cfg.TargetProvider == "immich" && errors.Is(errHash, storage.ErrNotFound)) {
 						break
 					}
 					if attempt < 2 {
@@ -432,7 +450,13 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						if isComparableHash(sourceAlgo) && isComparableHash(targetAlgo) && sourceAlgo == targetAlgo {
 							if cleanSource == cleanTarget {
 								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
-								_ = markVerifiedForFile(targetHash)
+								if cfg.TargetProvider == "immich" {
+									// A matching checksum from GET /assets/{id} already
+									// confirms the specific target asset exists.
+									_ = markVerified(task, targetHash)
+								} else {
+									_ = markVerifiedForFile(targetHash)
+								}
 							} else {
 								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)

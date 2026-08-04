@@ -104,7 +104,7 @@ time, description, tags, etc.) after a successful upload.
 | Nextcloud, MagentaCLOUD, WebDAV | `size_only` | ETags are not integrity evidence |
 | S3 | `size_only` | Multipart ETags are not comparable hashes |
 | SMB, SFTP, FTPS | `size_only` | No portable target-hash API |
-| Immich | `size_only` | No portable hash; its path-based size verification needs separate review |
+| Immich | `cryptographic_hash` | Asset `checksum` (Base64 SHA-1, normalized to `SHA1:<lowercase-hex>`) |
 
 ---
 
@@ -199,6 +199,8 @@ contacted). `GetFileHash` returns a `SHA1:` hash, enabling the standard 3-way ha
 Immich uses a server URL and API key sent as `x-api-key`; the key is stored in the encrypted password field and is never logged. No username is needed. The supplied URL may include the `/api` suffix; the provider normalizes it to the API base URL. It uses the stable v2 endpoint subset for API-key validation, asset search/download/upload, and album operations. Source browsing exposes virtual `/Timeline` and `/Albums` locations, retaining asset UUID, original filename, timestamps, MIME type, and album metadata. Asset IDs, rather than filenames, identify source assets.
 
 Immich is files-only and supports one-time migrations only: calendars, contacts, and sync jobs are rejected. An Immich target requires the native-duplicate `SKIP` conflict strategy; overwrite, rename, filename deletion, and atomic rename are unsupported. Uploaded files at the target root remain unassigned; a single target directory name creates or reuses an Immich album and assigns uploaded assets to it. Nested target directories are unsupported because Immich albums cannot be nested. Only supported image, video, and RAW extensions are indexed for an Immich target; rejected files are recorded as indexing errors.
+
+New Immich uploads persist the returned target asset ID in task metadata. Verification uses only that ID with `GET /assets/{id}`: its Base64 SHA-1 `checksum` is normalized to `SHA1:<lowercase-hex>`, while `exifInfo.fileSizeInByte` is the fallback when no checksum is available. ETags are never integrity evidence. Historical completed tasks without a persisted target asset ID are deliberately left unverified rather than guessed from an album or filename; retransfer is required for a trustworthy check.
 
 `NewProvider(ctx, providerType, urlStr, username, password)`:
 

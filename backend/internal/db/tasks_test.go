@@ -124,10 +124,11 @@ func TestBulkCreateMigrationTasksWhileIndexingPersistsSourceHash(t *testing.T) {
 var createTaskTestDriverID atomic.Uint64
 
 type createTaskDBState struct {
-	query     string
-	args      []driver.NamedValue
-	execQuery string
-	execArgs  []driver.NamedValue
+	query      string
+	args       []driver.NamedValue
+	execQuery  string
+	execArgs   []driver.NamedValue
+	execResult driver.Result
 }
 
 func newCreateTaskTestDB(t *testing.T) (*sql.DB, *createTaskDBState) {
@@ -165,7 +166,40 @@ func (c createTaskConn) QueryContext(_ context.Context, query string, args []dri
 func (c createTaskConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	c.state.execQuery = query
 	c.state.execArgs = args
+	if c.state.execResult != nil {
+		return c.state.execResult, nil
+	}
 	return driver.RowsAffected(1), nil
+}
+
+func TestUpdateClaimedTaskMetadataFencesClaimAndPersistsMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		affected int64
+		wantErr  error
+	}{
+		{name: "active claim", affected: 1},
+		{name: "wrong claim epoch", affected: 0, wantErr: sql.ErrNoRows},
+		{name: "task already terminal", affected: 0, wantErr: sql.ErrNoRows},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			database, state := newCreateTaskTestDB(t)
+			state.execResult = driver.RowsAffected(tc.affected)
+			metadata := json.RawMessage(`{"custom_props":{"immich_asset_id":"source","immich_target_asset_id":"target"}}`)
+			err := UpdateClaimedTaskMetadata(database, context.Background(), "task-1", 7, metadata)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("UpdateClaimedTaskMetadata() error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr == nil {
+				if !strings.Contains(state.execQuery, "status = 'RUNNING' AND claim_epoch = $3") {
+					t.Fatalf("fenced query = %q", state.execQuery)
+				}
+				if got := string(state.execArgs[0].Value.([]byte)); got != string(metadata) {
+					t.Fatalf("metadata argument = %q, want %q", got, metadata)
+				}
+			}
+		})
+	}
 }
 
 type createTaskTx struct{}

@@ -90,6 +90,15 @@ const (
 
 type transferMetadataContextKey struct{}
 
+// UploadReceipt carries target identity created by a provider upload. The
+// caller owns the receipt and persists it before completing the task.
+type UploadReceipt struct {
+	TargetResourceID string
+}
+
+type uploadReceiptContextKey struct{}
+type targetResourceIDContextKey struct{}
+
 // WithTransferMetadata supplies provider-specific upload attributes without
 // widening StorageProvider or persisting plaintext credentials.
 func WithTransferMetadata(ctx context.Context, meta FileMetadata) context.Context {
@@ -99,6 +108,39 @@ func WithTransferMetadata(ctx context.Context, meta FileMetadata) context.Contex
 func TransferMetadataFromContext(ctx context.Context) (FileMetadata, bool) {
 	meta, ok := ctx.Value(transferMetadataContextKey{}).(FileMetadata)
 	return meta, ok
+}
+
+// WithUploadReceipt lets providers return a newly created target resource ID
+// without widening StorageProvider or sharing mutable provider state.
+func WithUploadReceipt(ctx context.Context, receipt *UploadReceipt) context.Context {
+	return context.WithValue(ctx, uploadReceiptContextKey{}, receipt)
+}
+
+func UploadReceiptFromContext(ctx context.Context) (*UploadReceipt, bool) {
+	receipt, ok := ctx.Value(uploadReceiptContextKey{}).(*UploadReceipt)
+	return receipt, ok && receipt != nil
+}
+
+// WithTargetResourceID supplies a persisted provider target identity for
+// verification. It is intentionally separate from transfer metadata because
+// source metadata may contain a different provider resource ID.
+func WithTargetResourceID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, targetResourceIDContextKey{}, id)
+}
+
+func TargetResourceIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(targetResourceIDContextKey{}).(string)
+	id = strings.TrimSpace(id)
+	return id, ok && id != ""
+}
+
+// SetImmichTargetAssetID preserves indexed source metadata while recording the
+// only stable identity that can address a newly uploaded Immich target asset.
+func SetImmichTargetAssetID(meta *FileMetadata, assetID string) {
+	if meta.CustomProps == nil {
+		meta.CustomProps = make(map[string]string)
+	}
+	meta.CustomProps["immich_target_asset_id"] = assetID
 }
 
 // StorageProvider is the contract every storage backend must satisfy. It is a
