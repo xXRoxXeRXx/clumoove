@@ -1,10 +1,191 @@
 package db
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"io"
+	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestCreateTaskPersistsDirectSelectionSourceHash(t *testing.T) {
+	database, state := newCreateTaskTestDB(t)
+	task := &Task{
+		MigrationID:  "migration-1",
+		ResourceType: "files",
+		FilePath:     "/important.iso",
+		FileSize:     1024,
+		SourceHash:   sql.NullString{String: "sha256:provider-checksum", Valid: true},
+		Status:       "PENDING",
+		Metadata:     json.RawMessage(`{}`),
+	}
+
+	if _, err := CreateTask(database, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash) VALUES"
+	if normalized := strings.Join(strings.Fields(state.query), " "); !strings.Contains(normalized, wantInsert) {
+		t.Fatalf("CreateTask() INSERT columns = %q, want ordered source_hash column", normalized)
+	}
+	if len(state.args) != 7 {
+		t.Fatalf("CreateTask() argument count = %d, want 7", len(state.args))
+	}
+	if got := state.args[6].Value; got != task.SourceHash.String {
+		t.Fatalf("CreateTask() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
+	}
+}
+
+func TestCreateTaskWithoutSourceHashPersistsNull(t *testing.T) {
+	database, state := newCreateTaskTestDB(t)
+	task := &Task{
+		MigrationID:  "migration-2",
+		ResourceType: "files",
+		FilePath:     "/other.txt",
+		FileSize:     512,
+		Status:       "PENDING",
+		Metadata:     json.RawMessage(`{}`),
+	}
+
+	if _, err := CreateTask(database, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if len(state.args) != 7 {
+		t.Fatalf("CreateTask() argument count = %d, want 7", len(state.args))
+	}
+	if got := state.args[6].Value; got != nil {
+		t.Fatalf("CreateTask() source_hash argument = %#v, want nil", got)
+	}
+}
+
+func TestCreateMigrationTaskWhileIndexingPersistsSourceHash(t *testing.T) {
+	database, state := newCreateTaskTestDB(t)
+	task := &Task{
+		MigrationID:  "migration-3",
+		ResourceType: "files",
+		FilePath:     "/important.iso",
+		FileSize:     2048,
+		SourceHash:   sql.NullString{String: "sha256:provider-checksum", Valid: true},
+		Status:       "PENDING",
+		Metadata:     json.RawMessage(`{}`),
+	}
+
+	if _, err := CreateMigrationTaskWhileIndexing(database, task); err != nil {
+		t.Fatalf("CreateMigrationTaskWhileIndexing() error = %v", err)
+	}
+	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash) SELECT"
+	if normalized := strings.Join(strings.Fields(state.query), " "); !strings.Contains(normalized, wantInsert) {
+		t.Fatalf("CreateMigrationTaskWhileIndexing() INSERT columns = %q, want ordered source_hash column", normalized)
+	}
+	if len(state.args) != 7 {
+		t.Fatalf("CreateMigrationTaskWhileIndexing() argument count = %d, want 7", len(state.args))
+	}
+	if got := state.args[6].Value; got != task.SourceHash.String {
+		t.Fatalf("CreateMigrationTaskWhileIndexing() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
+	}
+}
+
+func TestBulkCreateMigrationTasksWhileIndexingPersistsSourceHash(t *testing.T) {
+	database, state := newCreateTaskTestDB(t)
+	task := &Task{
+		MigrationID:  "migration-3",
+		ResourceType: "files",
+		FilePath:     "/folder/important.iso",
+		FileSize:     2048,
+		SourceHash:   sql.NullString{String: "sha256:provider-checksum", Valid: true},
+		Status:       "PENDING",
+		Metadata:     json.RawMessage(`{}`),
+	}
+
+	created, err := BulkCreateMigrationTasksWhileIndexing(context.Background(), database, task.MigrationID, []*Task{task})
+	if err != nil {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() error = %v", err)
+	}
+	if !created {
+		t.Fatal("BulkCreateMigrationTasksWhileIndexing() created = false, want true")
+	}
+	const wantInsert = "INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata)"
+	if normalized := strings.Join(strings.Fields(state.execQuery), " "); !strings.Contains(normalized, wantInsert) {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() INSERT columns = %q, want ordered source_hash column", normalized)
+	}
+	if len(state.execArgs) != 7 {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() argument count = %d, want 7", len(state.execArgs))
+	}
+	if got := state.execArgs[4].Value; got != task.SourceHash.String {
+		t.Fatalf("BulkCreateMigrationTasksWhileIndexing() source_hash argument = %#v, want %#v", got, task.SourceHash.String)
+	}
+}
+
+var createTaskTestDriverID atomic.Uint64
+
+type createTaskDBState struct {
+	query     string
+	args      []driver.NamedValue
+	execQuery string
+	execArgs  []driver.NamedValue
+}
+
+func newCreateTaskTestDB(t *testing.T) (*sql.DB, *createTaskDBState) {
+	t.Helper()
+	state := &createTaskDBState{}
+	driverName := "create-task-test-" + strconv.FormatUint(createTaskTestDriverID.Add(1), 10)
+	sql.Register(driverName, createTaskDriver{state: state})
+	database, err := sql.Open(driverName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Close() })
+	return database, state
+}
+
+type createTaskDriver struct{ state *createTaskDBState }
+
+func (d createTaskDriver) Open(string) (driver.Conn, error) {
+	return createTaskConn{state: d.state}, nil
+}
+
+type createTaskConn struct{ state *createTaskDBState }
+
+func (createTaskConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not implemented") }
+func (createTaskConn) Close() error                        { return nil }
+func (createTaskConn) Begin() (driver.Tx, error)           { return createTaskTx{}, nil }
+func (createTaskConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return createTaskTx{}, nil
+}
+func (c createTaskConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	c.state.query = query
+	c.state.args = args
+	return &createTaskRows{}, nil
+}
+func (c createTaskConn) ExecContext(_ context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	c.state.execQuery = query
+	c.state.execArgs = args
+	return driver.RowsAffected(1), nil
+}
+
+type createTaskTx struct{}
+
+func (createTaskTx) Commit() error   { return nil }
+func (createTaskTx) Rollback() error { return nil }
+
+type createTaskRows struct{ returned bool }
+
+func (r *createTaskRows) Columns() []string { return []string{"id", "created_at", "updated_at"} }
+func (r *createTaskRows) Close() error      { return nil }
+func (r *createTaskRows) Next(dest []driver.Value) error {
+	if r.returned {
+		return io.EOF
+	}
+	r.returned = true
+	now := time.Now()
+	dest[0], dest[1], dest[2] = "task-1", now, now
+	return nil
+}
 
 func TestIndexingErrorMessage(t *testing.T) {
 	tests := []struct {

@@ -39,7 +39,10 @@ type TaskInput struct {
 	ResourceType string
 	FilePath     string
 	FileSize     int64
-	Metadata     json.RawMessage
+	// SourceHash is populated when indexing already has a provider-supplied hash.
+	// Its zero value persists as NULL.
+	SourceHash sql.NullString
+	Metadata   json.RawMessage
 }
 
 type IndexingError struct {
@@ -74,13 +77,13 @@ type ErrorListItem struct {
 
 func CreateTask(db *sql.DB, t *Task) (string, error) {
 	query := `
-		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at
 	`
 	err := db.QueryRow(
 		query,
-		t.MigrationID, t.ResourceType, t.FilePath, t.FileSize, t.Status, t.Metadata,
+		t.MigrationID, t.ResourceType, t.FilePath, t.FileSize, t.Status, t.Metadata, t.SourceHash,
 	).Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
 
 	if err != nil {
