@@ -46,10 +46,6 @@ func setupVerificationClaimTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
-const (
-	testMigrationID = "00000000-0000-0000-0000-000000000002"
-	testTaskID      = "00000000-0000-0000-0000-000000000003"
-)
 
 func TestChecksumMismatchRetryKeepsMigrationRunnableUntilRecopyIsVerified(t *testing.T) {
 	database := setupVerificationClaimTestDB(t)

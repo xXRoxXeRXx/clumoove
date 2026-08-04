@@ -493,7 +493,7 @@ func BulkCreateMigrationTasksWhileIndexing(ctx context.Context, db *sql.DB, migr
 			valuesClauses = append(valuesClauses, fmt.Sprintf("($%d,$%d,$%d::bigint,$%d,$%d,$%d::jsonb)", base, base+1, base+2, base+3, base+4, base+5))
 		}
 		query := `INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata)
-			SELECT $1, v.resource_type, v.file_path, v.file_size::bigint, v.source_hash, v.status, v.metadata::jsonb
+			SELECT $1, v.resource_type, v.file_path, v.file_size, v.source_hash, v.status, v.metadata
 			FROM (VALUES ` + strings.Join(valuesClauses, ",") + `) AS v(resource_type, file_path, file_size, source_hash, status, metadata)
 			WHERE EXISTS (SELECT 1 FROM migrations WHERE id = $1 AND status = 'INDEXING')`
 		res, err := tx.ExecContext(dbCtx, query, args...)

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -29,6 +30,18 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			email TEXT,
 			language TEXT NOT NULL DEFAULT 'de'
+		)`,
+		`CREATE TEMP TABLE migrations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			status TEXT NOT NULL,
+			notification_generation INT NOT NULL DEFAULT 0,
+			total_files INT NOT NULL DEFAULT 0,
+			processed_files INT NOT NULL DEFAULT 0,
+			failed_files INT NOT NULL DEFAULT 0,
+			skipped_files INT NOT NULL DEFAULT 0,
+			processed_bytes BIGINT NOT NULL DEFAULT 0,
+			error_message TEXT
 		)`,
 		`CREATE TEMP TABLE sync_jobs (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -71,6 +84,12 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 			payload JSONB NOT NULL,
 			UNIQUE (sync_job_id, run_at)
 		)`,
+		// Partial unique indexes cannot be declared inline on TEMP TABLEs;
+		// create them separately. This mirrors the production constraint that
+		// CreateMigrationNotificationEvent relies on for ON CONFLICT idempotency.
+		`CREATE UNIQUE INDEX notification_events_migration_gen
+			ON notification_events (migration_id, run_generation)
+			WHERE migration_id IS NOT NULL`,
 		`CREATE TEMP TABLE notification_deliveries (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			event_id UUID NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
@@ -100,10 +119,6 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 	}
 	return database
 }
-
-const (
-	testUserUUID = "00000000-0000-0000-0000-000000000001"
-)
 
 func TestCreateSyncNotificationEvent_SuccessfulRun(t *testing.T) {
 	db := setupNotificationsTestDB(t)
@@ -183,11 +198,22 @@ func TestCreateSyncNotificationEvent_FailedRun(t *testing.T) {
 		t.Fatalf("CreateSyncNotificationEvent failed for failed run: %v", err)
 	}
 
-	// Verify notification event created
+	// Verify notification event created with correct payload fields
 	var eventID string
-	err := db.QueryRow(`SELECT id FROM notification_events WHERE sync_job_id = $1`, syncJobID).Scan(&eventID)
+	var payloadStr string
+	err := db.QueryRow(`SELECT id, payload::text FROM notification_events WHERE sync_job_id = $1`, syncJobID).Scan(&eventID, &payloadStr)
 	if err != nil {
 		t.Fatalf("expected notification event created for failed run: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["status"] != "FAILED" {
+		t.Errorf("payload status = %v, want FAILED", payload["status"])
+	}
+	if payload["error_message"] != "Network connection reset" {
+		t.Errorf("payload error_message = %v, want 'Network connection reset'", payload["error_message"])
 	}
 
 	// Verify delivery entry created for telegram
@@ -227,7 +253,7 @@ func TestCreateSyncNotificationEvent_Idempotency(t *testing.T) {
 		t.Fatalf("first CreateSyncNotificationEvent call failed: %v", err)
 	}
 
-	// Second call (same run_at)
+	// Second call (same run_at) — must be idempotent
 	if err := CreateSyncNotificationEvent(db, syncJobID); err != nil {
 		t.Fatalf("second CreateSyncNotificationEvent call failed: %v", err)
 	}
@@ -250,67 +276,124 @@ func TestCreateSyncNotificationEvent_Idempotency(t *testing.T) {
 	}
 }
 
-func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
+// TestCreateMigrationNotificationEvent_Idempotency verifies that calling
+// CreateMigrationNotificationEvent twice for the same terminal state (same
+// notification_generation) produces exactly one event and one delivery row,
+// exercising the partial unique index on (migration_id, run_generation).
+func TestCreateMigrationNotificationEvent_Idempotency(t *testing.T) {
 	db := setupNotificationsTestDB(t)
 
 	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
-	if err := UpsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy_config"); err != nil {
+	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_config"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO migrations (id, user_id, status, notification_generation) VALUES ($1, $2, 'COMPLETED', 1)`, testMigrationID, testUserUUID); err != nil {
 		t.Fatal(err)
 	}
 
-	// 1. Test FinalizeSyncJobPass creating notification
-	syncJob1 := "00000000-0000-0000-0000-000000000021"
-	if _, err := db.Exec(`INSERT INTO sync_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'RUNNING', 1)`, syncJob1, testUserUUID); err != nil {
+	// First call
+	if err := CreateMigrationNotificationEvent(db, testMigrationID); err != nil {
+		t.Fatalf("first CreateMigrationNotificationEvent call failed: %v", err)
+	}
+
+	// Second call — must not insert a duplicate event (same run_generation)
+	if err := CreateMigrationNotificationEvent(db, testMigrationID); err != nil {
+		t.Fatalf("second CreateMigrationNotificationEvent call failed: %v", err)
+	}
+
+	var eventCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE migration_id = $1`, testMigrationID).Scan(&eventCount); err != nil {
 		t.Fatal(err)
 	}
-
-	finalized, err := FinalizeSyncJobPass(db, syncJob1, 1, "COMPLETED", nil, 5, 5, 1, 0, 0)
-	if err != nil || !finalized {
-		t.Fatalf("FinalizeSyncJobPass failed = (%v, %v), want (true, nil)", finalized, err)
+	if eventCount != 1 {
+		t.Fatalf("expected exactly 1 notification_event, got %d", eventCount)
 	}
 
-	var eventCount1 int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE sync_job_id = $1`, syncJob1).Scan(&eventCount1); err != nil {
+	var deliveryCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_deliveries d JOIN notification_events e ON d.event_id = e.id WHERE e.migration_id = $1`, testMigrationID).Scan(&deliveryCount); err != nil {
 		t.Fatal(err)
 	}
-	if eventCount1 != 1 {
-		t.Fatalf("expected 1 notification_event after FinalizeSyncJobPass, got %d", eventCount1)
+	if deliveryCount != 1 {
+		t.Fatalf("expected exactly 1 notification_delivery, got %d", deliveryCount)
 	}
+}
 
-	var deliveryCount1 int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_deliveries d JOIN notification_events e ON d.event_id = e.id WHERE e.sync_job_id = $1`, syncJob1).Scan(&deliveryCount1); err != nil {
-		t.Fatal(err)
-	}
-	if deliveryCount1 != 1 {
-		t.Fatalf("expected 1 notification_delivery after FinalizeSyncJobPass, got %d", deliveryCount1)
-	}
+func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
+	// Each sub-test gets its own isolated DB connection and temp tables so
+	// state from one scenario cannot bleed into the other.
+	t.Run("FinalizeSyncJobPass", func(t *testing.T) {
+		db := setupNotificationsTestDB(t)
 
-	// 2. Test FailSyncJobPass creating notification
-	syncJob2 := "00000000-0000-0000-0000-000000000022"
-	if _, err := db.Exec(`INSERT INTO sync_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'RUNNING', 1)`, syncJob2, testUserUUID); err != nil {
-		t.Fatal(err)
-	}
+		if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
+			t.Fatal(err)
+		}
+		if err := UpsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy_config"); err != nil {
+			t.Fatal(err)
+		}
 
-	failed, err := FailSyncJobPass(db, syncJob2, 1, "disk quota exceeded")
-	if err != nil || !failed {
-		t.Fatalf("FailSyncJobPass failed = (%v, %v), want (true, nil)", failed, err)
-	}
+		syncJob1 := "00000000-0000-0000-0000-000000000021"
+		if _, err := db.Exec(`INSERT INTO sync_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'RUNNING', 1)`, syncJob1, testUserUUID); err != nil {
+			t.Fatal(err)
+		}
 
-	var eventCount2 int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE sync_job_id = $1`, syncJob2).Scan(&eventCount2); err != nil {
-		t.Fatal(err)
-	}
-	if eventCount2 != 1 {
-		t.Fatalf("expected 1 notification_event after FailSyncJobPass, got %d", eventCount2)
-	}
+		finalized, err := FinalizeSyncJobPass(db, syncJob1, 1, "COMPLETED", nil, 5, 5, 1, 0, 0)
+		if err != nil || !finalized {
+			t.Fatalf("FinalizeSyncJobPass failed = (%v, %v), want (true, nil)", finalized, err)
+		}
 
-	var deliveryCount2 int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_deliveries d JOIN notification_events e ON d.event_id = e.id WHERE e.sync_job_id = $1`, syncJob2).Scan(&deliveryCount2); err != nil {
-		t.Fatal(err)
-	}
-	if deliveryCount2 != 1 {
-		t.Fatalf("expected 1 notification_delivery after FailSyncJobPass, got %d", deliveryCount2)
-	}
+		var eventCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE sync_job_id = $1`, syncJob1).Scan(&eventCount); err != nil {
+			t.Fatal(err)
+		}
+		if eventCount != 1 {
+			t.Fatalf("expected 1 notification_event after FinalizeSyncJobPass, got %d", eventCount)
+		}
+
+		var deliveryCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM notification_deliveries d JOIN notification_events e ON d.event_id = e.id WHERE e.sync_job_id = $1`, syncJob1).Scan(&deliveryCount); err != nil {
+			t.Fatal(err)
+		}
+		if deliveryCount != 1 {
+			t.Fatalf("expected 1 notification_delivery after FinalizeSyncJobPass, got %d", deliveryCount)
+		}
+	})
+
+	t.Run("FailSyncJobPass", func(t *testing.T) {
+		db := setupNotificationsTestDB(t)
+
+		if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
+			t.Fatal(err)
+		}
+		if err := UpsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy_config"); err != nil {
+			t.Fatal(err)
+		}
+
+		syncJob2 := "00000000-0000-0000-0000-000000000022"
+		if _, err := db.Exec(`INSERT INTO sync_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'RUNNING', 1)`, syncJob2, testUserUUID); err != nil {
+			t.Fatal(err)
+		}
+
+		failed, err := FailSyncJobPass(db, syncJob2, 1, "disk quota exceeded")
+		if err != nil || !failed {
+			t.Fatalf("FailSyncJobPass failed = (%v, %v), want (true, nil)", failed, err)
+		}
+
+		var eventCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE sync_job_id = $1`, syncJob2).Scan(&eventCount); err != nil {
+			t.Fatal(err)
+		}
+		if eventCount != 1 {
+			t.Fatalf("expected 1 notification_event after FailSyncJobPass, got %d", eventCount)
+		}
+
+		var deliveryCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM notification_deliveries d JOIN notification_events e ON d.event_id = e.id WHERE e.sync_job_id = $1`, syncJob2).Scan(&deliveryCount); err != nil {
+			t.Fatal(err)
+		}
+		if deliveryCount != 1 {
+			t.Fatalf("expected 1 notification_delivery after FailSyncJobPass, got %d", deliveryCount)
+		}
+	})
 }
