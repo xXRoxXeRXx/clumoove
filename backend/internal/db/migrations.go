@@ -7,10 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
-var ErrMigrationNotFailed = errors.New("migration is not in a failed state")
+var (
+	ErrMigrationNotFailed         = errors.New("migration is not in a failed state")
+	ErrMigrationIndexingClaimLost = errors.New("migration indexing claim lost")
+)
 
 type ResourceStats struct {
 	Total     int `json:"total"`
@@ -335,6 +339,32 @@ func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string)
 	return nil
 }
 
+// FailMigrationWhileIndexing records an indexing failure only if the indexer
+// still owns the migration lifecycle. It prevents a late provider error from
+// replacing a user's CANCELLED status.
+func FailMigrationWhileIndexing(db *sql.DB, id string, errMsg *string) (bool, error) {
+	result, err := db.Exec(`
+		UPDATE migrations
+		SET status = 'FAILED', error_message = $1, updated_at = CURRENT_TIMESTAMP,
+		    notification_generation = notification_generation + 1
+		WHERE id = $2 AND status = 'INDEXING'
+	`, errMsg, id)
+	if err != nil {
+		return false, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if rowsAffected != 1 {
+		return false, nil
+	}
+	if err := CreateMigrationNotificationEvent(db, id); err != nil {
+		log.Printf("notification event creation for migration %s failed: %v", id, err)
+	}
+	return true, nil
+}
+
 // ClaimScheduledMigrationForIndexing atomically claims a scheduled migration for
 // indexing. A false result means the row either does not exist or is no longer
 // in SCHEDULED state; both cases are intentionally treated as an invalid claim.
@@ -376,9 +406,114 @@ func TransitionMigrationIndexingToRunning(db *sql.DB, id string) error {
 		return err
 	}
 	if rowsAffected != 1 {
-		return fmt.Errorf("migration %s is not indexing", id)
+		return ErrMigrationIndexingClaimLost
+	}
+	// No notification event is created on RUNNING: notifications are emitted
+	// only for terminal migration states.
+	return nil
+}
+
+// TransitionMigrationIndexingToCompleted completes an empty migration without
+// allowing an indexer that lost its lifecycle claim to overwrite cancellation.
+func TransitionMigrationIndexingToCompleted(db *sql.DB, id string) error {
+	result, err := db.Exec(`
+		UPDATE migrations
+		SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP,
+		    notification_generation = notification_generation + 1
+		WHERE id = $1 AND status = 'INDEXING'
+	`, id)
+	if err != nil {
+		return err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected != 1 {
+		return ErrMigrationIndexingClaimLost
+	}
+	if err := CreateMigrationNotificationEvent(db, id); err != nil {
+		log.Printf("notification event creation for migration %s failed: %v", id, err)
 	}
 	return nil
+}
+
+// CreateMigrationTaskWhileIndexing creates a task only while the migration's
+// INDEXING claim is still active. The status predicate and insert are one SQL
+// statement, so cancellation cannot leave a task inserted after its pending
+// task sweep has completed.
+func CreateMigrationTaskWhileIndexing(db *sql.DB, t *Task) (string, error) {
+	query := `
+		INSERT INTO tasks (migration_id, resource_type, file_path, file_size, status, metadata, source_hash)
+		SELECT $1, $2, $3, $4, $5, $6, $7
+		WHERE EXISTS (SELECT 1 FROM migrations WHERE id = $1 AND status = 'INDEXING')
+		RETURNING id, created_at, updated_at
+	`
+	err := db.QueryRow(query, t.MigrationID, t.ResourceType, t.FilePath, t.FileSize, t.Status, t.Metadata, t.SourceHash).
+		Scan(&t.ID, &t.CreatedAt, &t.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrMigrationIndexingClaimLost
+	}
+	if err != nil {
+		return "", err
+	}
+	return t.ID, nil
+}
+
+// BulkCreateMigrationTasksWhileIndexing persists indexing batches only while
+// the migration still has the INDEXING lifecycle claim. All batches share one
+// transaction, so a lost claim rolls back every earlier batch in this call.
+func BulkCreateMigrationTasksWhileIndexing(ctx context.Context, db *sql.DB, migrationID string, tasks []*Task) (bool, error) {
+	if len(tasks) == 0 {
+		return true, nil
+	}
+
+	const batchSize = 2000
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+	defer cancel()
+	tx, err := db.BeginTx(dbCtx, nil)
+	if err != nil {
+		return false, fmt.Errorf("bulk create migration tasks: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for start := 0; start < len(tasks); start += batchSize {
+		end := start + batchSize
+		if end > len(tasks) {
+			end = len(tasks)
+		}
+		batch := tasks[start:end]
+		const paramsPerRow = 6
+		args := make([]interface{}, 0, 1+len(batch)*paramsPerRow)
+		args = append(args, migrationID)
+		valuesClauses := make([]string, 0, len(batch))
+		for i, t := range batch {
+			base := 2 + i*paramsPerRow
+			args = append(args, t.ResourceType, t.FilePath, t.FileSize, t.SourceHash, t.Status, t.Metadata)
+			valuesClauses = append(valuesClauses, fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)", base, base+1, base+2, base+3, base+4, base+5))
+		}
+		query := `INSERT INTO tasks (migration_id, resource_type, file_path, file_size, source_hash, status, metadata)
+			SELECT $1, v.resource_type, v.file_path, v.file_size, v.source_hash, v.status, v.metadata
+			FROM (VALUES ` + strings.Join(valuesClauses, ",") + `) AS v(resource_type, file_path, file_size, source_hash, status, metadata)
+			WHERE EXISTS (SELECT 1 FROM migrations WHERE id = $1 AND status = 'INDEXING')`
+		res, err := tx.ExecContext(dbCtx, query, args...)
+		if err != nil {
+			return false, fmt.Errorf("bulk create migration tasks: insert batch [%d:%d]: %w", start, end, err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return false, err
+		}
+		// All batches share this transaction; a lost claim rolls back every
+		// batch inserted so far before this function returns.
+		if n != int64(len(batch)) {
+			return false, ErrMigrationIndexingClaimLost
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func UpdateMigrationBandwidthLimit(db *sql.DB, id string, limitMbps int) error {

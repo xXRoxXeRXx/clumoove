@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -98,14 +99,15 @@ func TestMarshalString(t *testing.T) {
 func TestIndexFolderFlushesStagedCountersAfterCommit(t *testing.T) {
 	database, state := newBatchTestDB(t, false)
 	files, dirs, bytes := 0, 0, int64(0)
-	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
-		Path: "/report.txt", Name: "report.txt", Size: 42,
-	}}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{
+		{Path: "/report.txt", Name: "report.txt", Size: 42},
+		{Path: "/notes.txt", Name: "notes.txt", Size: 8},
+	}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
 	if err != nil {
 		t.Fatalf("indexFolder() error = %v", err)
 	}
-	if files != 1 || dirs != 0 || bytes != 42 {
-		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:1 dirs:0 bytes:42", files, dirs, bytes)
+	if files != 2 || dirs != 0 || bytes != 50 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:2 dirs:0 bytes:50", files, dirs, bytes)
 	}
 	if state.execs != 1 || state.commits != 1 {
 		t.Fatalf("database calls = execs:%d commits:%d, want one committed batch", state.execs, state.commits)
@@ -126,6 +128,24 @@ func TestIndexFolderDoesNotApplyStagedCountersWhenBatchInsertFails(t *testing.T)
 	}
 	if state.execs != 1 || state.commits != 0 {
 		t.Fatalf("database calls = execs:%d commits:%d, want one failed uncommitted batch", state.execs, state.commits)
+	}
+}
+
+func TestIndexFolderStopsWhenMigrationIndexingClaimIsLost(t *testing.T) {
+	database, state := newBatchTestDB(t, false)
+	state.claimLost = true
+	files, dirs, bytes := 0, 0, int64(0)
+	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: []storage.CloudResource{{
+		Path: "/report.txt", Name: "report.txt", Size: 42,
+	}}}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &[]db.IndexingErrorInput{})
+	if !errors.Is(err, db.ErrMigrationIndexingClaimLost) {
+		t.Fatalf("indexFolder() error = %v, want ErrMigrationIndexingClaimLost", err)
+	}
+	if files != 0 || dirs != 0 || bytes != 0 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want all zero after lost claim", files, dirs, bytes)
+	}
+	if state.execs != 1 || state.commits != 0 {
+		t.Fatalf("database calls = execs:%d commits:%d, want one rolled-back batch", state.execs, state.commits)
 	}
 }
 
@@ -175,6 +195,7 @@ var (
 
 type batchDBState struct {
 	failInsert     bool
+	claimLost      bool
 	execs, commits int
 }
 
@@ -202,12 +223,16 @@ func (batchTestConn) Begin() (driver.Tx, error)           { return batchTestTx{}
 func (batchTestConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
 	return batchTestTx{}, nil
 }
-func (batchTestConn) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+func (batchTestConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
 	batchTestState.execs++
 	if batchTestState.failInsert {
 		return nil, errors.New("injected insert failure")
 	}
-	return driver.RowsAffected(1), nil
+	if batchTestState.claimLost {
+		return driver.RowsAffected(0), nil
+	}
+	// Each VALUES row ends with "),(" except for the final row.
+	return driver.RowsAffected(int64(strings.Count(query, "),(") + 1)), nil
 }
 
 type batchTestTx struct{}

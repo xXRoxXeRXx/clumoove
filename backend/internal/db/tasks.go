@@ -401,12 +401,18 @@ func CancelRemainingPendingTasks(dbsql *sql.DB, migrationID string) (int, error)
 }
 
 func CancelPendingTasks(db *sql.DB, migrationID string) error {
+	return CancelPendingTasksCtx(context.Background(), db, migrationID)
+}
+
+// CancelPendingTasksCtx cancels queued migration tasks with a caller-provided
+// deadline, for cleanup paths that must not wait indefinitely on the DB.
+func CancelPendingTasksCtx(ctx context.Context, db *sql.DB, migrationID string) error {
 	query := `
 		UPDATE tasks
 		SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
 		WHERE migration_id = $1 AND status = 'PENDING'
 	`
-	_, err := db.Exec(query, migrationID)
+	_, err := db.ExecContext(ctx, query, migrationID)
 	return err
 }
 

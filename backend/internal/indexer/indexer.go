@@ -46,6 +46,20 @@ func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue) *Indexer
 func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	ctx, cancel := context.WithTimeout(serverCtx, indexingTimeout())
 	defer cancel()
+	claimLost := func(err error) bool {
+		if !errors.Is(err, db.ErrMigrationIndexingClaimLost) {
+			return false
+		}
+		// If cancellation won a race with an earlier insert, sweep once more.
+		// Guarded inserts ensure this cannot create new orphaned PENDING tasks.
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cleanupCancel()
+		if cancelErr := db.CancelPendingTasksCtx(cleanupCtx, idx.db, migID); cancelErr != nil {
+			log.Printf("Warning: failed to cancel tasks after indexing claim loss for %s: %v", migID, cancelErr)
+		}
+		log.Printf("Stopped indexing migration %s because its INDEXING claim was lost", migID)
+		return true
+	}
 
 	// Both callers establish INDEXING before starting this goroutine: immediate
 	// migrations are created in INDEXING, and the scheduler atomically claims
@@ -141,7 +155,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 						Status:       "PENDING",
 						Metadata:     mkdirMeta,
 					}
-					if _, err := db.CreateTask(idx.db, mkdirTask); err != nil {
+					if _, err := db.CreateMigrationTaskWhileIndexing(idx.db, mkdirTask); err != nil {
+						if claimLost(err) {
+							return
+						}
 						failMigration(idx.db, migID, fmt.Sprintf("Failed to create mkdir task for %s: %v", p, err))
 						return
 					}
@@ -150,6 +167,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			}
 			err = indexFolder(ctx, idx.db, sourceClient, "files", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
+				if claimLost(err) {
+					return
+				}
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
 				return
 			}
@@ -182,7 +202,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				Status:       "PENDING",
 				Metadata:     metaJSON,
 			}
-			if _, err := db.CreateTask(idx.db, task); err != nil {
+			if _, err := db.CreateMigrationTaskWhileIndexing(idx.db, task); err != nil {
+				if claimLost(err) {
+					return
+				}
 				failMigration(idx.db, migID, fmt.Sprintf("Failed to create task in DB: %v", err))
 				return
 			}
@@ -196,6 +219,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		for _, p := range calendars {
 			err = indexFolder(ctx, idx.db, sourceClient, "calendars", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
+				if claimLost(err) {
+					return
+				}
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
 				return
 			}
@@ -216,6 +242,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		for _, p := range contacts {
 			err = indexFolder(ctx, idx.db, sourceClient, "contacts", p, migID, mig.TargetProvider, &totalFiles, &totalDirs, &totalBytes, indexedPaths, &indexErrors)
 			if err != nil {
+				if claimLost(err) {
+					return
+				}
 				failMigration(idx.db, migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
 				return
 			}
@@ -259,7 +288,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	case totalItems == 0:
 		// Every selected path was an empty folder / empty calendar / skipped file
 		// AND no mkdir tasks were created (e.g. root "/" was the only selection).
-		if err := db.UpdateMigrationStatus(idx.db, migID, "COMPLETED", nil); err != nil {
+		if err := db.TransitionMigrationIndexingToCompleted(idx.db, migID); err != nil {
+			if claimLost(err) {
+				return
+			}
 			failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration completed: %v", err))
 			return
 		}
@@ -277,6 +309,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	err = db.TransitionMigrationIndexingToRunning(idx.db, migID)
 	if err != nil {
+		if claimLost(err) {
+			return
+		}
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration running: %v", err))
 		return
 	}
@@ -422,8 +457,12 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 		if len(taskBatch) == 0 {
 			return nil
 		}
-		if err := db.BulkCreateSyncTasks(ctx, database, taskBatch); err != nil {
+		created, err := db.BulkCreateMigrationTasksWhileIndexing(ctx, database, migID, taskBatch)
+		if err != nil {
 			return fmt.Errorf("create task batch: %w", err)
+		}
+		if !created {
+			return db.ErrMigrationIndexingClaimLost
 		}
 		*totalFiles += batchFiles
 		*totalDirs += batchDirs
@@ -575,7 +614,15 @@ func indexingTimeout() time.Duration {
 func failMigration(database *sql.DB, migID string, errMsg string) {
 	safe := sanitizeError(errMsg)
 	log.Printf("Migration %s failed during indexing: %s\n", migID, safe)
-	_ = db.UpdateMigrationStatus(database, migID, "FAILED", &safe)
+	failed, err := db.FailMigrationWhileIndexing(database, migID, &safe)
+	if err != nil {
+		log.Printf("Migration %s: failed to persist indexing failure: %v", migID, err)
+		return
+	}
+	if !failed {
+		log.Printf("Migration %s: did not persist indexing failure because its lifecycle claim was lost", migID)
+		return
+	}
 	if owner, oerr := db.GetMigrationOwnerID(database, migID); oerr == nil {
 		db.WriteAuditLog(database, db.AuditEntry{
 			UserID:  sql.NullString{String: owner, Valid: true},
