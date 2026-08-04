@@ -87,6 +87,16 @@ func TestWebDAVProviderSupportsAtomicRename(t *testing.T) {
 	}
 }
 
+func TestWebDAVProviderVerificationModeIsSizeOnly(t *testing.T) {
+	p, err := NewWebDAVProvider("https://example.com/dav", "user", "pass")
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+	if got := p.VerificationMode(); got != VerificationSizeOnly {
+		t.Fatalf("VerificationMode() = %q, want %q", got, VerificationSizeOnly)
+	}
+}
+
 func TestWebDAVProviderErrAuth(t *testing.T) {
 	if !errors.Is(ErrAuth, ErrAuth) {
 		t.Error("ErrAuth mismatch")

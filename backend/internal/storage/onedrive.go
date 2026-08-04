@@ -830,4 +830,5 @@ func (p *OneDriveProvider) itemID(ctx context.Context, filePath string) (string,
 	return item.ID, nil
 }
 
-func (p *OneDriveProvider) SupportsAtomicRename() bool { return true }
+func (p *OneDriveProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+func (p *OneDriveProvider) SupportsAtomicRename() bool         { return true }

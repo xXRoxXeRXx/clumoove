@@ -22,12 +22,14 @@ func TestFormatWorkerHashValueUsesQuickXorBase64(t *testing.T) {
 
 type verifierProvider struct {
 	fakeProvider
-	hash            string
-	hashErr         error
-	exists          bool
-	size            int64
-	fileExistsErr   error
-	fileExistsCalls int
+	hash             string
+	hashErr          error
+	exists           bool
+	size             int64
+	fileExistsErr    error
+	fileExistsCalls  int
+	hashCalls        int
+	verificationMode storage.VerificationMode
 }
 
 func (p *verifierProvider) FileExists(context.Context, string, string) (bool, int64, error) {
@@ -36,7 +38,15 @@ func (p *verifierProvider) FileExists(context.Context, string, string) (bool, in
 }
 
 func (p *verifierProvider) GetFileHash(context.Context, string, string) (string, error) {
+	p.hashCalls++
 	return p.hash, p.hashErr
+}
+
+func (p *verifierProvider) VerificationMode() storage.VerificationMode {
+	if p.verificationMode == "" {
+		return storage.VerificationCryptographicHash
+	}
+	return p.verificationMode
 }
 
 func TestBestSourceHash(t *testing.T) {
@@ -235,6 +245,52 @@ func TestVerificationFallbackRejectsMissingOrTruncatedTarget(t *testing.T) {
 				t.Fatal("fallback did not mark the invalid target as mismatched")
 			}
 		})
+	}
+}
+
+func TestVerificationSizeOnlySkipsHashQueryAndRejectsSizeMismatch(t *testing.T) {
+	provider := &verifierProvider{
+		verificationMode: storage.VerificationSizeOnly,
+		exists:           true,
+		size:             7,
+	}
+	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 10}
+	verified, mismatched := false, false
+	p := &Processor{}
+	p.runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType: "Migration", EntityID: "size-only", Threads: 1, TargetClient: provider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+		MarkMismatch:      func(context.Context, *db.Task) (bool, error) { mismatched = true; return true, nil },
+	})
+	if provider.hashCalls != 0 {
+		t.Fatalf("GetFileHash calls = %d, want 0 for size_only target", provider.hashCalls)
+	}
+	if provider.fileExistsCalls != 1 {
+		t.Fatalf("FileExists calls = %d, want 1", provider.fileExistsCalls)
+	}
+	if verified || !mismatched {
+		t.Fatal("size_only target with wrong size must be marked mismatched")
+	}
+}
+
+func TestVerificationNoneSkipsAllChecksAndLeavesTaskUnverified(t *testing.T) {
+	provider := &verifierProvider{verificationMode: storage.VerificationNone}
+	task := &db.Task{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 5}
+	verified, mismatched := false, false
+	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType: "Migration", EntityID: "none", Threads: 1, TargetClient: provider,
+		GetTasks:          func(context.Context) ([]*db.Task, error) { return []*db.Task{task}, nil },
+		ReconcileProgress: func() error { return nil },
+		MarkVerified:      func(context.Context, *db.Task, string) (bool, error) { verified = true; return true, nil },
+		MarkMismatch:      func(context.Context, *db.Task) (bool, error) { mismatched = true; return true, nil },
+	})
+	if provider.hashCalls != 0 || provider.fileExistsCalls != 0 {
+		t.Fatal("VerificationNone must not make provider calls")
+	}
+	if verified || mismatched {
+		t.Fatal("VerificationNone must not mutate task state")
 	}
 }
 

@@ -147,6 +147,9 @@ func (f *fakeProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 	panic("not implemented in test")
 }
 func (f *fakeProvider) SupportsAtomicRename() bool { return f.atomicRename }
+func (f *fakeProvider) VerificationMode() storage.VerificationMode {
+	return storage.VerificationCryptographicHash
+}
 
 // TestUseTempThenRename verifies the overwrite/retry decision: the temp-file +
 // rename pattern must only be used when BOTH an overwrite is requested AND the

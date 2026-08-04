@@ -299,6 +299,9 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		}
 		defer targetClient.Close()
 	}
+	// This is a provider capability, not a per-file property. Resolve it once
+	// for the entire pass so size-only targets never enter the hash-query path.
+	verificationMode := targetClient.VerificationMode()
 
 	numWorkers := cfg.Threads
 	if numWorkers <= 0 {
@@ -376,6 +379,22 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						return false
 					}
 					return markVerified(task, targetHash)
+				}
+				if verificationMode == storage.VerificationSizeOnly {
+					log.Printf("[VERIFIER] [SIZE_ONLY] %s | Target does not expose a comparable cryptographic hash — verifying size (%d bytes)\n", targetPath, task.FileSize)
+					if !markVerifiedForFile("") {
+						return
+					}
+					current := processedCount.Add(1)
+					if current == 1 || current%50 == 0 || current == int64(total) {
+						log.Printf("[VERIFIER] %s %s verification progress: %d/%d tasks processed (%.1f%%)\n",
+							cfg.EntityType, cfg.EntityID, current, total, float64(current)/float64(total)*100.0)
+					}
+					continue
+				}
+				if verificationMode == storage.VerificationNone {
+					log.Printf("[VERIFIER] [NO_INDEPENDENT_VERIFICATION] %s | Target does not support verification\n", targetPath)
+					continue
 				}
 				for attempt := 0; attempt < 3; attempt++ {
 					taskCtx, taskCancel := context.WithTimeout(passCtx, 15*time.Second)

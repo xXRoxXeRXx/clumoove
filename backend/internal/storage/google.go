@@ -673,6 +673,7 @@ func (p *GoogleProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 }
 
 // SupportsAtomicRename is true: Google Drive supports file rename.
+func (p *GoogleProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
 func (p *GoogleProvider) SupportsAtomicRename() bool {
 	return true
 }

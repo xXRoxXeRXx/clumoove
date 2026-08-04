@@ -24,6 +24,7 @@ type StorageProvider interface {
     CreateDirectory(ctx, resourceType, dirPath) error
     RenameFile(ctx, resourceType, oldPath, newPath) error
     SupportsAtomicRename() bool
+    VerificationMode() VerificationMode
 }
 ```
 
@@ -39,6 +40,18 @@ type StorageProvider interface {
 > - Return `false` for providers that **cannot** rename or delete (for example, `immich`, which writes
 >   an asset directly and relies on its native duplicate handling). The processor then skips the
 >   temp-file + rename step entirely.
+
+`VerificationMode()` is also mandatory. Return `cryptographic_hash` only when
+`GetFileHash` provides a target hash that can be compared with a source or
+streaming hash; return `size_only` when the target can only be checked for
+existence and size. The verifier never calls `GetFileHash` for `size_only`
+targets. In particular, Nextcloud, generic WebDAV, and MagentaCLOUD use
+`size_only`: their ETags are not cryptographic integrity evidence.
+
+`none` is reserved for targets that cannot be independently checked at all.
+The verifier performs no provider calls and does not mutate the task in that
+mode, so no current production provider returns it; adding one requires an
+explicit job-finalization policy.
 
 Optional capability interface:
 
@@ -78,6 +91,20 @@ time, description, tags, etc.) after a successful upload.
 | `ftp` | `ftp.go` | FTPS: explicit or implicit TLS | user/pass | files |
 | `local` | `local.go` | Local filesystem (server-side sandbox) | none (no URL/user/pass) | files only |
 | `immich` | `immich.go` | Immich stable v2 API | server URL + API key in encrypted password field | files only, one-time migrations |
+
+### Verification capabilities
+
+| Provider | Mode | Basis |
+| :------- | :--- | :---- |
+| Dropbox | `cryptographic_hash` | Dropbox content hash |
+| Google Drive | `cryptographic_hash` | MD5 |
+| OneDrive | `cryptographic_hash` | QuickXor |
+| HiDrive | `cryptographic_hash` | HiDrive `chash` |
+| Local | `cryptographic_hash` | SHA-256 |
+| Nextcloud, MagentaCLOUD, WebDAV | `size_only` | ETags are not integrity evidence |
+| S3 | `size_only` | Multipart ETags are not comparable hashes |
+| SMB, SFTP, FTPS | `size_only` | No portable target-hash API |
+| Immich | `size_only` | No portable hash; its path-based size verification needs separate review |
 
 ---
 
@@ -235,11 +262,13 @@ computes a second (target) hasher when algorithms differ (CPU optimization).
 
 1. Create `backend/internal/storage/<name>.go` implementing `StorageProvider` (and `MetadataApplier` if
    applicable).
-2. **Implement `SupportsAtomicRename() bool`.** This is a required interface method (no default). Forgetting
+2. **Implement `SupportsAtomicRename() bool` and `VerificationMode() VerificationMode`.** These are required interface methods (no default). Forgetting
    it produces a compile error `does not implement storage.StorageProvider (missing method
    SupportsAtomicRename)` for *every* implementer, including test mocks — so add it together with the other
    methods. Return `true` when the provider supports an atomic "upload to `<path>.tmp` then rename"
    overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Immich).
+   Return `cryptographic_hash` only for a comparable target hash; ETag-only and hashless targets must
+   return `size_only` so verification makes only the required existence/size query.
 3. Add the provider value to the whitelist in `internal/storage/factory.go` (`ValidProviders`) **and** the frontend
    provider selector.
 4. Register it in `NewProvider` (`factory.go`), including any SSRF egress validation for

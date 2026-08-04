@@ -1176,6 +1176,7 @@ func (p *davProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 }
 
 // SupportsAtomicRename is true: WebDAV/Nextcloud MOVE is supported.
+func (p *davProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
 func (p *davProvider) SupportsAtomicRename() bool {
 	return true
 }

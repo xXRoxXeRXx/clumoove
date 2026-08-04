@@ -547,4 +547,5 @@ func (p *FTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 	return nil
 }
 
-func (p *FTPProvider) SupportsAtomicRename() bool { return true }
+func (p *FTPProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+func (p *FTPProvider) SupportsAtomicRename() bool         { return true }

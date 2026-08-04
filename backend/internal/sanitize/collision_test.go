@@ -14,8 +14,8 @@ type mockProvider struct {
 	files map[string][]storage.CloudResource
 }
 
-func (m *mockProvider) Close() error                                                          { return nil }
-func (m *mockProvider) Connect(ctx context.Context) (bool, error)                             { return true, nil }
+func (m *mockProvider) Close() error                              { return nil }
+func (m *mockProvider) Connect(ctx context.Context) (bool, error) { return true, nil }
 func (m *mockProvider) InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error) {
 	return storage.CloudResource{}, fmt.Errorf("not implemented")
 }
@@ -45,6 +45,10 @@ func (m *mockProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 }
 func (m *mockProvider) SupportsAtomicRename() bool {
 	return true
+}
+func (m *mockProvider) VerificationMode() storage.VerificationMode {
+	// Verification is not exercised by collision tests; this only satisfies the interface.
+	return storage.VerificationSizeOnly
 }
 
 func (m *mockProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error) {

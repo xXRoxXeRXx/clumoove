@@ -662,6 +662,8 @@ func (p *HiDriveProvider) CreateDirectory(ctx context.Context, resourceType, dir
 	return nil
 }
 
+func (p *HiDriveProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
+
 func (p *HiDriveProvider) SupportsAtomicRename() bool {
 	return true
 }

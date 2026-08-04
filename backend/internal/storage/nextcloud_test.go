@@ -62,6 +62,16 @@ func TestNewNextcloudProviderURLNormalization(t *testing.T) {
 	}
 }
 
+func TestNextcloudProviderVerificationModeIsSizeOnly(t *testing.T) {
+	p, err := NewNextcloudProvider("https://nextcloud.example.com", "user", "pass")
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+	if got := p.VerificationMode(); got != VerificationSizeOnly {
+		t.Fatalf("VerificationMode() = %q, want %q", got, VerificationSizeOnly)
+	}
+}
+
 func TestNextcloudFileExistsFallsBackToPropfindForUnknownHEADLength(t *testing.T) {
 	propfindResponse := `<?xml version="1.0"?>
 <d:multistatus xmlns:d="DAV:">

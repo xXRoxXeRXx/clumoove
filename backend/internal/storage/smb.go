@@ -401,6 +401,7 @@ func (p *SMBProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 }
 
 // SupportsAtomicRename is true: SMB rename is supported.
+func (p *SMBProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
 func (p *SMBProvider) SupportsAtomicRename() bool {
 	return true
 }

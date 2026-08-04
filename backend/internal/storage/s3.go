@@ -544,6 +544,10 @@ func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newP
 // a delete, not an atomic replacement.  Returning false makes OVERWRITE upload
 // directly to the destination; S3 then atomically replaces the existing object
 // only after the upload succeeds.
+// VerificationMode is size_only: an S3 ETag is MD5 only for single-part
+// uploads and is a non-comparable composite value for multipart uploads.
+func (p *S3Provider) VerificationMode() VerificationMode { return VerificationSizeOnly }
+
 func (p *S3Provider) SupportsAtomicRename() bool {
 	return false
 }

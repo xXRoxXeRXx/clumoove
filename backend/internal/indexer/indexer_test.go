@@ -187,6 +187,10 @@ func (p indexFolderTestProvider) RenameFile(context.Context, string, string, str
 	return errors.New("not implemented")
 }
 func (p indexFolderTestProvider) SupportsAtomicRename() bool { return true }
+func (p indexFolderTestProvider) VerificationMode() storage.VerificationMode {
+	// Verification is not exercised by indexer tests; this only satisfies the interface.
+	return storage.VerificationSizeOnly
+}
 
 var (
 	batchTestDriverOnce sync.Once

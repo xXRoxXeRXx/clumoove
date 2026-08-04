@@ -44,6 +44,7 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 
 func (p *ImmichProvider) Close() error                       { p.HTTPClient.CloseIdleConnections(); return nil }
 func (p *ImmichProvider) SupportsAtomicRename() bool         { return false }
+func (p *ImmichProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
 func (p *ImmichProvider) UsesNativeDuplicateDetection() bool { return true }
 func (p *ImmichProvider) checkType(t string) error {
 	if t != "files" {

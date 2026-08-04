@@ -78,6 +78,16 @@ type NativeDuplicateDetector interface {
 	UsesNativeDuplicateDetection() bool
 }
 
+// VerificationMode describes the independent post-transfer verification a
+// provider can perform for a file target.
+type VerificationMode string
+
+const (
+	VerificationCryptographicHash VerificationMode = "cryptographic_hash"
+	VerificationSizeOnly          VerificationMode = "size_only"
+	VerificationNone              VerificationMode = "none"
+)
+
 type transferMetadataContextKey struct{}
 
 // WithTransferMetadata supplies provider-specific upload attributes without
@@ -122,6 +132,9 @@ type StorageProvider interface {
 	// during upload) must return false. The processor then skips the delete+rename
 	// step and relies on the provider having already written to the final name.
 	SupportsAtomicRename() bool
+	// VerificationMode reports how post-transfer integrity can be checked for
+	// this target. ETags alone are not cryptographic hashes and use size_only.
+	VerificationMode() VerificationMode
 }
 
 // ProgressReader wraps an io.Reader and emits the number of bytes read
