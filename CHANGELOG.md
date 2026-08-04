@@ -5,6 +5,23 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-05
+
+### Added
+- **Automatic Failed Task Retries**: Added background task retry engine (`FAILED_RETRYING` task status) that automatically re-executes transient failed migration tasks prior to entering final integrity verification.
+- **Immich Target Asset ID & SHA-1 Verification**: Implemented target asset ID tracking and Base64 SHA-1 verification for Immich storage targets.
+- **User Last Login Tracking**: Added `last_login_at` timestamp tracking to user authentication flows, admin API endpoints, and Admin UI user tables.
+
+### Improved & Security Hardened
+- **Verification Engine Optimization**: Optimized post-migration verification by skipping redundant remote target hash queries for `size_only` target providers (WebDAV, Nextcloud, MagentaCLOUD, FTPS).
+- **Single-Writer Verifier Fencing**: Implemented PostgreSQL database leases and generation fencing for migration verification passes to enforce single-writer guarantees across multi-instance worker processes.
+- **Cancellation Task Fencing**: Enhanced indexer and task management to prevent new task creation while migration cancellation is actively in progress.
+
+### Fixed
+- **Notification Deliveries Parameter Casting**: Fixed PostgreSQL type errors in notification delivery queries by explicitly casting `event_id` and `user_id` parameters to `UUID`.
+- **Bulk Task Insert Type Safety**: Fixed parameter type casting for `file_size` and task metadata in bulk task insertion queries.
+- **Completion Email Default**: Enabled completion email notifications by default when an instance SMTP server is configured.
+
 ## [0.10.0] - 2026-08-03
 
 ### Added
