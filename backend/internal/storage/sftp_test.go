@@ -2,10 +2,14 @@ package storage
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"net/url"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
 
 const testSFTPHostKeyFingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -76,6 +80,33 @@ func TestParseSFTPHostKeyFingerprint(t *testing.T) {
 	if got != want {
 		t.Errorf("parsed fingerprint = %x, want %x", got, want)
 	}
+}
+
+func TestSFTPProviderVerifyHostKey(t *testing.T) {
+	trustedKey := mustSFTPPublicKey(t, "trusted host key")
+	fingerprint := ssh.FingerprintSHA256(trustedKey)
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+url.QueryEscape(fingerprint), "user", "pass")
+	if err != nil {
+		t.Fatalf("NewSFTPProvider returned error: %v", err)
+	}
+
+	if err := p.verifyHostKey("example.com:22", nil, trustedKey); err != nil {
+		t.Fatalf("verifyHostKey rejected the configured host key: %v", err)
+	}
+	if err := p.verifyHostKey("example.com:22", nil, mustSFTPPublicKey(t, "untrusted host key")); err == nil {
+		t.Fatal("verifyHostKey accepted an unconfigured host key")
+	}
+}
+
+func mustSFTPPublicKey(t *testing.T, key string) ssh.PublicKey {
+	t.Helper()
+	seed := sha256.Sum256([]byte(key))
+	privateKey := ed25519.NewKeyFromSeed(seed[:])
+	publicKey, err := ssh.NewPublicKey(privateKey.Public())
+	if err != nil {
+		t.Fatalf("ssh.NewPublicKey returned error: %v", err)
+	}
+	return publicKey
 }
 
 func TestIsSFTPAuthError(t *testing.T) {

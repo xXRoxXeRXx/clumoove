@@ -81,6 +81,19 @@ time, description, tags, etc.) after a successful upload.
 
 ---
 
+### SFTP host identity
+
+SFTP endpoints must include a URL-encoded `host_key` query parameter containing
+the server's trusted SHA-256 SSH fingerprint, in the `SHA256:<base64>` format
+emitted by `ssh-keygen`. The fingerprint must be obtained through a trusted
+administrative channel; it is pinned when the provider is created, and the SSH
+handshake rejects any server key that does not match. Connections without a valid
+fingerprint are rejected before authentication, preventing a network attacker
+from impersonating the SFTP server or receiving password authentication
+credentials.
+
+---
+
 ## 2.1. FTPS Provider (`ftp`)
 
 `ftp` supports files only and always uses TLS-protected FTP. It can be a source or target for migrations,
