@@ -73,20 +73,39 @@ func MarkMigrationTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Con
 func MarkMigrationTaskChecksumMismatchWhileVerifying(db *sql.DB, ctx context.Context, task *Task, generation int) (bool, error) {
 	// The verifier populates ErrorMessage, TargetHash, and NextRetryAt before
 	// calling this function. A zero NextRetryAt deliberately suppresses retry.
+	// Lock and transition the parent in the same statement as the task write.
+	// This prevents a retryable mismatch from being visible while the migration
+	// still appears eligible for verification finalization.
 	res, err := db.ExecContext(ctx, `
-		UPDATE tasks AS t
-		SET status = 'FAILED', error_message = $2, next_retry_at = $3,
-		    target_hash = $4, checksum_verified = FALSE, updated_at = CURRENT_TIMESTAMP
-		WHERE t.id = $1 AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
-		  AND EXISTS (
-			SELECT 1 FROM migrations m
-			WHERE m.id = t.migration_id AND m.status = 'VERIFYING'
-			  AND m.verification_generation = $5 AND m.verification_lease_until > NOW()
-		  )
+		WITH eligible_migration AS (
+			SELECT m.id
+			FROM migrations m
+			JOIN tasks t ON t.migration_id = m.id
+			WHERE t.id = $1
+			  AND m.status = 'VERIFYING'
+			  AND m.verification_generation = $5
+			  AND m.verification_lease_until > NOW()
+			FOR UPDATE OF m
+		), updated_task AS (
+			UPDATE tasks AS t
+			SET status = 'FAILED', error_message = $2, next_retry_at = $3,
+			    target_hash = $4, checksum_verified = FALSE, updated_at = CURRENT_TIMESTAMP
+			FROM eligible_migration m
+			WHERE t.id = $1 AND t.migration_id = m.id
+			  AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
+			RETURNING t.migration_id
+		)
+		UPDATE migrations m
+		SET status = CASE WHEN $3::timestamptz IS NOT NULL THEN 'RUNNING' ELSE m.status END,
+		    updated_at = CURRENT_TIMESTAMP
+		FROM updated_task t
+		WHERE m.id = t.migration_id
 	`, task.ID, task.ErrorMessage, task.NextRetryAt, task.TargetHash, generation)
 	if err != nil {
 		return false, err
 	}
+	// RowsAffected reflects the outer migrations UPDATE: one row means both the
+	// task was written and its parent transition (when retryable) was applied.
 	n, err := res.RowsAffected()
 	return n == 1, err
 }

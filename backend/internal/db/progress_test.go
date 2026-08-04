@@ -78,6 +78,8 @@ func insertProgressMigration(t *testing.T, db *sql.DB, id, owner string, total, 
 	}
 }
 
+// migrationStatus returns the persisted status and fails the calling test when
+// the migration cannot be read. It is shared by db package state-machine tests.
 func migrationStatus(t *testing.T, db *sql.DB, id string) string {
 	t.Helper()
 	var status string
