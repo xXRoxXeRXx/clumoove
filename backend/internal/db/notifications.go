@@ -56,13 +56,13 @@ func UpsertNotificationChannel(database *sql.DB, userID, typ string, enabled boo
 // explicitly saved an email preference (including an opt-out).
 func createNotificationDeliveries(tx *sql.Tx, eventID, userID string) error {
 	_, err := tx.Exec(`INSERT INTO notification_deliveries (event_id,channel_type,config_encrypted)
-		SELECT $1, type, CASE WHEN type='email' THEN '' ELSE config_encrypted END
+		SELECT $1::uuid, type, CASE WHEN type='email' THEN '' ELSE config_encrypted END
 		FROM notification_channels
-		WHERE user_id=$2 AND enabled=TRUE
+		WHERE user_id=$2::uuid AND enabled=TRUE
 		UNION ALL
-		SELECT $1, 'email', ''
+		SELECT $1::uuid, 'email', ''
 		WHERE EXISTS (SELECT 1 FROM instance_smtp_settings WHERE id=1)
-		  AND NOT EXISTS (SELECT 1 FROM notification_channels WHERE user_id=$2 AND type='email')
+		  AND NOT EXISTS (SELECT 1 FROM notification_channels WHERE user_id=$2::uuid AND type='email')
 		ON CONFLICT (event_id,channel_type) DO NOTHING`, eventID, userID)
 	return err
 }
