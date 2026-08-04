@@ -166,7 +166,6 @@ func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
 		}
 		if requeued {
 			p.queue.NotifyTaskAvailable(ctx, p.db)
-			continue
 		}
 		if err := db.ReconcileMigrationProgress(p.db, id); err != nil {
 			log.Printf("[ProgressReconciler] error reconciling migration %s: %v\n", id, err)

@@ -38,7 +38,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `avatar_mime` | TEXT | |
 | `active` | BOOLEAN NOT NULL DEFAULT TRUE | |
 | `must_change_password` | BOOLEAN NOT NULL DEFAULT FALSE | |
-| `totp_secret_encrypted` | TEXT | AES-GCM |
+| `totp_secret_enc` | TEXT | AES-GCM |
 | `totp_enabled` | BOOLEAN NOT NULL DEFAULT FALSE | |
 | `totp_backup_codes` | JSONB | hashes |
 | `totp_failed_attempts` | INTEGER NOT NULL DEFAULT 0 | |

@@ -323,6 +323,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (idx_audit_log_created): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE audit_log ALTER COLUMN target SET DEFAULT '', ALTER COLUMN ip SET DEFAULT ''`)
+			if err != nil {
+				log.Printf("Failed schema migration (audit_log column defaults): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS migrations (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -354,6 +358,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			)`)
 			if err != nil {
 				log.Printf("Failed schema migration (migrations): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE migrations ALTER COLUMN source_url SET DEFAULT '', ALTER COLUMN source_username SET DEFAULT '', ALTER COLUMN source_password_encrypted SET DEFAULT ''`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations column defaults): %v\n", err)
 			}
 
 			// Repair legacy invalid values before adding the constraint. This makes
@@ -488,6 +496,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (idx_connection_profiles_user): %v\n", err)
 				db.Close()
 				return nil, fmt.Errorf("schema migration idx_connection_profiles_user: %w", err)
+			}
+			_, err = db.Exec(`ALTER TABLE connection_profiles ALTER COLUMN url SET DEFAULT '', ALTER COLUMN username SET DEFAULT '', ALTER COLUMN password_encrypted SET DEFAULT '', ALTER COLUMN refresh_token_encrypted SET DEFAULT ''`)
+			if err != nil {
+				log.Printf("Failed schema migration (connection_profiles column defaults): %v\n", err)
 			}
 
 			// Keep this bootstrap DDL in sync with db/schema.sql. It must precede
@@ -634,6 +646,18 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (indexing_errors): %v\n", err)
 			}
+			_, err = db.Exec(`DO $$ BEGIN
+				IF EXISTS (
+					SELECT 1 FROM information_schema.columns
+					WHERE table_name = 'indexing_errors' AND column_name = 'id' AND data_type = 'uuid'
+				) THEN
+					ALTER TABLE indexing_errors DROP COLUMN id;
+					ALTER TABLE indexing_errors ADD COLUMN id BIGSERIAL PRIMARY KEY;
+				END IF;
+			END $$`)
+			if err != nil {
+				log.Printf("Failed schema migration (indexing_errors id type migration): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS settings (
 				key VARCHAR(128) PRIMARY KEY,
@@ -721,6 +745,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_migration_id_key`)
 			if err != nil {
 				log.Printf("Failed schema migration (notification_events old migration uniqueness): %v\n", err)
+			}
+			_, err = db.Exec(`DROP INDEX IF EXISTS idx_notification_events_migration_generation; DROP INDEX IF EXISTS notification_events_migration_generation;`)
+			if err != nil {
+				log.Printf("Failed schema migration (drop legacy notification_events indexes): %v\n", err)
 			}
 			// Partial unique indexes replace the old table-level UNIQUE (sync_job_id, run_at).
 			// NULL != NULL in SQL unique constraints, so the table constraint was toothless

@@ -111,10 +111,34 @@ func TestMaybeRetryFailedMigrationTasks(t *testing.T) {
 		t.Fatalf("failed to insert test tasks: %v", err)
 	}
 
-	// First call: should claim final retry and requeue 2 terminal failed tasks
+	// First call: while an active task (next_retry_at IS NOT NULL) exists,
+	// MaybeRetryFailedMigrationTasks MUST NOT claim final retry.
+	requeuedActive, err := MaybeRetryFailedMigrationTasks(database, ctx, migID)
+	if err != nil {
+		t.Fatalf("MaybeRetryFailedMigrationTasks call with active task returned error: %v", err)
+	}
+	if requeuedActive {
+		t.Fatalf("expected requeuedActive=false while active task exists, got true")
+	}
+
+	var flagDoneBefore bool
+	if err := database.QueryRow(`SELECT failed_retry_done FROM migrations WHERE id = $1`, migID).Scan(&flagDoneBefore); err != nil {
+		t.Fatalf("failed to read failed_retry_done: %v", err)
+	}
+	if flagDoneBefore {
+		t.Fatalf("expected failed_retry_done=false while active task exists")
+	}
+
+	// Mark the active task as COMPLETED so no active tasks remain.
+	_, err = database.Exec(`UPDATE tasks SET status = 'COMPLETED', next_retry_at = NULL WHERE migration_id = $1 AND error_message = 'temporary error'`, migID)
+	if err != nil {
+		t.Fatalf("failed to complete active task: %v", err)
+	}
+
+	// Second call: no active tasks remain -> should claim final retry and requeue 2 terminal failed tasks
 	requeued, err := MaybeRetryFailedMigrationTasks(database, ctx, migID)
 	if err != nil {
-		t.Fatalf("MaybeRetryFailedMigrationTasks first call returned error: %v", err)
+		t.Fatalf("MaybeRetryFailedMigrationTasks call returned error: %v", err)
 	}
 	if !requeued {
 		t.Fatalf("expected requeued=true, got false")
@@ -141,14 +165,14 @@ func TestMaybeRetryFailedMigrationTasks(t *testing.T) {
 	if err := database.QueryRow(`SELECT COUNT(*) FROM tasks WHERE migration_id = $1 AND status = 'FAILED'`, migID).Scan(&failedCount); err != nil {
 		t.Fatalf("failed to count FAILED tasks: %v", err)
 	}
-	if failedCount != 1 { // Only the retryable failed task remains FAILED
-		t.Fatalf("expected 1 remaining FAILED task, got %d", failedCount)
+	if failedCount != 0 {
+		t.Fatalf("expected 0 remaining FAILED tasks, got %d", failedCount)
 	}
 
-	// Second call: should return requeued=false (no infinite loop)
+	// Third call: should return requeued=false (already claimed, no infinite loop)
 	requeuedAgain, err := MaybeRetryFailedMigrationTasks(database, ctx, migID)
 	if err != nil {
-		t.Fatalf("MaybeRetryFailedMigrationTasks second call returned error: %v", err)
+		t.Fatalf("MaybeRetryFailedMigrationTasks subsequent call returned error: %v", err)
 	}
 	if requeuedAgain {
 		t.Fatalf("expected requeuedAgain=false, got true")

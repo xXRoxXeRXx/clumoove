@@ -423,7 +423,8 @@ func MaybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID
 	}
 	defer tx.Rollback()
 
-	// Atomically claim the final retry phase for this RUNNING migration if terminally failed tasks exist.
+	// Atomically claim the final retry phase for this RUNNING migration if terminally failed tasks exist
+	// and no active tasks remain.
 	claimQuery := `
 		UPDATE migrations
 		SET failed_retry_done = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -433,6 +434,11 @@ func MaybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID
 			WHERE t.migration_id = migrations.id
 			  AND t.status = 'FAILED'
 			  AND t.next_retry_at IS NULL
+		  )
+		  AND NOT EXISTS (
+			SELECT 1 FROM tasks t
+			WHERE t.migration_id = migrations.id
+			  AND (t.status IN ('PENDING', 'RUNNING') OR (t.status = 'FAILED' AND t.next_retry_at IS NOT NULL))
 		  )
 	`
 	res, err := tx.ExecContext(ctx, claimQuery, migrationID)
