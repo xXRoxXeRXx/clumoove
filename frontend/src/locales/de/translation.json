@@ -708,6 +708,8 @@
       "suspended": "Gesperrt",
       "role": "Rolle",
       "createdAt": "Erstellt",
+      "lastLoginAt": "Letzte Anmeldung",
+      "neverLoggedIn": "Nie",
       "suspend": "Sperren",
       "reactivate": "Reaktivieren",
       "toggleRole": "Rolle wechseln",

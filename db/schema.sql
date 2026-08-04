@@ -21,9 +21,12 @@ CREATE TABLE IF NOT EXISTS users (
     totp_locked_until TIMESTAMP WITH TIME ZONE,
     login_failed_attempts INTEGER NOT NULL DEFAULT 0,
     login_locked_until TIMESTAMP WITH TIME ZONE,
+    last_login_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_users_last_login_at ON users(last_login_at);
 
 -- Table for Refresh Tokens (Session Extension)
 CREATE TABLE IF NOT EXISTS refresh_tokens (

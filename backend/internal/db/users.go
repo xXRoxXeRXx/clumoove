@@ -25,6 +25,7 @@ type User struct {
 	AvatarMime          string       `json:"-"`
 	CreatedAt           time.Time    `json:"created_at"`
 	UpdatedAt           time.Time    `json:"updated_at"`
+	LastLoginAt         *time.Time   `json:"last_login_at"`
 	TotpEnabled         bool         `json:"totp_enabled"`
 	TotpSecretEnc       string       `json:"-"`
 	TotpBackupCodes     StringArray  `json:"-"`
@@ -151,15 +152,16 @@ func GetUserByEmail(ctx context.Context, db *sql.DB, email string) (*User, error
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
-		       login_failed_attempts, login_locked_until
+		       login_failed_attempts, login_locked_until, last_login_at
 		FROM users WHERE email = $1
 	`
 	var u User
 	var mime sql.NullString
 	var totpSecret sql.NullString
+	var lastLogin sql.NullTime
 	err := db.QueryRowContext(ctx, query, email).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
-		&u.LoginFailedAttempts, &u.LoginLockedUntil)
+		&u.LoginFailedAttempts, &u.LoginLockedUntil, &lastLogin)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +170,9 @@ func GetUserByEmail(ctx context.Context, db *sql.DB, email string) (*User, error
 	}
 	if totpSecret.Valid {
 		u.TotpSecretEnc = totpSecret.String
+	}
+	if lastLogin.Valid {
+		u.LastLoginAt = &lastLogin.Time
 	}
 	return &u, nil
 }
@@ -176,15 +181,16 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
-		       login_failed_attempts, login_locked_until
+		       login_failed_attempts, login_locked_until, last_login_at
 		FROM users WHERE id = $1
 	`
 	var u User
 	var mime sql.NullString
 	var totpSecret sql.NullString
+	var lastLogin sql.NullTime
 	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
-		&u.LoginFailedAttempts, &u.LoginLockedUntil)
+		&u.LoginFailedAttempts, &u.LoginLockedUntil, &lastLogin)
 	if err != nil {
 		return nil, err
 	}
@@ -193,6 +199,9 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	}
 	if totpSecret.Valid {
 		u.TotpSecretEnc = totpSecret.String
+	}
+	if lastLogin.Valid {
+		u.LastLoginAt = &lastLogin.Time
 	}
 	return &u, nil
 }
@@ -202,15 +211,16 @@ func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
-		       login_failed_attempts, login_locked_until
+		       login_failed_attempts, login_locked_until, last_login_at
 		FROM users WHERE id = $1
 	`
 	var u User
 	var mime sql.NullString
 	var totpSecret sql.NullString
+	var lastLogin sql.NullTime
 	err := tx.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
-		&u.LoginFailedAttempts, &u.LoginLockedUntil)
+		&u.LoginFailedAttempts, &u.LoginLockedUntil, &lastLogin)
 	if err != nil {
 		return nil, err
 	}
@@ -219,6 +229,9 @@ func GetUserByIDTx(tx *sql.Tx, id string) (*User, error) {
 	}
 	if totpSecret.Valid {
 		u.TotpSecretEnc = totpSecret.String
+	}
+	if lastLogin.Valid {
+		u.LastLoginAt = &lastLogin.Time
 	}
 	return &u, nil
 }
@@ -268,7 +281,7 @@ func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
 	}
 	listArgs := append(append([]interface{}{}, args...), p.Limit, offset)
 	query := `
-		SELECT id, email, display_name, role, active, must_change_password, totp_enabled, created_at, updated_at
+		SELECT id, email, display_name, role, active, must_change_password, totp_enabled, created_at, updated_at, last_login_at
 		FROM users WHERE ` + where + `
 		ORDER BY created_at DESC
 		LIMIT $` + fmt.Sprintf("%d", idx) + ` OFFSET $` + fmt.Sprintf("%d", idx+1)
@@ -281,12 +294,22 @@ func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
 	users := []User{}
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.TotpEnabled, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		var lastLogin sql.NullTime
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.Role, &u.Active, &u.MustChangePassword, &u.TotpEnabled, &u.CreatedAt, &u.UpdatedAt, &lastLogin); err != nil {
 			return nil, 0, err
+		}
+		if lastLogin.Valid {
+			u.LastLoginAt = &lastLogin.Time
 		}
 		users = append(users, u)
 	}
 	return users, total, nil
+}
+
+func UpdateLastLoginAt(database *sql.DB, id string) (time.Time, error) {
+	var ts time.Time
+	err := database.QueryRow(`UPDATE users SET last_login_at = CURRENT_TIMESTAMP WHERE id = $1 RETURNING last_login_at`, id).Scan(&ts)
+	return ts, err
 }
 
 func UpdateUserDisplayName(db *sql.DB, id, name string) error {

@@ -6,6 +6,7 @@ export interface AdminUser extends User {
   must_change_password?: boolean;
   totp_enabled?: boolean;
   created_at?: string;
+  last_login_at?: string | null;
 }
 
 export interface AdminStats {

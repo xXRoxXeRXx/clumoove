@@ -70,6 +70,7 @@ export interface User {
   role?: UserRole | string;
   avatar?: string;
   totp_enabled?: boolean;
+  last_login_at?: string | null;
 }
 
 export interface Migration {

@@ -708,6 +708,8 @@
       "suspended": "Suspended",
       "role": "Role",
       "createdAt": "Created",
+      "lastLoginAt": "Last Login",
+      "neverLoggedIn": "Never",
       "suspend": "Suspend",
       "reactivate": "Reactivate",
       "toggleRole": "Toggle role",

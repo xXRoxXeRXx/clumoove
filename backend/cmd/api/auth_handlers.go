@@ -723,18 +723,21 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// userResponse formats the public user payload. last_login_at reflects the
+// timestamp of the user's latest established login session (updated during token issuance).
 func userResponse(u *db.User) map[string]interface{} {
 	language := u.Language
 	if language != "de" && language != "en" {
 		language = "en"
 	}
 	resp := map[string]interface{}{
-		"id":           u.ID,
-		"email":        u.Email,
-		"display_name": u.DisplayName,
-		"role":         u.Role,
-		"totp_enabled": u.TotpEnabled,
-		"language":     language,
+		"id":            u.ID,
+		"email":         u.Email,
+		"display_name":  u.DisplayName,
+		"role":          u.Role,
+		"totp_enabled":  u.TotpEnabled,
+		"language":      language,
+		"last_login_at": u.LastLoginAt,
 	}
 	if len(u.Avatar) > 0 {
 		resp["avatar"] = avatarDataURL(u)

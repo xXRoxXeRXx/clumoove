@@ -242,6 +242,16 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (login_locked_until): %v\n", err)
 			}
 
+			_, err = db.Exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP WITH TIME ZONE`)
+			if err != nil {
+				log.Printf("Failed schema migration (last_login_at): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_users_last_login_at ON users(last_login_at)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_users_last_login_at): %v\n", err)
+			}
+
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS instance_smtp_settings (
 				id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
 				smtp_host VARCHAR(255) NOT NULL,

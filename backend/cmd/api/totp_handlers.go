@@ -390,6 +390,12 @@ func (s *APIServer) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 // issueTokens mints a fresh access + refresh token pair for the given user,
 // mirroring the token issuance in handleLogin.
 func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.User) {
+	if ts, err := db.UpdateLastLoginAt(s.db, u.ID); err != nil {
+		log.Printf("issueTokens: failed to update last_login_at for user %s: %v\n", u.ID, err)
+	} else {
+		u.LastLoginAt = &ts
+	}
+
 	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
 	if err != nil {
 		log.Printf("issueTokens: failed to generate access token for user %s: %v\n", u.ID, err)

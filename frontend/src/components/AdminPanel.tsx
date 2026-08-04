@@ -282,6 +282,7 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
               <th className="text-left px-3 py-2 font-semibold">{t('admin.users.role')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('common.active')}</th>
               <th className="text-left px-3 py-2 font-semibold">{t('admin.users.createdAt')}</th>
+              <th className="text-left px-3 py-2 font-semibold">{t('admin.users.lastLoginAt')}</th>
               <th className="text-right px-3 py-2 font-semibold">{t('migrations.actions')}</th>
             </tr>
           </thead>
@@ -299,6 +300,7 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
                     : <Badge size="sm" variant="error" label={t('admin.users.suspended')} />}
                 </td>
                 <td data-label={t('admin.users.createdAt')} className="px-3 py-2 text-[var(--color-text-muted)]">{u.created_at ? formatDateTime(u.created_at) : ''}</td>
+                <td data-label={t('admin.users.lastLoginAt')} className="px-3 py-2 text-[var(--color-text-muted)]">{u.last_login_at ? formatDateTime(u.last_login_at) : t('admin.users.neverLoggedIn')}</td>
                 <td data-label={t('migrations.actions')} className="px-3 py-2">
                   <div className="flex justify-end gap-1.5">
                     {u.active ? (
@@ -321,7 +323,7 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
               </tr>
             ))}
             {!loading && users.length === 0 && (
-              <tr><td colSpan={6} className="px-3 py-6 text-center text-[var(--color-text-muted)]">{t('migrations.dbEmpty')}</td></tr>
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-[var(--color-text-muted)]">{t('migrations.dbEmpty')}</td></tr>
             )}
           </tbody>
         </table>
