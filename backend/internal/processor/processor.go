@@ -120,48 +120,12 @@ func (p *Processor) lockTargetFile(targetPath string) func() {
 	}
 }
 
-// immichOriginalFilenamePath replaces an Immich virtual asset ID with its
-// original filename while retaining the selected virtual directory structure.
-func immichOriginalFilenamePath(targetPath, filename string) string {
-	return path.Join(path.Dir(targetPath), path.Base(filename))
-}
-
-func immichTargetPath(targetPath, filename, albumName string) string {
-	if filename != "" {
-		targetPath = immichOriginalFilenamePath(targetPath, filename)
-	}
-	if albumName != "" {
-		if filename == "" {
-			if path.Base(path.Dir(targetPath)) != "Albums" {
-				return targetPath
-			}
-			return path.Join(path.Dir(targetPath), albumName)
-		}
-		if path.Base(path.Dir(path.Dir(targetPath))) != "Albums" {
-			return targetPath
-		}
-		targetPath = path.Join(path.Dir(path.Dir(targetPath)), albumName, path.Base(targetPath))
-	}
-	return targetPath
-}
-
-func isDirectoryPath(filePath string, metadata []byte) bool {
-	if strings.HasSuffix(filePath, "/") {
-		return true
-	}
-	if len(metadata) > 0 {
-		var meta struct {
-			Action string `json:"action"`
-		}
-		if err := json.Unmarshal(metadata, &meta); err == nil {
-			return meta.Action == "mkdir"
-		}
-	}
-	return false
-}
-
 // ResolveTargetPath computes the target file or directory path for a task
-// considering target directory, Immich source path translations, and target filename/directory sanitization.
+// considering target directory and target filename/directory sanitization.
+// Immich sources/targets are always flat (the library root), but an Immich
+// source's asset UUID is renamed to its original filename from task metadata so
+// the destination keeps human-readable names. No virtual album/path translation
+// is applied.
 func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir, sourceProvider, targetProvider string) string {
 	if resourceType != "files" {
 		return filePath
@@ -169,34 +133,11 @@ func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir
 
 	relativePath := filePath
 
+	// Immich sources store the original filename in metadata; replace the asset
+	// UUID with it while staying flat (no album structure).
 	if sourceProvider == "immich" {
-		var filename, albumName string
-		if len(metadata) > 0 {
-			var meta struct {
-				CustomProps map[string]string `json:"custom_props"`
-				Filename    string            `json:"immich_filename"`
-				AlbumName   string            `json:"immich_album_name"`
-			}
-			if err := json.Unmarshal(metadata, &meta); err == nil {
-				filename = meta.Filename
-				if filename == "" && meta.CustomProps != nil {
-					filename = meta.CustomProps["immich_filename"]
-				}
-				albumName = meta.AlbumName
-				if albumName == "" && meta.CustomProps != nil {
-					albumName = meta.CustomProps["immich_album_name"]
-				}
-			}
-		}
-
-		if isDirectoryPath(filePath, metadata) {
-			if albumName != "" {
-				relativePath = immichTargetPath(relativePath, "", albumName)
-			}
-		} else {
-			if filename != "" {
-				relativePath = immichTargetPath(relativePath, filename, albumName)
-			}
+		if filename := immichFilenameFromMetadata(metadata); filename != "" {
+			relativePath = path.Join(path.Dir(relativePath), path.Base(filename))
 		}
 	}
 
@@ -215,6 +156,29 @@ func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir
 		return path.Clean(path.Join(targetDir, relativePath))
 	}
 	return path.Clean(relativePath)
+}
+
+// immichFilenameFromMetadata extracts the original filename that an Immich
+// asset was indexed with. It is stored either as a top-level immich_filename
+// key or inside custom_props.immich_filename.
+func immichFilenameFromMetadata(metadata []byte) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var meta struct {
+		CustomProps map[string]string `json:"custom_props"`
+		Filename    string            `json:"immich_filename"`
+	}
+	if err := json.Unmarshal(metadata, &meta); err != nil {
+		return ""
+	}
+	if meta.Filename != "" {
+		return meta.Filename
+	}
+	if meta.CustomProps != nil {
+		return meta.CustomProps["immich_filename"]
+	}
+	return ""
 }
 
 // newProvider creates a provider scoped to a single operation. Providers retain

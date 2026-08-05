@@ -252,7 +252,7 @@ func TestDisplayTaskName(t *testing.T) {
 	}{
 		{
 			name:     "uses Immich original filename",
-			filePath: "/Timeline/eaf7957e-0601-428a-895d-55a376194d5a",
+			filePath: "/eaf7957e-0601-428a-895d-55a376194d5a",
 			metadata: `{"custom_props":{"immich_filename":"2026-07-urlaub.jpg"}}`,
 			want:     "2026-07-urlaub.jpg",
 		},

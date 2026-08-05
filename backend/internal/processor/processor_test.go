@@ -329,35 +329,6 @@ func TestOverwriteBackupPathUsesShortStableSuffix(t *testing.T) {
 	}
 }
 
-func TestImmichOriginalFilenamePath(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		filename string
-		want     string
-	}{
-		{"original filename", "photo.jpg", "/destination/Albums/album-id/photo.jpg"},
-		{"path traversal filename", "../photo.jpg", "/destination/Albums/album-id/photo.jpg"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := immichOriginalFilenamePath("/destination/Albums/album-id/asset-id", test.filename); got != test.want {
-				t.Fatalf("immichOriginalFilenamePath(..., %q) = %q, want %q", test.filename, got, test.want)
-			}
-		})
-	}
-}
-
-func TestImmichTargetPath(t *testing.T) {
-	if got, want := immichTargetPath("/destination/Albums/album-id/asset-id", "photo.jpg", "Holiday"), "/destination/Albums/Holiday/photo.jpg"; got != want {
-		t.Fatalf("immichTargetPath() = %q, want %q", got, want)
-	}
-	if got, want := immichTargetPath("/destination/Albums/album-id", "", "Holiday"), "/destination/Albums/Holiday"; got != want {
-		t.Fatalf("immichTargetPath() directory = %q, want %q", got, want)
-	}
-	if got, want := immichTargetPath("/destination/unrelated/asset-id", "photo.jpg", "Holiday"), "/destination/unrelated/photo.jpg"; got != want {
-		t.Fatalf("immichTargetPath() unexpected layout = %q, want %q", got, want)
-	}
-}
-
 func TestTransferTimeout(t *testing.T) {
 	const mb = int64(1024 * 1024)
 	cases := []struct {
@@ -462,14 +433,14 @@ func TestResolveTargetPath(t *testing.T) {
 		}
 	})
 
-	t.Run("immich single pass metadata reading and sanitization", func(t *testing.T) {
+	t.Run("immich source resolves uuid to human-readable target name", func(t *testing.T) {
 		task := &db.Task{
 			ResourceType: "files",
-			FilePath:     "/Albums/album-uuid-1/asset-uuid-2",
-			Metadata:     []byte(`{"immich_filename":"bad:photo?.jpg","immich_album_name":"Vacation/2024?"}`),
+			FilePath:     "/asset-uuid-2",
+			Metadata:     []byte(`{"immich_filename":"bad:photo?.jpg"}`),
 		}
 		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Immich Alben", "immich", "smb")
-		want := "/Immich Alben/Albums/Vacation/2024_/bad_photo_.jpg"
+		want := "/Immich Alben/bad_photo_.jpg"
 		if got != want {
 			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
 		}
@@ -478,11 +449,11 @@ func TestResolveTargetPath(t *testing.T) {
 	t.Run("virtual target provider skips sanitization", func(t *testing.T) {
 		task := &db.Task{
 			ResourceType: "files",
-			FilePath:     "/Albums/album-uuid-1/asset-uuid-2",
-			Metadata:     []byte(`{"immich_filename":"photo:1.jpg","immich_album_name":"Vacation"}`),
+			FilePath:     "/asset-uuid-2",
+			Metadata:     []byte(`{"immich_filename":"photo:1.jpg"}`),
 		}
 		got := ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, "/Immich Target", "immich", "immich")
-		want := "/Immich Target/Albums/Vacation/photo:1.jpg"
+		want := "/Immich Target/photo:1.jpg"
 		if got != want {
 			t.Fatalf("ResolveTargetPath() = %q, want %q", got, want)
 		}

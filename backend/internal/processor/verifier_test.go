@@ -408,9 +408,9 @@ func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
 	task := &db.Task{
 		ID:           "immich-task-1",
 		ResourceType: "files",
-		FilePath:     "/Albums/album-uuid-123/asset-uuid-456",
+		FilePath:     "/asset-uuid-456",
 		FileSize:     2000,
-		Metadata:     []byte(`{"immich_filename":"sunset.jpg","immich_album_name":"Vacation"}`),
+		Metadata:     []byte(`{"immich_filename":"sunset.jpg"}`),
 		SourceHash:   sql.NullString{String: "SHA1:abcd1234efgh5678", Valid: true},
 	}
 
@@ -436,7 +436,7 @@ func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
 		t.Fatal("expected Immich task to be marked verified")
 	}
 
-	wantPath := "/Immich Alben/Albums/Vacation/sunset.jpg"
+	wantPath := "/Immich Alben/asset-uuid-456"
 	if requestedPath != wantPath {
 		t.Fatalf("verifier requested path %q, want %q", requestedPath, wantPath)
 	}

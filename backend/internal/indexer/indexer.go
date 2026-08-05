@@ -336,9 +336,6 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 func directoryTaskMetadata(metadata storage.FileMetadata) map[string]interface{} {
 	result := map[string]interface{}{"action": "mkdir"}
-	if albumName := metadata.CustomProps["immich_album_name"]; albumName != "" {
-		result["immich_album_name"] = albumName
-	}
 	return result
 }
 
