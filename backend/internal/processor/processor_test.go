@@ -3,9 +3,11 @@ package processor
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -488,6 +490,215 @@ func TestIsWebDAVSystemConflict(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := isWebDAVSystemConflict(tt.err); got != tt.want {
 				t.Fatalf("isWebDAVSystemConflict(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+// entryCount is a test-only helper that reports how many keyed mutex entries are
+// currently live. It is not production API.
+func (k *keyedMutexes) entryCount() int {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return len(k.m)
+}
+
+func TestKeyedMutexesReleaseRemovesEntry(t *testing.T) {
+	var k keyedMutexes
+	for i := 0; i < 5; i++ {
+		release := k.lock("same-key")
+		if k.entryCount() != 1 {
+			t.Fatalf("while held: entryCount = %d, want 1", k.entryCount())
+		}
+		release()
+		if k.entryCount() != 0 {
+			t.Fatalf("after release %d: entryCount = %d, want 0", i, k.entryCount())
+		}
+	}
+}
+
+func TestKeyedMutexesDistinctKeys(t *testing.T) {
+	var k keyedMutexes
+	r1 := k.lock("k1")
+	if k.entryCount() != 1 {
+		t.Fatalf("after k1: entryCount = %d, want 1", k.entryCount())
+	}
+	r2 := k.lock("k2")
+	if k.entryCount() != 2 {
+		t.Fatalf("after k2: entryCount = %d, want 2", k.entryCount())
+	}
+	r1()
+	r2()
+	if k.entryCount() != 0 {
+		t.Fatalf("after both released: entryCount = %d, want 0", k.entryCount())
+	}
+}
+
+func TestKeyedMutexesMutualExclusion(t *testing.T) {
+	var k keyedMutexes
+	const n = 16
+	var wg sync.WaitGroup
+	wg.Add(n)
+	var inside int32
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			release := k.lock("contended")
+			cur := atomic.AddInt32(&inside, 1)
+			if cur != 1 {
+				t.Errorf("critical section entered %d times concurrently", cur)
+			}
+			atomic.AddInt32(&inside, -1)
+			release()
+		}()
+	}
+	wg.Wait()
+	if got := atomic.LoadInt32(&inside); got != 0 {
+		t.Fatalf("inside = %d after all goroutines, want 0", got)
+	}
+	if k.entryCount() != 0 {
+		t.Fatalf("after all released: entryCount = %d, want 0", k.entryCount())
+	}
+}
+
+func TestLockTargetFileNoOpPaths(t *testing.T) {
+	p := &Processor{}
+	r1 := p.lockTargetFile("")
+	r1()
+	r2 := p.lockTargetFile("/")
+	r2()
+	if got := p.targetFileLocks.entryCount(); got != 0 {
+		t.Fatalf("entryCount = %d, want 0", got)
+	}
+}
+
+func TestLockTargetFileSerializes(t *testing.T) {
+	p := &Processor{}
+	const n = 8
+	var wg sync.WaitGroup
+	wg.Add(n)
+	var inside int32
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			release := p.lockTargetFile("/shared/target.txt")
+			cur := atomic.AddInt32(&inside, 1)
+			if cur != 1 {
+				t.Errorf("target file entered %d times concurrently", cur)
+			}
+			atomic.AddInt32(&inside, -1)
+			release()
+		}()
+	}
+	wg.Wait()
+	if got := atomic.LoadInt32(&inside); got != 0 {
+		t.Fatalf("inside = %d after all goroutines, want 0", got)
+	}
+	if got := p.targetFileLocks.entryCount(); got != 0 {
+		t.Fatalf("entryCount = %d, want 0", got)
+	}
+}
+
+func TestRefreshOAuthTokenIfNeededNoTokenTakesNoLock(t *testing.T) {
+	p := &Processor{}
+	mig := &db.Migration{ID: "m1", SourceRefreshTokenEncrypted: sql.NullString{}}
+	got, err := p.refreshOAuthTokenIfNeeded(context.Background(), mig, "source", "tok", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "tok" {
+		t.Fatalf("got = %q, want %q", got, "tok")
+	}
+	if got := p.refreshLocks.entryCount(); got != 0 {
+		t.Fatalf("refreshLocks.entryCount = %d, want 0", got)
+	}
+}
+
+func TestShouldEvictThrottler(t *testing.T) {
+	notFound := func() (string, error) { return "", sql.ErrNoRows }
+	tests := []struct {
+		name   string
+		status string
+		err    error
+		lookup func() (string, error)
+		want   bool
+	}{
+		{
+			name: "terminal migration evicts",
+			status: "COMPLETED",
+			err:    nil,
+			lookup: func() (string, error) { t.Fatal("lookup should not be called"); return "", nil },
+			want:   true,
+		},
+		{
+			name: "active migration keeps",
+			status: "RUNNING",
+			err:    nil,
+			lookup: func() (string, error) { t.Fatal("lookup should not be called"); return "", nil },
+			want:   false,
+		},
+		{
+			name: "transient migration error keeps and skips lookup",
+			err:  errors.New("connection refused"),
+			lookup: func() (string, error) {
+				t.Fatal("lookup must not be called on transient error")
+				return "", nil
+			},
+			want: false,
+		},
+		{
+			name:   "migration not found + running sync job keeps",
+			err:    sql.ErrNoRows,
+			lookup: func() (string, error) { return "RUNNING", nil },
+			want:   false,
+		},
+		{
+			name:   "migration not found + indexing sync job keeps",
+			err:    sql.ErrNoRows,
+			lookup: func() (string, error) { return "INDEXING", nil },
+			want:   false,
+		},
+		{
+			name:   "migration not found + verifying sync job keeps",
+			err:    sql.ErrNoRows,
+			lookup: func() (string, error) { return "VERIFYING", nil },
+			want:   false,
+		},
+		{
+			name:   "migration not found + idle sync job keeps",
+			err:    sql.ErrNoRows,
+			lookup: func() (string, error) { return "IDLE", nil },
+			want:   false,
+		},
+		{
+			name:   "migration not found + completed sync job evicts",
+			err:    sql.ErrNoRows,
+			lookup: func() (string, error) { return "COMPLETED", nil },
+			want:   true,
+		},
+		{
+			name:   "migration not found + failed sync job evicts",
+			err:    sql.ErrNoRows,
+			lookup: func() (string, error) { return "FAILED", nil },
+			want:   true,
+		},
+		{
+			name:   "migration not found + sync job not found evicts",
+			err:    sql.ErrNoRows,
+			lookup: notFound,
+			want:   true,
+		},
+		{
+			name:   "migration not found + transient sync error keeps",
+			err:    sql.ErrNoRows,
+			lookup: func() (string, error) { return "", errors.New("timeout") },
+			want:   false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldEvictThrottler(tt.status, tt.err, tt.lookup); got != tt.want {
+				t.Fatalf("shouldEvictThrottler() = %v, want %v", got, tt.want)
 			}
 		})
 	}

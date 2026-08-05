@@ -58,7 +58,7 @@ type Processor struct {
 	// to periodic polling.
 	dbConnStr    string
 	activeTasks  sync.Map
-	refreshLocks sync.Map
+	refreshLocks keyedMutexes
 	throttlers   sync.Map
 	// connLossCounts tracks consecutive connection-loss events per migration so
 	// a single flaky task does not immediately pause the whole migration (P1-4).
@@ -78,11 +78,11 @@ type Processor struct {
 	// (keyed by "mig:<id>" or "sync:<id>") to prevent concurrent ticks from
 	// spawning duplicate verification passes for the same entity.
 	verifyingEntities sync.Map
-	// targetLocksMu protects targetFileLocks map initialization and cleanup.
-	targetLocksMu sync.Mutex
 	// targetFileLocks synchronizes parallel worker threads processing tasks that
-	// resolve to the same target file path.
-	targetFileLocks map[string]*refMutex
+	// resolve to the same target file path. Entries are reference counted and
+	// released automatically, so a long-lived worker holds a mutex only for the
+	// target paths it is actively transferring to.
+	targetFileLocks keyedMutexes
 }
 
 type refMutex struct {
@@ -90,34 +90,57 @@ type refMutex struct {
 	count int
 }
 
-func (p *Processor) lockTargetFile(targetPath string) func() {
-	if targetPath == "" || targetPath == "/" {
-		return func() {}
-	}
+// noCopy may be added to a struct to make go vet give a warning if the struct is
+// copied. See https://golang.org/issues/8005#issuecomment-190753527.
+type noCopy struct{}
 
-	p.targetLocksMu.Lock()
-	if p.targetFileLocks == nil {
-		p.targetFileLocks = make(map[string]*refMutex)
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
+
+// keyedMutexes provides per-key mutual exclusion with reference counting, so an
+// entry is removed as soon as no goroutine holds or waits for it. This keeps the
+// map bounded by concurrent in-flight work instead of by the number of distinct
+// keys the process has ever seen.
+type keyedMutexes struct {
+	_     noCopy
+	mu    sync.Mutex
+	m     map[string]*refMutex
+}
+
+// lock acquires the mutex for key and returns a release function that must be
+// called exactly once. The reference count is incremented before the mutex is
+// acquired, so a waiter can never have its entry deleted out from under it.
+func (k *keyedMutexes) lock(key string) func() {
+	k.mu.Lock()
+	if k.m == nil {
+		k.m = make(map[string]*refMutex)
 	}
-	m, ok := p.targetFileLocks[targetPath]
+	m, ok := k.m[key]
 	if !ok {
 		m = &refMutex{}
-		p.targetFileLocks[targetPath] = m
+		k.m[key] = m
 	}
 	m.count++
-	p.targetLocksMu.Unlock()
+	k.mu.Unlock()
 
 	m.Lock()
 	return func() {
 		m.Unlock()
 
-		p.targetLocksMu.Lock()
-		defer p.targetLocksMu.Unlock()
+		k.mu.Lock()
+		defer k.mu.Unlock()
 		m.count--
 		if m.count == 0 {
-			delete(p.targetFileLocks, targetPath)
+			delete(k.m, key)
 		}
 	}
+}
+
+func (p *Processor) lockTargetFile(targetPath string) func() {
+	if targetPath == "" || targetPath == "/" {
+		return func() {}
+	}
+	return p.targetFileLocks.lock(targetPath)
 }
 
 // ResolveTargetPath computes the target file or directory path for a task
@@ -212,11 +235,6 @@ func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey s
 		secretKey:  secretKey,
 		maxThreads: maxThreads,
 	}
-}
-
-func (p *Processor) getOrCreateRefreshLock(migrationID string) *sync.Mutex {
-	actual, _ := p.refreshLocks.LoadOrStore(migrationID, &sync.Mutex{})
-	return actual.(*sync.Mutex)
 }
 
 // connLossEscalationThreshold is the number of consecutive connection-loss
@@ -1526,9 +1544,8 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 
 	// Acquire lock to serialize token refresh requests for the same migration
 	lockKey := fmt.Sprintf("migration:%s:%s", mig.ID, role)
-	mu := p.getOrCreateRefreshLock(lockKey)
-	mu.Lock()
-	defer mu.Unlock()
+	releaseRefreshLock := p.refreshLocks.lock(lockKey)
+	defer releaseRefreshLock()
 
 	var lockToken string
 	if p.queue != nil {
@@ -1688,9 +1705,8 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 	}
 
 	lockKey := fmt.Sprintf("sync:%s:%s", job.ID, role)
-	mu := p.getOrCreateRefreshLock(lockKey)
-	mu.Lock()
-	defer mu.Unlock()
+	releaseRefreshLock := p.refreshLocks.lock(lockKey)
+	defer releaseRefreshLock()
 
 	var lockToken string
 	if p.queue != nil {

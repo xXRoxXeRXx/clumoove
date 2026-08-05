@@ -2,7 +2,9 @@ package processor
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"time"
 
@@ -42,20 +44,67 @@ func (p *Processor) RunNotifier(ctx context.Context) {
 // RunCompletionNotifier remains as a compatibility alias for integrations.
 func (p *Processor) RunCompletionNotifier(ctx context.Context) { p.RunNotifier(ctx) }
 
+// shouldEvictThrottler decides whether a throttler entry may be dropped. The
+// throttlers map is shared by migrations and sync jobs, so a migration miss must
+// fall back to a sync-job lookup before the entry is considered orphaned. A
+// transient lookup error must never evict live throttler state.
+// isTerminalStatus reports whether an entity lifecycle status is terminal and
+// therefore its throttler entry may be evicted. Sync jobs reuse the migration
+// vocabulary for safety, so a future sync terminal state cannot silently leak a
+// throttler that only the migration branch would recognize.
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
+		return true
+	}
+	return false
+}
+
+// shouldEvictThrottler decides whether a throttler entry may be dropped. The
+// throttlers map is shared by migrations and sync jobs, so a migration miss must
+// fall back to a sync-job lookup before the entry is considered orphaned. A
+// transient lookup error must never evict live throttler state.
+func shouldEvictThrottler(migStatus string, migErr error, lookupJob func() (string, error)) bool {
+	if migErr == nil {
+		return isTerminalStatus(migStatus)
+	}
+	if !errors.Is(migErr, sql.ErrNoRows) {
+		return false
+	}
+	jobStatus, jobErr := lookupJob()
+	if jobErr == nil {
+		return isTerminalStatus(jobStatus)
+	}
+	// Neither a migration nor a sync job: the owning entity was deleted.
+	return errors.Is(jobErr, sql.ErrNoRows)
+}
+
 func (p *Processor) cleanupThrottlers() {
 	p.throttlers.Range(func(key, value interface{}) bool {
 		id := key.(string)
 		mig, err := db.GetMigration(p.db, id)
-		if err != nil || mig == nil {
-			p.throttlers.Delete(id)
-			return true
-		}
-		switch mig.Status {
-		case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
+		if shouldEvictThrottler(migStatusOrEmpty(mig, err), err, func() (string, error) {
+			job, jerr := db.GetSyncJob(p.db, id)
+			if jerr != nil {
+				return "", jerr
+			}
+			return job.Status, nil
+		}) {
 			p.throttlers.Delete(id)
 		}
 		return true
 	})
+}
+
+// migStatusOrEmpty returns the migration status, or the empty string when the
+// migration was not found or another error occurred. Both cases collapse to ""
+// here; callers must inspect err independently to tell them apart (see
+// shouldEvictThrottler, which keys off errors.Is(migErr, sql.ErrNoRows)).
+func migStatusOrEmpty(mig *db.Migration, err error) string {
+	if err != nil || mig == nil {
+		return ""
+	}
+	return mig.Status
 }
 
 func (p *Processor) sendPendingNotifications(ctx context.Context) {
