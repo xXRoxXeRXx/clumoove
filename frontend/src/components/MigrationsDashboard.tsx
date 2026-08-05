@@ -34,6 +34,7 @@ export function MigrationsDashboard({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const [deleteAllLoading, setDeleteAllLoading] = useState<boolean>(false);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
 
   const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
@@ -193,6 +194,77 @@ export function MigrationsDashboard({
     } finally {
       setDeleteLoading(null);
     }
+  };
+
+  const matchesMigrationFilter = useCallback((m: Migration) => {
+    const matchSearch = !searchTerm || [m.id, m.source_provider, m.target_provider, m.source_url, m.target_url]
+      .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
+    if (!matchSearch) return false;
+
+    if (statusFilter === 'active') return m.status === 'RUNNING' || m.status === 'INDEXING';
+    if (statusFilter === 'completed') return m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS';
+    if (statusFilter === 'failed') return m.status === 'FAILED' || m.status === 'CANCELLED';
+    if (statusFilter === 'paused') return m.status === 'PAUSED' || m.status === 'PAUSED_CONNECTION_LOSS';
+    return true;
+  }, [searchTerm, statusFilter]);
+
+  const isDeletableMigration = (status: string) =>
+    !['RUNNING', 'INDEXING', 'VERIFYING', 'SCHEDULED', 'PENDING'].includes(status);
+
+  const handleDeleteAllMigrations = async () => {
+    const deletable = migrations.filter(matchesMigrationFilter).filter((m) => isDeletableMigration(m.status));
+    const ids = deletable.map((m) => m.id);
+
+    if (ids.length === 0) return;
+
+    const ok = await confirm({
+      message: t('migrations.deleteAllConfirm', { count: ids.length }),
+      confirmLabel: t('migrations.deleteAll'),
+    });
+    if (!ok) return;
+
+    setDeleteAllLoading(true);
+    let failCount = 0;
+    let firstErrorCode: string | null = null;
+    const successIds = new Set<string>();
+
+    for (const id of ids) {
+      try {
+        const res = await apiFetch(`${apiUrl}/api/migration/${id}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (res.ok) {
+          successIds.add(id);
+        } else {
+          failCount++;
+          if (!firstErrorCode) {
+            try {
+              const body = await res.json();
+              if (body?.error_code) {
+                firstErrorCode = body.error_code;
+              }
+            } catch {
+              /* ignore non-JSON bodies */
+            }
+          }
+        }
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (successIds.size > 0) {
+      setMigrations((prev) => prev.filter((m) => !successIds.has(m.id)));
+    }
+
+    if (failCount > 0) {
+      toast(firstErrorCode ? translateApiError(firstErrorCode) : t('migrations.deleteError'));
+    }
+
+    setDeleteAllLoading(false);
   };
 
   const handleMigrationControl = async (migration: Migration, e: React.MouseEvent) => {
@@ -399,17 +471,8 @@ export function MigrationsDashboard({
           className="min-h-[360px]"
         >
         {(() => {
-          const filteredMigrations = migrations.filter((m) => {
-            const matchSearch = !searchTerm || [m.id, m.source_provider, m.target_provider, m.source_url, m.target_url]
-              .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
-            if (!matchSearch) return false;
-
-            if (statusFilter === 'active') return m.status === 'RUNNING' || m.status === 'INDEXING';
-            if (statusFilter === 'completed') return m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS';
-            if (statusFilter === 'failed') return m.status === 'FAILED' || m.status === 'CANCELLED';
-            if (statusFilter === 'paused') return m.status === 'PAUSED' || m.status === 'PAUSED_CONNECTION_LOSS';
-            return true;
-          });
+          const filteredMigrations = migrations.filter(matchesMigrationFilter);
+          const deletableMigrations = filteredMigrations.filter((m) => isDeletableMigration(m.status));
 
           if (activeTab === 'sync') {
             return (
@@ -594,6 +657,24 @@ export function MigrationsDashboard({
                 })}
               </tbody>
             </table>
+            {deletableMigrations.length > 3 && (
+              <div className="p-4 border-t border-[var(--color-border-subtle)] flex justify-end">
+                <button
+                  onClick={handleDeleteAllMigrations}
+                  disabled={deleteAllLoading}
+                  className="ui-button-secondary text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] flex items-center gap-2 px-3 py-1.5 text-xs font-medium disabled:opacity-30"
+                  aria-label={t('migrations.deleteAll')}
+                  title={t('migrations.deleteAll')}
+                >
+                  {deleteAllLoading ? (
+                    <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <TrashIcon className="size-4" aria-hidden="true" />
+                  )}
+                  <span>{t('migrations.deleteAll')}</span>
+                </button>
+              </div>
+            )}
             </div>
           );
         })()}
@@ -629,6 +710,7 @@ function SyncList({
   onStartNewSync: () => void;
 }) {
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
+  const [deleteAllLoading, setDeleteAllLoading] = useState<boolean>(false);
   const [controlLoading, setControlLoading] = useState<string | null>(null);
 
   const { t } = useTranslation();
@@ -661,6 +743,76 @@ function SyncList({
     }
   };
 
+  const isDeletableSync = (status: string) =>
+    !['RUNNING', 'INDEXING', 'VERIFYING'].includes(status);
+
+  const matchesSyncFilter = useCallback((job: SyncJob) => {
+    const matchSearch = !searchTerm || [job.id, job.source_provider, job.target_provider, job.source_url, job.target_url]
+      .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
+    if (!matchSearch) return false;
+
+    if (statusFilter === 'active') return job.status === 'RUNNING' || job.status === 'INDEXING';
+    if (statusFilter === 'completed') return job.status === 'COMPLETED' || (job.status === 'IDLE' && job.last_run_status !== 'FAILED');
+    if (statusFilter === 'failed') return job.status === 'FAILED' || (job.status === 'IDLE' && job.last_run_status === 'FAILED');
+    if (statusFilter === 'paused') return job.status === 'PAUSED' || job.status === 'PAUSED_CONNECTION_LOSS';
+    return true;
+  }, [searchTerm, statusFilter]);
+
+  const filteredSyncJobs = syncJobs.filter(matchesSyncFilter);
+  const deletableSyncJobs = filteredSyncJobs.filter((j) => isDeletableSync(j.status));
+
+  const handleDeleteAllSyncs = async () => {
+    const ids = deletableSyncJobs.map((j) => j.id);
+    if (ids.length === 0) return;
+
+    const ok = await confirm({
+      message: t('sync.deleteAllConfirm', { count: ids.length }),
+      confirmLabel: t('sync.deleteAll'),
+    });
+    if (!ok) return;
+
+    setDeleteAllLoading(true);
+    let failCount = 0;
+    let firstErrorCode: string | null = null;
+    const successIds = new Set<string>();
+
+    for (const id of ids) {
+      try {
+        const res = await apiFetch(`${apiUrl}/api/sync/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          successIds.add(id);
+        } else {
+          failCount++;
+          if (!firstErrorCode) {
+            try {
+              const body = await res.json();
+              if (body?.error_code) {
+                firstErrorCode = body.error_code;
+              }
+            } catch {
+              /* ignore non-JSON bodies */
+            }
+          }
+        }
+      } catch {
+        failCount++;
+      }
+    }
+
+    if (successIds.size > 0) {
+      setSyncJobs((prev) => prev.filter((j) => !successIds.has(j.id)));
+    }
+
+    if (failCount > 0) {
+      toast(firstErrorCode ? translateApiError(firstErrorCode) : t('sync.deleteFailed'));
+    }
+
+    setDeleteAllLoading(false);
+  };
+
   const handleSyncControl = async (job: SyncJob, e: React.MouseEvent) => {
     e.stopPropagation();
     const action = job.status === 'PAUSED' ? 'resume' : 'pause';
@@ -685,18 +837,6 @@ function SyncList({
       setControlLoading(null);
     }
   };
-
-  const filteredSyncJobs = syncJobs.filter((job) => {
-    const matchSearch = !searchTerm || [job.id, job.source_provider, job.target_provider, job.source_url, job.target_url]
-      .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
-    if (!matchSearch) return false;
-
-    if (statusFilter === 'active') return job.status === 'RUNNING' || job.status === 'INDEXING';
-    if (statusFilter === 'completed') return job.status === 'COMPLETED' || (job.status === 'IDLE' && job.last_run_status !== 'FAILED');
-    if (statusFilter === 'failed') return job.status === 'FAILED' || (job.status === 'IDLE' && job.last_run_status === 'FAILED');
-    if (statusFilter === 'paused') return job.status === 'PAUSED' || job.status === 'PAUSED_CONNECTION_LOSS';
-    return true;
-  });
 
   if (loading) {
     return (
@@ -843,6 +983,24 @@ function SyncList({
           ))}
         </tbody>
       </table>
+      {deletableSyncJobs.length > 3 && (
+        <div className="p-4 border-t border-[var(--color-border-subtle)] flex justify-end">
+          <button
+            onClick={handleDeleteAllSyncs}
+            disabled={deleteAllLoading}
+            className="ui-button-secondary text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] flex items-center gap-2 px-3 py-1.5 text-xs font-medium disabled:opacity-30"
+            aria-label={t('sync.deleteAll')}
+            title={t('sync.deleteAll')}
+          >
+            {deleteAllLoading ? (
+              <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <TrashIcon className="size-4" aria-hidden="true" />
+            )}
+            <span>{t('sync.deleteAll')}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

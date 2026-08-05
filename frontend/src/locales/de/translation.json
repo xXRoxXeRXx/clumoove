@@ -373,7 +373,9 @@
     "filterCompleted": "Abgeschlossen",
     "filterFailed": "Fehlgeschlagen",
     "filterPaused": "Pausiert",
-    "newSync": "Neue Synchronisation"
+    "newSync": "Neue Synchronisation",
+    "deleteAll": "Alle löschen",
+    "deleteAllConfirm": "Möchten Sie wirklich alle {{count}} sichtbaren Übertragungen dauerhaft löschen? Aktive, verifizierende oder geplante Übertragungen werden übersprungen. Dies kann nicht rückgängig gemacht werden."
   },
   "settings": {
     "back": "Zurück",
@@ -833,7 +835,9 @@
     "oneWayConflictNote": "Bei One-Way-Synchronisation überschreibt der Quell-Stand stets das Ziel.",
     "lastRunErrors": "{{count}} Fehler beim letzten Lauf",
     "lastRunUpdated": "{{count}} Datei(en) aktualisiert",
-    "lastRunNoChanges": "Keine Änderungen festgestellt"
+    "lastRunNoChanges": "Keine Änderungen festgestellt",
+    "deleteAll": "Alle löschen",
+    "deleteAllConfirm": "Möchten Sie wirklich alle {{count}} sichtbaren Sync-Jobs dauerhaft löschen? Aktive Sync-Jobs werden übersprungen. Dies kann nicht rückgängig gemacht werden."
   },
   "paths": {
     "moreItems": "+{{count}} weitere",

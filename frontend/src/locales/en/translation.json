@@ -373,7 +373,9 @@
     "filterCompleted": "Completed",
     "filterFailed": "Failed",
     "filterPaused": "Paused",
-    "newSync": "New Synchronization"
+    "newSync": "New Synchronization",
+    "deleteAll": "Delete all",
+    "deleteAllConfirm": "Permanently delete all {{count}} visible transfers? Active, verifying, and scheduled transfers will be skipped. This cannot be undone."
   },
   "settings": {
     "back": "Back",
@@ -833,7 +835,9 @@
     "oneWayConflictNote": "In one-way sync, source state always overwrites target.",
     "lastRunErrors": "{{count}} error(s) on last run",
     "lastRunUpdated": "{{count}} file(s) updated",
-    "lastRunNoChanges": "No changes detected"
+    "lastRunNoChanges": "No changes detected",
+    "deleteAll": "Delete all",
+    "deleteAllConfirm": "Permanently delete all {{count}} visible sync jobs? Active sync jobs will be skipped. This cannot be undone."
   },
   "paths": {
     "moreItems": "+{{count}} more",
