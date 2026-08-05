@@ -488,3 +488,37 @@ func TestResolveTargetPath(t *testing.T) {
 		}
 	})
 }
+
+func TestIsWebDAVSystemConflict(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil error", err: nil, want: false},
+		{name: "propfind 400 bad request", err: errors.New("failed to check if target file exists: PROPFIND check failed with status: 400"), want: true},
+		{name: "sabredav bad request", err: errors.New("Sabre\\DAV\\Exception\\BadRequest: File name is blacklisted"), want: true},
+		{name: "propfind 403 forbidden", err: errors.New("PROPFIND check failed with status: 403"), want: true},
+		{name: "sabredav forbidden", err: errors.New("Sabre\\DAV\\Exception\\Forbidden: .htaccess forbidden"), want: true},
+		{name: "sabredav conflict", err: errors.New("Sabre\\DAV\\Exception\\Conflict"), want: true},
+		{name: "http 409 conflict", err: errors.New("target file error: status: 409"), want: true},
+		{name: "http 404 not found", err: errors.New("resource status 404"), want: true},
+		{name: "http status 400", err: errors.New("webdav request failed with status: 400"), want: true},
+
+		// Negative test cases (C1, C2, S4)
+		{name: "numeric port in URL", err: errors.New("dial tcp 127.0.0.1:4003: connect: connection refused"), want: false},
+		{name: "written byte count", err: errors.New("wrote 400 bytes to stream"), want: false},
+		{name: "SMB sharing conflict", err: errors.New("smb: sharing conflict on file"), want: false},
+		{name: "S3 invalid request", err: errors.New("S3 error InvalidRequest: bad request payload"), want: false},
+		{name: "unrelated error", err: errors.New("connection timeout"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isWebDAVSystemConflict(tt.err); got != tt.want {
+				t.Fatalf("isWebDAVSystemConflict(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+

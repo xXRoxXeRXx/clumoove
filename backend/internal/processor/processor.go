@@ -835,6 +835,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	} else {
 		exists, _, err := targetClient.FileExists(ctx, task.ResourceType, targetPath)
 		if err != nil {
+			if isWebDAVSystemConflict(err) {
+				return p.skipTask(ctx, task, fmt.Sprintf("Target file existence check skipped (WebDAV system conflict): %v", err))
+			}
 			return fmt.Errorf("failed to check if target file exists: %w", err)
 		}
 
@@ -845,12 +848,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				err = targetClient.DeleteFile(ctx, task.ResourceType, targetPath)
 				if err != nil {
 					if isWebDAVSystemConflict(err) {
-						task.Status = "SKIPPED"
-						task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(fmt.Sprintf("Skipped calendar/contact entry: %v", err)), Valid: true}
-						if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); err != nil {
-							return err
-						}
-						return nil
+						return p.skipTask(ctx, task, fmt.Sprintf("Skipped calendar/contact entry: %v", err))
 					}
 					return fmt.Errorf("failed to delete existing calendar/contact entry for overwrite: %w", err)
 				}
@@ -860,12 +858,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 					// An existing target must never be overwritten under SKIP,
 					// including after a create-only HiDrive POST reports a race.
 					if exists {
-						task.Status = "SKIPPED"
-						task.ErrorMessage = sql.NullString{String: "File already exists in target (SKIP)", Valid: true}
-						if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); err != nil {
-							return err
-						}
-						return nil
+						return p.skipTask(ctx, task, "File already exists in target (SKIP)")
 					}
 
 				case "RENAME":
@@ -879,6 +872,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 						candidatePath := path.Join(dir, fmt.Sprintf("%s_copy%d%s", base, counter, ext))
 						candidateExists, _, err := targetClient.FileExists(ctx, task.ResourceType, candidatePath)
 						if err != nil {
+							if isWebDAVSystemConflict(err) {
+								return p.skipTask(ctx, task, fmt.Sprintf("Target rename candidate check skipped (WebDAV system conflict): %v", err))
+							}
 							return fmt.Errorf("failed to check existence of rename candidate: %w", err)
 						}
 						if !candidateExists {
@@ -1142,20 +1138,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	if err != nil {
 		if errors.Is(err, storage.ErrNativeDuplicate) {
-			task.Status = "SKIPPED"
-			task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError("Asset already exists in Immich; duplicate handled natively (SKIP)"), Valid: true}
-			if claimErr := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); claimErr != nil {
-				return claimErr
-			}
-			return nil
+			return p.skipTask(ctx, task, "Asset already exists in Immich; duplicate handled natively (SKIP)")
 		}
-		if errors.Is(err, storage.ErrDuplicateUID) || (task.ResourceType != "files" && isWebDAVSystemConflict(err)) {
-			task.Status = "SKIPPED"
-			task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(fmt.Sprintf("Sabredav/WebDAV: calendar/contact entry skipped (%v)", err)), Valid: true}
-			if claimErr := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize); claimErr != nil {
-				return claimErr
-			}
-			return nil
+		if errors.Is(err, storage.ErrDuplicateUID) || isWebDAVSystemConflict(err) {
+			return p.skipTask(ctx, task, fmt.Sprintf("Sabredav/WebDAV target entry skipped (system conflict/forbidden): %v", err))
 		}
 		return fmt.Errorf("upload to target failed: %w", err)
 	}
@@ -1883,18 +1869,48 @@ func isNonRetryableHashError(err error) bool {
 		strings.Contains(msg, "is a folder")
 }
 
+func (p *Processor) skipTask(ctx context.Context, task *db.Task, reason string) error {
+	task.Status = "SKIPPED"
+	task.ErrorMessage = sql.NullString{String: sanitize.SanitizeError(reason), Valid: true}
+	return db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 1, 0, task.FileSize)
+}
+
+// isWebDAVSystemConflict returns true if err represents a WebDAV/SabreDAV server
+// policy rejection or HTTP status failure (e.g. HTTP 400/403/404/409 or SabreDAV exception)
+// that prevents operating on protected or blacklisted files (such as .htaccess).
+//
+// String matching is tightly anchored to WebDAV/SabreDAV error formats to prevent
+// false positives on numeric ports (e.g. :4003), byte counts (e.g. 400 bytes), or
+// non-WebDAV provider errors (such as SMB sharing conflicts or S3 request errors).
 func isWebDAVSystemConflict(err error) bool {
 	if err == nil {
 		return false
 	}
 	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "409") ||
-		strings.Contains(s, "403") ||
-		strings.Contains(s, "404") ||
-		strings.Contains(s, "sabredav\\exception\\conflict") ||
-		strings.Contains(s, "sabredav\\exception\\forbidden") ||
-		strings.Contains(s, "sabredav\\exception\\notfound") ||
-		strings.Contains(s, "conflict") ||
-		strings.Contains(s, "delete failed with status: 403") ||
-		strings.Contains(s, "could not be found")
+
+	// Match SabreDAV exceptions in PHP collapsed format ("sabredav") or backslash-escaped format ("sabre\dav")
+	if strings.Contains(s, "sabredav") || strings.Contains(s, "sabre\\dav") || strings.Contains(s, "sabre/dav") {
+		return true
+	}
+
+	// Match WebDAV PROPFIND status failures (e.g. "PROPFIND check failed with status: 400")
+	if strings.Contains(s, "propfind check failed with status:") || strings.Contains(s, "propfind for hash failed: status") {
+		return true
+	}
+
+	// Match WebDAV HTTP status code responses anchored to status prefixes
+	if strings.Contains(s, "status: 400") || strings.Contains(s, "status 400") ||
+		strings.Contains(s, "status: 403") || strings.Contains(s, "status 403") ||
+		strings.Contains(s, "status: 404") || strings.Contains(s, "status 404") ||
+		strings.Contains(s, "status: 409") || strings.Contains(s, "status 409") {
+		return true
+	}
+
+	// Match specific WebDAV error phrases
+	if strings.Contains(s, "delete failed with status: 403") ||
+		strings.Contains(s, "could not be found") {
+		return true
+	}
+
+	return false
 }
