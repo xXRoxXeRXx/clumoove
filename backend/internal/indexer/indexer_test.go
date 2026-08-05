@@ -149,6 +149,49 @@ func TestIndexFolderStopsWhenMigrationIndexingClaimIsLost(t *testing.T) {
 	}
 }
 
+func TestIndexFolderSkipsNonMediaForImmichWithoutError(t *testing.T) {
+	database, _ := newBatchTestDB(t, false)
+	files, dirs, bytes := 0, 0, int64(0)
+	var indexErrors []db.IndexingErrorInput
+
+	listing := []storage.CloudResource{
+		{Path: "/photo.jpg", Name: "photo.jpg", Size: 100},
+		{Path: "/doc.pdf", Name: "doc.pdf", Size: 200},
+		{Path: "/.shards", Name: ".shards", Size: 50},
+		{Path: "/vector.svg", Name: "vector.svg", Size: 30},
+		{Path: "/readme.md", Name: "readme.md", Size: 10},
+		{Path: "/temp.tmp", Name: "temp.tmp", Size: 5},
+	}
+
+	err := indexFolder(context.Background(), database, indexFolderTestProvider{listing: listing}, "files", "/", "migration-1", "immich", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	if err != nil {
+		t.Fatalf("indexFolder() error = %v", err)
+	}
+	if files != 1 || bytes != 100 {
+		t.Fatalf("counters = files:%d bytes:%d, want files:1 bytes:100 (only photo.jpg)", files, bytes)
+	}
+	if len(indexErrors) != 0 {
+		t.Fatalf("expected 0 indexing errors for Immich non-media files, got %d: %v", len(indexErrors), indexErrors)
+	}
+}
+
+func TestIsImmichMedia(t *testing.T) {
+	media := []string{"photo.jpg", "PIC.JPEG", "video.mp4", "raw.cr2", "image.heic", "file.png"}
+	for _, m := range media {
+		if !isImmichMedia(m) {
+			t.Errorf("isImmichMedia(%q) = false, want true", m)
+		}
+	}
+
+	nonMedia := []string{".shards", "file.tmp", "vector.svg", "doc.pdf", "readme.md", "data.docx", "sheet.xlsx", "pres.odp", "file.doc"}
+	for _, nm := range nonMedia {
+		if isImmichMedia(nm) {
+			t.Errorf("isImmichMedia(%q) = true, want false", nm)
+		}
+	}
+}
+
+
 type indexFolderTestProvider struct{ listing []storage.CloudResource }
 
 func (p indexFolderTestProvider) Close() error                          { return nil }

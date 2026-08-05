@@ -176,7 +176,6 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		} else {
 			// Single file
 			if mig.TargetProvider == "immich" && !isImmichMedia(res.Name) {
-				indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: "unsupported Immich media extension: " + path.Ext(res.Name)})
 				continue
 			}
 			key := resourceIndexKey("files", p, res.Metadata)
@@ -536,7 +535,6 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 				}
 			} else {
 				if targetProvider == "immich" && resourceType == "files" && !isImmichMedia(file.Name) {
-					*indexErrors = append(*indexErrors, db.IndexingErrorInput{Path: file.Path, ResourceType: resourceType, ErrorMessage: "unsupported Immich media extension: " + path.Ext(file.Name)})
 					continue
 				}
 				key := resourceIndexKey(resourceType, file.Path, file.Metadata)
