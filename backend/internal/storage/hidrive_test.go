@@ -375,3 +375,18 @@ func TestHiDriveProviderUploadDoesNotPreflightOrDeleteExistingFile(t *testing.T)
 		t.Fatalf("upload made preflight requests: meta=%d delete=%d", metaRequests, deleteRequests)
 	}
 }
+
+func TestHiDriveInspectResourceNotFound(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	p, _ := NewHiDriveProvider("mock-token")
+	p.BaseURL = ts.URL
+	_, err := p.InspectResource(context.Background(), "files", "/missing.txt")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
+	}
+}
+

@@ -343,7 +343,7 @@ func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (str
 			return "", err
 		}
 		if len(res.Files) == 0 {
-			return "", fmt.Errorf("path not found: %s", path)
+			return "", fmt.Errorf("google inspect: %w", ErrNotFound)
 		}
 		currentID = res.Files[0].Id
 		p.pathCache.Store(currentPath, currentID)
@@ -387,7 +387,7 @@ func (p *GoogleProvider) resolveDriveFileID(ctx context.Context, filePath string
 		return "", err
 	}
 	if len(res.Files) == 0 {
-		return "", fmt.Errorf("file not found: %s", filePath)
+		return "", fmt.Errorf("google inspect: %w", ErrNotFound)
 	}
 
 	// Check for exact match (direct name match or Google Doc matching the requested extension)
@@ -420,6 +420,17 @@ func googleDocsExtension(mimeType string) (exportMIME, extension string) {
 	}
 }
 
+func wrapGoogleNotFound(err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return err
+	}
+	var gErr *googleapi.Error
+	if errors.As(err, &gErr) && gErr.Code == http.StatusNotFound {
+		return fmt.Errorf("google inspect: %w", ErrNotFound)
+	}
+	return err
+}
+
 func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
@@ -427,11 +438,11 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 	case "files":
 		id, err := p.resolveDriveFileID(ctx, path)
 		if err != nil {
-			return CloudResource{}, err
+			return CloudResource{}, wrapGoogleNotFound(err)
 		}
 		f, err := p.driveService.Files.Get(id).Fields("id, name, mimeType, size, modifiedTime, md5Checksum, description").Context(ctx).Do()
 		if err != nil {
-			return CloudResource{}, err
+			return CloudResource{}, wrapGoogleNotFound(err)
 		}
 		isDir := f.MimeType == "application/vnd.google-apps.folder"
 		modTime, _ := time.Parse(time.RFC3339, f.ModifiedTime)

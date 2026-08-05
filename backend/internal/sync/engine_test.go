@@ -329,3 +329,33 @@ func TestWaitForNoRunningTasksPropagatesCountError(t *testing.T) {
 		t.Fatalf("waitForNoRunningTasks error = %v; want wrapped %v", err, want)
 	}
 }
+
+func TestListFilesMissingStartPath(t *testing.T) {
+	provider := listingTestProvider{
+		inspect: func(p string) (storage.CloudResource, error) {
+			if p == "/missing" {
+				return storage.CloudResource{}, storage.ErrNotFound
+			}
+			return storage.CloudResource{Path: p, IsDir: true}, nil
+		},
+		list: func(p string) ([]storage.CloudResource, error) {
+			return nil, nil
+		},
+	}
+
+	engine := NewEngine(nil, nil, "secret")
+	files, dirMap, _, indexErrs, err := engine.listFiles(context.Background(), provider, []string{"/missing"}, nil, nil)
+	if err != nil {
+		t.Fatalf("listFiles failed: %v", err)
+	}
+	if len(indexErrs) != 0 {
+		t.Fatalf("expected 0 index errors for missing path, got %d: %v", len(indexErrs), indexErrs)
+	}
+	if len(files) != 0 {
+		t.Fatalf("expected 0 files, got %d", len(files))
+	}
+	if dirMap["/missing"] {
+		t.Fatalf("expected /missing not to be in dirMap")
+	}
+}
+

@@ -298,6 +298,9 @@ func (p *SFTPProvider) InspectResource(ctx context.Context, resourceType, filePa
 
 	info, err := p.sftpClient.Stat(cleanPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return CloudResource{}, fmt.Errorf("sftp inspect: %w", ErrNotFound)
+		}
 		return CloudResource{}, p.handleError(fmt.Errorf("sftp inspect resource failed: %w", err))
 	}
 

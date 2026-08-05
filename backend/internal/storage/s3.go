@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
@@ -321,7 +320,7 @@ func (p *S3Provider) InspectResource(ctx context.Context, resourceType, filePath
 	if isS3AuthError(err) {
 		return CloudResource{}, ErrAuth
 	}
-	return CloudResource{}, os.ErrNotExist
+	return CloudResource{}, fmt.Errorf("s3 inspect: %w", ErrNotFound)
 }
 
 func (p *S3Provider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {

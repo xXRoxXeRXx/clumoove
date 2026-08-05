@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -295,3 +296,20 @@ func TestNextcloudFileExistsHEADFallback(t *testing.T) {
 		t.Errorf("Expected size=150, got %d", size)
 	}
 }
+
+func TestNextcloudInspectResourceNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	if err != nil {
+		t.Fatalf("NewNextcloudProvider: %v", err)
+	}
+	_, err = p.InspectResource(context.Background(), "files", "/missing.txt")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
+	}
+}
+

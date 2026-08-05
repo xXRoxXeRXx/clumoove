@@ -660,3 +660,19 @@ func (r *delayedReader) Read(p []byte) (int, error) {
 	}
 	return n, nil
 }
+
+func TestLocalInspectResourceNotFound(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LOCAL_STORAGE_ROOT", root)
+	p, err := NewLocalProvider("user-inspect-not-found")
+	if err != nil {
+		t.Fatalf("NewLocalProvider: %v", err)
+	}
+	defer p.Close()
+
+	_, err = p.InspectResource(context.Background(), "files", "nonexistent.txt")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
+	}
+}
+

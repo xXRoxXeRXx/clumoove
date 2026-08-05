@@ -271,6 +271,9 @@ func (p *HiDriveProvider) InspectResource(ctx context.Context, resourceType, res
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return CloudResource{}, fmt.Errorf("hidrive inspect: %w", ErrAuth)
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		return CloudResource{}, fmt.Errorf("hidrive inspect: %w", ErrNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return CloudResource{}, fmt.Errorf("hidrive inspect failed, status: %d", resp.StatusCode)
 	}

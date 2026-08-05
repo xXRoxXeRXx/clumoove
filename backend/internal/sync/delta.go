@@ -279,6 +279,10 @@ func (e *Engine) listFiles(
 		}
 		res, err := client.InspectResource(ctx, "files", startPath)
 		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				log.Printf("[SyncEngine] start path %q not found on source (deleted/renamed), treating as empty\n", sanitize.SanitizeError(startPath))
+				continue
+			}
 			addError(startPath, err.Error())
 			continue
 		}

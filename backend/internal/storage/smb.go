@@ -254,6 +254,9 @@ func (p *SMBProvider) InspectResource(ctx context.Context, resourceType, filePat
 
 	info, err := fsWithCtx.Stat(cleanPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return CloudResource{}, fmt.Errorf("smb inspect: %w", ErrNotFound)
+		}
 		return CloudResource{}, p.handleError(fmt.Errorf("smb inspect resource failed: %w", err))
 	}
 

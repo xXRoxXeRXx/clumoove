@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -127,6 +128,9 @@ func (p *LocalProvider) InspectResource(ctx context.Context, resourceType, resou
 	}
 	f, err := root.open(parts)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return CloudResource{}, fmt.Errorf("local inspect: %w", ErrNotFound)
+		}
 		return CloudResource{}, err
 	}
 	defer f.Close()

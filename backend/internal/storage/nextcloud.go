@@ -236,6 +236,9 @@ func (p *davProvider) InspectResource(ctx context.Context, resourceType, resourc
 	if resp.StatusCode == http.StatusUnauthorized {
 		return CloudResource{}, fmt.Errorf("nextcloud inspect: %w", ErrAuth)
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		return CloudResource{}, fmt.Errorf("nextcloud inspect: %w", ErrNotFound)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return CloudResource{}, fmt.Errorf("inspect failed with status: %d", resp.StatusCode)
 	}
@@ -247,7 +250,7 @@ func (p *davProvider) InspectResource(ctx context.Context, resourceType, resourc
 	}
 
 	if len(multistatus.Responses) == 0 {
-		return CloudResource{}, fmt.Errorf("no resource found at path: %s", resourcePath)
+		return CloudResource{}, fmt.Errorf("nextcloud inspect: %w", ErrNotFound)
 	}
 
 	r := multistatus.Responses[0]

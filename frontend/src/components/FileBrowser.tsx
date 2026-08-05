@@ -192,6 +192,17 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     [selectedPaths]
   );
 
+  const syncSelectedPaths = useMemo(() => {
+    const rootItems = directoryContents['/'] || sortEntries(initialFiles);
+    const selectableRootItems = rootItems.filter(
+      (item) => (!isImmichSource || item.path === '/Timeline') && !isOneDrivePersonalVault(item)
+    );
+    const allRootSelected =
+      selectableRootItems.length > 0 &&
+      selectableRootItems.every((item) => selectedPaths[item.path]);
+    return allRootSelected ? [] : pathsToMigrate;
+  }, [directoryContents, initialFiles, isImmichSource, selectedPaths, pathsToMigrate]);
+
 
 
   // Minimum selectable start time: now + 1 minute, formatted in the user's
@@ -573,7 +584,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             threads: threads,
             bandwidth_limit_mbps: bandwidthLimit,
             target_dir: targetDir,
-            selected_paths: pathsToMigrate,
+            selected_paths: syncSelectedPaths,
           }),
         });
 

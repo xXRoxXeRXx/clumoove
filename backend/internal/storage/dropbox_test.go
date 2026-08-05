@@ -1,8 +1,13 @@
 package storage
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -96,3 +101,32 @@ func TestDropboxHasherMultiBlock(t *testing.T) {
 		t.Errorf("Expected hash to be %s, got %s", expectedHash, hashStr)
 	}
 }
+
+type mockRoundTripper struct {
+	fn func(req *http.Request) (*http.Response, error)
+}
+
+func (m mockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return m.fn(req)
+}
+
+func TestDropboxInspectResourceNotFound(t *testing.T) {
+	client := &http.Client{
+		Transport: mockRoundTripper{
+			fn: func(req *http.Request) (*http.Response, error) {
+				body := `{"error_summary": "path/not_found/...", "error": {".tag": "path", "path": {".tag": "not_found"}}}`
+				return &http.Response{
+					StatusCode: http.StatusConflict,
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Header:     make(http.Header),
+				}, nil
+			},
+		},
+	}
+	p := &DropboxProvider{HTTPClient: client}
+	_, err := p.InspectResource(context.Background(), "files", "/missing.txt")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
+	}
+}
+

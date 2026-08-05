@@ -359,6 +359,22 @@ func (p *DropboxProvider) InspectResource(ctx context.Context, resourceType, res
 		return CloudResource{}, fmt.Errorf("dropbox inspect: %w", ErrAuth)
 	}
 	if resp.StatusCode != http.StatusOK {
+		var errResp struct {
+			ErrorSummary string `json:"error_summary"`
+			Error        struct {
+				Tag  string `json:".tag"`
+				Path struct {
+					Tag string `json:".tag"`
+				} `json:"path"`
+			} `json:"error"`
+		}
+		bodyBytes, readErr := io.ReadAll(resp.Body)
+		if readErr == nil {
+			_ = json.Unmarshal(bodyBytes, &errResp)
+		}
+		if resp.StatusCode == http.StatusNotFound || (errResp.Error.Tag == "path" && errResp.Error.Path.Tag == "not_found") || strings.Contains(errResp.ErrorSummary, "path/not_found") {
+			return CloudResource{}, fmt.Errorf("dropbox inspect: %w", ErrNotFound)
+		}
 		return CloudResource{}, fmt.Errorf("inspect resource failed, status: %d", resp.StatusCode)
 	}
 
