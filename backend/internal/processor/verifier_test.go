@@ -436,7 +436,7 @@ func TestVerificationPassImmichTargetPathResolution(t *testing.T) {
 		t.Fatal("expected Immich task to be marked verified")
 	}
 
-	wantPath := "/Immich Alben/asset-uuid-456"
+	wantPath := "/Immich Alben/sunset.jpg"
 	if requestedPath != wantPath {
 		t.Fatalf("verifier requested path %q, want %q", requestedPath, wantPath)
 	}
