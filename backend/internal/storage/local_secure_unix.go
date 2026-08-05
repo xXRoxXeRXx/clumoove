@@ -283,5 +283,5 @@ func (r *localRoot) chtimes(parts []string, modTime time.Time) error {
 		unix.NsecToTimespec(time.Now().UnixNano()),
 		unix.NsecToTimespec(modTime.UnixNano()),
 	}
-	return unix.Utimensat(parent, parts[len(parts)-1], ts, 0)
+	return unix.UtimesNanoAt(parent, parts[len(parts)-1], ts, 0)
 }
