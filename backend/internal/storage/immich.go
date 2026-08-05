@@ -38,6 +38,9 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 	return &ImmichProvider{BaseURL: strings.TrimSuffix(u.String(), "/"), APIKey: apiKey, HTTPClient: &http.Client{Transport: tr, CheckRedirect: rejectEgressRedirect}}, nil
 }
 
+// Note: ImmichProvider intentionally does not implement MetadataApplier. Immich receives
+// asset metadata (fileCreatedAt, fileModifiedAt) inline during StreamUpload (POST /assets),
+// so no post-upload metadata step is required.
 func (p *ImmichProvider) Close() error                       { p.HTTPClient.CloseIdleConnections(); return nil }
 func (p *ImmichProvider) SupportsAtomicRename() bool         { return false }
 func (p *ImmichProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
@@ -309,10 +312,16 @@ func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string,
 	mw := multipart.NewWriter(pw)
 	meta, _ := TransferMetadataFromContext(ctx)
 	createdAt := meta.CustomProps["immich_file_created_at"]
+	if createdAt == "" && !meta.ModifiedTime.IsZero() {
+		createdAt = meta.ModifiedTime.UTC().Format(time.RFC3339)
+	}
 	if createdAt == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	modifiedAt := meta.CustomProps["immich_file_modified_at"]
+	if modifiedAt == "" && !meta.ModifiedTime.IsZero() {
+		modifiedAt = meta.ModifiedTime.UTC().Format(time.RFC3339)
+	}
 	if modifiedAt == "" {
 		modifiedAt = createdAt
 	}

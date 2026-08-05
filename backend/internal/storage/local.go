@@ -329,6 +329,22 @@ func (p *LocalProvider) RenameFile(ctx context.Context, resourceType, oldPath, n
 	return root.rename(oldParts, newParts)
 }
 
+func (p *LocalProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+	// Local provider supports only "files"; short-circuit for other resource types.
+	if resourceType != "files" || meta.ModifiedTime.IsZero() {
+		return nil
+	}
+	root, err := p.localRoot()
+	if err != nil {
+		return err
+	}
+	parts, err := localPathComponents(filePath)
+	if err != nil {
+		return err
+	}
+	return root.chtimes(parts, meta.ModifiedTime)
+}
+
 // localPathComponents accepts only a relative path and returns components for
 // descriptor-relative operations. Unlike resolve, it never returns a pathname
 // that a caller could later re-resolve through a swapped symlink. On Unix,

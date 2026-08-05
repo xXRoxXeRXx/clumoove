@@ -444,12 +444,18 @@ func (p *DropboxProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	}
 
 	pathArg := p.cleanPath(filePath)
-	apiArg, err := escapeAPIArg(map[string]interface{}{
+	uploadArgs := map[string]interface{}{
 		"path":       pathArg,
 		"mode":       "overwrite",
 		"autorename": false,
 		"mute":       false,
-	})
+	}
+	if meta, ok := TransferMetadataFromContext(ctx); ok && !meta.ModifiedTime.IsZero() {
+		// Dropbox requires client_modified in UTC with second precision and a literal "Z" suffix.
+		// time.RFC3339 would emit "+00:00" which the API rejects.
+		uploadArgs["client_modified"] = meta.ModifiedTime.UTC().Format("2006-01-02T15:04:05Z")
+	}
+	apiArg, err := escapeAPIArg(uploadArgs)
 	if err != nil {
 		return err
 	}
@@ -628,18 +634,24 @@ func (p *DropboxProvider) appendUploadSessionWithRetry(ctx context.Context, sess
 }
 
 func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID string, offset int64, cleanPath string, chunk []byte) error {
+	commitArgs := map[string]interface{}{
+		"path":            cleanPath,
+		"mode":            "overwrite",
+		"autorename":      false,
+		"mute":            false,
+		"strict_conflict": false,
+	}
+	if meta, ok := TransferMetadataFromContext(ctx); ok && !meta.ModifiedTime.IsZero() {
+		// Dropbox requires client_modified in UTC with second precision and a literal "Z" suffix.
+		// time.RFC3339 would emit "+00:00" which the API rejects.
+		commitArgs["client_modified"] = meta.ModifiedTime.UTC().Format("2006-01-02T15:04:05Z")
+	}
 	apiArg, err := escapeAPIArg(map[string]interface{}{
 		"cursor": map[string]interface{}{
 			"session_id": sessionID,
 			"offset":     offset,
 		},
-		"commit": map[string]interface{}{
-			"path":            cleanPath,
-			"mode":            "overwrite",
-			"autorename":      false,
-			"mute":            false,
-			"strict_conflict": false,
-		},
+		"commit": commitArgs,
 	})
 	if err != nil {
 		return err

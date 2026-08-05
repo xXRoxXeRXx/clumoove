@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNewImmichProviderNormalizesAPIBase(t *testing.T) {
@@ -351,5 +352,39 @@ func TestImmichRootListingSearchPayloadAndSizeMapping(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].Path != "/asset-id" || items[0].Name != "photo.jpg" || items[0].Size != 12345 {
 		t.Errorf("items = %#v", items)
+	}
+}
+
+func TestImmichStreamUploadUsesSourceModifiedTime(t *testing.T) {
+	expectedTime := time.Date(2023, 5, 10, 14, 20, 0, 0, time.UTC)
+	var gotCreatedAt, gotModifiedAt string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := r.ParseMultipartForm(10 << 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotCreatedAt = r.FormValue("fileCreatedAt")
+		gotModifiedAt = r.FormValue("fileModifiedAt")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"asset-123","status":"created"}`))
+	}))
+	defer server.Close()
+
+	p := &ImmichProvider{BaseURL: server.URL, APIKey: "test-key", HTTPClient: server.Client()}
+	meta := FileMetadata{ModifiedTime: expectedTime}
+	ctx := WithTransferMetadata(context.Background(), meta)
+
+	err := p.StreamUpload(ctx, "files", "/photo.jpg", strings.NewReader("dummy photo content"), 19)
+	if err != nil {
+		t.Fatalf("StreamUpload() error = %v", err)
+	}
+
+	wantFormatted := expectedTime.Format(time.RFC3339)
+	if gotCreatedAt != wantFormatted {
+		t.Errorf("fileCreatedAt = %q, want %q", gotCreatedAt, wantFormatted)
+	}
+	if gotModifiedAt != wantFormatted {
+		t.Errorf("fileModifiedAt = %q, want %q", gotModifiedAt, wantFormatted)
 	}
 }

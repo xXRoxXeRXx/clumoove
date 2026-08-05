@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDropboxHasherEmpty(t *testing.T) {
@@ -127,6 +128,36 @@ func TestDropboxInspectResourceNotFound(t *testing.T) {
 	_, err := p.InspectResource(context.Background(), "files", "/missing.txt")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDropboxStreamUploadIncludesClientModified(t *testing.T) {
+	expectedTime := time.Date(2023, 5, 10, 14, 20, 0, 0, time.UTC)
+	var gotAPIArg string
+
+	client := &http.Client{
+		Transport: mockRoundTripper{
+			fn: func(req *http.Request) (*http.Response, error) {
+				gotAPIArg = req.Header.Get("Dropbox-API-Arg")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{}`)),
+					Header:     make(http.Header),
+				}, nil
+			},
+		},
+	}
+	p := &DropboxProvider{HTTPClient: client}
+	meta := FileMetadata{ModifiedTime: expectedTime}
+	ctx := WithTransferMetadata(context.Background(), meta)
+
+	err := p.StreamUpload(ctx, "files", "/test.txt", strings.NewReader("content"), 7)
+	if err != nil {
+		t.Fatalf("StreamUpload() error = %v", err)
+	}
+
+	if !strings.Contains(gotAPIArg, `"client_modified":"2023-05-10T14:20:00Z"`) {
+		t.Errorf("Dropbox-API-Arg = %q, want client_modified to contain 2023-05-10T14:20:00Z", gotAPIArg)
 	}
 }
 

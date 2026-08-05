@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestOneDrivePath(t *testing.T) {
@@ -401,5 +402,39 @@ func TestOneDriveProviderSessionUpload(t *testing.T) {
 	}
 	if got := <-progress; got != size {
 		t.Fatalf("progress = %d, want %d", got, size)
+	}
+}
+
+func TestOneDriveApplyMetadata(t *testing.T) {
+	expectedTime := time.Date(2023, 5, 10, 14, 20, 0, 0, time.UTC)
+	var gotMethod, gotPath, gotBody string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	p := newOneDriveProvider("token", server.URL+"/v1.0/me/drive", server.Client())
+	meta := FileMetadata{ModifiedTime: expectedTime}
+
+	err := p.ApplyMetadata(context.Background(), "files", "/test.txt", meta)
+	if err != nil {
+		t.Fatalf("ApplyMetadata() error = %v", err)
+	}
+
+	if gotMethod != http.MethodPatch {
+		t.Errorf("Method = %q, want %q", gotMethod, http.MethodPatch)
+	}
+	if !strings.Contains(gotPath, "test.txt") {
+		t.Errorf("PATCH path = %q, expected to contain target item path", gotPath)
+	}
+	wantFormatted := expectedTime.Format(time.RFC3339)
+	if !strings.Contains(gotBody, wantFormatted) {
+		t.Errorf("Body = %q, want to contain %q", gotBody, wantFormatted)
 	}
 }

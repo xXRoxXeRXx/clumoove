@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 )
 
 // Windows does not expose an openat-style API through the Go standard library.
@@ -40,4 +41,7 @@ func (r *localRoot) remove(parts []string) error {
 }
 func (r *localRoot) rename(oldParts, newParts []string) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
+}
+func (r *localRoot) chtimes(parts []string, modTime time.Time) error {
+	return fmt.Errorf("local provider mutations are unsupported on Windows: %w", ErrUnsupportedOnPlatform)
 }

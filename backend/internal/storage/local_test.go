@@ -677,3 +677,26 @@ func TestLocalInspectResourceNotFound(t *testing.T) {
 	}
 }
 
+func TestLocalApplyMetadata(t *testing.T) {
+	p := newTestLocalProvider(t)
+	filePath := "test_mtime.txt"
+	if err := p.StreamUpload(context.Background(), "files", filePath, strings.NewReader("hello"), 5); err != nil {
+		t.Fatalf("StreamUpload: %v", err)
+	}
+
+	// Use a time with zero nanoseconds: HFS+ only stores 1-second mtime granularity.
+	expectedTime := time.Date(2023, 5, 10, 14, 20, 0, 0, time.UTC)
+	meta := FileMetadata{ModifiedTime: expectedTime}
+	if err := p.ApplyMetadata(context.Background(), "files", filePath, meta); err != nil {
+		t.Fatalf("ApplyMetadata: %v", err)
+	}
+
+	res, err := p.InspectResource(context.Background(), "files", filePath)
+	if err != nil {
+		t.Fatalf("InspectResource: %v", err)
+	}
+	if !res.LastModified.Equal(expectedTime) {
+		t.Errorf("LastModified = %v, want %v", res.LastModified, expectedTime)
+	}
+}
+

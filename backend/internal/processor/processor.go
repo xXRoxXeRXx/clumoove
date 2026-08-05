@@ -1071,6 +1071,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if task.Metadata != nil {
 		_ = json.Unmarshal(task.Metadata, &transferMeta)
 	}
+	if transferMeta.ModifiedTime.IsZero() {
+		if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr != nil {
+			log.Printf("Warning: could not fetch source mtime for %s: %v (timestamp may be inaccurate)", task.FilePath, inspectErr)
+		} else {
+			transferMeta.ModifiedTime = srcInfo.LastModified
+		}
+	}
 	uploadCtx = storage.WithTransferMetadata(uploadCtx, transferMeta)
 	verificationCtx := ctx
 	var uploadReceipt *storage.UploadReceipt
@@ -1142,17 +1149,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}
 
 	if applier, ok := targetClient.(storage.MetadataApplier); ok {
-		var meta storage.FileMetadata
-		if task.Metadata != nil {
-			_ = json.Unmarshal(task.Metadata, &meta)
-		}
-		if meta.ModifiedTime.IsZero() {
-			if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr == nil {
-				meta.ModifiedTime = srcInfo.LastModified
-			}
-		}
-		if !meta.ModifiedTime.IsZero() || meta.Description != "" {
-			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, meta); err != nil {
+		if !transferMeta.ModifiedTime.IsZero() || transferMeta.Description != "" {
+			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, transferMeta); err != nil && !errors.Is(err, storage.ErrUnsupportedOnPlatform) {
 				log.Printf("Warning: failed to apply metadata for %s: %v", targetPath, err)
 			}
 		}

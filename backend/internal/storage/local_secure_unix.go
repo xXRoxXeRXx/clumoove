@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -267,4 +268,20 @@ func (r *localRoot) rename(oldParts, newParts []string) error {
 	}
 	defer unix.Close(newParent)
 	return unix.Renameat(oldParent, oldParts[len(oldParts)-1], newParent, newParts[len(newParts)-1])
+}
+
+func (r *localRoot) chtimes(parts []string, modTime time.Time) error {
+	if len(parts) == 0 {
+		return nil
+	}
+	parent, err := r.directory(parts[:len(parts)-1], false)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parent)
+	ts := []unix.Timespec{
+		unix.NsecToTimespec(time.Now().UnixNano()),
+		unix.NsecToTimespec(modTime.UnixNano()),
+	}
+	return unix.Utimensat(parent, parts[len(parts)-1], ts, 0)
 }

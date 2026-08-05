@@ -34,6 +34,9 @@ var ErrPathEscapesRoot = errors.New("path escapes storage root")
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("resource not found")
 
+// ErrUnsupportedOnPlatform is returned when an operation is unsupported on the host operating system platform.
+var ErrUnsupportedOnPlatform = errors.New("operation unsupported on this platform")
+
 type FileMetadata struct {
 	ModifiedTime time.Time         `json:"modified_time,omitempty"`
 	Description  string            `json:"description,omitempty"`

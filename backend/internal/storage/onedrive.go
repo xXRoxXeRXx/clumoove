@@ -801,6 +801,45 @@ func (p *OneDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath
 	return nil
 }
 
+func (p *OneDriveProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return err
+	}
+	if meta.ModifiedTime.IsZero() {
+		return nil
+	}
+	itemURL, err := p.itemURL(filePath)
+	if err != nil {
+		return err
+	}
+	// Note: createdDateTime is intentionally omitted; we only preserve the
+	// source's last-modified time. Graph will default createdDateTime to the
+	// upload time.
+	payload := map[string]any{
+		"fileSystemInfo": map[string]string{
+			"lastModifiedDateTime": meta.ModifiedTime.UTC().Format(time.RFC3339),
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := p.request(ctx, http.MethodPatch, itemURL, bytes.NewReader(body), true)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return oneDriveError("apply metadata", resp.StatusCode)
+	}
+	return nil
+}
+
 func (p *OneDriveProvider) itemID(ctx context.Context, filePath string) (string, error) {
 	itemURL, err := p.itemURL(filePath)
 	if err != nil {
