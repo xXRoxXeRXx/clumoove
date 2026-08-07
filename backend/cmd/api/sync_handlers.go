@@ -996,6 +996,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	defer crypto.ZeroString(&password)
 
 	allowedProviders := map[string]bool{
 		"nextcloud": true, "webdav": true, "dropbox": true,
@@ -1012,8 +1013,8 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	client, err := storage.NewProvider(r.Context(), provider, urlStr, username, password)
-	crypto.ZeroString(&password)
+	browseCtx := storage.WithLocalUserScope(r.Context(), userID)
+	client, err := storage.NewProvider(browseCtx, provider, urlStr, username, password)
 	if err != nil {
 		log.Printf("handleBrowseSyncJob: NewProvider failed for provider %s: %v", provider, err)
 		errCode := ErrSourceUrlInvalid
