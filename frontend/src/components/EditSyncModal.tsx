@@ -78,6 +78,13 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
 
   const pathsToMigrate = Object.keys(selectedPaths).filter((p) => selectedPaths[p]);
 
+const sortEntries = (entries: CloudFile[]): CloudFile[] => {
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+};
+
   // Fetch directory contents for source
   const fetchSourceDirectory = useCallback(
     async (folderPath: string) => {
@@ -91,8 +98,12 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
           const body = await res.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.loadFailed"));
         }
-        const data: CloudFile[] = await res.json();
-        setFolderContents((prev) => ({ ...prev, [folderPath]: data }));
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error_code ? translateApiError(data.error_code) : t("fileBrowser.loadFailed"));
+        }
+        const items = sortEntries(data.items || data.files || []);
+        setFolderContents((prev) => ({ ...prev, [folderPath]: items }));
       } catch (err) {
         console.error("Error loading source directory:", err);
         setError(err instanceof Error ? err.message : t("fileBrowser.loadFailed"));
@@ -116,8 +127,12 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
           const body = await res.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.loadFailed"));
         }
-        const data: CloudFile[] = await res.json();
-        setTargetFolderContents((prev) => ({ ...prev, [folderPath]: data }));
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error_code ? translateApiError(data.error_code) : t("fileBrowser.loadFailed"));
+        }
+        const items = sortEntries(data.items || data.files || []);
+        setTargetFolderContents((prev) => ({ ...prev, [folderPath]: items }));
       } catch (err) {
         console.error("Error loading target directory:", err);
         setError(err instanceof Error ? err.message : t("fileBrowser.loadFailed"));
