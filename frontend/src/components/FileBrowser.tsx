@@ -23,13 +23,12 @@ import {
   FolderIcon as Folder,
   FolderOpenIcon as FolderOpen,
   FolderPlusIcon as FolderPlus,
-  InformationCircleIcon as Info,
   MusicalNoteIcon as Music,
   PhotoIcon as ImageIcon,
   PlayIcon as Play,
   XMarkIcon as X,
 } from "@heroicons/react/24/outline";
-import type { CloudFile, MigrationConfig, SyncJob } from "../types";
+import type { CloudFile, MigrationConfig } from "../types";
 import { useTranslation } from "react-i18next";
 import { useFormat } from "../utils/format";
 import { useApiError } from "../utils/apiError";
@@ -37,12 +36,7 @@ import { apiFetch } from "../utils/apiClient";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { Button } from "./Button";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import {
-  BANDWIDTH_OPTIONS,
-  valueToBandwidthIndex,
-  bandwidthIndexToValue,
-  getBandwidthLabel,
-} from "../utils/bandwidth";
+import { SyncOptionsForm } from "./SyncOptionsForm";
 
 interface FileBrowserProps {
   initialFiles: CloudFile[];
@@ -51,7 +45,6 @@ interface FileBrowserProps {
   onBack: () => void;
   onStartSuccess: (id: string, isSync?: boolean) => void;
   token: string;
-  existingSyncJob?: SyncJob;
 }
 
 // toLocalInputValue formats a Date as a local-time datetime-local string
@@ -193,9 +186,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   onBack,
   onStartSuccess,
   token,
-  existingSyncJob,
 }) => {
-  const isEditMode = !!existingSyncJob;
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
   const translateApiError = useApiError();
@@ -247,15 +238,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // entries so the selection checkboxes render checked on first paint.
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>(
     () => {
-      if (existingSyncJob?.selected_paths) {
-        return existingSyncJob.selected_paths.reduce(
-          (acc, p) => {
-            acc[p] = true;
-            return acc;
-          },
-          {} as Record<string, boolean>,
-        );
-      }
       return initialFiles.reduce(
         (acc, f) => {
           acc[f.path] = !isOneDrivePersonalVault(f);
@@ -268,7 +250,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
   const [conflictStrategy, setConflictStrategy] = useState("SKIP");
   const [threads, setThreads] = useState<number>(8);
-  const [targetDir, setTargetDir] = useState(existingSyncJob?.target_dir || "/");
+  const [targetDir, setTargetDir] = useState("/");
   const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
   const [targetExpandedPaths, setTargetExpandedPaths] = useState<
     Record<string, boolean>
@@ -289,7 +271,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const targetDialogTitleId = useId();
   const loadingPathsRef = useRef(loadingPaths);
   const directoryContentsRef = useRef(directoryContents);
-  const initialFetchedSyncJobIdRef = useRef<string | null>(null);
   const loadingCalendarsRef = useRef(loadingCalendars);
   const calendarsRef = useRef(calendars);
   const loadingContactsRef = useRef(loadingContacts);
@@ -306,20 +287,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     contactsRef.current = contacts;
   }, [loadingPaths, directoryContents, loadingCalendars, calendars, loadingContacts, contacts]);
 
-  // Job type: a third mode (e.g. 'backup') can be added later as a third
-  // segmented-control column without restructuring the settings strip.
-  const [jobType, setJobType] = useState<"migration" | "sync">(
-    existingSyncJob ? "sync" : "migration",
-  );
-  const [direction, setDirection] = useState<"one_way" | "two_way">(
-    (existingSyncJob?.direction as "one_way" | "two_way") || "one_way",
-  );
-  const [intervalMinutes, setIntervalMinutes] = useState<number>(
-    existingSyncJob?.interval_minutes || 15,
-  );
-  const [deletePropagation, setDeletePropagation] = useState<boolean>(
-    existingSyncJob?.delete_propagation || false,
-  );
+  // Job type
+  const [jobType, setJobType] = useState<"migration" | "sync">("migration");
+  const [direction, setDirection] = useState<"one_way" | "two_way">("one_way");
+  const [intervalMinutes, setIntervalMinutes] = useState<number>(15);
+  const [deletePropagation, setDeletePropagation] = useState<boolean>(false);
   // A profile change can introduce Immich after sync was selected. Deriving the
   // active mode keeps the UI and request path migration-only without a stateful
   // effect that would cause an unnecessary render.
@@ -374,28 +346,21 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     setTargetError(null);
     try {
-      const response = isEditMode && existingSyncJob
-        ? await apiFetch(
-            `${apiUrl}/api/sync/${existingSyncJob.id}/browse?role=target&path=${encodeURIComponent(folderPath)}`,
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            },
-          )
-        : await apiFetch(`${apiUrl}/api/migration/target/browse`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              target_url: credentials.target_url,
-              target_username: credentials.target_username,
-              target_password: credentials.target_password,
-              target_provider: credentials.target_provider,
-              target_profile_id: credentials.target_profile_id,
-              path: folderPath,
-            }),
-          });
+      const response = await apiFetch(`${apiUrl}/api/migration/target/browse`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          target_url: credentials.target_url,
+          target_username: credentials.target_username,
+          target_password: credentials.target_password,
+          target_provider: credentials.target_provider,
+          target_profile_id: credentials.target_profile_id,
+          path: folderPath,
+        }),
+      });
 
       if (!response.ok) {
         const b = await response
@@ -532,7 +497,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const fetchCalendars = useCallback(
     async (force?: boolean) => {
-      if (isEditMode) return;
       if (!force && (calendarsRef.current.length > 0 || loadingCalendarsRef.current)) return;
       setLoadingCalendars(true);
       try {
@@ -582,7 +546,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     [
       apiUrl,
       credentials,
-      isEditMode,
       t,
       token,
       translateApiError,
@@ -591,7 +554,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const fetchContacts = useCallback(
     async (force?: boolean) => {
-      if (isEditMode) return;
       if (!force && (contactsRef.current.length > 0 || loadingContactsRef.current)) return;
       setLoadingContacts(true);
       try {
@@ -641,7 +603,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     [
       apiUrl,
       credentials,
-      isEditMode,
       t,
       token,
       translateApiError,
@@ -655,7 +616,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   }, [activeTab, supportsCalendars, supportsContacts]);
 
   useEffect(() => {
-    if (isEditMode) return;
     const timer = setTimeout(() => {
       if (supportsCalendars && !hasFetchedCalendarsRef.current) {
         hasFetchedCalendarsRef.current = true;
@@ -671,7 +631,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [supportsCalendars, supportsContacts, fetchCalendars, fetchContacts, isEditMode]);
+  }, [supportsCalendars, supportsContacts, fetchCalendars, fetchContacts]);
 
   const handleTabChange = (tab: "files" | "calendars" | "contacts") => {
     setActiveTab(tab);
@@ -686,30 +646,22 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       try {
-        const response =
-          isEditMode && existingSyncJob
-            ? await apiFetch(
-                `${apiUrl}/api/sync/${existingSyncJob.id}/browse?role=source&path=${encodeURIComponent(folderPath)}`,
-                {
-                  headers: { Authorization: `Bearer ${token}` },
-                },
-              )
-            : await apiFetch(`${apiUrl}/api/migration/browse`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                  source_url: credentials.source_url,
-                  source_username: credentials.source_username,
-                  source_password: credentials.source_password,
-                  source_provider: credentials.source_provider,
-                  source_profile_id: credentials.source_profile_id,
-                  resource_type: "files",
-                  path: folderPath,
-                }),
-              });
+        const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            source_url: credentials.source_url,
+            source_username: credentials.source_username,
+            source_password: credentials.source_password,
+            source_provider: credentials.source_provider,
+            source_profile_id: credentials.source_profile_id,
+            resource_type: "files",
+            path: folderPath,
+          }),
+        });
 
         if (!response.ok) {
           const b = await response
@@ -730,12 +682,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             const next = { ...prev };
             for (const child of items) {
               if (next[child.path] === undefined) {
-                next[child.path] =
-                  isEditMode && existingSyncJob
-                    ? (existingSyncJob.selected_paths || []).includes(
-                        child.path,
-                      )
-                    : !isOneDrivePersonalVault(child);
+                next[child.path] = !isOneDrivePersonalVault(child);
               }
             }
             return next;
@@ -757,8 +704,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
     },
     [
-      isEditMode,
-      existingSyncJob,
       apiUrl,
       token,
       credentials,
@@ -766,20 +711,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       t,
     ],
   );
-
-  useEffect(() => {
-    if (
-      isEditMode &&
-      existingSyncJob &&
-      initialFetchedSyncJobIdRef.current !== existingSyncJob.id
-    ) {
-      initialFetchedSyncJobIdRef.current = existingSyncJob.id;
-      const timer = setTimeout(() => {
-        void fetchChildren("/", true);
-      }, 0);
-      return () => clearTimeout(timer);
-    }
-  }, [isEditMode, existingSyncJob, fetchChildren]);
 
   const refreshFiles = async () => {
     setDirectoryContents({});
@@ -806,74 +737,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const handleStartMigration = async () => {
-    if (isEditMode && existingSyncJob) {
-      if (syncSelectedPaths.length === 0) {
-        setError(t("fileBrowser.errors.selectOne"));
-        return;
-      }
-      setStarting(true);
-      setError(null);
-      try {
-        const scopeRes = await apiFetch(
-          `${apiUrl}/api/sync/${existingSyncJob.id}/scope`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              selected_paths: syncSelectedPaths,
-              target_dir: targetDir,
-            }),
-          },
-        );
-        if (!scopeRes.ok) {
-          const b = await scopeRes
-            .json()
-            .catch(() => ({}) as { error_code?: string });
-          throw new Error(
-            b.error_code
-              ? translateApiError(b.error_code)
-              : t("sync.createFailed"),
-          );
-        }
-
-        if (intervalMinutes !== existingSyncJob.interval_minutes) {
-          const schedRes = await apiFetch(
-            `${apiUrl}/api/sync/${existingSyncJob.id}/schedule`,
-            {
-              method: "PUT",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({ interval_minutes: intervalMinutes }),
-            },
-          );
-          if (!schedRes.ok) {
-            const b = await schedRes
-              .json()
-              .catch(() => ({}) as { error_code?: string });
-            throw new Error(
-              b.error_code
-                ? translateApiError(b.error_code)
-                : t("sync.createFailed"),
-            );
-          }
-        }
-
-        onStartSuccess(existingSyncJob.id, true);
-      } catch (err) {
-        console.error(err);
-        setError(
-          err instanceof Error ? err.message : t("sync.createFailed"),
-        );
-      } finally {
-        setStarting(false);
-      }
-      return;
-    }
 
     const pathsToMigrate = Object.keys(selectedPaths).filter(
       (p) => selectedPaths[p],
@@ -1279,7 +1142,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <span />
         )}
         <h1 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
-          {isEditMode ? t("sync.editModalTitle") : t("fileBrowser.wizardStep")}
+          {t("fileBrowser.wizardStep")}
         </h1>
       </div>
 
@@ -1358,7 +1221,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
               <button
                 type="button"
                 onClick={() => setJobType("migration")}
-                disabled={isEditMode}
                 className={`px-3 py-2 text-sm font-medium transition-colors ${
                   effectiveJobType === "migration"
                     ? "border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]"
@@ -1371,7 +1233,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 <button
                   type="button"
                   onClick={() => setJobType("sync")}
-                  disabled={isEditMode}
                   className={`px-3 py-2 text-sm font-medium transition-colors ${
                     effectiveJobType === "sync"
                       ? "border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]"
@@ -1398,340 +1259,38 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : (
               <>
                 <Play className="w-4 h-4 fill-current stroke-[2.5]" />
-                <span>
-                  {isEditMode
-                    ? t("sync.saveChanges")
-                    : t("fileBrowser.startTransfer")}
-                </span>
+                <span>{t("fileBrowser.startTransfer")}</span>
               </>
             )}
           </button>
         </div>
 
         {/* Settings body */}
-        <div className="p-5 sm:p-6 space-y-6">
-          {isEditMode && (
-            <div className="ui-alert ui-alert-info p-3 text-xs font-medium">
-              {t("sync.scopeUpdateWarning")}
-            </div>
-          )}
-          {/* Sync-only options */}
-          {effectiveJobType === "sync" && (
-            <div className="ui-alert ui-alert-info space-y-4 p-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Direction */}
-                <div className="space-y-2">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-primary)] uppercase tracking-widest font-mono">
-                    {t("sync.direction")}
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setDirection("one_way")}
-                      className={`py-2 px-2.5 text-[11px] font-bold font-mono transition-all cursor-pointer ${
-                        direction === "one_way"
-                          ? "ui-button-primary"
-                          : "ui-button-secondary"
-                      }`}
-                    >
-                      {t("sync.oneWay")} (→)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDirection("two_way")}
-                      className={`py-2 px-2.5 text-[11px] font-bold font-mono transition-all cursor-pointer ${
-                        direction === "two_way"
-                          ? "ui-button-primary"
-                          : "ui-button-secondary"
-                      }`}
-                    >
-                      {t("sync.twoWay")} (↔)
-                    </button>
-                  </div>
-                </div>
-
-                {/* Interval */}
-                <div className="space-y-1">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-primary)] uppercase tracking-widest font-mono">
-                    {t("sync.interval")}
-                  </label>
-                  <select
-                    value={intervalMinutes}
-                    onChange={(e) =>
-                      setIntervalMinutes(parseInt(e.target.value, 10))
-                    }
-                    className="ui-select w-full py-2 px-3 text-xs font-mono"
-                  >
-                    <option value={5}>5 {t("sync.minutes")}</option>
-                    <option value={15}>15 {t("sync.minutes")}</option>
-                    <option value={30}>30 {t("sync.minutes")}</option>
-                    <option value={60}>1 {t("sync.hour")}</option>
-                    <option value={360}>6 {t("sync.hours")}</option>
-                    <option value={1440}>24 {t("sync.hours")}</option>
-                  </select>
-                </div>
-
-                {/* Delete propagation */}
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="deletePropagation"
-                    checked={deletePropagation}
-                    onChange={(e) => setDeletePropagation(e.target.checked)}
-                    className="rounded accent-[var(--color-text-primary)] cursor-pointer"
-                  />
-                  <div className="flex flex-col">
-                    <label
-                      htmlFor="deletePropagation"
-                      className="text-[11px] font-bold text-[var(--color-text-primary)] cursor-pointer"
-                    >
-                      {t("sync.deletePropagation")}
-                    </label>
-                    <span className="text-[10px] text-[var(--color-text-secondary)]">
-                      {t("sync.deletePropagationHelp")}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Common + mode-specific settings grid (full width) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start">
-            {/* Target folder is configured from the target summary above. */}
-            <div className="space-y-2 text-xs md:col-span-2 xl:col-span-1">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                {t("fileBrowser.targetDir")}
-              </label>
-              <div className="flex items-center gap-2">
-                <span className="flex-grow flex items-center gap-2 px-3 py-2.5 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] rounded-xl font-mono text-xs text-[var(--color-text-secondary)] truncate">
-                  <Folder className="w-3.5 h-3.5 text-[var(--color-text-secondary)] shrink-0" />
-                  <span className="truncate">{targetDir || "/"}</span>
-                </span>
-              </div>
-              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-sans">
-                {t("fileBrowser.targetCopied")}
-              </p>
-            </div>
-
-            {/* Conflict Strategy */}
-            {isImmichTarget ? (
-              <div className="ui-alert ui-alert-info p-3.5 text-xs font-mono flex items-center gap-2 xl:col-span-2">
-                <Info className="w-4 h-4 shrink-0" />
-                <span>{t("fileBrowser.immichDuplicateDetection")}</span>
-              </div>
-            ) : effectiveJobType === "sync" && direction === "one_way" ? (
-              <div className="ui-alert ui-alert-info self-center p-3.5 text-xs font-mono flex items-center gap-2 xl:col-span-2">
-                <Info className="w-4 h-4 shrink-0" />
-                <span>{t("sync.oneWayConflictNote")}</span>
-              </div>
-            ) : (
-              <div className="space-y-3 text-xs xl:col-span-2">
-                <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                  {t("fileBrowser.conflictHandling")}
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* OVERWRITE card */}
-                  <button
-                    type="button"
-                    onClick={() => setConflictStrategy("OVERWRITE")}
-                    aria-pressed={conflictStrategy === "OVERWRITE"}
-                    className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
-                      conflictStrategy === "OVERWRITE"
-                        ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs"
-                        : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-xs font-semibold">
-                      <span className="font-display">
-                        {effectiveJobType === "sync"
-                          ? t("sync.conflictSourceWins")
-                          : t("fileBrowser.overwrite")}
-                      </span>
-                      {conflictStrategy === "OVERWRITE" && (
-                        <Check className="w-4 h-4 text-[var(--color-text-primary)] stroke-[3]" />
-                      )}
-                    </div>
-                    <p
-                      className={`text-xs mt-1 leading-normal font-normal ${conflictStrategy === "OVERWRITE" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)]"}`}
-                    >
-                      {t("fileBrowser.overwriteDesc")}
-                    </p>
-                  </button>
-
-                  {/* RENAME card */}
-                  <button
-                    type="button"
-                    onClick={() => setConflictStrategy("RENAME")}
-                    aria-pressed={conflictStrategy === "RENAME"}
-                    className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
-                      conflictStrategy === "RENAME"
-                        ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs"
-                        : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-xs font-semibold">
-                      <span className="font-display">
-                        {effectiveJobType === "sync"
-                          ? t("sync.conflictKeepBoth")
-                          : t("fileBrowser.rename")}
-                      </span>
-                      {conflictStrategy === "RENAME" && (
-                        <Check className="w-4 h-4 text-[var(--color-text-primary)] stroke-[3]" />
-                      )}
-                    </div>
-                    <p
-                      className={`text-xs mt-1 leading-normal font-normal ${conflictStrategy === "RENAME" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)]"}`}
-                    >
-                      {t("fileBrowser.renameDesc")}
-                    </p>
-                  </button>
-
-                  {/* SKIP card */}
-                  <button
-                    type="button"
-                    onClick={() => setConflictStrategy("SKIP")}
-                    aria-pressed={conflictStrategy === "SKIP"}
-                    className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
-                      conflictStrategy === "SKIP"
-                        ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs"
-                        : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-xs font-semibold">
-                      <span className="font-display">
-                        {effectiveJobType === "sync"
-                          ? t("sync.conflictSkip")
-                          : t("fileBrowser.skip")}
-                      </span>
-                      {conflictStrategy === "SKIP" && (
-                        <Check className="w-4 h-4 text-[var(--color-text-primary)] stroke-[3]" />
-                      )}
-                    </div>
-                    <p
-                      className={`text-xs mt-1 leading-normal font-normal ${conflictStrategy === "SKIP" ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-muted)]"}`}
-                    >
-                      {t("fileBrowser.skipDesc")}
-                    </p>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Thread count selector */}
-            <div className="space-y-3 text-xs">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                {t("fileBrowser.threads")}
-              </label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="range"
-                  min="1"
-                  max={16}
-                  value={threads}
-                  onChange={(e) => setThreads(parseInt(e.target.value, 10))}
-                  className="flex-grow accent-[var(--color-text-primary)] cursor-pointer"
-                />
-                <span
-                  className={`font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[32px] text-center transition-colors ${
-                    threads > 8
-                      ? "bg-[var(--color-warning-bg)] text-[var(--color-text-primary)]"
-                      : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]"
-                  }`}
-                >
-                  {threads}
-                </span>
-              </div>
-              <p className="text-xs text-[var(--color-text-muted)] leading-relaxed font-sans">
-                {threads > 8 ? (
-                  <span className="text-[var(--color-text-primary)] font-semibold">
-                    {t("fileBrowser.threadsHighWarn")}
-                  </span>
-                ) : (
-                  t("fileBrowser.threadsHint")
-                )}
-              </p>
-            </div>
-
-            {/* Bandwidth limit */}
-            <div className="space-y-3 text-xs">
-              <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
-                {t("fileBrowser.bandwidth")}
-              </label>
-              <div className="flex items-center gap-4">
-                <input
-                  type="range"
-                  min="0"
-                  max={BANDWIDTH_OPTIONS.length - 1}
-                  step="1"
-                  value={valueToBandwidthIndex(bandwidthLimit)}
-                  onChange={(e) => {
-                    const idx = parseInt(e.target.value, 10);
-                    setBandwidthLimit(bandwidthIndexToValue(idx));
-                  }}
-                  className="flex-grow accent-[var(--color-text-primary)] cursor-pointer"
-                />
-                <span className="font-mono text-xs font-bold px-2.5 py-1 rounded-lg min-w-[70px] text-center bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]">
-                  {getBandwidthLabel(bandwidthLimit, t("dashboard.unlimited"))}
-                </span>
-              </div>
-              <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
-                {bandwidthLimit === 0
-                  ? t("fileBrowser.bandwidthUnlimited")
-                  : t("fileBrowser.bandwidthHint", {
-                      limit: getBandwidthLabel(
-                        bandwidthLimit,
-                        t("dashboard.unlimited"),
-                      ),
-                    })}
-              </p>
-            </div>
-          </div>
-
-          {/* Migration-only scheduling */}
-          {effectiveJobType === "migration" && (
-            <div className="space-y-3 text-xs pt-5 border-t border-[var(--color-border-light)]">
-              <label className="flex items-center gap-3 cursor-pointer group">
-                <input
-                  type="checkbox"
-                  checked={enableScheduling}
-                  onChange={(e) => setEnableScheduling(e.target.checked)}
-                  className="w-4 h-4 rounded border-[var(--color-border)] accent-[var(--color-text-primary)] cursor-pointer"
-                />
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4 text-[var(--color-text-muted)] group-hover:text-[var(--color-text-primary)] transition-colors" />
-                  <span className="text-xs font-semibold text-[var(--color-text-primary)]">
-                    {t("fileBrowser.schedule")}
-                  </span>
-                </div>
-              </label>
-
-              {enableScheduling && (
-                <div className="mt-3 sm:max-w-sm">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
-                    {t("fileBrowser.scheduleTime")}
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={scheduledTime}
-                    onChange={(e) => setScheduledTime(e.target.value)}
-                    min={minScheduledTime}
-                    className="ui-input w-full py-2.5 px-4 text-sm transition-all font-sans"
-                  />
-                  <p className="text-xs text-[var(--color-text-muted)] mt-2 leading-relaxed font-sans">
-                    {t("fileBrowser.scheduleHint")}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {error && (
-            <div className="ui-alert ui-alert-error p-4 text-[11px] font-semibold leading-normal flex gap-2 text-left">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{error}</span>
-            </div>
-          )}
+        <div className="p-5 sm:p-6">
+          <SyncOptionsForm
+            effectiveJobType={effectiveJobType}
+            direction={direction}
+            setDirection={setDirection}
+            intervalMinutes={intervalMinutes}
+            setIntervalMinutes={setIntervalMinutes}
+            deletePropagation={deletePropagation}
+            setDeletePropagation={setDeletePropagation}
+            conflictStrategy={conflictStrategy}
+            setConflictStrategy={setConflictStrategy}
+            threads={threads}
+            setThreads={setThreads}
+            bandwidthLimit={bandwidthLimit}
+            setBandwidthLimit={setBandwidthLimit}
+            enableScheduling={enableScheduling}
+            setEnableScheduling={setEnableScheduling}
+            scheduledTime={scheduledTime}
+            setScheduledTime={setScheduledTime}
+            minScheduledTime={minScheduledTime}
+            isImmichTarget={isImmichTarget}
+            targetDir={targetDir}
+            openTargetBrowser={openTargetBrowser}
+            error={error}
+          />
         </div>
       </div>
 

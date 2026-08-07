@@ -1417,8 +1417,8 @@ func DeleteSyncStateForJob(exec queryExecer, syncJobID string) error {
 	return err
 }
 
-// UpdateSyncJobScope updates selected_paths and target_dir for a sync job and clears its sync_state in a single transaction.
-func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, targetDir string) error {
+// UpdateSyncJobScope updates selected_paths, target_dir, conflict_strategy, direction, and delete_propagation for a sync job and clears its sync_state in a single transaction.
+func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, targetDir string, conflictStrategy string, direction string, deletePropagation *bool) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -1442,10 +1442,30 @@ func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, ta
 		return fmt.Errorf("failed to marshal selected_paths: %w", err)
 	}
 
-	res, err := tx.Exec(
-		`UPDATE sync_jobs SET selected_paths = $1, target_dir = $2, updated_at = NOW() WHERE id = $3`,
-		pathsJSON, targetDir, syncJobID,
-	)
+	query := `UPDATE sync_jobs SET selected_paths = $1, target_dir = $2, updated_at = NOW()`
+	args := []any{pathsJSON, targetDir}
+	argIdx := 3
+
+	if conflictStrategy != "" {
+		query += fmt.Sprintf(`, conflict_strategy = $%d`, argIdx)
+		args = append(args, conflictStrategy)
+		argIdx++
+	}
+	if direction != "" {
+		query += fmt.Sprintf(`, direction = $%d`, argIdx)
+		args = append(args, direction)
+		argIdx++
+	}
+	if deletePropagation != nil {
+		query += fmt.Sprintf(`, delete_propagation = $%d`, argIdx)
+		args = append(args, *deletePropagation)
+		argIdx++
+	}
+
+	query += fmt.Sprintf(` WHERE id = $%d`, argIdx)
+	args = append(args, syncJobID)
+
+	res, err := tx.Exec(query, args...)
 	if err != nil {
 		return err
 	}

@@ -831,8 +831,11 @@ type updateSyncScheduleRequest struct {
 }
 
 type updateSyncScopeRequest struct {
-	SelectedPaths []string `json:"selected_paths"`
-	TargetDir     string   `json:"target_dir"`
+	SelectedPaths     []string `json:"selected_paths"`
+	TargetDir         string   `json:"target_dir"`
+	ConflictStrategy  string   `json:"conflict_strategy,omitempty"`
+	Direction         string   `json:"direction,omitempty"`
+	DeletePropagation *bool    `json:"delete_propagation,omitempty"`
 }
 
 func (s *APIServer) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Request) {
@@ -1110,7 +1113,7 @@ func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 		req.TargetDir = "/"
 	}
 
-	if err := db.UpdateSyncJobScope(s.db, id, req.SelectedPaths, req.TargetDir); err != nil {
+	if err := db.UpdateSyncJobScope(s.db, id, req.SelectedPaths, req.TargetDir, req.ConflictStrategy, req.Direction, req.DeletePropagation); err != nil {
 		if errors.Is(err, db.ErrSyncInvalidState) {
 			writeError(w, http.StatusConflict, ErrSyncInvalidState)
 			return

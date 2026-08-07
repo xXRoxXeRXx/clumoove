@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import type { SyncJob, Provider } from '../types';
+import type { SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatBytes, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
@@ -15,7 +15,7 @@ import { TransferProgress } from './TransferProgress';
 import { TransferEndpoints } from './TransferEndpoints';
 import { ActiveTransfersPanel, TransferStatusPanel } from './TransferRunSummary';
 import { LoadingIndicator } from './LoadingIndicator';
-import { FileBrowser } from './FileBrowser';
+import { EditSyncModal } from './EditSyncModal';
 import { BANDWIDTH_OPTIONS, bandwidthIndexToValue, getBandwidthLabel, valueToBandwidthIndex } from '../utils/bandwidth';
 import {
   AdjustmentsHorizontalIcon,
@@ -565,50 +565,27 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       </div>
 
       {isEditing && job && (
-        <div className="fixed inset-0 bg-[var(--color-overlay)] z-[var(--layer-dialog)] flex items-center justify-center p-4 overflow-y-auto">
-          <div className="ui-card w-full max-w-5xl p-6 bg-[var(--color-bg-primary)] border-[var(--color-border)] shadow-xl relative max-h-[90vh] overflow-y-auto text-left">
-            {/*
-              In edit mode (existingSyncJob provided), password and token fields pass empty strings.
-              The server-side handler GET /api/sync/{id}/browse uses stored encrypted credentials from the database.
-            */}
-            <FileBrowser
-              initialFiles={[]}
-              credentials={{
-                source_provider: (job.source_provider || "nextcloud") as Provider,
-                target_provider: (job.target_provider || "nextcloud") as Provider,
-                source_url: job.source_url || "",
-                target_url: job.target_url || "",
-                source_username: job.source_username || "",
-                target_username: job.target_username || "",
-                source_password: "",
-                target_password: "",
-                source_refresh_token: "",
-                source_token_expires_in: 0,
-                target_refresh_token: "",
-                target_token_expires_in: 0,
-              }}
-              apiUrl={apiUrl}
-              token={token}
-              existingSyncJob={job}
-              onBack={() => setIsEditing(false)}
-              onStartSuccess={async () => {
-                setIsEditing(false);
-                toast(t('sync.scopeUpdated'));
-                try {
-                  const res = await apiFetch(`${apiUrl}/api/sync/${syncId}`, {
-                    headers: { Authorization: `Bearer ${token}` },
-                  });
-                  if (res.ok) {
-                    const updated = await res.json();
-                    setJob(updated);
-                  }
-                } catch (err) {
-                  console.error('Failed to re-fetch sync job details after edit:', err);
-                }
-              }}
-            />
-          </div>
-        </div>
+        <EditSyncModal
+          job={job}
+          apiUrl={apiUrl}
+          token={token}
+          onClose={() => setIsEditing(false)}
+          onSuccess={async () => {
+            setIsEditing(false);
+            toast(t('sync.scopeUpdated'));
+            try {
+              const res = await apiFetch(`${apiUrl}/api/sync/${syncId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              if (res.ok) {
+                const updated = await res.json();
+                setJob(updated);
+              }
+            } catch (err) {
+              console.error('Failed to re-fetch sync job details after edit:', err);
+            }
+          }}
+        />
       )}
     </div>
   );
