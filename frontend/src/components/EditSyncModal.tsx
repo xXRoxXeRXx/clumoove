@@ -1,19 +1,27 @@
 import React, { useState, useEffect, useCallback, useId, useRef } from "react";
 import {
-  FolderIcon as Folder,
-  FolderOpenIcon as FolderOpen,
-  XMarkIcon as X,
+  ArchiveBoxIcon as Archive,
   ArrowPathIcon as RefreshCw,
   CheckIcon as Check,
-  ChevronRightIcon as ChevronRight,
   ChevronDownIcon as ChevronDown,
-  ArrowLeftIcon as ArrowLeft,
-  DocumentIcon as FileIcon,
+  ChevronRightIcon as ChevronRight,
+  CodeBracketIcon as FileCode,
+  DocumentIcon as File,
+  DocumentTextIcon as FileText,
+  ExclamationTriangleIcon as AlertTriangle,
+  FilmIcon as Film,
+  FolderIcon as Folder,
+  FolderOpenIcon as FolderOpen,
+  FolderPlusIcon as FolderPlus,
+  MusicalNoteIcon as Music,
+  PhotoIcon as ImageIcon,
+  XMarkIcon as X,
 } from "@heroicons/react/24/outline";
 import { useTranslation } from "react-i18next";
 import type { CloudFile, SyncJob } from "../types";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useApiError } from "../utils/apiError";
+import { useFormat } from "../utils/format";
 import { apiFetch } from "../utils/apiClient";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { SyncOptionsForm } from "./SyncOptionsForm";
@@ -27,6 +35,120 @@ interface EditSyncModalProps {
   onSuccess: () => void;
 }
 
+const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
+  if (!fileName) return <File className={`${className} ui-file-default`} />;
+  if (fileName.endsWith("/"))
+    return <Folder className={`${className} ui-file-folder`} />;
+
+  const lastSegment = fileName.split("/").pop() || "";
+  if (!lastSegment.includes("."))
+    return <File className={`${className} ui-file-default`} />;
+
+  const ext = lastSegment.split(".").pop()?.toLowerCase() || "";
+
+  if (
+    [
+      "jpg",
+      "jpeg",
+      "png",
+      "gif",
+      "webp",
+      "svg",
+      "bmp",
+      "ico",
+      "tiff",
+      "heic",
+      "raw",
+      "psd",
+      "ai",
+    ].includes(ext)
+  ) {
+    return <ImageIcon className={`${className} ui-file-image`} />;
+  }
+  if (
+    [
+      "mp4",
+      "mkv",
+      "avi",
+      "mov",
+      "webm",
+      "m4v",
+      "flv",
+      "wmv",
+      "mpeg",
+      "3gp",
+    ].includes(ext)
+  ) {
+    return <Film className={`${className} ui-file-video`} />;
+  }
+  if (
+    ["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "alac"].includes(ext)
+  ) {
+    return <Music className={`${className} ui-file-audio`} />;
+  }
+  if (
+    [
+      "pdf",
+      "doc",
+      "docx",
+      "xls",
+      "xlsx",
+      "ppt",
+      "pptx",
+      "odt",
+      "ods",
+      "odp",
+      "rtf",
+      "txt",
+      "csv",
+      "md",
+    ].includes(ext)
+  ) {
+    return <FileText className={`${className} ui-file-document`} />;
+  }
+  if (
+    [
+      "js",
+      "ts",
+      "jsx",
+      "tsx",
+      "json",
+      "xml",
+      "html",
+      "css",
+      "scss",
+      "py",
+      "go",
+      "rs",
+      "java",
+      "c",
+      "cpp",
+      "h",
+      "sh",
+      "yaml",
+      "yml",
+      "sql",
+      "env",
+    ].includes(ext)
+  ) {
+    return <FileCode className={`${className} ui-file-folder`} />;
+  }
+  if (
+    ["zip", "tar", "gz", "7z", "rar", "bz2", "xz", "iso", "dmg"].includes(ext)
+  ) {
+    return <Archive className={`${className} ui-file-archive`} />;
+  }
+
+  return <File className={`${className} ui-file-default`} />;
+};
+
+const sortEntries = (entries: CloudFile[]): CloudFile[] => {
+  return [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+};
+
 export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   job,
   apiUrl,
@@ -35,12 +157,16 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   onSuccess,
 }) => {
   const { t } = useTranslation();
+  const { formatBytes } = useFormat();
   const translateApiError = useApiError();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   useFocusTrap(dialogRef, closeButtonRef, onClose);
 
   const titleId = useId();
+  const targetDialogRef = useRef<HTMLDivElement>(null);
+  const targetCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const targetDialogTitleId = useId();
 
   // Selected paths state
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>(() => {
@@ -66,28 +192,27 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Source tree browsing state
-  const [folderContents, setFolderContents] = useState<Record<string, CloudFile[]>>({});
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({ "/": true });
+  const [directoryContents, setDirectoryContents] = useState<Record<string, CloudFile[]>>({});
+  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({ "/": true });
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
 
   // Target directory browser state
-  const [isBrowsingTarget, setIsBrowsingTarget] = useState(false);
-  const [targetCurrentFolder, setTargetCurrentFolder] = useState("/");
-  const [targetFolderContents, setTargetFolderContents] = useState<Record<string, CloudFile[]>>({});
+  const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
+  const [targetExpandedPaths, setTargetExpandedPaths] = useState<Record<string, boolean>>({ "/": true });
+  const [targetDirectoryContents, setTargetDirectoryContents] = useState<Record<string, CloudFile[]>>({});
   const [targetLoadingPaths, setTargetLoadingPaths] = useState<Record<string, boolean>>({});
+  const [targetError, setTargetError] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
 
   const pathsToMigrate = Object.keys(selectedPaths).filter((p) => selectedPaths[p]);
 
-const sortEntries = (entries: CloudFile[]): CloudFile[] => {
-  return [...entries].sort((a, b) => {
-    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-  });
-};
-
   // Fetch directory contents for source
   const fetchSourceDirectory = useCallback(
-    async (folderPath: string) => {
+    async (folderPath: string, force?: boolean) => {
+      if (loadingPaths[folderPath]) return;
+      if (!force && directoryContents[folderPath]) return;
+
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       try {
         const res = await apiFetch(
@@ -96,28 +221,29 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
         );
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.loadFailed"));
+          throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.errors.loadDir"));
         }
         const data = await res.json();
         if (!data.success) {
-          throw new Error(data.error_code ? translateApiError(data.error_code) : t("fileBrowser.loadFailed"));
+          throw new Error(data.error_code ? translateApiError(data.error_code) : t("fileBrowser.errors.loadDir"));
         }
         const items = sortEntries(data.items || data.files || []);
-        setFolderContents((prev) => ({ ...prev, [folderPath]: items }));
+        setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
       } catch (err) {
         console.error("Error loading source directory:", err);
-        setError(err instanceof Error ? err.message : t("fileBrowser.loadFailed"));
+        setError(err instanceof Error ? err.message : t("fileBrowser.errors.loadDir"));
       } finally {
         setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
       }
     },
-    [apiUrl, job.id, token, t, translateApiError]
+    [apiUrl, job.id, token, t, translateApiError, loadingPaths, directoryContents]
   );
 
   // Fetch directory contents for target
-  const fetchTargetDirectory = useCallback(
+  const fetchTargetChildren = useCallback(
     async (folderPath: string) => {
       setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
+      setTargetError(null);
       try {
         const res = await apiFetch(
           `${apiUrl}/api/sync/${job.id}/browse?role=target&path=${encodeURIComponent(folderPath)}`,
@@ -125,17 +251,17 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
         );
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.loadFailed"));
+          throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.errors.loadTarget"));
         }
         const data = await res.json();
         if (!data.success) {
-          throw new Error(data.error_code ? translateApiError(data.error_code) : t("fileBrowser.loadFailed"));
+          throw new Error(data.error_code ? translateApiError(data.error_code) : t("fileBrowser.errors.loadTarget"));
         }
         const items = sortEntries(data.items || data.files || []);
-        setTargetFolderContents((prev) => ({ ...prev, [folderPath]: items }));
+        setTargetDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
       } catch (err) {
         console.error("Error loading target directory:", err);
-        setError(err instanceof Error ? err.message : t("fileBrowser.loadFailed"));
+        setTargetError(err instanceof Error ? err.message : t("fileBrowser.errors.loadTarget"));
       } finally {
         setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
       }
@@ -146,30 +272,49 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
   // Load root folder on mount
   useEffect(() => {
     const timer = setTimeout(() => {
-      void fetchSourceDirectory("/");
+      void fetchSourceDirectory("/", true);
     }, 0);
     return () => clearTimeout(timer);
   }, [fetchSourceDirectory]);
 
-  // Memoized target browser opener (Point 3)
+  // Target browser opener
   const openTargetBrowser = useCallback(() => {
-    setIsBrowsingTarget(true);
-    if (!targetFolderContents[targetCurrentFolder] && !targetLoadingPaths[targetCurrentFolder]) {
-      void fetchTargetDirectory(targetCurrentFolder);
+    setIsTargetBrowserOpen(true);
+    setTargetExpandedPaths((prev) => ({ ...prev, "/": true }));
+    void fetchTargetChildren("/");
+  }, [fetchTargetChildren]);
+
+  const closeTargetBrowser = () => {
+    setIsTargetBrowserOpen(false);
+    setIsCreatingFolder(false);
+    setNewFolderName("");
+    setTargetError(null);
+  };
+
+  const handleCreateTargetFolder = async (parentPath: string) => {
+    if (!newFolderName.trim()) return;
+    try {
+      const res = await apiFetch(`${apiUrl}/api/sync/${job.id}/mkdir`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ role: "target", path: parentPath, name: newFolderName.trim() }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error_code ? translateApiError(body.error_code) : t("fileBrowser.mkdirFailed"));
+      }
+      setIsCreatingFolder(false);
+      setNewFolderName("");
+      await fetchTargetChildren(parentPath);
+    } catch (err) {
+      console.error(err);
+      setTargetError(err instanceof Error ? err.message : t("fileBrowser.mkdirFailed"));
     }
-  }, [fetchTargetDirectory, targetCurrentFolder, targetFolderContents, targetLoadingPaths]);
+  };
 
   // Toggle path selection
-  const togglePathSelection = (path: string) => {
-    setSelectedPaths((prev) => {
-      const next = { ...prev };
-      if (next[path]) {
-        delete next[path];
-      } else {
-        next[path] = true;
-      }
-      return next;
-    });
+  const toggleSelect = (filePath: string) => {
+    setSelectedPaths((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
   };
 
   const deselectAll = () => {
@@ -177,14 +322,18 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
   };
 
   // Toggle folder expansion in source tree
-  const toggleFolderExpand = (folderPath: string) => {
-    setExpandedFolders((prev) => {
-      const isExpanding = !prev[folderPath];
-      if (isExpanding && !folderContents[folderPath] && !loadingPaths[folderPath]) {
-        void fetchSourceDirectory(folderPath);
-      }
-      return { ...prev, [folderPath]: isExpanding };
-    });
+  const toggleExpand = (folderPath: string) => {
+    const isExpanded = !!expandedPaths[folderPath];
+    setExpandedPaths((prev) => ({ ...prev, [folderPath]: !isExpanded }));
+    if (!isExpanded) {
+      void fetchSourceDirectory(folderPath);
+    }
+  };
+
+  const refreshFiles = async () => {
+    setDirectoryContents({});
+    setExpandedPaths({ "/": true });
+    await fetchSourceDirectory("/", true);
   };
 
   // Handle Save
@@ -248,71 +397,207 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
     }
   };
 
-  // Helper for source tree node rendering
-  const renderSourceTreeNode = (file: CloudFile, depth = 0) => {
+  // Render tree node 1:1 matching FileBrowser.tsx
+  const renderNode = (file: CloudFile, depth: number = 0) => {
+    const isExpanded = !!expandedPaths[file.path];
     const isSelected = !!selectedPaths[file.path];
-    const isFolder = file.is_dir;
-    const isExpanded = !!expandedFolders[file.path];
     const isLoading = !!loadingPaths[file.path];
-    const children = folderContents[file.path] || [];
+    const children = directoryContents[file.path] || [];
 
     return (
-      <div key={file.path} className="space-y-0.5">
+      <div key={file.path} className="select-none font-sans text-xs">
+        {/* Row */}
         <div
-          className={`flex items-center justify-between p-1.5 rounded-lg transition-colors text-xs font-mono ${
-            isSelected ? "bg-[var(--color-bg-tertiary)]/60" : "hover:bg-[var(--color-bg-secondary)]"
+          className={`flex items-center gap-3 py-3.5 px-4 border-b border-[var(--color-border-light)] hover:bg-[var(--color-bg-tertiary)] transition-colors duration-150 ${
+            isSelected ? "bg-[var(--color-bg-tertiary)] font-semibold" : ""
           }`}
-          style={{ paddingLeft: `${depth * 1.25 + 0.5}rem` }}
+          style={{ paddingLeft: `${depth * 20 + 16}px` }}
         >
-          <div className="flex items-center gap-2 truncate flex-1">
-            {isFolder ? (
-              <button
-                type="button"
-                onClick={() => toggleFolderExpand(file.path)}
-                className="p-0.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors rounded"
-                aria-label={isExpanded ? t("common.collapse") : t("common.expand")}
-              >
-                {isLoading ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : isExpanded ? (
-                  <ChevronDown className="w-3.5 h-3.5" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5" />
-                )}
-              </button>
-            ) : (
-              <span className="w-3.5 h-3.5 inline-block" />
-            )}
-
-            <label className="flex items-center gap-2 cursor-pointer flex-1 truncate">
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onChange={() => togglePathSelection(file.path)}
-                className="rounded accent-[var(--color-text-primary)] cursor-pointer"
-              />
-              {isFolder ? (
-                <Folder className="w-4 h-4 text-[var(--color-text-secondary)] shrink-0" />
+          {/* Collapse/Expand Arrow */}
+          {file.is_dir ? (
+            <button
+              type="button"
+              className="w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+              onClick={() => toggleExpand(file.path)}
+              aria-label={
+                isExpanded
+                  ? t("common.collapse", { name: file.name })
+                  : t("common.expand", { name: file.name })
+              }
+            >
+              {isLoading ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin text-[var(--color-text-primary)]" />
+              ) : isExpanded ? (
+                <ChevronDown className="w-4.5 h-4.5 stroke-[2]" />
               ) : (
-                <FileIcon className="w-4 h-4 text-[var(--color-text-muted)] shrink-0" />
+                <ChevronRight className="w-4.5 h-4.5 stroke-[2]" />
               )}
-              <span className="truncate">{file.name}</span>
-            </label>
-          </div>
+            </button>
+          ) : (
+            <span className="w-5" />
+          )}
+
+          {/* Rounded-md Checkbox */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleSelect(file.path);
+            }}
+            className="flex items-center justify-center cursor-pointer"
+            aria-label={`${t("common.select")} ${file.name}`}
+          >
+            <div
+              className={`w-4.5 h-4.5 border rounded flex items-center justify-center transition-all duration-200 ${
+                isSelected
+                  ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent shadow-xs"
+                  : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]"
+              }`}
+            >
+              {isSelected && (
+                <Check className="w-3 h-3 text-[var(--color-text-inverse)] stroke-[3.5]" />
+              )}
+            </div>
+          </button>
+
+          {/* Outline-style Icon */}
+          <span className="shrink-0">
+            {file.is_dir ? (
+              isExpanded ? (
+                <FolderOpen className="w-5 h-5 text-[var(--color-text-secondary)]" />
+              ) : (
+                <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />
+              )
+            ) : (
+              getFileIcon(file.name, "w-5 h-5")
+            )}
+          </span>
+
+          {/* Name & Size */}
+          <span
+            className={`text-[12px] truncate flex-grow leading-normal py-0.5 ${
+              isSelected ? "text-[var(--color-text-primary)] font-bold" : "text-[var(--color-text-primary)]"
+            }`}
+          >
+            {file.name}
+          </span>
+
+          {!file.is_dir && (
+            <span className="ui-badge ui-badge-muted text-[10px] font-bold px-2 py-0.5 rounded">
+              {formatBytes(file.size)}
+            </span>
+          )}
         </div>
 
-        {/* Render child nodes if expanded */}
-        {isFolder && isExpanded && (
-          <div className="space-y-0.5">
-            {children.length === 0 && !isLoading ? (
-              <div
-                className="text-[11px] text-[var(--color-text-muted)] italic font-mono p-1"
-                style={{ paddingLeft: `${(depth + 1) * 1.25 + 0.5}rem` }}
-              >
-                {t("fileBrowser.noFiles")}
-              </div>
+        {/* Children (Recursion) */}
+        {file.is_dir && isExpanded && children.length > 0 && (
+          <div className="relative">
+            {/* Visual connector left track */}
+            <div className="absolute left-6.5 top-0 bottom-4.5 border-l border-[var(--color-border)]"></div>
+            {children.map((child) => renderNode(child, depth + 1))}
+          </div>
+        )}
+
+        {file.is_dir && isExpanded && children.length === 0 && !isLoading && (
+          <div className="text-[10px] text-[var(--color-text-muted)] italic py-2.5 pl-14 text-left">
+            {t("fileBrowser.emptyDir")}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render target directory tree node 1:1 matching FileBrowser.tsx
+  const renderTargetNode = (file: CloudFile, depth: number = 0) => {
+    const isExpanded = !!targetExpandedPaths[file.path];
+    const isSelected = targetDir === file.path;
+    const isLoading = !!targetLoadingPaths[file.path];
+    const children = targetDirectoryContents[file.path] || [];
+
+    const toggleTargetExpand = (folderPath: string) => {
+      const nextExpanded = !targetExpandedPaths[folderPath];
+      setTargetExpandedPaths((prev) => ({
+        ...prev,
+        [folderPath]: nextExpanded,
+      }));
+      if (nextExpanded) {
+        void fetchTargetChildren(folderPath);
+      }
+    };
+
+    return (
+      <div key={file.path} className="select-none font-sans text-xs">
+        {/* Row */}
+        <div
+          className={`flex items-center gap-2.5 py-2 px-3 border-b border-[var(--color-border-light)] hover:bg-[var(--color-bg-tertiary)] transition-colors duration-150 rounded-md ${
+            isSelected
+              ? "bg-[var(--color-bg-secondary)] font-bold border border-[var(--color-border)] text-[var(--color-text-primary)] shadow-sm"
+              : ""
+          }`}
+          style={{ paddingLeft: `${depth * 16 + 12}px` }}
+        >
+          {/* Collapse/Expand Arrow */}
+          <button
+            type="button"
+            className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleTargetExpand(file.path);
+            }}
+            aria-label={
+              isExpanded
+                ? t("common.collapse", { name: file.name })
+                : t("common.expand", { name: file.name })
+            }
+          >
+            {isLoading ? (
+              <RefreshCw className="w-3 h-3 animate-spin text-[var(--color-text-primary)]" />
+            ) : isExpanded ? (
+              <ChevronDown className="w-3.5 h-3.5" />
             ) : (
-              children.map((child) => renderSourceTreeNode(child, depth + 1))
+              <ChevronRight className="w-3.5 h-3.5" />
+            )}
+          </button>
+
+          {/* Icon */}
+          <span className="text-[var(--color-text-primary)]">
+            {isExpanded ? (
+              <FolderOpen className="w-4 h-4 text-[var(--color-text-secondary)]" />
+            ) : (
+              <Folder className="w-4 h-4 text-[var(--color-text-secondary)]" />
+            )}
+          </span>
+
+          {/* Name */}
+          <button
+            type="button"
+            className={`text-[11.5px] truncate flex-grow leading-normal py-0.5 text-left ${
+              isSelected
+                ? "text-[var(--color-text-primary)]"
+                : "text-[var(--color-text-secondary)]"
+            }`}
+            onClick={() => setTargetDir(file.path)}
+            aria-pressed={isSelected}
+          >
+            {file.name}
+          </button>
+
+          {/* Select Indicator */}
+          {isSelected && (
+            <Check className="w-3.5 h-3.5 text-[var(--color-text-primary)] stroke-[3]" />
+          )}
+        </div>
+
+        {/* Children (Recursion) */}
+        {isExpanded && (
+          <div className="relative">
+            <div className="absolute left-[20px] top-0 bottom-3 border-l border-[var(--color-border)]"></div>
+            {children.length > 0 ? (
+              children.map((child) => renderTargetNode(child, depth + 1))
+            ) : isLoading ? null : (
+              <div className="text-[10px] text-[var(--color-text-muted)] italic py-2 pl-[42px] text-left">
+                {t("fileBrowser.noSubdirs")}
+              </div>
             )}
           </div>
         )}
@@ -430,130 +715,249 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
           hideTargetDirConfig
         />
 
-        {/* Target Folder Browser Sub-modal (Points 7 & 8: multi-level & keyboard accessible) */}
-        {isBrowsingTarget && (
-          <div className="fixed inset-0 bg-[var(--color-overlay)] z-[calc(var(--layer-dialog)+10)] flex items-center justify-center p-4">
-            <div className="ui-card w-full max-w-2xl p-5 bg-[var(--color-bg-primary)] border-[var(--color-border)] shadow-xl relative max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)] mb-3">
-                <div className="flex items-center gap-2">
-                  {targetCurrentFolder !== "/" && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const parts = targetCurrentFolder.split("/").filter(Boolean);
-                        parts.pop();
-                        const parent = "/" + parts.join("/");
-                        setTargetCurrentFolder(parent);
-                        if (!targetFolderContents[parent]) {
-                          void fetchTargetDirectory(parent);
-                        }
-                      }}
-                      className="ui-button-secondary p-1 text-xs"
-                      title={t("common.back")}
-                    >
-                      <ArrowLeft className="w-4 h-4" />
-                    </button>
-                  )}
-                  <h3 className="font-bold text-sm text-[var(--color-text-primary)] font-mono truncate">
-                    {t("fileBrowser.selectTargetFolder")}: <span className="text-[var(--color-text-secondary)]">{targetCurrentFolder}</span>
+        {/* Target Directory Browser Modal 1:1 matching FileBrowser.tsx */}
+        {isTargetBrowserOpen && job.target_provider !== "immich" && (
+          <div className="fixed inset-0 bg-[var(--color-overlay)] z-[var(--layer-dialog)] flex items-center justify-center p-4">
+            <div
+              ref={targetDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={targetDialogTitleId}
+              className="ui-card max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden text-left"
+            >
+              {/* Modal Header */}
+              <div className="p-5 border-b border-[var(--color-border-light)] flex items-center justify-between bg-[var(--color-bg-tertiary)]/50">
+                <div>
+                  <h3
+                    id={targetDialogTitleId}
+                    className="font-display font-extrabold text-lg text-[var(--color-text-primary)] tracking-tight"
+                  >
+                    {t("fileBrowser.targetSelectTitle")}
                   </h3>
+                  <p className="text-xs text-[var(--color-text-muted)] mt-0.5 uppercase tracking-wider font-mono">
+                    {t("fileBrowser.targetSelectSubtitle")}
+                  </p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsBrowsingTarget(false)}
-                  className="p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                  ref={targetCloseButtonRef}
+                  onClick={closeTargetBrowser}
+                  className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
+                  aria-label={t("paths.close")}
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto space-y-1 font-mono text-xs p-2">
-                {targetLoadingPaths[targetCurrentFolder] ? (
-                  <div className="p-4 text-center text-[var(--color-text-muted)] flex items-center justify-center gap-2">
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>{t("common.loading")}</span>
+              {/* Modal Content - Directory Tree */}
+              <div className="p-5 flex-grow overflow-y-auto min-h-[300px]">
+                {targetError && (
+                  <div className="ui-alert ui-alert-error mb-4 p-3 text-xs flex gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>{targetError}</span>
                   </div>
-                ) : (
-                  <>
-                    {/* Current folder selection button */}
-                    <button
-                      type="button"
-                      onClick={() => setTargetDir(targetCurrentFolder)}
-                      className={`w-full text-left p-2.5 rounded-lg cursor-pointer flex items-center justify-between transition-colors ${
-                        targetDir === targetCurrentFolder
-                          ? "bg-[var(--color-bg-tertiary)] font-bold text-[var(--color-text-primary)] border border-[var(--color-border)]"
-                          : "bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-tertiary)]/50"
+                )}
+
+                <div className="border border-[var(--color-border)]/60 rounded-lg bg-[var(--color-bg-tertiary)]/30 p-2 overflow-x-auto max-h-[350px]">
+                  {/* Root Directory Node */}
+                  <div className="select-none font-sans text-xs">
+                    <div
+                      className={`flex items-center gap-2.5 py-2 px-3 border border-transparent hover:bg-[var(--color-bg-tertiary)]/50 transition-colors duration-150 rounded-xl ${
+                        targetDir === "/"
+                          ? "bg-[var(--color-bg-secondary)] font-bold border-[var(--color-border)] text-[var(--color-text-primary)] shadow-xs"
+                          : ""
                       }`}
                     >
-                      <div className="flex items-center gap-2 truncate">
-                        <Folder className="w-4 h-4 text-[var(--color-text-secondary)] shrink-0" />
-                        <span className="truncate">{targetCurrentFolder} ({t("fileBrowser.useCurrentFolder")})</span>
-                      </div>
-                      {targetDir === targetCurrentFolder && <Check className="w-4 h-4 text-[var(--color-text-primary)]" />}
-                    </button>
+                      <button
+                        type="button"
+                        className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
+                        onClick={() => {
+                          const isExpanded = !!targetExpandedPaths["/"];
+                          setTargetExpandedPaths((prev) => ({
+                            ...prev,
+                            "/": !isExpanded,
+                          }));
+                          if (!isExpanded) void fetchTargetChildren("/");
+                        }}
+                        aria-label={
+                          targetExpandedPaths["/"]
+                            ? t("common.collapse", { name: t("fileBrowser.mainDir") })
+                            : t("common.expand", { name: t("fileBrowser.mainDir") })
+                        }
+                      >
+                        {targetLoadingPaths["/"] ? (
+                          <RefreshCw className="w-3 h-3 animate-spin text-[var(--color-text-primary)]" />
+                        ) : targetExpandedPaths["/"] ? (
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        ) : (
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <span className="text-[var(--color-text-primary)]">
+                        {targetExpandedPaths["/"] ? (
+                          <FolderOpen className="w-4 h-4 text-[var(--color-text-secondary)]" />
+                        ) : (
+                          <Folder className="w-4 h-4 text-[var(--color-text-secondary)]" />
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        className={`text-[11.5px] truncate flex-grow text-left leading-normal py-0.5 ${
+                          targetDir === "/"
+                            ? "text-[var(--color-text-primary)]"
+                            : "text-[var(--color-text-secondary)]"
+                        }`}
+                        onClick={() => setTargetDir("/")}
+                        aria-pressed={targetDir === "/"}
+                      >
+                        {t("fileBrowser.mainDir")}
+                      </button>
+                      {targetDir === "/" && (
+                        <Check className="w-3.5 h-3.5 text-[var(--color-text-primary)] stroke-[3]" />
+                      )}
+                    </div>
 
-                    {/* Subfolders list */}
-                    {(targetFolderContents[targetCurrentFolder] || [])
-                      .filter((f) => f.is_dir)
-                      .map((folder) => (
-                        <button
-                          key={folder.path}
-                          type="button"
-                          onClick={() => {
-                            setTargetCurrentFolder(folder.path);
-                            if (!targetFolderContents[folder.path]) {
-                              void fetchTargetDirectory(folder.path);
-                            }
-                          }}
-                          className="w-full text-left p-2 rounded-lg cursor-pointer flex items-center justify-between hover:bg-[var(--color-bg-secondary)] transition-colors"
-                        >
-                          <div className="flex items-center gap-2 truncate">
-                            <Folder className="w-4 h-4 text-[var(--color-text-secondary)] shrink-0" />
-                            <span className="truncate">{folder.name}</span>
+                    {/* Root Children */}
+                    {targetExpandedPaths["/"] && (
+                      <div className="relative">
+                        <div className="absolute left-[20px] top-0 bottom-3 border-l border-[var(--color-border)]"></div>
+                        {targetDirectoryContents["/"] &&
+                        targetDirectoryContents["/"].length > 0 ? (
+                          targetDirectoryContents["/"].map((child) =>
+                            renderTargetNode(child, 1),
+                          )
+                        ) : targetLoadingPaths["/"] ? null : (
+                          <div className="text-[10px] text-[var(--color-text-muted)] italic py-2 pl-[42px] text-left">
+                            {t("fileBrowser.noSubdirs")}
                           </div>
-                          <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
-                        </button>
-                      ))}
-                  </>
-                )}
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
-              <div className="pt-4 border-t border-[var(--color-border)] flex justify-end gap-2">
-                <Button type="button" variant="secondary" onClick={() => setIsBrowsingTarget(false)}>
-                  {t("common.done")}
-                </Button>
+              {/* Folder creation form */}
+              {isCreatingFolder && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleCreateTargetFolder(targetDir);
+                  }}
+                  className="p-4 border-t border-[var(--color-border-light)] bg-[var(--color-bg-tertiary)]/50 flex items-center gap-3 text-left"
+                >
+                  <div className="flex-grow space-y-1">
+                    <label className="block text-xs font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-wider">
+                      {t("fileBrowser.mkdirIn", { path: targetDir })}
+                    </label>
+                    <input
+                      type="text"
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      placeholder={t("fileBrowser.mkdirPlaceholder")}
+                      className="ui-input w-full py-2 px-3 text-xs text-[var(--color-text-primary)]"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex items-end gap-1.5 pt-5">
+                    <button
+                      type="submit"
+                      disabled={!newFolderName.trim()}
+                      className="ui-button-primary px-3.5 py-2 text-xs font-mono font-bold uppercase hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {t("common.create")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingFolder(false);
+                        setNewFolderName("");
+                      }}
+                      className="ui-button-secondary px-3.5 py-2 text-xs font-mono font-bold uppercase hover:bg-[var(--color-bg-tertiary)]"
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Modal Footer */}
+              <div className="p-4 border-t border-[var(--color-border-light)] flex items-center justify-between bg-[var(--color-bg-tertiary)]/50">
+                <div className="text-left max-w-[200px] md:max-w-[240px] space-y-0.5">
+                  <p className="text-xs text-[var(--color-text-muted)] font-bold font-mono uppercase tracking-wider">
+                    {t("fileBrowser.selectionLabel")}
+                  </p>
+                  <p className="font-mono text-[11px] text-[var(--color-text-primary)] truncate font-semibold">
+                    {targetDir}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsCreatingFolder(true)}
+                    className="ui-button-secondary px-3.5 py-2 text-[11px] font-mono font-bold uppercase hover:bg-[var(--color-bg-tertiary)] flex items-center gap-1.5"
+                    title={t("fileBrowser.newFolderHint")}
+                  >
+                    <FolderPlus className="w-4 h-4 text-[var(--color-text-primary)]" />
+                    <span>{t("fileBrowser.newFolder")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeTargetBrowser}
+                    className="ui-button-primary px-4 py-2 text-[11px] font-mono font-bold uppercase hover:opacity-90"
+                  >
+                    {t("common.select")}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Source File Tree Card (Points 4 & 8: drill-down & keyboard accessibility) */}
-        <div className="ui-card flex flex-col p-5 space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-3">
-            <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
-              {t("fileBrowser.files")} ({pathsToMigrate.length})
-            </h3>
-            <button
-              type="button"
-              onClick={deselectAll}
-              className="ui-button-secondary py-1 px-2.5 text-[10px] font-mono font-bold uppercase"
-            >
-              {t("common.deselectAll")}
-            </button>
+        {/* Source File Tree Card 1:1 matching FileBrowser.tsx */}
+        <div className="ui-card flex flex-col p-5">
+          {/* Header Bar */}
+          <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4 mb-4 gap-4">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+                {t("fileBrowser.files")} ({pathsToMigrate.length})
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={deselectAll}
+                className="ui-button-secondary p-2.5 hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer flex items-center gap-1.5"
+                title={t("common.deselectAll")}
+              >
+                <X className="w-4 h-4" />
+                <span className="text-[11px] font-mono font-bold uppercase tracking-wider">
+                  {t("common.deselectAll")}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={refreshFiles}
+                className="ui-button-secondary p-2.5 hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer flex items-center gap-1.5"
+                title={t("common.refresh")}
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingPaths["/"] ? "animate-spin" : ""}`} />
+              </button>
+            </div>
           </div>
 
-          <div className="max-h-72 overflow-y-auto space-y-1 font-mono text-xs p-1">
-            {loadingPaths["/"] ? (
-              <div className="p-4 text-center text-[var(--color-text-muted)] flex items-center justify-center gap-2">
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>{t("common.loading")}</span>
-              </div>
-            ) : (folderContents["/"] || []).length === 0 ? (
-              <div className="p-4 text-center text-[var(--color-text-muted)]">
-                {t("fileBrowser.noFiles")}
-              </div>
+          <div className="flex-grow overflow-y-auto rounded-lg max-h-96">
+            {directoryContents["/"]?.length > 0 ? (
+              directoryContents["/"].map((file) => renderNode(file, 0))
             ) : (
-              (folderContents["/"] || []).map((file) => renderSourceTreeNode(file, 0))
+              <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
+                <Folder className="w-10 h-10 text-[var(--color-text-muted)]" />
+                <p className="font-mono text-xs italic text-[var(--color-text-muted)]">
+                  {t("fileBrowser.noFiles")}
+                </p>
+              </div>
             )}
           </div>
         </div>
