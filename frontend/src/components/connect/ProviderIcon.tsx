@@ -24,48 +24,49 @@ interface ProviderIconProps {
 
 export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className = 'w-6 h-6' }) => {
   const p = provider.toLowerCase();
+  const iconCls = `${className} text-[#52525b]`;
 
   switch (p) {
     case 'nextcloud':
-      return <SiNextcloud className={`${className} text-[#0082C9]`} />;
+      return <SiNextcloud className={iconCls} />;
 
     case 'dropbox':
-      return <SiDropbox className={`${className} text-[#0061FF]`} />;
+      return <SiDropbox className={iconCls} />;
 
     case 'google':
-      return <SiGoogledrive className={`${className} text-[#4285F4]`} />;
+      return <SiGoogledrive className={iconCls} />;
 
     case 'onedrive':
-      return <TbBrandOnedrive className={`${className} text-[#0078D4]`} />;
+      return <TbBrandOnedrive className={iconCls} />;
 
     case 's3':
-      return <TbBrandAws className={`${className} text-[#FF9900]`} />;
+      return <TbBrandAws className={iconCls} />;
 
     case 'smb':
-      return <TbServer2 className={`${className} text-[#10B981]`} />;
+      return <TbServer2 className={iconCls} />;
 
     case 'sftp':
-      return <TbTerminal2 className={`${className} text-[#6366F1]`} />;
+      return <TbTerminal2 className={iconCls} />;
 
     case 'ftp':
-      return <TbShieldLock className={`${className} text-[#06B6D4]`} />;
+      return <TbShieldLock className={iconCls} />;
 
     case 'immich':
-      return <SiImmich className={`${className} text-[#3B82F6]`} />;
+      return <SiImmich className={iconCls} />;
 
     case 'magentacloud':
-      return <SiDeutschetelekom className={`${className} text-[#E20074]`} />;
+      return <SiDeutschetelekom className={iconCls} />;
 
     case 'hidrive':
-      return <TbCloud className={`${className} text-[#E60000]`} />;
+      return <TbCloud className={iconCls} />;
 
     case 'webdav':
-      return <TbWorld className={`${className} text-[#14B8A6]`} />;
+      return <TbWorld className={iconCls} />;
 
     case 'local':
-      return <FaHardDrive className={`${className} text-[#64748B]`} />;
+      return <FaHardDrive className={iconCls} />;
 
     default:
-      return <FaHardDrive className={className} />;
+      return <FaHardDrive className={iconCls} />;
   }
 };
