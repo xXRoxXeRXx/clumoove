@@ -740,9 +740,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             }
             return next;
           });
+        } else {
+          setError(
+            data.error_code
+              ? translateApiError(data.error_code)
+              : t("fileBrowser.errors.loadDir"),
+          );
         }
       } catch (err) {
         console.error(err);
+        setError(
+          err instanceof Error ? err.message : t("fileBrowser.errors.loadDir"),
+        );
       } finally {
         setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
       }
