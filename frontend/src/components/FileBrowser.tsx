@@ -287,6 +287,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const targetDialogRef = useRef<HTMLDivElement>(null);
   const targetCloseButtonRef = useRef<HTMLButtonElement>(null);
   const targetDialogTitleId = useId();
+  const loadingPathsRef = useRef(loadingPaths);
+  const directoryContentsRef = useRef(directoryContents);
+  const initialFetchedSyncJobIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    loadingPathsRef.current = loadingPaths;
+    directoryContentsRef.current = directoryContents;
+  }, [loadingPaths, directoryContents]);
 
   // Job type: a third mode (e.g. 'backup') can be added later as a third
   // segmented-control column without restructuring the settings strip.
@@ -660,8 +668,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const fetchChildren = useCallback(
     async (folderPath: string, force?: boolean) => {
-      if (loadingPaths[folderPath]) return;
-      if (!force && directoryContents[folderPath]) return;
+      if (loadingPathsRef.current[folderPath]) return;
+      if (!force && directoryContentsRef.current[folderPath]) return;
 
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       try {
@@ -727,8 +735,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
     },
     [
-      loadingPaths,
-      directoryContents,
       isEditMode,
       existingSyncJob,
       apiUrl,
@@ -740,13 +746,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   );
 
   useEffect(() => {
-    if (isEditMode) {
+    if (
+      isEditMode &&
+      existingSyncJob &&
+      initialFetchedSyncJobIdRef.current !== existingSyncJob.id
+    ) {
+      initialFetchedSyncJobIdRef.current = existingSyncJob.id;
       const timer = setTimeout(() => {
         void fetchChildren("/", true);
       }, 0);
       return () => clearTimeout(timer);
     }
-  }, [isEditMode, fetchChildren]);
+  }, [isEditMode, existingSyncJob, fetchChildren]);
 
   const refreshFiles = async () => {
     setDirectoryContents({});
