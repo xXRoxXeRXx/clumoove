@@ -697,6 +697,37 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               </div>
 
               <div className="md:col-span-6 space-y-5 text-xs text-left">
+                <div className="flex items-center justify-between gap-3 pb-3 border-b border-[var(--color-border-light)]">
+                  <div className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider font-mono">
+                    {t('connect.configuration')}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => verifyAndAdvance()}
+                    disabled={loading}
+                    className="ui-button-primary flex items-center justify-center gap-2 px-4 py-2 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>{t('connect.testing')}</span>
+                      </>
+                    ) : (
+                      <>
+                        {sourceVerified && <CheckCircle2 className="w-3.5 h-3.5 stroke-[2.5]" />}
+                        <span>{t('connect.checkAndContinue')}</span>
+                        <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {error && (
+                  <div role="alert" className="ui-alert ui-alert-error p-3 flex items-start gap-2.5 text-left">
+                    <AlertCircle className="w-4 h-4 text-[var(--color-error-text)] shrink-0 mt-0.5" />
+                    <div className="text-xs font-semibold text-[var(--color-error-text)] leading-normal">{error}</div>
+                  </div>
+                )}
 
                 {sourceProfileId ? (
                   <div className="space-y-4 pt-2">
@@ -1181,35 +1212,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   onNameChange={setSourceProfileName}
                 />
               )}
-
-              {error && (
-                <div role="alert" className="ui-alert ui-alert-error p-3 flex items-start gap-2.5 text-left">
-                  <AlertCircle className="w-4 h-4 text-[var(--color-error-text)] shrink-0 mt-0.5" />
-                  <div className="text-xs font-semibold text-[var(--color-error-text)] leading-normal">{error}</div>
-                </div>
-              )}
-
-              <div className="pt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => verifyAndAdvance()}
-                  disabled={loading}
-                  className="ui-button-primary w-full sm:w-auto flex items-center justify-center gap-2.5 px-6 py-3 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>{t('connect.testing')}</span>
-                    </>
-                  ) : (
-                    <>
-                      {sourceVerified && <CheckCircle2 className="w-4 h-4 stroke-[2.5]" />}
-                      <span>{t('connect.checkAndContinue')}</span>
-                      <ArrowRight className="w-4 h-4 stroke-[2.5]" />
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
           </div>
         </fieldset>
@@ -1728,33 +1730,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   onNameChange={setTargetProfileName}
                 />
               )}
-
-              {error && (
-                <div role="alert" className="ui-alert ui-alert-error p-3 flex items-start gap-2.5 text-left">
-                  <AlertCircle className="w-4 h-4 text-[var(--color-error-text)] shrink-0 mt-0.5" />
-                  <div className="text-xs font-semibold text-[var(--color-error-text)] leading-normal">{error}</div>
-                </div>
-              )}
-
-              <div className="pt-2 flex justify-end">
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="ui-button-primary w-full sm:w-auto flex items-center justify-center gap-2.5 px-6 py-3 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>{t('connect.testing')}</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>{t('connect.connectInstances')}</span>
-                      <ArrowRight className="w-4 h-4 stroke-[2.5]" />
-                    </>
-                  )}
-                </button>
-              </div>
             </div>
           </div>
         </fieldset>
