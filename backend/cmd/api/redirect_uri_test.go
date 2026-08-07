@@ -60,4 +60,13 @@ func TestGetRedirectURIScheme(t *testing.T) {
 	if got := s2.getRedirectURI(reqSecure); got != "https://app.example.com/api/oauth/callback" {
 		t.Fatalf("getRedirectURI = %q, want https://app.example.com/api/oauth/callback", got)
 	}
+
+	// TLS terminated at an untrusted proxy that still forwards X-Forwarded-Proto:
+	// the scheme must be https even without TRUSTED_PROXY, using the request host.
+	s3 := newTestServer(false)
+	reqProto := httptest.NewRequest(http.MethodGet, "http://example.com/x", nil)
+	reqProto.Header.Set("X-Forwarded-Proto", "https")
+	if got := s3.getRedirectURI(reqProto); got != "https://example.com/api/oauth/callback" {
+		t.Fatalf("getRedirectURI = %q, want https://example.com/api/oauth/callback", got)
+	}
 }

@@ -275,11 +275,22 @@ func generateRandomString(n int) string {
 // getRedirectURI derives the OAuth callback URL from the public host. It is never
 // configurable: the provider console must be registered with exactly this value.
 func (s *APIServer) getRedirectURI(r *http.Request) string {
-	scheme := "http"
-	if s.isSecure(r) {
-		scheme = "https"
+	return fmt.Sprintf("%s://%s/api/oauth/callback", s.requestScheme(r), s.publicHost(r))
+}
+
+// requestScheme returns the externally visible scheme for the request. TLS
+// termination at a reverse proxy is reported via X-Forwarded-Proto; honoring it
+// for the scheme (only) is safe because the host is resolved separately and
+// gated behind TRUSTED_PROXY, so a spoofed header cannot redirect to an
+// attacker-controlled host.
+func (s *APIServer) requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
 	}
-	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, s.publicHost(r))
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return "https"
+	}
+	return "http"
 }
 
 // publicHost returns the public host (including any non-default port) for the

@@ -32,7 +32,7 @@ configuration, scaling, and routine operational tasks.
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |
 | `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` (`50` in production Compose) |
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
-| `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting and the auto-derived OAuth callback scheme). | off |
+| `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting and lets the OAuth callback host follow `X-Forwarded-Host`). The callback **scheme** is taken from `X-Forwarded-Proto` regardless, so a TLS-terminating proxy that forwards that header yields an `https://` redirect URI without `TRUSTED_PROXY`. | off |
 | `FRONTEND_URL` | Frontend base URL (used in reset/email-change links). | `http://localhost:5173` |
 
 > **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. No `*_CLIENT_ID` / `*_CLIENT_SECRET` variables are read. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
