@@ -667,7 +667,10 @@
     "SYNC_INVALID_STATE": "Der Sync-Job ist in einem ungültigen Zustand.",
     "SYNC_INTERVAL_INVALID": "Das gewählte Sync-Intervall ist ungültig.",
     "IMMICH_SYNC_UNSUPPORTED": "Immich ist nur für einmalige Migrationen verfügbar.",
-    "IMMICH_CONFLICT_STRATEGY_INVALID": "Immich verwendet eine eigene Duplikaterkennung und erfordert Überspringen."
+    "IMMICH_CONFLICT_STRATEGY_INVALID": "Immich verwendet eine eigene Duplikaterkennung und erfordert Überspringen.",
+    "OAUTH_PROVIDER_UNKNOWN": "Der ausgewählte OAuth-Anbieter wird nicht unterstützt.",
+    "OAUTH_CONFIG_INCOMPLETE": "Client-ID und Secret müssen gültig und innerhalb der erlaubten Länge sein.",
+    "OAUTH_SECRET_REQUIRED": "Ein Client-Secret ist beim erstmaligen Einrichten eines Anbieters erforderlich."
   },
   "admin": {
     "title": "Verwaltung",
@@ -685,6 +688,31 @@
         "saved": "E-Mail-Server-Konfiguration gespeichert.",
         "removed": "E-Mail-Server-Konfiguration entfernt.",
         "testSent": "Test-E-Mail gesendet."
+      },
+      "oauth": {
+        "title": "OAuth-Anbieter",
+        "redirectTitle": "Callback-URL",
+        "redirectHint": "Hinterlege genau diese URL als Redirect-URI in jedem Anbieter-Konto. Sie wird aus dem Server-Host abgeleitet und kann hier nicht geändert werden.",
+        "copy": "Kopieren",
+        "copied": "Kopiert",
+        "clientId": "Client-ID",
+        "clientSecret": "Client-Secret",
+        "secretUnchanged": "unverändert",
+        "configured": "Eingerichtet",
+        "notConfigured": "Nicht eingerichtet",
+        "save": "Anbieter speichern",
+        "remove": "Anbieter entfernen",
+        "removeConfirm": "Die gespeicherten Zugangsdaten für diesen OAuth-Anbieter entfernen? Bestehende Verbindungen verlieren den Zugriff, bis neue Zugangsdaten hinterlegt wurden.",
+        "changeConfirm": "Das Ändern der Client-ID macht bestehende Verbindungen für diesen Anbieter ungültig. Fortfahren?",
+        "reauthHint": "Das Ändern der Client-ID macht bestehende Verbindungen ungültig. Das gespeicherte Secret wird nie angezeigt und bleibt erhalten, sofern du kein neues eingibst.",
+        "saved": "OAuth-Anbieter gespeichert.",
+        "removed": "OAuth-Anbieter entfernt.",
+        "providers": {
+          "google": "Google",
+          "onedrive": "OneDrive",
+          "dropbox": "Dropbox",
+          "hidrive": "HiDrive"
+        }
       }
     },
     "tabs": {

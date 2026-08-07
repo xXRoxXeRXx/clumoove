@@ -183,6 +183,16 @@ from `delivery.*` locale keys.
 
 This table is a singleton (`id = 1`) managed only through the administrator SMTP endpoints. The password is AES-GCM encrypted; email notification preferences remain per-user `notification_channels` rows and never contain SMTP credentials.
 
+### `instance_oauth_providers`
+| Column | Type | Notes |
+| :----- | :--- | :---- |
+| `provider` | VARCHAR(32) PK | one of `google`, `onedrive`, `dropbox`, `hidrive` (whitelist enforced in Go, not by a CHECK) |
+| `client_id` | TEXT NOT NULL | |
+| `client_secret_encrypted` | TEXT NOT NULL | AES-GCM encrypted; never returned to the client |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+Administrator-managed OAuth2 client credentials (no environment variables). `client_secret_encrypted` is held in the process cache only as ciphertext and decrypted at the moment a token request is made. Deleting a row removes the provider from the configured set immediately after the cache is invalidated.
+
 ### `password_reset_tokens` / `email_change_tokens`
 | Column | Type | Notes |
 | :----- | :--- | :---- |

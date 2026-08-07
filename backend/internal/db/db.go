@@ -273,6 +273,24 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (instance_smtp_settings trigger): %v\n", err)
 			}
 
+			// Administrator-managed OAuth2 client credentials. The provider whitelist is
+			// enforced in Go (oauth.IsProvider), not by a CHECK constraint.
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS instance_oauth_providers (
+				provider VARCHAR(32) PRIMARY KEY,
+				client_id TEXT NOT NULL,
+				client_secret_encrypted TEXT NOT NULL,
+				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (instance_oauth_providers): %v\n", err)
+			}
+			_, err = db.Exec(`DROP TRIGGER IF EXISTS update_instance_oauth_providers_updated_at ON instance_oauth_providers;
+				CREATE TRIGGER update_instance_oauth_providers_updated_at BEFORE UPDATE ON instance_oauth_providers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`)
+			if err != nil {
+				log.Printf("Failed schema migration (instance_oauth_providers trigger): %v\n", err)
+			}
+
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS refresh_tokens (
 				token_hash VARCHAR(64) PRIMARY KEY,
 				user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

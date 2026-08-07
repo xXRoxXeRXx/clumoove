@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, DocumentTextIcon as ScrollText, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
+import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, DocumentTextIcon as ScrollText, EnvelopeIcon as Mail, KeyIcon, LinkIcon, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
 import { useApiError } from '../utils/apiError';
-import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult } from '../utils/adminApi';
+import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult, type InstanceOAuthSettings, type InstanceOAuthUpdate } from '../utils/adminApi';
 import { useFormat } from '../utils/format';
 import { useConfirm } from '../contexts/useConfirm';
 import { MessageBanner } from './MessageBanner';
@@ -633,6 +633,9 @@ function SystemTab({ apiUrl, token, onMessage }: {
   const [loading, setLoading] = useState<boolean>(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  const [oauth, setOAuth] = useState<InstanceOAuthSettings | null>(null);
+  const [oauthLoading, setOAuthLoading] = useState(true);
+
   useEffect(() => {
     let cancelled = false;
     apiFetch(`${apiUrl}/api/settings`)
@@ -645,6 +648,19 @@ function SystemTab({ apiUrl, token, onMessage }: {
       });
     return () => { cancelled = true; };
   }, [apiUrl]);
+
+  const loadOAuth = useCallback(async () => {
+    setOAuthLoading(true);
+    const res = await adminApi.getOAuth(apiUrl, token);
+    setOAuthLoading(false);
+    if (res.ok) setOAuth(res.data ?? null);
+    else onMessage({ text: translateApiError(res.errorCode), type: 'error' });
+  }, [apiUrl, token, onMessage, translateApiError]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadOAuth(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadOAuth]);
 
   const handleToggleRegistrations = async (checked: boolean) => {
     setMessage(null);
@@ -680,25 +696,127 @@ function SystemTab({ apiUrl, token, onMessage }: {
   };
 
   return (
-    <SectionCard icon={SlidersHorizontal} title={t('admin.system.title')}>
-      <MessageBanner message={message} />
+    <div className="grid md:grid-cols-2 gap-6">
+      <div className="space-y-6">
+        <SectionCard icon={SlidersHorizontal} title={t('admin.system.title')}>
+          <MessageBanner message={message} />
 
-      <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-lg">
-        <div className="text-left space-y-1 pr-4">
-          <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.allowRegistrations')}</h4>
-          <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
-            {t('settings.allowRegistrationsHint')}
-          </p>
-        </div>
-        <Toggle
-          checked={registrationsEnabled}
-          disabled={loading}
-          onChange={handleToggleRegistrations}
-          label={t('settings.allowRegistrations')}
-        />
+          <div className="flex items-center justify-between p-3.5 bg-[var(--color-bg-tertiary)]/50 border border-[var(--color-border)]/50 rounded-lg">
+            <div className="text-left space-y-1 pr-4">
+              <h4 className="text-xs font-bold text-[var(--color-text-primary)] font-display">{t('settings.allowRegistrations')}</h4>
+              <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">
+                {t('settings.allowRegistrationsHint')}
+              </p>
+            </div>
+            <Toggle
+              checked={registrationsEnabled}
+              disabled={loading}
+              onChange={handleToggleRegistrations}
+              label={t('settings.allowRegistrations')}
+            />
+          </div>
+        </SectionCard>
+
+        <SMTPSettingsCard apiUrl={apiUrl} token={token} onMessage={onMessage} />
       </div>
 
-      <SMTPSettingsCard apiUrl={apiUrl} token={token} onMessage={onMessage} />
+      <div className="space-y-6">
+        <OAuthRedirectCard redirectUri={oauth?.redirect_uri ?? ''} loading={oauthLoading} />
+        {(oauth?.providers ?? []).map((p) => (
+          <OAuthProviderCard key={`${p.provider}-${p.updated_at ?? ''}`} apiUrl={apiUrl} token={token} provider={p} onMessage={onMessage} onChanged={() => { void loadOAuth(); }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function OAuthRedirectCard({ redirectUri, loading }: { redirectUri: string; loading: boolean }) {
+  const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(redirectUri);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard may be unavailable (e.g. insecure context); ignore.
+    }
+  };
+
+  return (
+    <SectionCard icon={LinkIcon} title={t('admin.system.oauth.redirectTitle')}>
+      <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">{t('admin.system.oauth.redirectHint')}</p>
+      <div className="flex items-center gap-2">
+        {loading
+          ? <div className="h-9 flex-1 rounded bg-[var(--color-bg-tertiary)] animate-pulse" />
+          : (
+            <>
+              <input readOnly value={redirectUri} aria-label={t('admin.system.oauth.redirectTitle')} className={`${inputCls} font-mono`} />
+              <button type="button" onClick={() => void copy()} aria-label={t('admin.system.oauth.copy')} title={t('admin.system.oauth.copy')} className={secondaryBtnCls}>
+                {copied ? t('admin.system.oauth.copied') : t('admin.system.oauth.copy')}
+              </button>
+            </>
+          )}
+      </div>
+    </SectionCard>
+  );
+}
+
+function OAuthProviderCard({ apiUrl, token, provider, onMessage, onChanged }: {
+  apiUrl: string; token: string;
+  provider: InstanceOAuthSettings['providers'][number];
+  onMessage: (m: { text: string; type: 'success' | 'error' } | null) => void;
+  onChanged: () => void;
+}) {
+  const { t } = useTranslation();
+  const translateApiError = useApiError();
+  const confirm = useConfirm();
+  const [saving, setSaving] = useState(false);
+  const [clientID, setClientID] = useState(provider.client_id);
+  const [clientSecret, setClientSecret] = useState('');
+
+  const save = async () => {
+    const trimmed = clientID.trim();
+    if (!trimmed) { onMessage({ text: translateApiError('OAUTH_CONFIG_INCOMPLETE'), type: 'error' }); return; }
+    if (provider.configured && trimmed !== provider.client_id) {
+      if (!await confirm({ message: t('admin.system.oauth.changeConfirm'), confirmLabel: t('admin.system.oauth.save') })) return;
+    }
+    setSaving(true);
+    const body: InstanceOAuthUpdate = { client_id: trimmed };
+    if (clientSecret) body.client_secret = clientSecret;
+    const res = await adminApi.updateOAuth(apiUrl, token, provider.provider, body);
+    setSaving(false);
+    if (!res.ok) { onMessage({ text: translateApiError(res.errorCode), type: 'error' }); return; }
+    onMessage({ text: t('admin.system.oauth.saved'), type: 'success' });
+    onChanged();
+  };
+
+  const remove = async () => {
+    if (!await confirm({ message: t('admin.system.oauth.removeConfirm'), confirmLabel: t('admin.system.oauth.remove') })) return;
+    setSaving(true);
+    const res = await adminApi.deleteOAuth(apiUrl, token, provider.provider);
+    setSaving(false);
+    if (!res.ok) { onMessage({ text: translateApiError(res.errorCode), type: 'error' }); return; }
+    onChanged();
+  };
+
+  return (
+    <SectionCard icon={KeyIcon} title={t(`admin.system.oauth.providers.${provider.provider}`)}>
+      <div className="flex items-center justify-between gap-3">
+        <Badge variant={provider.configured ? 'success' : 'muted'} label={provider.configured ? t('admin.system.oauth.configured') : t('admin.system.oauth.notConfigured')} />
+      </div>
+      <form onSubmit={(e) => { e.preventDefault(); void save(); }} className="grid grid-cols-1 gap-3">
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('admin.system.oauth.clientId')}<input required value={clientID} onChange={(e) => setClientID(e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('admin.system.oauth.clientSecret')}<input type="password" value={clientSecret} placeholder={provider.client_secret_set ? t('admin.system.oauth.secretUnchanged') : ''} onChange={(e) => setClientSecret(e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <p className="text-[10px] text-[var(--color-text-muted)] leading-normal">{t('admin.system.oauth.reauthHint')}</p>
+        <div className="flex flex-wrap items-end gap-2">
+          <button type="submit" disabled={saving} className={primaryBtnCls}>{t('admin.system.oauth.save')}</button>
+          {provider.configured && (
+            <button type="button" disabled={saving} onClick={() => void remove()} className="ui-button-danger px-3 py-2 text-sm">{t('admin.system.oauth.remove')}</button>
+          )}
+        </div>
+      </form>
     </SectionCard>
   );
 }
@@ -752,19 +870,21 @@ function SMTPSettingsCard({ apiUrl, token, onMessage }: { apiUrl: string; token:
   const test = async () => { setSaving(true); const result = await adminApi.testSMTP(apiUrl, token); setSaving(false); onMessage(result.ok ? { text: t('admin.system.smtp.testSent'), type: 'success' } : { text: translateApiError(result.errorCode), type: 'error' }); };
   const remove = async () => { if (!await confirm({ message: t('admin.system.smtp.removeConfirm'), confirmLabel: t('admin.system.smtp.remove') })) return; setSaving(true); const result = await adminApi.deleteSMTP(apiUrl, token); setSaving(false); if (!result.ok) { onMessage({ text: translateApiError(result.errorCode), type: 'error' }); return; } setConfigured(false); setPasswordSet(false); setForm({ smtp_host: '', smtp_port: '587', smtp_username: '', smtp_password: '', smtp_from_email: '', smtp_from_name: '', smtp_encryption: 'starttls' }); onMessage({ text: t('admin.system.smtp.removed'), type: 'success' }); };
 
-  return <div className="border-t border-[var(--color-border-light)] pt-5 space-y-4">
-    <div className="flex items-center justify-between gap-3"><h4 className="font-display font-semibold text-sm text-[var(--color-text-primary)]">{t('admin.system.smtp.title')}</h4><Badge variant={configured ? 'success' : 'muted'} label={configured ? t('admin.system.smtp.configured') : t('admin.system.smtp.notConfigured')} /></div>
-    {!loading && <form onSubmit={submit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpHost')}<input required value={form.smtp_host} onChange={(e) => update('smtp_host', e.target.value)} className={`${inputCls} mt-1`} /></label>
-      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpPort')}<input required type="number" min="1" max="65535" value={form.smtp_port} onChange={(e) => update('smtp_port', e.target.value)} className={`${inputCls} mt-1`} /></label>
-      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpUsername')}<input required value={form.smtp_username} onChange={(e) => update('smtp_username', e.target.value)} className={`${inputCls} mt-1`} /></label>
-      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpPassword')}<input type="password" required={!passwordSet} value={form.smtp_password} placeholder={passwordSet ? t('settings.smtpPasswordUnchanged') : ''} onChange={(e) => update('smtp_password', e.target.value)} className={`${inputCls} mt-1`} /></label>
-      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpFromEmail')}<input required type="email" value={form.smtp_from_email} onChange={(e) => update('smtp_from_email', e.target.value)} className={`${inputCls} mt-1`} /></label>
-      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpFromName')}<input value={form.smtp_from_name} onChange={(e) => update('smtp_from_name', e.target.value)} className={`${inputCls} mt-1`} /></label>
-      <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpEncryption')}<select value={form.smtp_encryption} onChange={(e) => update('smtp_encryption', e.target.value)} className={`${selectCls} mt-1 w-full`}><option value="starttls">STARTTLS</option><option value="tls">TLS</option></select></label>
-      <div className="flex flex-wrap items-end gap-2"><button disabled={saving} className={primaryBtnCls}>{t('admin.system.smtp.save')}</button>{configured && <><button type="button" disabled={saving} onClick={() => void test()} className={secondaryBtnCls}>{t('admin.system.smtp.test')}</button><button type="button" disabled={saving} onClick={() => void remove()} className="ui-button-danger px-3 py-2 text-sm">{t('admin.system.smtp.remove')}</button></>}</div>
-    </form>}
-  </div>;
+  return (
+    <SectionCard icon={Mail} title={t('admin.system.smtp.title')}>
+      <div className="flex items-center justify-between gap-3"><Badge variant={configured ? 'success' : 'muted'} label={configured ? t('admin.system.smtp.configured') : t('admin.system.smtp.notConfigured')} /></div>
+      {!loading && <form onSubmit={submit} className="grid grid-cols-1 gap-3">
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpHost')}<input required value={form.smtp_host} onChange={(e) => update('smtp_host', e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpPort')}<input required type="number" min="1" max="65535" value={form.smtp_port} onChange={(e) => update('smtp_port', e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpUsername')}<input required value={form.smtp_username} onChange={(e) => update('smtp_username', e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpPassword')}<input type="password" required={!passwordSet} value={form.smtp_password} placeholder={passwordSet ? t('settings.smtpPasswordUnchanged') : ''} onChange={(e) => update('smtp_password', e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpFromEmail')}<input required type="email" value={form.smtp_from_email} onChange={(e) => update('smtp_from_email', e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpFromName')}<input value={form.smtp_from_name} onChange={(e) => update('smtp_from_name', e.target.value)} className={`${inputCls} mt-1`} /></label>
+        <label className="text-xs text-[var(--color-text-secondary)]">{t('settings.smtpEncryption')}<select value={form.smtp_encryption} onChange={(e) => update('smtp_encryption', e.target.value)} className={`${selectCls} mt-1 w-full`}><option value="starttls">STARTTLS</option><option value="tls">TLS</option></select></label>
+        <div className="flex flex-wrap items-end gap-2"><button disabled={saving} className={primaryBtnCls}>{t('admin.system.smtp.save')}</button>{configured && <><button type="button" disabled={saving} onClick={() => void test()} className={secondaryBtnCls}>{t('admin.system.smtp.test')}</button><button type="button" disabled={saving} onClick={() => void remove()} className="ui-button-danger px-3 py-2 text-sm">{t('admin.system.smtp.remove')}</button></>}</div>
+      </form>}
+    </SectionCard>
+  );
 }
 
 // ---------------------------------------------------------------------------

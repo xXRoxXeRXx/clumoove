@@ -150,6 +150,9 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | `PUT` | `/admin/settings/smtp` | admin | Create or update the instance SMTP configuration. Password may be omitted after initial setup; only `tls` and `starttls` are accepted. |
 | `POST` | `/admin/settings/smtp/test` | admin | Send a localized test email to the authenticated administrator. |
 | `DELETE` | `/admin/settings/smtp` | admin | Remove the instance SMTP configuration. |
+| `GET` | `/admin/settings/oauth` | admin | List all four OAuth providers with `configured`/`client_id`/`client_secret_set` and the read-only `redirect_uri`. |
+| `PUT` | `/admin/settings/oauth/{provider}` | admin | Create or update the client credentials for one provider (`google`, `onedrive`, `dropbox`, `hidrive`). `client_secret` may be omitted to keep the existing secret. |
+| `DELETE` | `/admin/settings/oauth/{provider}` | admin | Remove the stored credentials for one provider. |
 | `GET` | `/audit/log` | admin | Paginated/filtered audit log. |
 
 If a user suspension commits but a Redis sync-cancellation event cannot be published, the endpoint still returns `200` with `partial: true`; the affected sync-job IDs are recorded in the suspension audit entry for operator follow-up.

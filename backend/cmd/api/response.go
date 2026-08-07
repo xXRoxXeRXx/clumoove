@@ -10,7 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
+	"net/url"
 	"strings"
 
 	"backend/internal/db"
@@ -133,6 +133,9 @@ const (
 	ErrSmtpNotConfigured            APIErrorCode = "SMTP_NOT_CONFIGURED"
 	ErrSmtpDecryptFailed            APIErrorCode = "SMTP_DECRYPT_FAILED"
 	ErrSmtpTestFailed               APIErrorCode = "SMTP_TEST_FAILED"
+	ErrOauthProviderUnknown         APIErrorCode = "OAUTH_PROVIDER_UNKNOWN"
+	ErrOauthConfigIncomplete        APIErrorCode = "OAUTH_CONFIG_INCOMPLETE"
+	ErrOauthSecretRequired          APIErrorCode = "OAUTH_SECRET_REQUIRED"
 	ErrNotificationChannelInvalid   APIErrorCode = "NOTIFICATION_CHANNEL_INVALID"
 	ErrNotificationConfigIncomplete APIErrorCode = "NOTIFICATION_CONFIG_INCOMPLETE"
 	ErrNotificationTestFailed       APIErrorCode = "NOTIFICATION_TEST_FAILED"
@@ -269,24 +272,52 @@ func generateRandomString(n int) string {
 	return hex.EncodeToString(b)
 }
 
+// getRedirectURI derives the OAuth callback URL from the public host. It is never
+// configurable: the provider console must be registered with exactly this value.
 func (s *APIServer) getRedirectURI(r *http.Request) string {
-	if envRedirect := os.Getenv("OAUTH_REDIRECT_URI"); envRedirect != "" {
-		return envRedirect
-	}
-	if envBase := os.Getenv("OAUTH_PUBLIC_BASE_URL"); envBase != "" {
-		scheme := "https"
-		if strings.HasPrefix(envBase, "http://") {
-			scheme = "http"
-		}
-		envBase = strings.TrimPrefix(strings.TrimPrefix(envBase, "https://"), "http://")
-		envBase = strings.TrimRight(envBase, "/")
-		return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, envBase)
-	}
 	scheme := "http"
 	if s.isSecure(r) {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, r.Host)
+	return fmt.Sprintf("%s://%s/api/oauth/callback", scheme, s.publicHost(r))
+}
+
+// publicHost returns the public host (including any non-default port) for the
+// OAuth callback. It trusts the X-Forwarded-Host header only when a trusted
+// reverse proxy sits in front of the API, and validates the candidate to
+// prevent header/redirect injection. An untrusted or malformed value falls back
+// to the request's Host header, which is always safe and port-preserving.
+func (s *APIServer) publicHost(r *http.Request) string {
+	if s.trustedProxy {
+		if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+			// Only the first (leftmost) value is authoritative; comma-separated
+			// lists may carry client-supplied copies behind a proxy.
+			candidate := strings.TrimSpace(fwd)
+			if idx := strings.IndexByte(candidate, ','); idx >= 0 {
+				candidate = strings.TrimSpace(candidate[:idx])
+			}
+			if host, ok := validPublicHost(candidate); ok {
+				return host
+			}
+		}
+	}
+	return r.Host
+}
+
+// validPublicHost accepts a host candidate only when it has no path, no control
+// characters, and is safe to embed in a URL. It returns the trimmed host.
+func validPublicHost(candidate string) (string, bool) {
+	if candidate == "" {
+		return "", false
+	}
+	if strings.ContainsAny(candidate, "\r\n\t") {
+		return "", false
+	}
+	u, err := url.Parse("//" + candidate)
+	if err != nil || u.Host != candidate || u.Path != "" {
+		return "", false
+	}
+	return u.Host, true
 }
 
 func csvCell(s string) string {

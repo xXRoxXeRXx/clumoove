@@ -7,12 +7,24 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"backend/internal/crypto"
 )
 
+const testEncryptionKey = "0123456789abcdef0123456789abcdef"
+
 func TestOneDriveOAuthFlow(t *testing.T) {
-	t.Setenv("ONEDRIVE_CLIENT_ID", "client-id")
-	t.Setenv("ONEDRIVE_CLIENT_SECRET", "client-secret")
-	InitConfigs()
+	enc, err := crypto.Encrypt("client-secret", testEncryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	Configure(func() (map[string]Credentials, error) {
+		return map[string]Credentials{
+			"onedrive": {ClientID: "client-id", ClientSecretEnc: enc},
+		}, nil
+	}, testEncryptionKey)
+	defer Invalidate()
 
 	authURL, err := GetAuthURL("onedrive", "https://clumoove.example/api/oauth/callback", "csrf-state")
 	if err != nil {
@@ -48,8 +60,10 @@ func TestOneDriveOAuthFlow(t *testing.T) {
 
 	oldClient, oldUserURL, oldConfig := httpClient, oneDriveUserInfoURL, configs["onedrive"]
 	httpClient, oneDriveUserInfoURL = server.Client(), server.URL+"/me"
-	configs["onedrive"] = ProviderConfig{ClientID: "client-id", ClientSecret: "client-secret", TokenURL: server.URL + "/token"}
-	defer func() { httpClient, oneDriveUserInfoURL, configs["onedrive"] = oldClient, oldUserURL, oldConfig }()
+	configs["onedrive"] = ProviderConfig{TokenURL: server.URL + "/token"}
+	defer func() {
+		httpClient, oneDriveUserInfoURL, configs["onedrive"] = oldClient, oldUserURL, oldConfig
+	}()
 
 	token, err := ExchangeCode(context.Background(), "onedrive", "code", "https://clumoove.example/api/oauth/callback")
 	if err != nil || token.RefreshToken != "refresh-token" {

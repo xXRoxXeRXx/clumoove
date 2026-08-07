@@ -147,11 +147,10 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | `JWT_SECRET_KEY` | HMAC key for JWT signatures. **Required, must differ from `ENCRYPTION_SECRET_KEY`.** |
 | `REDIS_PASSWORD` | Redis password. **Required** — no default; the server refuses to start with an empty/known value. |
 | `DATABASE_URL` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials (Drive/Calendar/Contacts). |
-| `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` | OneDrive OAuth2 credentials. |
-| `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. |
-| `HIDRIVE_CLIENT_ID` / `HIDRIVE_CLIENT_SECRET` | Strato HiDrive OAuth2 credentials. |
 | `MAX_THREADS` | Global max parallelism per worker process (default `16`). |
+| `TRUSTED_PROXY` | Set to `1`/`true` when a reverse proxy strips client-supplied `X-Forwarded-*` headers; required for correct client-IP accounting and the auto-derived OAuth callback scheme. |
+
+> **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
 
 ## Development
 

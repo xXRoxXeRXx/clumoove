@@ -6,20 +6,49 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
 
 type ProviderConfig struct {
-	ClientID     string
-	ClientSecret string
-	AuthURL      string
-	TokenURL     string
-	Scopes       []string
+	AuthURL  string
+	TokenURL string
+	Scopes   []string
 }
 
-var configs = map[string]ProviderConfig{}
+// configs holds the static endpoints and scopes for each provider. Client
+// identity (ID/secret) is no longer embedded here; it is loaded at runtime from
+// the instance_oauth_providers table via the process cache.
+var configs = map[string]ProviderConfig{
+	"dropbox": {
+		AuthURL:  "https://www.dropbox.com/oauth2/authorize",
+		TokenURL: "https://api.dropboxapi.com/oauth2/token",
+	},
+	"google": {
+		AuthURL:  "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL: "https://oauth2.googleapis.com/token",
+		Scopes: []string{
+			"https://www.googleapis.com/auth/drive",
+			"https://www.googleapis.com/auth/calendar",
+			"https://www.googleapis.com/auth/contacts",
+			"https://www.googleapis.com/auth/userinfo.email",
+			"https://www.googleapis.com/auth/userinfo.profile",
+		},
+	},
+	"onedrive": {
+		AuthURL:  "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
+		TokenURL: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+		// Files.ReadWrite.All is required to access files shared with the user;
+		// Files.ReadWrite alone is insufficient for remote OneDrive items.
+		Scopes: []string{"openid", "profile", "offline_access", "User.Read", "Files.ReadWrite.All"},
+	},
+	// Note: HiDrive OAuth requires comma-separated scopes ("admin,rw"), joined as single string.
+	"hidrive": {
+		AuthURL:  "https://my.hidrive.com/client/authorize",
+		TokenURL: "https://my.hidrive.com/oauth2/token",
+		Scopes:   []string{"admin,rw"},
+	},
+}
 
 var httpClient = &http.Client{
 	Timeout: 15 * time.Second,
@@ -44,62 +73,14 @@ func IsProvider(provider string) bool {
 	return ok
 }
 
-func InitConfigs() {
-	configs["dropbox"] = ProviderConfig{
-		ClientID:     os.Getenv("DROPBOX_CLIENT_ID"),
-		ClientSecret: os.Getenv("DROPBOX_CLIENT_SECRET"),
-		AuthURL:      "https://www.dropbox.com/oauth2/authorize",
-		TokenURL:     "https://api.dropboxapi.com/oauth2/token",
-	}
-	configs["google"] = ProviderConfig{
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
-		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		Scopes: []string{
-			"https://www.googleapis.com/auth/drive",
-			"https://www.googleapis.com/auth/calendar",
-			"https://www.googleapis.com/auth/contacts",
-			"https://www.googleapis.com/auth/userinfo.email",
-			"https://www.googleapis.com/auth/userinfo.profile",
-		},
-	}
-	configs["onedrive"] = ProviderConfig{
-		ClientID:     os.Getenv("ONEDRIVE_CLIENT_ID"),
-		ClientSecret: os.Getenv("ONEDRIVE_CLIENT_SECRET"),
-		AuthURL:      "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
-		TokenURL:     "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
-		// Files.ReadWrite.All is required to access files shared with the user;
-		// Files.ReadWrite alone is insufficient for remote OneDrive items.
-		Scopes:       []string{"openid", "profile", "offline_access", "User.Read", "Files.ReadWrite.All"},
-	}
-	// Note: HiDrive OAuth requires comma-separated scopes ("admin,rw"), joined as single string.
-	configs["hidrive"] = ProviderConfig{
-		ClientID:     os.Getenv("HIDRIVE_CLIENT_ID"),
-		ClientSecret: os.Getenv("HIDRIVE_CLIENT_SECRET"),
-		AuthURL:      "https://my.hidrive.com/client/authorize",
-		TokenURL:     "https://my.hidrive.com/oauth2/token",
-		Scopes:       []string{"admin,rw"},
-	}
-}
-
-// ConfiguredProviders returns the set of OAuth provider keys that have both a
-// client ID and secret configured.
-func ConfiguredProviders() map[string]bool {
-	result := make(map[string]bool, len(configs))
-	for name, config := range configs {
-		result[name] = config.ClientID != "" && config.ClientSecret != ""
-	}
-	return result
-}
-
 func GetAuthURL(provider, redirectURI, state string) (string, error) {
 	config, ok := configs[provider]
 	if !ok {
 		return "", fmt.Errorf("unknown provider: %s", provider)
 	}
-	if config.ClientID == "" {
-		return "", fmt.Errorf("client ID for %s is not configured in backend environment", provider)
+	clientID, err := clientID(provider)
+	if err != nil {
+		return "", fmt.Errorf("client ID for %s is not configured", provider)
 	}
 
 	u, err := url.Parse(config.AuthURL)
@@ -108,7 +89,7 @@ func GetAuthURL(provider, redirectURI, state string) (string, error) {
 	}
 
 	q := u.Query()
-	q.Set("client_id", config.ClientID)
+	q.Set("client_id", clientID)
 	q.Set("redirect_uri", redirectURI)
 	q.Set("response_type", "code")
 	q.Set("state", state)
@@ -137,15 +118,20 @@ func ExchangeCode(ctx context.Context, provider, code, redirectURI string) (*Tok
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
-	if config.ClientID == "" || config.ClientSecret == "" {
-		return nil, fmt.Errorf("client ID/secret for %s is not configured in backend environment", provider)
+	clientID, err := clientID(provider)
+	if err != nil {
+		return nil, fmt.Errorf("client ID for %s is not configured", provider)
+	}
+	clientSecret, err := clientSecret(provider)
+	if err != nil {
+		return nil, fmt.Errorf("client secret for %s is not configured", provider)
 	}
 
 	data := url.Values{}
 	data.Set("code", code)
 	data.Set("grant_type", "authorization_code")
-	data.Set("client_id", config.ClientID)
-	data.Set("client_secret", config.ClientSecret)
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
 	data.Set("redirect_uri", redirectURI)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, strings.NewReader(data.Encode()))
@@ -317,15 +303,20 @@ func RefreshToken(ctx context.Context, provider, refreshToken string) (*TokenRes
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
-	if config.ClientID == "" || config.ClientSecret == "" {
-		return nil, fmt.Errorf("client ID/secret for %s is not configured in backend environment", provider)
+	clientID, err := clientID(provider)
+	if err != nil {
+		return nil, fmt.Errorf("client ID for %s is not configured", provider)
+	}
+	clientSecret, err := clientSecret(provider)
+	if err != nil {
+		return nil, fmt.Errorf("client secret for %s is not configured", provider)
 	}
 
 	data := url.Values{}
 	data.Set("grant_type", "refresh_token")
 	data.Set("refresh_token", refreshToken)
-	data.Set("client_id", config.ClientID)
-	data.Set("client_secret", config.ClientSecret)
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {

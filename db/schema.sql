@@ -196,6 +196,22 @@ CREATE OR REPLACE TRIGGER update_instance_smtp_settings_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+-- Administrator-managed OAuth2 client credentials. Secret never leaves the server decrypted.
+-- No CHECK constraint on provider: the whitelist is enforced in Go via oauth.IsProvider so a
+-- future provider does not require a schema migration.
+CREATE TABLE IF NOT EXISTS instance_oauth_providers (
+    provider VARCHAR(32) PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    client_secret_encrypted TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE OR REPLACE TRIGGER update_instance_oauth_providers_updated_at
+    BEFORE UPDATE ON instance_oauth_providers
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 
 -- Password reset tokens
 CREATE TABLE IF NOT EXISTS password_reset_tokens (

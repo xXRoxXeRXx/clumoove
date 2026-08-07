@@ -117,6 +117,32 @@ export interface InstanceSMTPUpdate {
   smtp_encryption: 'tls' | 'starttls';
 }
 
+export interface InstanceOAuthProvider {
+  provider: 'google' | 'onedrive' | 'dropbox' | 'hidrive';
+  configured: boolean;
+  client_id: string;
+  client_secret_set: boolean;
+  updated_at?: string;
+}
+
+export interface InstanceOAuthSettings {
+  redirect_uri: string;
+  providers: InstanceOAuthProvider[];
+}
+
+/**
+ * OAuth client secret contract:
+ * - `client_secret` is OPTIONAL in the update body.
+ * - Omitted / `undefined` => leave the existing secret unchanged.
+ * - Empty string `""` => keep existing secret if one exists, otherwise the
+ *   backend returns `OAUTH_SECRET_REQUIRED`. It does NOT clear the secret.
+ * - To fully remove a provider's credentials, use `deleteOAuth` instead.
+ */
+export interface InstanceOAuthUpdate {
+  client_id: string;
+  client_secret?: string;
+}
+
 function buildQuery(params: Record<string, string | number | undefined | null>): string {
   const sp = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
@@ -176,4 +202,7 @@ export const adminApi = {
   updateSMTP: (apiUrl: string, token: string, body: InstanceSMTPUpdate) => call(apiUrl, token, 'PUT', '/api/admin/settings/smtp', body),
   testSMTP: (apiUrl: string, token: string) => call(apiUrl, token, 'POST', '/api/admin/settings/smtp/test', {}),
   deleteSMTP: (apiUrl: string, token: string) => call(apiUrl, token, 'DELETE', '/api/admin/settings/smtp'),
+  getOAuth: (apiUrl: string, token: string) => call<InstanceOAuthSettings>(apiUrl, token, 'GET', '/api/admin/settings/oauth'),
+  updateOAuth: (apiUrl: string, token: string, provider: string, body: InstanceOAuthUpdate) => call(apiUrl, token, 'PUT', `/api/admin/settings/oauth/${provider}`, body),
+  deleteOAuth: (apiUrl: string, token: string, provider: string) => call(apiUrl, token, 'DELETE', `/api/admin/settings/oauth/${provider}`),
 };

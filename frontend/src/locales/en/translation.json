@@ -667,7 +667,10 @@
     "SYNC_INVALID_STATE": "The sync job is not in a valid state.",
     "SYNC_INTERVAL_INVALID": "The selected sync interval is invalid.",
     "IMMICH_SYNC_UNSUPPORTED": "Immich is available for one-time migrations only.",
-    "IMMICH_CONFLICT_STRATEGY_INVALID": "Immich uses native duplicate detection and requires Skip."
+    "IMMICH_CONFLICT_STRATEGY_INVALID": "Immich uses native duplicate detection and requires Skip.",
+    "OAUTH_PROVIDER_UNKNOWN": "The selected OAuth provider is not supported.",
+    "OAUTH_CONFIG_INCOMPLETE": "Client ID and secret must be valid and within the allowed length.",
+    "OAUTH_SECRET_REQUIRED": "A client secret is required the first time a provider is configured."
   },
   "admin": {
     "title": "Administration",
@@ -685,6 +688,31 @@
         "saved": "Email server configuration saved.",
         "removed": "Email server configuration removed.",
         "testSent": "Test email sent."
+      },
+      "oauth": {
+        "title": "OAuth providers",
+        "redirectTitle": "Callback URL",
+        "redirectHint": "Register exactly this URL as a redirect URI in every provider console. It is derived from the server host and cannot be changed here.",
+        "copy": "Copy",
+        "copied": "Copied",
+        "clientId": "Client ID",
+        "clientSecret": "Client secret",
+        "secretUnchanged": "unchanged",
+        "configured": "Configured",
+        "notConfigured": "Not configured",
+        "save": "Save provider",
+        "remove": "Remove provider",
+        "removeConfirm": "Remove the stored credentials for this OAuth provider? Active connections will lose access until new credentials are entered.",
+        "changeConfirm": "Changing the client ID invalidates existing connections for this provider. Continue?",
+        "reauthHint": "Changing the client ID invalidates existing connections. The stored secret is never shown and is kept unless you enter a new one.",
+        "saved": "OAuth provider saved.",
+        "removed": "OAuth provider removed.",
+        "providers": {
+          "google": "Google",
+          "onedrive": "OneDrive",
+          "dropbox": "Dropbox",
+          "hidrive": "HiDrive"
+        }
       }
     },
     "tabs": {

@@ -28,19 +28,16 @@ configuration, scaling, and routine operational tasks.
 | `CORS_ALLOWED_ORIGIN` | Allowed CORS origin for production. | – |
 | `POSTGRES_MAX_CONNECTIONS` | PostgreSQL connection limit for the production Compose stack; increase when scaling workers. | `300` |
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for the Vite dev server. | – |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 credentials. | – |
-| `ONEDRIVE_CLIENT_ID` / `ONEDRIVE_CLIENT_SECRET` | Microsoft personal OneDrive OAuth2 credentials. | – |
-| `DROPBOX_CLIENT_ID` / `DROPBOX_CLIENT_SECRET` | Dropbox OAuth2 credentials. | – |
-| `HIDRIVE_CLIENT_ID` / `HIDRIVE_CLIENT_SECRET` | Strato HiDrive OAuth2 credentials. | – |
-| `OAUTH_REDIRECT_URI` | Optional OAuth redirect override (auto-detected otherwise). | auto |
-
-For OneDrive, register a confidential Microsoft application restricted to **personal Microsoft accounts**. Add the exact callback URL resolved by `OAUTH_REDIRECT_URI` (or the server's auto-detected `/api/oauth/callback`) as a web redirect URI. Configure delegated `openid`, `profile`, `offline_access`, `User.Read`, and `Files.ReadWrite` permissions; no tenant-wide permission or admin consent is required.
 | `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `60` |
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |
 | `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` (`50` in production Compose) |
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
-| `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting). | off |
+| `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting and the auto-derived OAuth callback scheme). | off |
 | `FRONTEND_URL` | Frontend base URL (used in reset/email-change links). | `http://localhost:5173` |
+
+> **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. No `*_CLIENT_ID` / `*_CLIENT_SECRET` variables are read. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
+
+For OneDrive, register a confidential Microsoft application restricted to **personal Microsoft accounts**. Add the exact callback URL shown in the admin UI (**Administration → System**, auto-derived from the server host as `<scheme>://<host>/api/oauth/callback`) as a web redirect URI. Configure delegated `openid`, `profile`, `offline_access`, `User.Read`, and `Files.ReadWrite` permissions; no tenant-wide permission or admin consent is required.
 
 SMTP is configured by an administrator in **Administration → System → Email server**. The configuration, including its password, is encrypted with `ENCRYPTION_SECRET_KEY` in PostgreSQL; no `SMTP_*` environment variables are used.
 

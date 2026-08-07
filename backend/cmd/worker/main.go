@@ -44,10 +44,6 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 func main() {
 	log.Println("Starting Migration Worker...")
 
-	// Initialize OAuth provider configs up front so any inline token refresh
-	// (Finding 9) has a populated configs map instead of failing silently.
-	oauth.InitConfigs()
-
 	// Read environment variables
 	if os.Getenv("DATABASE_URL") == "" {
 		// No explicit DATABASE_URL: default to TLS-required rather than
@@ -66,6 +62,12 @@ func main() {
 	}
 	defer database.Close()
 	log.Println("Connected to PostgreSQL database.")
+
+	// 1b. Install the administrator-managed OAuth credential loader so any inline
+	// token refresh (Finding 9) has a populated credential cache instead of
+	// failing silently. The cache holds ciphertext only and is decrypted at the
+	// moment a token request is made.
+	oauth.Configure(oauth.NewDBLoader(database), config.encryptionKey)
 
 	// 2. Initialize Redis Queue
 	q, err := queue.NewQueue(config.redisURL)

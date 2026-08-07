@@ -71,7 +71,6 @@ const (
 
 func main() {
 	log.Println("Starting Migration API Gateway...")
-	oauth.InitConfigs()
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -121,6 +120,11 @@ func main() {
 	}
 	defer database.Close()
 	log.Println("Connected to PostgreSQL database.")
+
+	// 1b. Install the administrator-managed OAuth credential loader. Credentials
+	// live in instance_oauth_providers and are decrypted only when a token is
+	// requested; the cache holds ciphertext only.
+	oauth.Configure(oauth.NewDBLoader(database), encryptionKey)
 
 	// 2. Initialize Redis Queue
 	q, err := queue.NewQueue(redisURL)
@@ -259,6 +263,9 @@ func main() {
 	mux.Handle("PUT /api/admin/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleAdminPutSMTP)))
 	mux.Handle("POST /api/admin/settings/smtp/test", jwtMiddleware(http.HandlerFunc(server.handleAdminTestSMTP)))
 	mux.Handle("DELETE /api/admin/settings/smtp", jwtMiddleware(http.HandlerFunc(server.handleAdminDeleteSMTP)))
+	mux.Handle("GET /api/admin/settings/oauth", jwtMiddleware(http.HandlerFunc(server.handleAdminGetOAuth)))
+	mux.Handle("PUT /api/admin/settings/oauth/{provider}", jwtMiddleware(http.HandlerFunc(server.handleAdminPutOAuth)))
+	mux.Handle("DELETE /api/admin/settings/oauth/{provider}", jwtMiddleware(http.HandlerFunc(server.handleAdminDeleteOAuth)))
 	mux.Handle("GET /api/audit/log", jwtMiddleware(http.HandlerFunc(server.handleAdminAuditLog)))
 
 	// OAuth callbacks use their own state validation.

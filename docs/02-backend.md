@@ -52,7 +52,7 @@ Responsibilities:
 | `internal/db` | PostgreSQL access layer, `InitDB` schema migration, audit log, users, migrations, tasks, schedules, SMTP, indexing errors, admin queries. |
 | `internal/email` | SMTP config + `SendMail`, localized HTML delivery rendering. |
 | `internal/indexer` | BFS indexing of source paths/calendars/contacts → `PENDING` tasks. |
-| `internal/oauth` | OAuth2 token refresh for Dropbox/Google/OneDrive/HiDrive; `InitConfigs`. |
+| `internal/oauth` | OAuth2 token refresh for Dropbox/Google/OneDrive/HiDrive; `Configure`/`NewDBLoader` installs a DB-backed credential loader with a 30s ciphertext cache; secrets are decrypted only at token-request time. |
 | `internal/processor` | The worker loop, transfer logic, conflict resolution, hash verification, retry/backoff, liveness & recovery schedulers, completion notifier. |
 | `internal/queue` | PostgreSQL dequeue (`DequeueSQL`), Redis locks, Pub/Sub for cancel/bandwidth, liveness tracking. |
 | `internal/sanitize` | Filename sanitization + case-collision detection/resolution for target providers. |
@@ -69,7 +69,7 @@ Responsibilities:
 migrations** so the schema self-heals on first boot:
 
 - `CREATE TABLE IF NOT EXISTS` for `users`, `refresh_tokens`, `settings`, `schedules`, `audit_log`,
-  `instance_smtp_settings`, `notification_channels`, `notification_events`,
+  `instance_smtp_settings`, `instance_oauth_providers`, `notification_channels`, `notification_events`,
   `notification_deliveries`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`,
   `connection_profiles`, `sync_jobs`, `sync_state`.
 - `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for every new column added over time (e.g.

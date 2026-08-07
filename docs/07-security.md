@@ -56,6 +56,12 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
   cause a permanent auth failure, so encryption failure is fatal (aborts the task).
 - The OAuth callback posts tokens to `window.opener` via `postMessage`; the receiver validates
   `event.origin` against the API origin.
+- **OAuth client secrets (administrator-managed):** Google/OneDrive/Dropbox/HiDrive client credentials
+  live in the `instance_oauth_providers` table, with `client_secret_encrypted` AES-256-GCM encrypted using
+  `ENCRYPTION_SECRET_KEY`. They are **never** configured via `*_CLIENT_ID`/`*_CLIENT_SECRET` environment
+  variables and are **never** serialized to the frontend (the admin endpoints return only
+  `client_id` + `client_secret_set`). The process-local cache holds only ciphertext (30 s TTL in workers);
+  the plaintext secret is decrypted **at the moment a token request is made** and never retained.
 
 ---
 

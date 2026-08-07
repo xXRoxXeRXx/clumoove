@@ -185,6 +185,12 @@ Interactive requirements:
   `ConfirmationDialog` pattern rather than bespoke modal behavior.
 - Tree and path-selection rows expose explicit keyboard-operable expand and selection controls.
 
+The **Administration → System** tab uses a two-column `md:grid-cols-2` layout: the left column holds the
+general settings (registration toggle) and the email-server card; the right column holds the read-only OAuth
+callback-URL card and one card per OAuth provider (Google, OneDrive, Dropbox, HiDrive). All cards reuse the
+shared `SectionCard` component; the email-server card renders its form in a single column because it occupies
+half the width.
+
 ## 9. Frontend Validation
 
 Run the standard typecheck and lint commands from [Development §2](./09-development.md#2-code-quality--checks),
