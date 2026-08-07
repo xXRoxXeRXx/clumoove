@@ -228,6 +228,9 @@ func main() {
 	mux.Handle("GET /api/sync/{id}/errors", jwtMiddleware(http.HandlerFunc(server.handleSyncErrors)))
 	mux.Handle("PUT /api/sync/{id}/threads", jwtMiddleware(http.HandlerFunc(server.handleSetSyncThreads)))
 	mux.Handle("PUT /api/sync/{id}/bandwidth", jwtMiddleware(http.HandlerFunc(server.handleSetSyncBandwidth)))
+	mux.Handle("GET /api/sync/{id}/browse", jwtMiddleware(http.HandlerFunc(server.handleBrowseSyncJob)))
+	mux.Handle("PUT /api/sync/{id}/schedule", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncSchedule)))
+	mux.Handle("PUT /api/sync/{id}/scope", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncScope)))
 
 	// Schedule Management Routes (Protected)
 	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))

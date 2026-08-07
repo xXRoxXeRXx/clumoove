@@ -29,7 +29,7 @@ import {
   PlayIcon as Play,
   XMarkIcon as X,
 } from "@heroicons/react/24/outline";
-import type { CloudFile, MigrationConfig } from "../types";
+import type { CloudFile, MigrationConfig, SyncJob } from "../types";
 import { useTranslation } from "react-i18next";
 import { useFormat } from "../utils/format";
 import { useApiError } from "../utils/apiError";
@@ -51,6 +51,7 @@ interface FileBrowserProps {
   onBack: () => void;
   onStartSuccess: (id: string, isSync?: boolean) => void;
   token: string;
+  existingSyncJob?: SyncJob;
 }
 
 // toLocalInputValue formats a Date as a local-time datetime-local string
@@ -192,7 +193,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   onBack,
   onStartSuccess,
   token,
+  existingSyncJob,
 }) => {
+  const isEditMode = !!existingSyncJob;
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
   const translateApiError = useApiError();
@@ -243,19 +246,29 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // All files/folders are selected by default. Pre-populate the top-level
   // entries so the selection checkboxes render checked on first paint.
   const [selectedPaths, setSelectedPaths] = useState<Record<string, boolean>>(
-    () =>
-      initialFiles.reduce(
+    () => {
+      if (existingSyncJob?.selected_paths) {
+        return existingSyncJob.selected_paths.reduce(
+          (acc, p) => {
+            acc[p] = true;
+            return acc;
+          },
+          {} as Record<string, boolean>,
+        );
+      }
+      return initialFiles.reduce(
         (acc, f) => {
           acc[f.path] = !isOneDrivePersonalVault(f);
           return acc;
         },
         {} as Record<string, boolean>,
-      ),
+      );
+    },
   );
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
   const [conflictStrategy, setConflictStrategy] = useState("SKIP");
   const [threads, setThreads] = useState<number>(8);
-  const [targetDir, setTargetDir] = useState("/");
+  const [targetDir, setTargetDir] = useState(existingSyncJob?.target_dir || "/");
   const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
   const [targetExpandedPaths, setTargetExpandedPaths] = useState<
     Record<string, boolean>
@@ -277,10 +290,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   // Job type: a third mode (e.g. 'backup') can be added later as a third
   // segmented-control column without restructuring the settings strip.
-  const [jobType, setJobType] = useState<"migration" | "sync">("migration");
-  const [direction, setDirection] = useState<"one_way" | "two_way">("one_way");
-  const [intervalMinutes, setIntervalMinutes] = useState<number>(15);
-  const [deletePropagation, setDeletePropagation] = useState<boolean>(false);
+  const [jobType, setJobType] = useState<"migration" | "sync">(
+    existingSyncJob ? "sync" : "migration",
+  );
+  const [direction, setDirection] = useState<"one_way" | "two_way">(
+    (existingSyncJob?.direction as "one_way" | "two_way") || "one_way",
+  );
+  const [intervalMinutes, setIntervalMinutes] = useState<number>(
+    existingSyncJob?.interval_minutes || 15,
+  );
+  const [deletePropagation, setDeletePropagation] = useState<boolean>(
+    existingSyncJob?.delete_propagation || false,
+  );
   // A profile change can introduce Immich after sync was selected. Deriving the
   // active mode keeps the UI and request path migration-only without a stateful
   // effect that would cause an unnecessary render.
@@ -335,21 +356,28 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     setTargetError(null);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/target/browse`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          target_url: credentials.target_url,
-          target_username: credentials.target_username,
-          target_password: credentials.target_password,
-          target_provider: credentials.target_provider,
-          target_profile_id: credentials.target_profile_id,
-          path: folderPath,
-        }),
-      });
+      const response = isEditMode && existingSyncJob
+        ? await apiFetch(
+            `${apiUrl}/api/sync/${existingSyncJob.id}/browse?role=target&path=${encodeURIComponent(folderPath)}`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          )
+        : await apiFetch(`${apiUrl}/api/migration/target/browse`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              target_url: credentials.target_url,
+              target_username: credentials.target_username,
+              target_password: credentials.target_password,
+              target_provider: credentials.target_provider,
+              target_profile_id: credentials.target_profile_id,
+              path: folderPath,
+            }),
+          });
 
       if (!response.ok) {
         const b = await response
@@ -365,7 +393,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       const data = await response.json();
       if (data.success) {
         const foldersOnly = sortEntries(
-          (data.files || []).filter((f: CloudFile) => f.is_dir),
+          (data.files || data.items || []).filter((f: CloudFile) => f.is_dir),
         );
         setTargetDirectoryContents((prev) => ({
           ...prev,
@@ -630,64 +658,95 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     if (tab === "contacts") fetchContacts();
   };
 
-  const fetchChildren = async (folderPath: string, force?: boolean) => {
-    if (loadingPaths[folderPath]) return;
-    if (!force && directoryContents[folderPath]) return;
+  const fetchChildren = useCallback(
+    async (folderPath: string, force?: boolean) => {
+      if (loadingPaths[folderPath]) return;
+      if (!force && directoryContents[folderPath]) return;
 
-    setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
-    try {
-      const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          source_url: credentials.source_url,
-          source_username: credentials.source_username,
-          source_password: credentials.source_password,
-          source_provider: credentials.source_provider,
-          source_profile_id: credentials.source_profile_id,
-          resource_type: "files",
-          path: folderPath,
-        }),
-      });
+      setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
+      try {
+        const response =
+          isEditMode && existingSyncJob
+            ? await apiFetch(
+                `${apiUrl}/api/sync/${existingSyncJob.id}/browse?role=source&path=${encodeURIComponent(folderPath)}`,
+                {
+                  headers: { Authorization: `Bearer ${token}` },
+                },
+              )
+            : await apiFetch(`${apiUrl}/api/migration/browse`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${token}`,
+                },
+                body: JSON.stringify({
+                  source_url: credentials.source_url,
+                  source_username: credentials.source_username,
+                  source_password: credentials.source_password,
+                  source_provider: credentials.source_provider,
+                  source_profile_id: credentials.source_profile_id,
+                  resource_type: "files",
+                  path: folderPath,
+                }),
+              });
 
-      if (!response.ok) {
-        const b = await response
-          .json()
-          .catch(() => ({}) as { error_code?: string });
-        throw new Error(
-          b.error_code
-            ? translateApiError(b.error_code)
-            : t("fileBrowser.errors.loadDir"),
-        );
+        if (!response.ok) {
+          const b = await response
+            .json()
+            .catch(() => ({}) as { error_code?: string });
+          throw new Error(
+            b.error_code
+              ? translateApiError(b.error_code)
+              : t("fileBrowser.errors.loadDir"),
+          );
+        }
+
+        const data = await response.json();
+        if (data.success) {
+          const items = sortEntries(data.items || data.files || []);
+          setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
+          setSelectedPaths((prev) => {
+            const next = { ...prev };
+            for (const child of items) {
+              if (next[child.path] === undefined) {
+                next[child.path] =
+                  isEditMode && existingSyncJob
+                    ? (existingSyncJob.selected_paths || []).includes(
+                        child.path,
+                      )
+                    : !isOneDrivePersonalVault(child);
+              }
+            }
+            return next;
+          });
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
       }
+    },
+    [
+      loadingPaths,
+      directoryContents,
+      isEditMode,
+      existingSyncJob,
+      apiUrl,
+      token,
+      credentials,
+      translateApiError,
+      t,
+    ],
+  );
 
-      const data = await response.json();
-      if (data.success) {
-        const items = sortEntries(data.items || data.files || []);
-        setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
-        // Newly loaded children are selected by default.
-        // Newly loaded children are selected by default, but only if the
-        // user has not explicitly interacted with them yet (so a "Deselect
-        // all" followed by expanding a folder keeps the children
-        // unselected).
-        setSelectedPaths((prev) => {
-          const next = { ...prev };
-          for (const child of items) {
-            if (next[child.path] === undefined)
-              next[child.path] = !isOneDrivePersonalVault(child);
-          }
-          return next;
-        });
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
+  useEffect(() => {
+    if (isEditMode) {
+      const timer = setTimeout(() => {
+        void fetchChildren("/", true);
+      }, 0);
+      return () => clearTimeout(timer);
     }
-  };
+  }, [isEditMode, fetchChildren]);
 
   const refreshFiles = async () => {
     setDirectoryContents({});
@@ -714,6 +773,75 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const handleStartMigration = async () => {
+    if (isEditMode && existingSyncJob) {
+      if (syncSelectedPaths.length === 0) {
+        setError(t("fileBrowser.errors.selectOne"));
+        return;
+      }
+      setStarting(true);
+      setError(null);
+      try {
+        const scopeRes = await apiFetch(
+          `${apiUrl}/api/sync/${existingSyncJob.id}/scope`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              selected_paths: syncSelectedPaths,
+              target_dir: targetDir,
+            }),
+          },
+        );
+        if (!scopeRes.ok) {
+          const b = await scopeRes
+            .json()
+            .catch(() => ({}) as { error_code?: string });
+          throw new Error(
+            b.error_code
+              ? translateApiError(b.error_code)
+              : t("sync.createFailed"),
+          );
+        }
+
+        if (intervalMinutes !== existingSyncJob.interval_minutes) {
+          const schedRes = await apiFetch(
+            `${apiUrl}/api/sync/${existingSyncJob.id}/schedule`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ interval_minutes: intervalMinutes }),
+            },
+          );
+          if (!schedRes.ok) {
+            const b = await schedRes
+              .json()
+              .catch(() => ({}) as { error_code?: string });
+            throw new Error(
+              b.error_code
+                ? translateApiError(b.error_code)
+                : t("sync.createFailed"),
+            );
+          }
+        }
+
+        onStartSuccess(existingSyncJob.id, true);
+      } catch (err) {
+        console.error(err);
+        setError(
+          err instanceof Error ? err.message : t("sync.createFailed"),
+        );
+      } finally {
+        setStarting(false);
+      }
+      return;
+    }
+
     const pathsToMigrate = Object.keys(selectedPaths).filter(
       (p) => selectedPaths[p],
     );
@@ -1118,7 +1246,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           <span />
         )}
         <h1 className="font-display text-xl font-semibold leading-none text-[var(--color-text-primary)]">
-          {t("fileBrowser.wizardStep")}
+          {isEditMode ? t("sync.editModalTitle") : t("fileBrowser.wizardStep")}
         </h1>
       </div>
 
@@ -1187,36 +1315,49 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
       </div>
 
-      {/* Settings Strip — full width, backup-ready 3-mode layout */}
-      <div className="ui-card">
-        {/* Mode selector (left) + start button (right) */}
-        <div className="flex flex-col justify-between gap-3 border-b border-[var(--color-border-light)] px-5 py-3 sm:flex-row sm:items-center sm:px-6">
-          {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
-          <div className="w-full text-xs sm:w-auto">
-            <div className="flex border-b border-[var(--color-border-light)]">
-              <button
-                type="button"
-                onClick={() => setJobType("migration")}
-                className={`px-3 py-2 text-sm ${
-                  effectiveJobType === "migration"
-                    ? "border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                }`}
-              >
-                {t("sync.modeMigration")}
-              </button>
-              {!hasImmichEndpoint && (
-                <button
-                  type="button"
-                  onClick={() => setJobType("sync")}
-                  className={`px-3 py-2 text-sm ${
-                    effectiveJobType === "sync"
-                      ? "border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]"
-                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                  }`}
-                >
-                  {t("sync.modeSync")}
-                </button>
+      {/* Main Settings Card */}
+      <div className="ui-card flex flex-col p-0 overflow-hidden">
+        {/* Settings header */}
+        <div className="p-5 sm:p-6 border-b border-[var(--color-border-light)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[var(--color-bg-tertiary)]/50">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] flex items-center justify-center font-extrabold text-sm shadow-xs font-mono shrink-0">
+              ⚙
+            </div>
+            <div>
+              <h2 className="font-display font-extrabold text-lg text-[var(--color-text-primary)] tracking-tight">
+                {t("fileBrowser.config")}
+              </h2>
+              {!isEditMode && !hasImmichEndpoint ? (
+                <div className="flex gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => setJobType("migration")}
+                    className={`text-xs font-mono font-bold px-2 py-0.5 rounded cursor-pointer ${
+                      effectiveJobType === "migration"
+                        ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]"
+                        : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]"
+                    }`}
+                  >
+                    {t("sync.modeMigration")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setJobType("sync")}
+                    className={`text-xs font-mono font-bold px-2 py-0.5 rounded cursor-pointer ${
+                      effectiveJobType === "sync"
+                        ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]"
+                        : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]"
+                    }`}
+                  >
+                    {t("sync.modeSync")}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--color-text-muted)] mt-0.5 uppercase tracking-wider font-mono">
+                  {effectiveJobType === "sync"
+                    ? t("sync.modeSync")
+                    : t("sync.modeMigration")}
+                </p>
               )}
             </div>
           </div>
@@ -1235,7 +1376,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : (
               <>
                 <Play className="w-4 h-4 fill-current stroke-[2.5]" />
-                <span>{t("fileBrowser.startTransfer")}</span>
+                <span>{isEditMode ? t("sync.saveChanges") : t("fileBrowser.startTransfer")}</span>
               </>
             )}
           </button>
@@ -1243,6 +1384,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
         {/* Settings body */}
         <div className="p-5 sm:p-6 space-y-6">
+          {isEditMode && (
+            <div className="ui-alert ui-alert-info p-3 text-xs font-medium">
+              {t("sync.scopeUpdateWarning")}
+            </div>
+          )}
           {/* Sync-only options */}
           {effectiveJobType === "sync" && (
             <div className="ui-alert ui-alert-info space-y-4 p-4 text-xs">

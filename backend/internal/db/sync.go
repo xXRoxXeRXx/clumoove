@@ -1408,3 +1408,101 @@ func UpdateSyncStateTargetHash(db *sql.DB, ctx context.Context, syncJobID, relPa
 	_, err := db.ExecContext(ctx, query, syncJobID, relPath, targetHash)
 	return err
 }
+
+var ErrSyncInvalidState = errors.New("sync job is in an active state and cannot be modified")
+
+// DeleteSyncStateForJob removes all cached sync_state entries for a sync job (used on scope changes to prevent false deletions).
+func DeleteSyncStateForJob(exec queryExecer, syncJobID string) error {
+	_, err := exec.Exec(`DELETE FROM sync_state WHERE sync_job_id = $1`, syncJobID)
+	return err
+}
+
+// UpdateSyncJobScope updates selected_paths and target_dir for a sync job and clears its sync_state in a single transaction.
+func UpdateSyncJobScope(db *sql.DB, syncJobID string, selectedPaths []string, targetDir string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var status string
+	err = tx.QueryRow(`SELECT status FROM sync_jobs WHERE id = $1 FOR UPDATE`, syncJobID).Scan(&status)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return sql.ErrNoRows
+		}
+		return err
+	}
+	if status == "RUNNING" || status == "INDEXING" || status == "VERIFYING" {
+		return ErrSyncInvalidState
+	}
+
+	pathsJSON, err := json.Marshal(selectedPaths)
+	if err != nil {
+		return fmt.Errorf("failed to marshal selected_paths: %w", err)
+	}
+
+	res, err := tx.Exec(
+		`UPDATE sync_jobs SET selected_paths = $1, target_dir = $2, updated_at = NOW() WHERE id = $3`,
+		pathsJSON, targetDir, syncJobID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	if err := DeleteSyncStateForJob(tx, syncJobID); err != nil {
+		return fmt.Errorf("failed to delete sync state: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// UpdateSyncJobInterval updates interval_minutes on sync_jobs and recalculates next_run_at on the linked schedule.
+func UpdateSyncJobInterval(db *sql.DB, syncJobID string, intervalMinutes int) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	res, err := tx.Exec(
+		`UPDATE sync_jobs SET interval_minutes = $1, updated_at = NOW() WHERE id = $2`,
+		intervalMinutes, syncJobID,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+
+	nextRun := time.Now().Add(time.Duration(intervalMinutes) * time.Minute)
+	schedRes, err := tx.Exec(
+		`UPDATE schedules SET next_run_at = $1, updated_at = NOW() WHERE task_type = 'sync' AND task_id = $2`,
+		nextRun, syncJobID,
+	)
+	if err != nil {
+		return err
+	}
+	schedRows, err := schedRes.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if schedRows == 0 {
+		log.Printf("UpdateSyncJobInterval: warning - no linked schedule found for sync job %s", syncJobID)
+	}
+
+	return tx.Commit()
+}
+

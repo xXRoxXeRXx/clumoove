@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -823,3 +825,305 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
+
+type updateSyncScheduleRequest struct {
+	IntervalMinutes int `json:"interval_minutes"`
+}
+
+type updateSyncScopeRequest struct {
+	SelectedPaths []string `json:"selected_paths"`
+	TargetDir     string   `json:"target_dir"`
+}
+
+func (s *APIServer) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+
+	var req updateSyncScheduleRequest
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+
+	validIntervals := map[int]bool{5: true, 15: true, 30: true, 60: true, 360: true, 1440: true}
+	if !validIntervals[req.IntervalMinutes] {
+		writeValidationError(w, ErrSyncIntervalInvalid)
+		return
+	}
+
+	if err := db.UpdateSyncJobInterval(s.db, id, req.IntervalMinutes); err != nil {
+		log.Printf("Error updating sync schedule for job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditSyncUpdated, id, userID, map[string]any{"interval_minutes": req.IntervalMinutes})
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "browse", s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+
+	job, err := db.GetSyncJob(s.db, id)
+	if err != nil {
+		log.Printf("Error getting sync job %s for browse: %v", id, err)
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+
+	role := r.URL.Query().Get("role")
+	if role != "target" {
+		role = "source"
+	}
+	reqPath := r.URL.Query().Get("path")
+	if reqPath == "" {
+		reqPath = "/"
+	}
+	resourceType := r.URL.Query().Get("resource_type")
+	if resourceType == "" {
+		resourceType = "files"
+	}
+	if resourceType != "files" && resourceType != "calendars" && resourceType != "contacts" {
+		writeError(w, http.StatusBadRequest, ErrInvalidResourceType)
+		return
+	}
+
+	var provider, urlStr, username, passEnc, refreshEnc string
+	var tokenExpiresAt sql.NullTime
+
+	if role == "target" {
+		provider = job.TargetProvider
+		urlStr = job.TargetURL
+		username = job.TargetUsername
+		passEnc = job.TargetPasswordEncrypted
+		refreshEnc = job.TargetRefreshTokenEncrypted.String
+		tokenExpiresAt = job.TargetTokenExpiresAt
+	} else {
+		provider = job.SourceProvider
+		urlStr = job.SourceURL
+		username = job.SourceUsername
+		passEnc = job.SourcePasswordEncrypted
+		refreshEnc = job.SourceRefreshTokenEncrypted.String
+		tokenExpiresAt = job.SourceTokenExpiresAt
+	}
+
+	var password string
+	if oauth.IsProvider(provider) {
+		shouldRefresh := tokenExpiresAt.Valid && !time.Now().Before(tokenExpiresAt.Time.Add(-2*time.Minute))
+		if shouldRefresh && refreshEnc != "" {
+			refreshToken, derr := crypto.Decrypt(refreshEnc, s.encryptionKey)
+			if derr == nil && refreshToken != "" {
+				tokenResp, rerr := oauth.RefreshToken(r.Context(), provider, refreshToken)
+				crypto.ZeroString(&refreshToken)
+				if rerr == nil && tokenResp != nil {
+					password = tokenResp.AccessToken
+					newAccessEnc, e1 := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
+					newRefreshEnc, e2 := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
+					if e1 == nil && e2 == nil {
+						expiresIn := tokenResp.ExpiresIn
+						if expiresIn <= 0 {
+							expiresIn = 3600
+						}
+						newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
+						if uerr := db.UpdateSyncJobOAuthTokens(s.db, id, role, newAccessEnc, newRefreshEnc, newExpiresAt, refreshEnc); uerr != nil {
+							log.Printf("handleBrowseSyncJob: failed to persist refreshed OAuth tokens for job %s role %s: %v", id, role, uerr)
+						}
+					}
+				}
+			}
+		}
+		if password == "" && passEnc != "" {
+			var derr error
+			password, derr = crypto.Decrypt(passEnc, s.encryptionKey)
+			if derr != nil {
+				log.Printf("handleBrowseSyncJob: failed to decrypt token for job %s role %s: %v", id, role, derr)
+				errCode := ErrSourceConnectionFailed
+				if role == "target" {
+					errCode = ErrTargetConnectionFailed
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
+				return
+			}
+		}
+	} else if passEnc != "" {
+		var derr error
+		password, derr = crypto.Decrypt(passEnc, s.encryptionKey)
+		if derr != nil {
+			log.Printf("handleBrowseSyncJob: failed to decrypt password for job %s role %s: %v", id, role, derr)
+			errCode := ErrSourceConnectionFailed
+			if role == "target" {
+				errCode = ErrTargetConnectionFailed
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
+			return
+		}
+	}
+
+	allowedProviders := map[string]bool{
+		"nextcloud": true, "webdav": true, "dropbox": true,
+		"google": true, "onedrive": true, "hidrive": true,
+		"smb": true, "s3": true, "sftp": true, "ftp": true,
+		"magentacloud": true, "local": true, "immich": true,
+	}
+	if !allowedProviders[provider] {
+		errCode := ErrSourceUrlInvalid
+		if role == "target" {
+			errCode = ErrTargetUrlInvalid
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
+		return
+	}
+
+	client, err := storage.NewProvider(r.Context(), provider, urlStr, username, password)
+	crypto.ZeroString(&password)
+	if err != nil {
+		log.Printf("handleBrowseSyncJob: NewProvider failed for provider %s: %v", provider, err)
+		errCode := ErrSourceUrlInvalid
+		if role == "target" {
+			errCode = ErrTargetUrlInvalid
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
+		return
+	}
+	defer client.Close()
+
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+
+	ok, err := client.Connect(ctx)
+	if !ok {
+		log.Printf("handleBrowseSyncJob: connection failed for provider %s: %v", provider, err)
+		errCode := ErrSourceConnectionFailed
+		if role == "target" {
+			errCode = ErrTargetConnectionFailed
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
+		return
+	}
+
+	items, err := client.GetDirectoryListing(ctx, resourceType, reqPath)
+	if err != nil {
+		log.Printf("handleBrowseSyncJob: failed to list %s for path %s (provider %s): %v", resourceType, reqPath, provider, err)
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(ErrListFailed)})
+		return
+	}
+
+	collections := items
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"items":   collections,
+		"files":   collections,
+	})
+}
+
+func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+
+	job, err := db.GetSyncJob(s.db, id)
+	if err != nil {
+		log.Printf("Error getting sync job %s for scope update: %v", id, err)
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+
+	if job.Status == "INDEXING" || job.Status == "RUNNING" || job.Status == "VERIFYING" {
+		writeError(w, http.StatusConflict, ErrSyncInvalidState)
+		return
+	}
+
+	if job.SourceProvider == "immich" || job.TargetProvider == "immich" {
+		writeError(w, http.StatusBadRequest, ErrImmichSyncUnsupported)
+		return
+	}
+
+	var req updateSyncScopeRequest
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+
+	if len(req.SelectedPaths) == 0 {
+		writeValidationError(w, ErrNoSourcePaths)
+		return
+	}
+
+	if req.TargetDir == "" {
+		req.TargetDir = "/"
+	}
+
+	if err := db.UpdateSyncJobScope(s.db, id, req.SelectedPaths, req.TargetDir); err != nil {
+		if errors.Is(err, db.ErrSyncInvalidState) {
+			writeError(w, http.StatusConflict, ErrSyncInvalidState)
+			return
+		}
+		log.Printf("Error updating scope for sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	s.writeAudit(r, db.AuditSyncUpdated, id, userID, map[string]any{
+		"selected_paths": req.SelectedPaths,
+		"target_dir":     req.TargetDir,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+

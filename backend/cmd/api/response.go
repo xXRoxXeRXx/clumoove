@@ -158,8 +158,9 @@ const (
 	ErrSyncIdMissing      APIErrorCode = "SYNC_ID_MISSING"
 	ErrSyncNotFound       APIErrorCode = "SYNC_NOT_FOUND"
 	ErrSyncNotOwned       APIErrorCode = "SYNC_NOT_OWNED"
-	ErrSyncAlreadyRunning APIErrorCode = "SYNC_ALREADY_RUNNING"
-	ErrSyncInvalidState   APIErrorCode = "SYNC_INVALID_STATE"
+	ErrSyncAlreadyRunning  APIErrorCode = "SYNC_ALREADY_RUNNING"
+	ErrSyncInvalidState    APIErrorCode = "SYNC_INVALID_STATE"
+	ErrSyncIntervalInvalid APIErrorCode = "SYNC_INTERVAL_INVALID"
 
 	// Connection profiles
 	ErrProfileNotFound        APIErrorCode = "PROFILE_NOT_FOUND"

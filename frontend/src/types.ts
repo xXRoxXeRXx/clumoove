@@ -101,8 +101,10 @@ export interface SyncJob {
   conflict_strategy: 'OVERWRITE' | 'SKIP' | 'RENAME';
   source_provider: string;
   source_url: string | null;
+  source_username?: string | null;
   target_provider: string;
   target_url: string | null;
+  target_username?: string | null;
   target_dir?: string;
   selected_paths?: string[];
   total_files: number;

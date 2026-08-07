@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import type { SyncJob } from '../types';
+import type { SyncJob, Provider } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat, formatBytes, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
-import { Badge, StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
@@ -15,11 +14,13 @@ import { TransferProgress } from './TransferProgress';
 import { TransferEndpoints } from './TransferEndpoints';
 import { ActiveTransfersPanel, TransferStatusPanel } from './TransferRunSummary';
 import { LoadingIndicator } from './LoadingIndicator';
+import { FileBrowser } from './FileBrowser';
 import { BANDWIDTH_OPTIONS, bandwidthIndexToValue, getBandwidthLabel, valueToBandwidthIndex } from '../utils/bandwidth';
 import {
   AdjustmentsHorizontalIcon,
   ArrowLeftIcon,
   ClockIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline';
 
 interface SyncDashboardProps {
@@ -34,6 +35,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+  const [isEditing, setIsEditing] = useState<boolean>(false);
   const [threads, setThreads] = useState<number>(8);
   const [threadsLoading, setThreadsLoading] = useState<boolean>(false);
   const [bandwidthLimit, setBandwidthLimit] = useState<number>(0);
@@ -232,6 +234,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : t('sync.pauseFailed'));
     }
+
     finally { setActionLoading(false); }
   };
 
@@ -306,12 +309,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const effectiveBytesDisplay = totalBytes > 0
     ? Math.min(totalBytes, Math.max(processedBytes, liveBytes))
     : processedBytes;
-
   const byteProgressPercent = totalBytes > 0
     ? Math.min(Math.round((effectiveBytesDisplay / totalBytes) * 100), 100)
     : (job?.total_files && job.total_files > 0
         ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100)
         : (job?.status === 'IDLE' || job?.status === 'COMPLETED' ? 100 : 0));
+
   const canPause = ['IDLE', 'INDEXING', 'RUNNING', 'VERIFYING'].includes(job.status);
   const canStart = ['IDLE', 'FAILED'].includes(job.status);
 
@@ -320,6 +323,19 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       <div className="ui-card p-6 space-y-6">
         <TransferDetailHeader backLabel={t('common.back')} onBack={onBack} title={t('sync.syncJobDetail')} id={job.id} actions={
           <>
+            {['IDLE', 'PAUSED', 'FAILED'].includes(job.status) && (
+              <button
+                onClick={() => setIsEditing(true)}
+                disabled={actionLoading}
+                className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-xs font-bold hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
+                aria-label={t('sync.editScope')}
+                title={t('sync.editScope')}
+              >
+                <PencilIcon className="h-4 w-4" aria-hidden="true" />
+                <span>{t('sync.edit')}</span>
+              </button>
+            )}
+
             {job.status === 'PAUSED' ? (
               <button
                 onClick={handleResume}
@@ -340,8 +356,8 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
             {canStart && (
               <button
-              onClick={job.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(job.error_message || '') ? handleReauth : handleTriggerStart}
-              disabled={actionLoading}
+                onClick={job.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(job.error_message || '') ? handleReauth : handleTriggerStart}
+                disabled={actionLoading}
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {actionLoading && `${t('common.loading')} `}
@@ -350,11 +366,6 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             )}
           </>
         } />
-
-        <div className="flex items-center gap-2.5">
-          <StatusBadge status={job.status} />
-          <Badge variant="muted" label={job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')} />
-        </div>
 
         {/* Live Transfer Progress (only shown while a run is active) */}
         {(job.status === 'RUNNING' || job.status === 'INDEXING') && <TransferProgress progress={byteProgressPercent} rate={`${formatBytes(speed)}/s`} transferred={totalBytes > 0 ? `${formatBytes(effectiveBytesDisplay)} / ${formatBytes(totalBytes)}` : `${job.processed_files} / ${job.total_files}`} remaining={eta} labels={{ progress: t('dashboard.progress'), transferRate: t('dashboard.transferRate'), transferred: t('dashboard.transferred'), remaining: t('dashboard.remaining') }} />}
@@ -546,6 +557,53 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           </div>
         )}
       </div>
+
+      {isEditing && job && (
+        <div className="fixed inset-0 bg-[var(--color-overlay)] z-[var(--layer-dialog)] flex items-center justify-center p-4 overflow-y-auto">
+          <div className="ui-card w-full max-w-5xl p-6 bg-[var(--color-bg-primary)] border-[var(--color-border)] shadow-xl relative max-h-[90vh] overflow-y-auto text-left">
+            {/*
+              In edit mode (existingSyncJob provided), password and token fields pass empty strings.
+              The server-side handler GET /api/sync/{id}/browse uses stored encrypted credentials from the database.
+            */}
+            <FileBrowser
+              initialFiles={[]}
+              credentials={{
+                source_provider: (job.source_provider || "nextcloud") as Provider,
+                target_provider: (job.target_provider || "nextcloud") as Provider,
+                source_url: job.source_url || "",
+                target_url: job.target_url || "",
+                source_username: job.source_username || "",
+                target_username: job.target_username || "",
+                source_password: "",
+                target_password: "",
+                source_refresh_token: "",
+                source_token_expires_in: 0,
+                target_refresh_token: "",
+                target_token_expires_in: 0,
+              }}
+              apiUrl={apiUrl}
+              token={token}
+              existingSyncJob={job}
+              onBack={() => setIsEditing(false)}
+              onStartSuccess={async () => {
+                setIsEditing(false);
+                toast(t('sync.scopeUpdated'));
+                try {
+                  const res = await apiFetch(`${apiUrl}/api/sync/${syncId}`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                  });
+                  if (res.ok) {
+                    const updated = await res.json();
+                    setJob(updated);
+                  }
+                } catch (err) {
+                  console.error('Failed to re-fetch sync job details after edit:', err);
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
