@@ -290,11 +290,21 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const loadingPathsRef = useRef(loadingPaths);
   const directoryContentsRef = useRef(directoryContents);
   const initialFetchedSyncJobIdRef = useRef<string | null>(null);
+  const loadingCalendarsRef = useRef(loadingCalendars);
+  const calendarsRef = useRef(calendars);
+  const loadingContactsRef = useRef(loadingContacts);
+  const contactsRef = useRef(contacts);
+  const hasFetchedCalendarsRef = useRef(false);
+  const hasFetchedContactsRef = useRef(false);
 
   useEffect(() => {
     loadingPathsRef.current = loadingPaths;
     directoryContentsRef.current = directoryContents;
-  }, [loadingPaths, directoryContents]);
+    loadingCalendarsRef.current = loadingCalendars;
+    calendarsRef.current = calendars;
+    loadingContactsRef.current = loadingContacts;
+    contactsRef.current = contacts;
+  }, [loadingPaths, directoryContents, loadingCalendars, calendars, loadingContacts, contacts]);
 
   // Job type: a third mode (e.g. 'backup') can be added later as a third
   // segmented-control column without restructuring the settings strip.
@@ -522,7 +532,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const fetchCalendars = useCallback(
     async (force?: boolean) => {
-      if (!force && (calendars.length > 0 || loadingCalendars)) return;
+      if (isEditMode) return;
+      if (!force && (calendarsRef.current.length > 0 || loadingCalendarsRef.current)) return;
       setLoadingCalendars(true);
       try {
         const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
@@ -571,8 +582,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     [
       apiUrl,
       credentials,
-      calendars.length,
-      loadingCalendars,
+      isEditMode,
       t,
       token,
       translateApiError,
@@ -581,7 +591,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const fetchContacts = useCallback(
     async (force?: boolean) => {
-      if (!force && (contacts.length > 0 || loadingContacts)) return;
+      if (isEditMode) return;
+      if (!force && (contactsRef.current.length > 0 || loadingContactsRef.current)) return;
       setLoadingContacts(true);
       try {
         const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
@@ -630,8 +641,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     [
       apiUrl,
       credentials,
-      contacts.length,
-      loadingContacts,
+      isEditMode,
       t,
       token,
       translateApiError,
@@ -645,20 +655,23 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   }, [activeTab, supportsCalendars, supportsContacts]);
 
   useEffect(() => {
+    if (isEditMode) return;
     const timer = setTimeout(() => {
-      if (supportsCalendars) {
+      if (supportsCalendars && !hasFetchedCalendarsRef.current) {
+        hasFetchedCalendarsRef.current = true;
         void fetchCalendars();
-      } else {
+      } else if (!supportsCalendars) {
         setSelectedCalendars({});
       }
-      if (supportsContacts) {
+      if (supportsContacts && !hasFetchedContactsRef.current) {
+        hasFetchedContactsRef.current = true;
         void fetchContacts();
-      } else {
+      } else if (!supportsContacts) {
         setSelectedContacts({});
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [supportsCalendars, supportsContacts, fetchCalendars, fetchContacts]);
+  }, [supportsCalendars, supportsContacts, fetchCalendars, fetchContacts, isEditMode]);
 
   const handleTabChange = (tab: "files" | "calendars" | "contacts") => {
     setActiveTab(tab);
