@@ -21,8 +21,9 @@ desktop.ini
 *.sw?
 
 # Agent-specific files
-.kilo/*
-.agents/*
+.kilo/
+.agent/
+openspec/
 
 # Ignore backend build binaries
 backend/bin/
