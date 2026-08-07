@@ -24,7 +24,7 @@ interface ProviderIconProps {
 
 export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className = 'w-6 h-6' }) => {
   const p = provider.toLowerCase();
-  const iconCls = `${className} text-[#52525b]`;
+  const iconCls = `${className} text-[var(--color-text-secondary)]`;
 
   switch (p) {
     case 'nextcloud':
