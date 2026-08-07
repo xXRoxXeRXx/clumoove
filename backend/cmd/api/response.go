@@ -279,15 +279,25 @@ func (s *APIServer) getRedirectURI(r *http.Request) string {
 }
 
 // requestScheme returns the externally visible scheme for the request. TLS
-// termination at a reverse proxy is reported via X-Forwarded-Proto; honoring it
-// for the scheme (only) is safe because the host is resolved separately and
-// gated behind TRUSTED_PROXY, so a spoofed header cannot redirect to an
-// attacker-controlled host.
+// termination at a reverse proxy is reported via X-Forwarded-Proto. When a
+// trusted proxy sits in front of the API it is the TLS endpoint, so the public
+// scheme is https unless X-Forwarded-Proto explicitly says otherwise. Honoring
+// the header for the scheme (only) is safe because the host is resolved
+// separately and gated behind TRUSTED_PROXY, so a spoofed header cannot redirect
+// to an attacker-controlled host.
 func (s *APIServer) requestScheme(r *http.Request) string {
 	if r.TLS != nil {
 		return "https"
 	}
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+		if strings.EqualFold(proto, "https") {
+			return "https"
+		}
+		if strings.EqualFold(proto, "http") {
+			return "http"
+		}
+	}
+	if s.trustedProxy {
 		return "https"
 	}
 	return "http"
