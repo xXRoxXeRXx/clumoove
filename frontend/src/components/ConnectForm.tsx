@@ -697,15 +697,12 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               </div>
 
               <div className="md:col-span-6 space-y-5 text-xs text-left">
-                <div className="flex items-center justify-between gap-3 pb-3 border-b border-[var(--color-border-light)]">
-                  <div className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider font-mono">
-                    {t('connect.configuration')}
-                  </div>
+                <div className="flex justify-end">
                   <button
                     type="button"
                     onClick={() => verifyAndAdvance()}
                     disabled={loading}
-                    className="ui-button-primary flex items-center justify-center gap-2 px-4 py-2 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="ui-button-primary flex items-center justify-center gap-2 px-5 py-2.5 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {loading ? (
                       <>
@@ -1246,6 +1243,25 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
               </div>
 
               <div className="md:col-span-6 space-y-5 text-xs text-left">
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="ui-button-primary flex items-center justify-center gap-2 px-5 py-2.5 font-mono text-xs font-bold uppercase tracking-wider hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>{t('connect.testing')}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{t('connect.connectInstances')}</span>
+                        <ArrowRight className="w-3.5 h-3.5 stroke-[2.5]" />
+                      </>
+                    )}
+                  </button>
+                </div>
 
                 {targetProfileId ? (
                   <div className="space-y-4 pt-2">
