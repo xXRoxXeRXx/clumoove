@@ -5,6 +5,26 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-07
+
+### Added
+- **Editable Sync Jobs**: Added support for editing schedule, selected paths, and target configurations for existing continuous synchronization jobs.
+- **Bulk Delete for Transfers & Sync Jobs**: Added multi-select bulk deletion capability for migrations and continuous sync jobs in the Web UI.
+- **Missing Path Resilience for Sync Jobs**: Optimized continuous sync root path selection and added graceful handling for missing source paths across storage providers.
+
+### Improved & Security Hardened
+- **Admin-Managed OAuth Credentials**: Replaced static environment variable OAuth credentials (`*_CLIENT_ID` / `*_CLIENT_SECRET`) with AES-256-GCM encrypted database storage in `instance_oauth_providers`, configurable via the Admin UI.
+- **Dynamic & Secure OAuth Redirect URIs**: OAuth redirect URIs are derived dynamically from request context and `X-Forwarded-Proto`, defaulting securely to HTTPS behind trusted proxies.
+- **File Timestamp Preservation**: Preserved source file modification timestamps (`mtime`) across supporting target storage providers.
+- **Bounded Worker Lock Memory**: Replaced unbounded map growth in processor locks with reference-counted keyed mutexes to reduce worker memory overhead.
+
+### Fixed
+- **WebDAV System Conflicts**: Improved WebDAV status 400 handling and conflict resolution during streaming file transfers.
+- **Immich Integration**: Streamlined Immich targets to library-only mode and silently skipped non-media files during migration indexing.
+- **Sync Browse Credentials**: Fixed deferred password zeroing in `handleBrowseSyncJob` to prevent authorization errors during sync target browsing.
+- **UI & Modal Stabilization**: Fixed infinite re-render loops in sync edit mode, restored file tree modal UI parity, and surfaced connection/browse error messages in `FileBrowser`.
+- **Linux Build Compatibility**: Replaced platform-specific syscalls with `UtimesNanoAt` for clean Linux cross-compilation.
+
 ## [0.11.0] - 2026-08-05
 
 ### Added
