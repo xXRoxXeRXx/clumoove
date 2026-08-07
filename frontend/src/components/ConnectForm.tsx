@@ -8,6 +8,7 @@ import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { apiFetch } from '../utils/apiClient';
 import { ProfileSelect } from './connect/ProfileSelect';
 import { SaveProfileRow } from './connect/SaveProfileRow';
+import { ProviderSelector } from './connect/ProviderSelector';
 import { buildFtpUrl, type FtpTlsMode } from '../utils/providerUrls';
 
 type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
@@ -669,60 +670,53 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
           {/* Source Host Card */}
           {subStep === 1 && (
-          <fieldset key={sourceProvider} className="ui-card ui-view-enter m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
+          <fieldset key={sourceProvider} className="ui-card ui-view-enter m-0 min-h-[300px] w-full p-6">
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
-            
-            <div className="space-y-5 text-xs text-left">
-              <ProfileSelect
-                idPrefix="source"
-                profiles={profiles}
-                selectedId={sourceProfileId}
-                onSelect={(id) => applyProfile('source', id)}
-                onClear={() => { setSourceProfileId(''); setSourceSaveProfile(false); setSourceProfileName(''); }}
-              />
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              <div className="md:col-span-4">
+                <ProviderSelector
+                  providers={providerOptions}
+                  selectedProvider={sourceProvider}
+                  onSelectProvider={(val) => {
+                    handleSourceProviderSelect(val);
+                    setSourceProfileId('');
+                    setSourceSaveProfile(false);
+                    setSourceProfileName('');
+                  }}
+                  label={t('connect.sourceProvider')}
+                />
+              </div>
 
-              {sourceProfileId ? (
-                <div className="space-y-4 pt-2">
-                  <div className="ui-alert ui-alert-success p-4.5 space-y-3">
-                    <div className="flex items-center">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">
-                        {getProfile(sourceProfileId)?.provider.toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-display font-bold text-sm text-[var(--color-text-primary)]">
-                        {getProfile(sourceProfileId)?.name}
-                      </p>
-                      <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
-                        {t('settings.connections.usingProfile', { name: getProfile(sourceProfileId)?.name })}
-                      </p>
+              <div className="md:col-span-8 space-y-5 text-xs text-left">
+                <ProfileSelect
+                  idPrefix="source"
+                  profiles={profiles}
+                  selectedId={sourceProfileId}
+                  onSelect={(id) => applyProfile('source', id)}
+                  onClear={() => { setSourceProfileId(''); setSourceSaveProfile(false); setSourceProfileName(''); }}
+                />
+
+                {sourceProfileId ? (
+                  <div className="space-y-4 pt-2">
+                    <div className="ui-alert ui-alert-success p-4.5 space-y-3">
+                      <div className="flex items-center">
+                        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">
+                          {getProfile(sourceProfileId)?.provider.toUpperCase()}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="font-display font-bold text-sm text-[var(--color-text-primary)]">
+                          {getProfile(sourceProfileId)?.name}
+                        </p>
+                        <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
+                          {t('settings.connections.usingProfile', { name: getProfile(sourceProfileId)?.name })}
+                        </p>
+                      </div>
                     </div>
                   </div>
-
-                </div>
-              ) : (
-              <>
-                <div id="source-provider-label" className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider font-mono mb-2">{t('connect.sourceProvider')}</div>
-                
-                {/* Visual Provider Pills */}
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-labelledby="source-provider-label">
-                  {providerOptions.map(opt => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => handleSourceProviderSelect(opt.id)}
-                      aria-pressed={sourceProvider === opt.id}
-                      className={`min-h-10 px-2 py-2 text-xs font-bold font-mono cursor-pointer ${
-                        sourceProvider === opt.id
-                          ? 'ui-button-primary text-[var(--color-text-inverse)]'
-                          : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
-                      }`}
-                    >
-                      {opt.name}
-                    </button>
-                  ))}
-                </div>
+                ) : (
+                <>
 
               {sourceProvider === 'smb' ? (
                 <>
@@ -1187,64 +1181,59 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 />
               )}
             </div>
-          </fieldset>
-          )}
+          </div>
+        </fieldset>
+        )}
 
            {/* Target Host Card */}
            {subStep === 2 && (
-          <fieldset key={targetProvider} className="ui-card ui-view-enter m-0 min-h-[300px] w-full p-6 md:w-1/2 mx-auto">
+          <fieldset key={targetProvider} className="ui-card ui-view-enter m-0 min-h-[300px] w-full p-6">
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
-            
-            <div className="space-y-5 text-xs text-left">
-              <ProfileSelect
-                idPrefix="target"
-                profiles={profiles}
-                selectedId={targetProfileId}
-                onSelect={(id) => applyProfile('target', id)}
-                onClear={() => { setTargetProfileId(''); setTargetSaveProfile(false); setTargetProfileName(''); }}
-              />
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+              <div className="md:col-span-4">
+                <ProviderSelector
+                  providers={providerOptions}
+                  selectedProvider={targetProvider}
+                  onSelectProvider={(val) => {
+                    handleTargetProviderSelect(val);
+                    setTargetProfileId('');
+                    setTargetSaveProfile(false);
+                    setTargetProfileName('');
+                  }}
+                  label={t('connect.targetProvider')}
+                />
+              </div>
 
-              {targetProfileId ? (
-                <div className="space-y-4 pt-2">
-                  <div className="ui-alert ui-alert-success p-4.5 space-y-3">
-                    <div className="flex items-center">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">
-                        {getProfile(targetProfileId)?.provider.toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-display font-bold text-sm text-[var(--color-text-primary)]">
-                        {getProfile(targetProfileId)?.name}
-                      </p>
-                      <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
-                        {t('settings.connections.usingProfile', { name: getProfile(targetProfileId)?.name })}
-                      </p>
+              <div className="md:col-span-8 space-y-5 text-xs text-left">
+                <ProfileSelect
+                  idPrefix="target"
+                  profiles={profiles}
+                  selectedId={targetProfileId}
+                  onSelect={(id) => applyProfile('target', id)}
+                  onClear={() => { setTargetProfileId(''); setTargetSaveProfile(false); setTargetProfileName(''); }}
+                />
+
+                {targetProfileId ? (
+                  <div className="space-y-4 pt-2">
+                    <div className="ui-alert ui-alert-success p-4.5 space-y-3">
+                      <div className="flex items-center">
+                        <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[var(--color-success-text)] bg-[var(--color-success-bg)] px-2.5 py-1 rounded-full border border-[var(--color-success-border)] flex items-center gap-1.5">
+                          {getProfile(targetProfileId)?.provider.toUpperCase()}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="font-display font-bold text-sm text-[var(--color-text-primary)]">
+                          {getProfile(targetProfileId)?.name}
+                        </p>
+                        <p className="text-xs text-[var(--color-text-muted)] font-sans mt-0.5">
+                          {t('settings.connections.usingProfile', { name: getProfile(targetProfileId)?.name })}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-              <>
-                <div id="target-provider-label" className="block text-xs font-bold text-[var(--color-text-muted)] uppercase tracking-wider font-mono mb-2">{t('connect.targetProvider')}</div>
-                
-                {/* Visual Provider Pills */}
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="group" aria-labelledby="target-provider-label">
-                  {providerOptions.map(opt => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => handleTargetProviderSelect(opt.id)}
-                      aria-pressed={targetProvider === opt.id}
-                      className={`min-h-10 px-2 py-2 text-xs font-bold font-mono cursor-pointer ${
-                        targetProvider === opt.id
-                          ? 'ui-button-primary text-[var(--color-text-inverse)]'
-                          : 'ui-button-secondary text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)] hover:text-[var(--color-text-primary)]'
-                      }`}
-                    >
-                      {opt.name}
-                    </button>
-                  ))}
-                </div>
+                ) : (
+                <>
 
               {targetProvider === 'smb' ? (
                 <>
@@ -1709,8 +1698,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 />
               )}
             </div>
-          </fieldset>
-          )}
+          </div>
+        </fieldset>
+        )}
 
         {/* Helpful Info Guide Box */}
         {showHelp && (

@@ -22,6 +22,8 @@ import {
   type FtpTlsMode,
 } from '../utils/providerUrls';
 import { ProviderFields } from './connect/ProviderFields';
+import { ProviderIcon } from './connect/ProviderIcon';
+import { ProviderSelector } from './connect/ProviderSelector';
 import { isOAuthProvider } from '../types';
 
 export interface ConnectionManagerProps {
@@ -197,6 +199,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
+                      <ProviderIcon provider={p.provider} className="w-5 h-5 shrink-0" />
                       <span className="font-display font-semibold text-sm text-[var(--color-text-primary)] truncate">{p.name}</span>
                       <span className="text-[9px] font-mono font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] text-[var(--color-text-secondary)]">
                         {provName}
@@ -401,7 +404,6 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const nameId = useId();
-  const providerId = useId();
 
   const fieldIds = useMemo(() => ({
     urlId: 'profile-editor-url',
@@ -589,7 +591,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
   return (
     <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-lg rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
           <h3 id={titleId} className="font-display font-semibold text-sm text-[var(--color-text-primary)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
@@ -600,77 +602,81 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         </div>
 
         <form onSubmit={handleSave} className="space-y-4">
-          <div className="space-y-1.5">
-            <label htmlFor={nameId} className={labelCls}>{t('settings.connections.nameLabel')}</label>
-            <input id={nameId} type="text" required value={form.name} onChange={(e) => updateField('name', e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />
-          </div>
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+            <div className="md:col-span-5 border-r-0 md:border-r border-[var(--color-border-light)] md:pr-4">
+              <ProviderSelector
+                providers={providerOptions}
+                selectedProvider={form.provider}
+                onSelectProvider={(val) => {
+                  if (!editing) {
+                    handleProviderSelect(val as ProviderId);
+                  }
+                }}
+                label={t('settings.connections.providerLabel')}
+              />
+            </div>
 
-          <div className="space-y-1.5">
-            <label htmlFor={providerId} className={labelCls}>{t('settings.connections.providerLabel')}</label>
-            <select
-              id={providerId}
-              value={form.provider}
-              disabled={!!editing}
-              onChange={(e) => handleProviderSelect(e.target.value as ProviderId)}
-              className={inputCls}
-            >
-              {providerOptions.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
-          </div>
+            <div className="md:col-span-7 space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor={nameId} className={labelCls}>{t('settings.connections.nameLabel')}</label>
+                <input id={nameId} type="text" required value={form.name} onChange={(e) => updateField('name', e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />
+              </div>
 
-          <ProviderFields
-            provider={form.provider}
-            editing={!!editing}
-            oauthUser={form.oauthUser}
-            oauthRefreshToken={form.oauthRefreshToken}
-            onOpenOAuthPopup={openOAuthPopup}
-            onDisconnectOAuth={() => { updateField('oauthRefreshToken', ''); updateField('oauthUser', ''); }}
-            url={form.url}
-            onUrlChange={(v) => updateField('url', v)}
-            username={form.username}
-            onUsernameChange={(v) => updateField('username', v)}
-            password={form.password}
-            onPasswordChange={(v) => updateField('password', v)}
-            smbHost={form.smbHost}
-            onSmbHostChange={(v) => updateField('smbHost', v)}
-            smbPort={form.smbPort}
-            onSmbPortChange={(v) => updateField('smbPort', v)}
-            smbShare={form.smbShare}
-            onSmbShareChange={(v) => updateField('smbShare', v)}
-            smbDomain={form.smbDomain}
-            onSmbDomainChange={(v) => updateField('smbDomain', v)}
-            s3Bucket={form.s3Bucket}
-            onS3BucketChange={(v) => updateField('s3Bucket', v)}
-            s3Region={form.s3Region}
-            onS3RegionChange={(v) => updateField('s3Region', v)}
-            s3Endpoint={form.s3Endpoint}
-            onS3EndpointChange={(v) => updateField('s3Endpoint', v)}
-            s3Insecure={form.s3Insecure}
-            onS3InsecureChange={(v) => updateField('s3Insecure', v)}
-            sftpHost={form.sftpHost}
-            onSftpHostChange={(v) => updateField('sftpHost', v)}
-            sftpPort={form.sftpPort}
-            onSftpPortChange={(v) => updateField('sftpPort', v)}
-            sftpHostKey={form.sftpHostKey}
-            onSftpHostKeyChange={(v) => updateField('sftpHostKey', v)}
-            sftpAuthMode={form.sftpAuthMode}
-            onSftpAuthModeChange={(v) => updateField('sftpAuthMode', v)}
-            sftpPrivateKey={form.sftpPrivateKey}
-            onSftpPrivateKeyChange={(v) => updateField('sftpPrivateKey', v)}
-            ftpHost={form.ftpHost}
-            onFtpHostChange={(v) => updateField('ftpHost', v)}
-            ftpPort={form.ftpPort}
-            onFtpPortChange={(v) => updateField('ftpPort', v)}
-            ftpTlsMode={form.ftpTlsMode}
-            onFtpTlsModeChange={(v) => updateField('ftpTlsMode', v)}
-            ids={fieldIds}
-          />
+              <ProviderFields
+                provider={form.provider}
+                editing={!!editing}
+                oauthUser={form.oauthUser}
+                oauthRefreshToken={form.oauthRefreshToken}
+                onOpenOAuthPopup={openOAuthPopup}
+                onDisconnectOAuth={() => { updateField('oauthRefreshToken', ''); updateField('oauthUser', ''); }}
+                url={form.url}
+                onUrlChange={(v) => updateField('url', v)}
+                username={form.username}
+                onUsernameChange={(v) => updateField('username', v)}
+                password={form.password}
+                onPasswordChange={(v) => updateField('password', v)}
+                smbHost={form.smbHost}
+                onSmbHostChange={(v) => updateField('smbHost', v)}
+                smbPort={form.smbPort}
+                onSmbPortChange={(v) => updateField('smbPort', v)}
+                smbShare={form.smbShare}
+                onSmbShareChange={(v) => updateField('smbShare', v)}
+                smbDomain={form.smbDomain}
+                onSmbDomainChange={(v) => updateField('smbDomain', v)}
+                s3Bucket={form.s3Bucket}
+                onS3BucketChange={(v) => updateField('s3Bucket', v)}
+                s3Region={form.s3Region}
+                onS3RegionChange={(v) => updateField('s3Region', v)}
+                s3Endpoint={form.s3Endpoint}
+                onS3EndpointChange={(v) => updateField('s3Endpoint', v)}
+                s3Insecure={form.s3Insecure}
+                onS3InsecureChange={(v) => updateField('s3Insecure', v)}
+                sftpHost={form.sftpHost}
+                onSftpHostChange={(v) => updateField('sftpHost', v)}
+                sftpPort={form.sftpPort}
+                onSftpPortChange={(v) => updateField('sftpPort', v)}
+                sftpHostKey={form.sftpHostKey}
+                onSftpHostKeyChange={(v) => updateField('sftpHostKey', v)}
+                sftpAuthMode={form.sftpAuthMode}
+                onSftpAuthModeChange={(v) => updateField('sftpAuthMode', v)}
+                sftpPrivateKey={form.sftpPrivateKey}
+                onSftpPrivateKeyChange={(v) => updateField('sftpPrivateKey', v)}
+                ftpHost={form.ftpHost}
+                onFtpHostChange={(v) => updateField('ftpHost', v)}
+                ftpPort={form.ftpPort}
+                onFtpPortChange={(v) => updateField('ftpPort', v)}
+                ftpTlsMode={form.ftpTlsMode}
+                onFtpTlsModeChange={(v) => updateField('ftpTlsMode', v)}
+                ids={fieldIds}
+              />
 
-          <div className="flex gap-2 pt-2">
-            <button type="submit" disabled={saving} className={`flex-1 ${primaryBtnCls}`}>
-              {saving ? t('settings.saving') : (editing ? t('settings.connections.edit') : t('settings.connections.saveProfile'))}
-            </button>
-            <button type="button" onClick={onClose} disabled={saving} className={secondaryBtnCls}>{t('common.cancel')}</button>
+              <div className="flex gap-2 pt-4">
+                <button type="submit" disabled={saving} className={`flex-1 ${primaryBtnCls}`}>
+                  {saving ? t('settings.saving') : (editing ? t('settings.connections.edit') : t('settings.connections.saveProfile'))}
+                </button>
+                <button type="button" onClick={onClose} disabled={saving} className={secondaryBtnCls}>{t('common.cancel')}</button>
+              </div>
+            </div>
           </div>
         </form>
       </div>
