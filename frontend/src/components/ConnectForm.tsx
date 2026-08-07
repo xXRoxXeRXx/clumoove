@@ -674,7 +674,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             <legend className="sr-only">{t('connect.sourceTitle')}</legend>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-              <div className="md:col-span-5 border-r-0 md:border-r border-[var(--color-border-light)] md:pr-6 space-y-5">
+              <div className="md:col-span-6 border-r-0 md:border-r border-[var(--color-border-light)] md:pr-6 space-y-5">
                 <ProfileSelect
                   idPrefix="source"
                   profiles={profiles}
@@ -696,7 +696,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 />
               </div>
 
-              <div className="md:col-span-7 space-y-5 text-xs text-left">
+              <div className="md:col-span-6 space-y-5 text-xs text-left">
 
                 {sourceProfileId ? (
                   <div className="space-y-4 pt-2">
@@ -1192,7 +1192,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
             <legend className="sr-only">{t('connect.targetTitle')}</legend>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-              <div className="md:col-span-5 border-r-0 md:border-r border-[var(--color-border-light)] md:pr-6 space-y-5">
+              <div className="md:col-span-6 border-r-0 md:border-r border-[var(--color-border-light)] md:pr-6 space-y-5">
                 <ProfileSelect
                   idPrefix="target"
                   profiles={profiles}
@@ -1214,7 +1214,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 />
               </div>
 
-              <div className="md:col-span-7 space-y-5 text-xs text-left">
+              <div className="md:col-span-6 space-y-5 text-xs text-left">
 
                 {targetProfileId ? (
                   <div className="space-y-4 pt-2">

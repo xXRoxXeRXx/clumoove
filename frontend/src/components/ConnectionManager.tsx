@@ -603,7 +603,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-            <div className="md:col-span-5 border-r-0 md:border-r border-[var(--color-border-light)] md:pr-4">
+            <div className="md:col-span-6 border-r-0 md:border-r border-[var(--color-border-light)] md:pr-4">
               <ProviderSelector
                 providers={providerOptions}
                 selectedProvider={form.provider}
@@ -616,7 +616,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
               />
             </div>
 
-            <div className="md:col-span-7 space-y-4">
+            <div className="md:col-span-6 space-y-4">
               <div className="space-y-1.5">
                 <label htmlFor={nameId} className={labelCls}>{t('settings.connections.nameLabel')}</label>
                 <input id={nameId} type="text" required value={form.name} onChange={(e) => updateField('name', e.target.value)} className={inputCls} placeholder={t('connect.profileNamePlaceholder')} />

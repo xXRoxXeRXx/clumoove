@@ -20,7 +20,7 @@ export function ProviderSelector<T extends string = string>({
           {label}
         </div>
       )}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-2.5">
         {providers.map((p) => {
           const isSelected = selectedProvider === p.id;
           return (
