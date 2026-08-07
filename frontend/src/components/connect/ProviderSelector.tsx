@@ -20,7 +20,7 @@ export function ProviderSelector<T extends string = string>({
           {label}
         </div>
       )}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:flex md:flex-col gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
         {providers.map((p) => {
           const isSelected = selectedProvider === p.id;
           return (
@@ -29,22 +29,22 @@ export function ProviderSelector<T extends string = string>({
               type="button"
               onClick={() => onSelectProvider(p.id)}
               aria-pressed={isSelected}
-              className={`flex items-center gap-3 p-2.5 text-left rounded-lg transition-all duration-150 cursor-pointer border ${
+              className={`group flex items-center gap-2 p-2.5 text-left rounded-lg transition-all duration-150 cursor-pointer border ${
                 isSelected
-                  ? 'bg-[var(--color-bg-tertiary)] border-[var(--color-text-primary)] ring-2 ring-[var(--color-text-primary)]/20 shadow-sm'
-                  : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/70 hover:border-[var(--color-border-light)]'
+                  ? 'bg-[var(--color-bg-primary)] border-[var(--color-text-primary)] ring-2 ring-[var(--color-text-primary)]/20 shadow-sm'
+                  : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/80 hover:border-[var(--color-border-light)]'
               }`}
             >
               <div
-                className={`p-1.5 rounded-md shrink-0 transition-colors ${
-                  isSelected ? 'bg-[var(--color-bg-primary)] shadow-xs' : 'bg-[var(--color-bg-tertiary)]'
+                className={`p-1.5 rounded-md shrink-0 transition-transform duration-150 group-hover:scale-105 ${
+                  isSelected ? 'bg-[var(--color-bg-tertiary)]' : 'bg-[var(--color-bg-tertiary)]/60'
                 }`}
               >
                 <ProviderIcon provider={p.id} className="w-5 h-5" />
               </div>
               <span
-                className={`text-xs font-medium truncate ${
-                  isSelected ? 'text-[var(--color-text-primary)] font-semibold' : 'text-[var(--color-text-secondary)]'
+                className={`text-xs truncate ${
+                  isSelected ? 'text-[var(--color-text-primary)] font-bold' : 'text-[var(--color-text-secondary)] group-hover:text-[var(--color-text-primary)]'
                 }`}
               >
                 {p.name}
