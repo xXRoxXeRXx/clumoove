@@ -5,6 +5,7 @@ import { useFormat, formatBytes, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
+import { Badge, StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
@@ -366,6 +367,11 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             )}
           </>
         } />
+
+        <div className="flex items-center gap-2.5">
+          <StatusBadge status={job.status} />
+          <Badge variant="muted" label={job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')} />
+        </div>
 
         {/* Live Transfer Progress (only shown while a run is active) */}
         {(job.status === 'RUNNING' || job.status === 'INDEXING') && <TransferProgress progress={byteProgressPercent} rate={`${formatBytes(speed)}/s`} transferred={totalBytes > 0 ? `${formatBytes(effectiveBytesDisplay)} / ${formatBytes(totalBytes)}` : `${job.processed_files} / ${job.total_files}`} remaining={eta} labels={{ progress: t('dashboard.progress'), transferRate: t('dashboard.transferRate'), transferred: t('dashboard.transferred'), remaining: t('dashboard.remaining') }} />}

@@ -1348,49 +1348,38 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
       </div>
 
-      {/* Main Settings Card */}
-      <div className="ui-card flex flex-col p-0 overflow-hidden">
-        {/* Settings header */}
-        <div className="p-5 sm:p-6 border-b border-[var(--color-border-light)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[var(--color-bg-tertiary)]/50">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] flex items-center justify-center font-extrabold text-sm shadow-xs font-mono shrink-0">
-              ⚙
-            </div>
-            <div>
-              <h2 className="font-display font-extrabold text-lg text-[var(--color-text-primary)] tracking-tight">
-                {t("fileBrowser.config")}
-              </h2>
-              {!isEditMode && !hasImmichEndpoint ? (
-                <div className="flex gap-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => setJobType("migration")}
-                    className={`text-xs font-mono font-bold px-2 py-0.5 rounded cursor-pointer ${
-                      effectiveJobType === "migration"
-                        ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]"
-                        : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]"
-                    }`}
-                  >
-                    {t("sync.modeMigration")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setJobType("sync")}
-                    className={`text-xs font-mono font-bold px-2 py-0.5 rounded cursor-pointer ${
-                      effectiveJobType === "sync"
-                        ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]"
-                        : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]"
-                    }`}
-                  >
-                    {t("sync.modeSync")}
-                  </button>
-                </div>
-              ) : (
-                <p className="text-xs text-[var(--color-text-muted)] mt-0.5 uppercase tracking-wider font-mono">
-                  {effectiveJobType === "sync"
-                    ? t("sync.modeSync")
-                    : t("sync.modeMigration")}
-                </p>
+      {/* Settings Strip — full width, backup-ready 3-mode layout */}
+      <div className="ui-card">
+        {/* Mode selector (left) + start button (right) */}
+        <div className="flex flex-col justify-between gap-3 border-b border-[var(--color-border-light)] px-5 py-3 sm:flex-row sm:items-center sm:px-6">
+          {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
+          <div className="w-full text-xs sm:w-auto">
+            <div className="flex border-b border-[var(--color-border-light)]">
+              <button
+                type="button"
+                onClick={() => setJobType("migration")}
+                disabled={isEditMode}
+                className={`px-3 py-2 text-sm font-medium transition-colors ${
+                  effectiveJobType === "migration"
+                    ? "border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                }`}
+              >
+                {t("sync.modeMigration")}
+              </button>
+              {!hasImmichEndpoint && (
+                <button
+                  type="button"
+                  onClick={() => setJobType("sync")}
+                  disabled={isEditMode}
+                  className={`px-3 py-2 text-sm font-medium transition-colors ${
+                    effectiveJobType === "sync"
+                      ? "border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  }`}
+                >
+                  {t("sync.modeSync")}
+                </button>
               )}
             </div>
           </div>
@@ -1409,7 +1398,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : (
               <>
                 <Play className="w-4 h-4 fill-current stroke-[2.5]" />
-                <span>{isEditMode ? t("sync.saveChanges") : t("fileBrowser.startTransfer")}</span>
+                <span>
+                  {isEditMode
+                    ? t("sync.saveChanges")
+                    : t("fileBrowser.startTransfer")}
+                </span>
               </>
             )}
           </button>
