@@ -20,7 +20,7 @@ export function ProviderSelector<T extends string = string>({
           {label}
         </div>
       )}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+      <div className="grid grid-cols-2 gap-3">
         {providers.map((p) => {
           const isSelected = selectedProvider === p.id;
           return (
@@ -29,22 +29,18 @@ export function ProviderSelector<T extends string = string>({
               type="button"
               onClick={() => onSelectProvider(p.id)}
               aria-pressed={isSelected}
-              className={`group flex items-center gap-2 p-2.5 text-left rounded-lg transition-all duration-150 cursor-pointer border ${
+              className={`flex flex-col items-center justify-center text-center gap-2 p-3.5 rounded-xl border-2 transition-all cursor-pointer ${
                 isSelected
-                  ? 'bg-[var(--color-bg-primary)] border-[var(--color-text-primary)] ring-2 ring-[var(--color-text-primary)]/20 shadow-sm'
-                  : 'bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/80 hover:border-[var(--color-border-light)]'
+                  ? 'border-[var(--color-text-primary)] bg-[var(--color-bg-tertiary)] shadow-sm'
+                  : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
               }`}
             >
-              <div
-                className={`p-1.5 rounded-md shrink-0 transition-transform duration-150 group-hover:scale-105 ${
-                  isSelected ? 'bg-[var(--color-bg-tertiary)]' : 'bg-[var(--color-bg-tertiary)]/60'
-                }`}
-              >
-                <ProviderIcon provider={p.id} className="w-5 h-5" />
+              <div className="p-1 rounded-md">
+                <ProviderIcon provider={p.id} className="w-6 h-6" />
               </div>
               <span
-                className={`text-xs truncate ${
-                  isSelected ? 'text-[var(--color-text-primary)] font-bold' : 'text-[var(--color-text-secondary)] group-hover:text-[var(--color-text-primary)]'
+                className={`text-xs font-bold font-mono truncate max-w-full ${
+                  isSelected ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'
                 }`}
               >
                 {p.name}
