@@ -1069,15 +1069,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                 </>
-              ) : sourceProvider === 'nextcloud' || sourceProvider === 'webdav' ? (
+              ) : sourceProvider === 'nextcloud' || sourceProvider === 'opencloud' || sourceProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                      {sourceProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
+                      {sourceProvider === 'opencloud' ? t('connect.opencloudUrl') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
                       type="url"
-                      placeholder={sourceProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
+                      placeholder={sourceProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
                       className={formInputClass}
@@ -1606,15 +1606,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                 </>
-              ) : targetProvider === 'nextcloud' || targetProvider === 'webdav' ? (
+              ) : targetProvider === 'nextcloud' || targetProvider === 'opencloud' || targetProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                      {targetProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
+                      {targetProvider === 'opencloud' ? t('connect.opencloudUrl') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
                       type="url"
-                      placeholder={targetProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
+                      placeholder={targetProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={targetUrl}
                       onChange={(e) => setTargetUrl(e.target.value)}
                       className={formInputClass}
