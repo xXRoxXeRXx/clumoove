@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, CheckCircleIcon as CheckCircle2, ExclamationCircleIcon as AlertCircle, QuestionMarkCircleIcon as HelpCircle } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
-import { isOAuthProvider, type CloudFile, type MigrationConfig } from '../types';
+import { isOAuthProvider, type CloudFile, type MigrationConfig, type ProviderId } from '../types';
 
 import { useApiError } from '../utils/apiError';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
@@ -21,8 +21,6 @@ interface ConnectFormProps {
   oauthProviders?: Record<string, boolean>;
   onBack?: () => void;
 }
-
-type ProviderId = 'nextcloud' | 'dropbox' | 'webdav' | 'magentacloud' | 'google' | 'onedrive' | 'hidrive' | 'smb' | 's3' | 'sftp' | 'ftp' | 'local' | 'immich';
 
 const sftpHostKeyFingerprintPattern = /^SHA256:[A-Za-z0-9+/]{43}$/;
 
@@ -632,6 +630,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
   const providerOptions: { id: ProviderId; name: string }[] = [
     { id: 'nextcloud', name: 'Nextcloud' },
+    { id: 'opencloud', name: 'OpenCloud' },
     { id: 'webdav', name: 'WebDAV' },
     { id: 'magentacloud', name: 'MagentaCLOUD' },
     { id: 'smb', name: 'SMB/CIFS' },

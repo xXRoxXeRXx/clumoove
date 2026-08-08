@@ -68,6 +68,22 @@ time, description, tags, etc.) after a successful upload.
 
 - `CloudResource` — `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
 - `FileMetadata` — `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
+
+Optional capability interface:
+
+```go
+type MetadataApplier interface {
+    ApplyMetadata(ctx, resourceType, filePath string, meta FileMetadata) error
+}
+```
+
+When a target client implements `MetadataApplier`, the processor applies file metadata (modification
+time, description, tags, etc.) after a successful upload.
+
+### Supporting types
+
+- `CloudResource` — `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
+- `FileMetadata` — `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
 - `ErrAuth` — sentinel returned (wrapped) on HTTP 401 so the processor can detect auth failures via
   `errors.Is`.
 - `ErrDuplicateUID` — SabreDAV duplicate UID (calendars); treated as `SKIP`.
@@ -79,6 +95,7 @@ time, description, tags, etc.) after a successful upload.
 | Provider | File (`storage/*.go`) | Protocol | Auth | Resource types |
 | :------- | :-------------------- | :------- | :--- | :------------- |
 | `nextcloud` | `nextcloud.go` | WebDAV + OC extensions | user/pass | files, calendars (CalDAV), contacts (CardDAV) |
+| `opencloud` | `opencloud.go` | WebDAV (`dav/spaces/`) + TUS 1.0.0 | user/pass or Bearer token | files only |
 | `magentacloud` | `magentacloud.go` | WebDAV (fixed endpoint `https://magentacloud.de/remote.php/webdav`) | user/pass | files only |
 | `webdav` | `webdav.go` (+ `propfind.go`) | generic WebDAV | user/pass | files |
 | `dropbox` | `dropbox.go` | Dropbox API v2 | OAuth2 (access token in `password` field) | files |
@@ -101,7 +118,7 @@ time, description, tags, etc.) after a successful upload.
 | OneDrive | `cryptographic_hash` | QuickXor |
 | HiDrive | `cryptographic_hash` | HiDrive `chash` |
 | Local | `cryptographic_hash` | SHA-256 |
-| Nextcloud, MagentaCLOUD, WebDAV | `size_only` | ETags are not integrity evidence |
+| Nextcloud, OpenCloud, MagentaCLOUD, WebDAV | `size_only` | ETags are not integrity evidence (OpenCloud parses dynamic `oc:checksums` header when provided) |
 | S3 | `size_only` | Multipart ETags are not comparable hashes |
 | SMB, SFTP, FTPS | `size_only` | No portable target-hash API |
 | Immich | `cryptographic_hash` | Asset `checksum` (Base64 SHA-1, normalized to `SHA1:<lowercase-hex>`) |

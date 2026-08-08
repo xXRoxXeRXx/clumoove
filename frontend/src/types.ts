@@ -10,6 +10,7 @@ export interface CloudFile {
 
 export type Provider =
   | 'nextcloud'
+  | 'opencloud'
   | 'dropbox'
   | 'webdav'
   | 'magentacloud'
@@ -22,6 +23,8 @@ export type Provider =
   | 'ftp'
   | 'local'
   | 'immich';
+
+export type ProviderId = Provider;
 
 export const OAUTH_PROVIDERS = ['dropbox', 'google', 'onedrive', 'hidrive'] as const satisfies readonly Provider[];
 

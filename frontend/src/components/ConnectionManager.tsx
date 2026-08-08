@@ -24,7 +24,7 @@ import {
 import { ProviderFields } from './connect/ProviderFields';
 import { ProviderIcon } from './connect/ProviderIcon';
 import { ProviderSelector } from './connect/ProviderSelector';
-import { isOAuthProvider } from '../types';
+import { isOAuthProvider, type ProviderId } from '../types';
 
 export interface ConnectionManagerProps {
   apiUrl: string;
@@ -32,21 +32,6 @@ export interface ConnectionManagerProps {
   localStorageEnabled?: boolean;
   oauthProviders?: Record<string, boolean>;
 }
-
-export type ProviderId =
-  | 'nextcloud'
-  | 'dropbox'
-  | 'webdav'
-  | 'magentacloud'
-  | 'google'
-  | 'onedrive'
-  | 'hidrive'
-  | 'smb'
-  | 's3'
-  | 'sftp'
-  | 'ftp'
-  | 'local'
-  | 'immich';
 
 export interface ProfilePublic {
   id: string;
@@ -143,6 +128,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   const providerOptions = useMemo(
     (): { id: ProviderId; name: string }[] => [
       { id: 'nextcloud', name: 'Nextcloud' },
+      { id: 'opencloud', name: 'OpenCloud' },
       { id: 'webdav', name: 'WebDAV' },
       { id: 'magentacloud', name: 'MagentaCLOUD' },
       { id: 'smb', name: 'SMB/CIFS' },

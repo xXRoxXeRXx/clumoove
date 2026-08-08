@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { ExclamationCircleIcon as AlertCircle, ArrowPathIcon as RefreshCw } from '@heroicons/react/24/outline';
-import type { ProviderId } from '../ConnectionManager';
-import { isOAuthProvider } from '../../types';
+import { isOAuthProvider, type ProviderId } from '../../types';
 import type { FtpTlsMode } from '../../utils/providerUrls';
 
 const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
@@ -469,6 +468,16 @@ export function MagentaCloudFields({
   );
 }
 
+const urlLabelKeys: Record<string, string> = {
+  opencloud: 'connect.opencloudUrl',
+  nextcloud: 'connect.nextcloudUrl',
+};
+
+const urlPlaceholderKeys: Record<string, string> = {
+  opencloud: 'connect.opencloudUrlPlaceholder',
+  nextcloud: 'connect.nextcloudUrlPlaceholder',
+};
+
 export function NextcloudWebdavFields({
   provider,
   editing,
@@ -482,7 +491,7 @@ export function NextcloudWebdavFields({
     <>
       <div className="space-y-1.5">
         <label htmlFor={ids.urlId} className={labelCls}>
-          {provider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
+          {t(urlLabelKeys[provider] ?? 'connect.webdavUrl')}
         </label>
         <input
           id={ids.urlId}
@@ -491,7 +500,7 @@ export function NextcloudWebdavFields({
           value={url}
           onChange={(e) => onUrlChange(e.target.value)}
           className={inputCls}
-          placeholder={provider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
+          placeholder={t(urlPlaceholderKeys[provider] ?? 'connect.webdavUrlPlaceholder')}
         />
       </div>
       <div className="space-y-1.5">

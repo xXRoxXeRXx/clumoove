@@ -24,7 +24,7 @@ func localUserID(ctx context.Context) string {
 // request-time whitelist checks (e.g. main.go handleConnect), so adding a
 // provider only requires updating the switch — not every call site.
 var ValidProviders = []string{
-	"nextcloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "ftp", "magentacloud", "local", "immich",
+	"nextcloud", "opencloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "ftp", "magentacloud", "local", "immich",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
@@ -50,6 +50,11 @@ var providerRegistry = map[string]ProviderMetadata{
 		Type:                   "nextcloud",
 		RequiresHost:           true,
 		SupportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
+	},
+	"opencloud": {
+		Type:                   "opencloud",
+		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 	"google": {
 		Type:                   "google",
@@ -149,7 +154,7 @@ func ValidateProviderURL(providerType, urlStr string) error {
 
 func NewProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
 	// Sanitize URL credentials to prevent leakage in url.Error (Finding 2)
-	if providerType == "nextcloud" || providerType == "webdav" {
+	if providerType == "nextcloud" || providerType == "webdav" || providerType == "opencloud" {
 		if parsed, err := url.Parse(urlStr); err == nil && parsed.User != nil {
 			if username == "" {
 				username = parsed.User.Username()
@@ -167,7 +172,7 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	// SSRF guard: reject egress to loopback / link-local (and private ranges
 	// when MIGRATION_BLOCK_PRIVATE is set) for providers that connect to a
 	// user-supplied host.
-	if providerType == "nextcloud" || providerType == "webdav" ||
+	if providerType == "nextcloud" || providerType == "webdav" || providerType == "opencloud" ||
 		providerType == "smb" || providerType == "sftp" || providerType == "ftp" || providerType == "immich" {
 		if err := validateEgressURL(urlStr); err != nil {
 			return nil, err
@@ -177,6 +182,8 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	switch providerType {
 	case "nextcloud":
 		return NewNextcloudProvider(urlStr, username, password)
+	case "opencloud":
+		return NewOpenCloudProvider(urlStr, username, password)
 	case "magentacloud":
 		// MagentaCLOUD has a fixed public WebDAV endpoint, so urlStr is ignored.
 		return NewMagentacloudProvider(username, password)
