@@ -109,3 +109,30 @@ func TestNewProviderOAuthProviders(t *testing.T) {
 		t.Errorf("magentacloud: got p=%v err=%v", p, err)
 	}
 }
+
+func TestNewProviderMega(t *testing.T) {
+	session := MegaSession{ID: "session-id", MasterKey: []byte{1, 2, 3}}
+	ctx := WithMegaSession(context.Background(), session)
+
+	provider, err := NewProvider(ctx, "mega", "", "user@example.com", "password")
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+
+	megaProvider, ok := provider.(*MegaProvider)
+	if !ok {
+		t.Fatalf("NewProvider() type = %T, want *MegaProvider", provider)
+	}
+	if megaProvider.email != "user@example.com" || megaProvider.password != "password" {
+		t.Errorf("provider credentials = %q, %q, want supplied credentials", megaProvider.email, megaProvider.password)
+	}
+
+	gotSession := megaProvider.Session()
+	if gotSession.ID != session.ID || string(gotSession.MasterKey) != string(session.MasterKey) {
+		t.Errorf("provider session = %+v, want %+v", gotSession, session)
+	}
+	gotSession.MasterKey[0] = 9
+	if megaProvider.Session().MasterKey[0] != 1 {
+		t.Error("Session() returned a mutable reference to the provider session")
+	}
+}

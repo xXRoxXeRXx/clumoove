@@ -12,6 +12,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/megasecret"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
@@ -217,14 +218,24 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 
 	// 4. Create storage provider clients
-	sourceClient, err := storage.NewProvider(indexCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
+	sourceCtx, err := megasecret.WithSession(indexCtx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, e.encryptionKey)
+	if err != nil {
+		e.failSync(syncJobID, generation, "Failed to decrypt source connection session.")
+		return
+	}
+	targetCtx, err := megasecret.WithSession(indexCtx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, e.encryptionKey)
+	if err != nil {
+		e.failSync(syncJobID, generation, "Failed to decrypt target connection session.")
+		return
+	}
+	sourceClient, err := storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourcePass)
 	if err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to connect to source: %v", err))
 		return
 	}
 	defer sourceClient.Close()
 
-	targetClient, err := storage.NewProvider(indexCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
+	targetClient, err := storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetPass)
 	if err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to connect to target: %v", err))
 		return

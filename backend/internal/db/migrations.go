@@ -30,40 +30,44 @@ type MigrationResourceStats struct {
 }
 
 type Migration struct {
-	ID                          string                  `json:"id"`
-	UserID                      sql.NullString          `json:"user_id,omitempty"`
-	SourceURL                   string                  `json:"source_url"`
-	SourceUsername              string                  `json:"source_username"`
-	SourcePasswordEncrypted     string                  `json:"-"`
-	SourceProvider              string                  `json:"source_provider"`
-	SourceRefreshTokenEncrypted sql.NullString          `json:"-"`
-	SourceTokenExpiresAt        sql.NullTime            `json:"-"`
-	TargetURL                   string                  `json:"target_url"`
-	TargetUsername              string                  `json:"target_username"`
-	TargetPasswordEncrypted     string                  `json:"-"`
-	TargetProvider              string                  `json:"target_provider"`
-	TargetRefreshTokenEncrypted sql.NullString          `json:"-"`
-	TargetTokenExpiresAt        sql.NullTime            `json:"-"`
-	TargetDir                   string                  `json:"target_dir"`
-	Status                      string                  `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED
-	ConflictStrategy            string                  `json:"conflict_strategy"`
-	TotalFiles                  int                     `json:"total_files"`
-	TotalBytes                  int64                   `json:"total_bytes"`
-	ProcessedFiles              int                     `json:"processed_files"`
-	ProcessedBytes              int64                   `json:"processed_bytes"`
-	LiveBytes                   int64                   `json:"live_bytes"`
-	SkippedFiles                int                     `json:"skipped_files"`
-	FailedFiles                 int                     `json:"failed_files"`
-	ErrorMessage                sql.NullString          `json:"error_message,omitempty"`
-	CreatedAt                   time.Time               `json:"created_at"`
-	UpdatedAt                   time.Time               `json:"updated_at"`
-	Threads                     int                     `json:"threads"`
-	BandwidthLimitMbps          int                     `json:"bandwidth_limit_mbps"`
-	PickerSessionID             string                  `json:"picker_session_id,omitempty"`
-	SelectedPaths               StringArray             `json:"selected_paths,omitempty"`
-	SelectedCalendars           StringArray             `json:"selected_calendars,omitempty"`
-	SelectedContacts            StringArray             `json:"selected_contacts,omitempty"`
-	ResourceStats               *MigrationResourceStats `json:"resource_stats,omitempty"`
+	ID                           string                  `json:"id"`
+	UserID                       sql.NullString          `json:"user_id,omitempty"`
+	SourceURL                    string                  `json:"source_url"`
+	SourceUsername               string                  `json:"source_username"`
+	SourcePasswordEncrypted      string                  `json:"-"`
+	SourceProvider               string                  `json:"source_provider"`
+	SourceRefreshTokenEncrypted  sql.NullString          `json:"-"`
+	SourceTokenExpiresAt         sql.NullTime            `json:"-"`
+	SourceMegaSessionIDEncrypted string                  `json:"-"`
+	SourceMegaMasterKeyEncrypted string                  `json:"-"`
+	TargetURL                    string                  `json:"target_url"`
+	TargetUsername               string                  `json:"target_username"`
+	TargetPasswordEncrypted      string                  `json:"-"`
+	TargetProvider               string                  `json:"target_provider"`
+	TargetRefreshTokenEncrypted  sql.NullString          `json:"-"`
+	TargetTokenExpiresAt         sql.NullTime            `json:"-"`
+	TargetMegaSessionIDEncrypted string                  `json:"-"`
+	TargetMegaMasterKeyEncrypted string                  `json:"-"`
+	TargetDir                    string                  `json:"target_dir"`
+	Status                       string                  `json:"status"` // PENDING, INDEXING, RUNNING, PAUSED, COMPLETED, FAILED, CANCELLED
+	ConflictStrategy             string                  `json:"conflict_strategy"`
+	TotalFiles                   int                     `json:"total_files"`
+	TotalBytes                   int64                   `json:"total_bytes"`
+	ProcessedFiles               int                     `json:"processed_files"`
+	ProcessedBytes               int64                   `json:"processed_bytes"`
+	LiveBytes                    int64                   `json:"live_bytes"`
+	SkippedFiles                 int                     `json:"skipped_files"`
+	FailedFiles                  int                     `json:"failed_files"`
+	ErrorMessage                 sql.NullString          `json:"error_message,omitempty"`
+	CreatedAt                    time.Time               `json:"created_at"`
+	UpdatedAt                    time.Time               `json:"updated_at"`
+	Threads                      int                     `json:"threads"`
+	BandwidthLimitMbps           int                     `json:"bandwidth_limit_mbps"`
+	PickerSessionID              string                  `json:"picker_session_id,omitempty"`
+	SelectedPaths                StringArray             `json:"selected_paths,omitempty"`
+	SelectedCalendars            StringArray             `json:"selected_calendars,omitempty"`
+	SelectedContacts             StringArray             `json:"selected_contacts,omitempty"`
+	ResourceStats                *MigrationResourceStats `json:"resource_stats,omitempty"`
 }
 
 // ValidConflictStrategy reports whether strategy is safe for a target write.
@@ -138,12 +142,12 @@ type PendingEmailNotification struct {
 const createMigrationQuery = `
 		INSERT INTO migrations (
 			user_id, source_url, source_username, source_password_encrypted, source_provider,
-			source_refresh_token_encrypted, source_token_expires_at,
+			source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
 			target_url, target_username, target_password_encrypted, target_provider,
-			target_refresh_token_encrypted, target_token_expires_at,
+			target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
 			status, conflict_strategy, target_dir, threads, bandwidth_limit_mbps,
 			picker_session_id, selected_paths, selected_calendars, selected_contacts
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -158,9 +162,9 @@ func insertMigration(database queryExecer, m *Migration) error {
 	return database.QueryRow(
 		createMigrationQuery,
 		m.UserID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted, m.SourceProvider,
-		m.SourceRefreshTokenEncrypted, m.SourceTokenExpiresAt,
+		m.SourceRefreshTokenEncrypted, m.SourceTokenExpiresAt, m.SourceMegaSessionIDEncrypted, m.SourceMegaMasterKeyEncrypted,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted, m.TargetProvider,
-		m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt,
+		m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt, m.TargetMegaSessionIDEncrypted, m.TargetMegaMasterKeyEncrypted,
 		m.Status, m.ConflictStrategy, m.TargetDir, m.Threads, m.BandwidthLimitMbps,
 		m.PickerSessionID, m.SelectedPaths, m.SelectedCalendars, m.SelectedContacts,
 	).Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt)
@@ -209,9 +213,9 @@ func resetMigrationAndSchedule(migration *Migration, schedule *Schedule) {
 func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted, source_provider,
-		       source_refresh_token_encrypted, source_token_expires_at,
+		       source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
 		       target_url, target_username, target_password_encrypted, target_provider,
-		       target_refresh_token_encrypted, target_token_expires_at,
+		       target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
 		       status, conflict_strategy, total_files, total_bytes, processed_files,
 		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
 		       created_at, updated_at, target_dir, threads, bandwidth_limit_mbps,
@@ -221,9 +225,9 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	var m Migration
 	err := db.QueryRow(query, id).Scan(
 		&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted, &m.SourceProvider,
-		&m.SourceRefreshTokenEncrypted, &m.SourceTokenExpiresAt,
+		&m.SourceRefreshTokenEncrypted, &m.SourceTokenExpiresAt, &m.SourceMegaSessionIDEncrypted, &m.SourceMegaMasterKeyEncrypted,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,
-		&m.TargetRefreshTokenEncrypted, &m.TargetTokenExpiresAt,
+		&m.TargetRefreshTokenEncrypted, &m.TargetTokenExpiresAt, &m.TargetMegaSessionIDEncrypted, &m.TargetMegaMasterKeyEncrypted,
 		&m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
 		&m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
 		&m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads, &m.BandwidthLimitMbps,
@@ -475,7 +479,6 @@ func MaybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID
 	}
 	return true, nil
 }
-
 
 // TransitionMigrationIndexingToCompleted completes an empty migration without
 // allowing an indexer that lost its lifecycle claim to overwrite cancellation.

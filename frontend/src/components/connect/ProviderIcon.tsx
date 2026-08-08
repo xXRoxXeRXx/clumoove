@@ -14,7 +14,8 @@ import {
   TbTerminal2,
   TbShieldLock,
   TbCloud,
-  TbWorld,
+	TbWorld,
+	TbCloudLock,
 } from 'react-icons/tb';
 import { FaHardDrive } from 'react-icons/fa6';
 
@@ -71,8 +72,11 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className 
     case 'hidrive':
       return <TbCloud className={iconCls} />;
 
-    case 'webdav':
-      return <TbWorld className={iconCls} />;
+	case 'webdav':
+		return <TbWorld className={iconCls} />;
+
+	case 'mega':
+		return <TbCloudLock className={iconCls} />;
 
     case 'local':
       return <FaHardDrive className={iconCls} />;

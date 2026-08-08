@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"log"
 	"net/http"
@@ -23,6 +24,34 @@ type profileCreds struct {
 	Username     string
 	Password     string
 	RefreshToken string
+	MegaSession  storage.MegaSession
+}
+
+func (s *APIServer) encryptMegaSession(session storage.MegaSession) (string, string, error) {
+	if session.ID == "" || len(session.MasterKey) == 0 {
+		return "", "", nil
+	}
+	defer func() {
+		for i := range session.MasterKey {
+			session.MasterKey[i] = 0
+		}
+	}()
+	sessionID, err := crypto.Encrypt(session.ID, s.encryptionKey)
+	if err != nil {
+		return "", "", err
+	}
+	masterKey, err := crypto.Encrypt(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey)
+	if err != nil {
+		return "", "", err
+	}
+	return sessionID, masterKey, nil
+}
+
+func withMegaProfileSession(ctx context.Context, creds profileCreds) context.Context {
+	if creds.Provider == "mega" && creds.MegaSession.ID != "" {
+		return storage.WithMegaSession(ctx, creds.MegaSession)
+	}
+	return ctx
 }
 
 func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileCreds) (profileCreds, error) {
@@ -67,6 +96,19 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 			refreshToken = dec
 		}
 	}
+	megaSession := base.MegaSession
+	if p.MegaSessionIDEncrypted != "" || p.MegaMasterKeyEncrypted != "" {
+		if p.MegaSessionIDEncrypted == "" || p.MegaMasterKeyEncrypted == "" {
+			return base, errors.New("incomplete MEGA session")
+		}
+		id, idErr := crypto.Decrypt(p.MegaSessionIDEncrypted, s.encryptionKey)
+		keyText, keyErr := crypto.Decrypt(p.MegaMasterKeyEncrypted, s.encryptionKey)
+		key, decodeErr := base64.StdEncoding.DecodeString(keyText)
+		if idErr != nil || keyErr != nil || decodeErr != nil || id == "" || len(key) == 0 {
+			return base, errors.New("invalid encrypted MEGA session")
+		}
+		megaSession = storage.MegaSession{ID: id, MasterKey: key}
+	}
 
 	isOAuth := oauth.IsProvider(p.Provider)
 	if isOAuth && refreshToken != "" {
@@ -87,6 +129,7 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 		Username:     username,
 		Password:     password,
 		RefreshToken: refreshToken,
+		MegaSession:  megaSession,
 	}, nil
 }
 
@@ -287,6 +330,11 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 	}
 
 	in := db.UpdateConnectionProfileInput{}
+	existing, existingErr := db.GetConnectionProfile(r.Context(), s.db, id)
+	if existingErr != nil {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
 	if req.Name != "" {
 		in.Name = &req.Name
 	}
@@ -312,6 +360,11 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		}
 		in.PasswordEncrypted = &enc
 	}
+	if existing.Provider == "mega" && (req.Password != "" || (in.Provider != nil && *in.Provider != "mega")) {
+		empty := ""
+		in.MegaSessionIDEncrypted = &empty
+		in.MegaMasterKeyEncrypted = &empty
+	}
 	if req.RefreshToken != "" {
 		enc, err := crypto.Encrypt(req.RefreshToken, s.encryptionKey)
 		if err != nil {
@@ -330,7 +383,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		in.OAuthUser = &req.OAuthUser
 	}
 
-	if existing, gerr := db.GetConnectionProfile(r.Context(), s.db, id); gerr == nil {
+	if existing != nil {
 		mergedProvider := existing.Provider
 		if in.Provider != nil {
 			mergedProvider = *in.Provider
@@ -439,7 +492,18 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		password = tok.AccessToken
 	}
 
-	client, err := storage.NewProvider(r.Context(), p.Provider, p.URL, p.Username, password)
+	providerCtx := r.Context()
+	if p.Provider == "mega" && p.MegaSessionIDEncrypted != "" && p.MegaMasterKeyEncrypted != "" {
+		sessionID, idErr := crypto.Decrypt(p.MegaSessionIDEncrypted, s.encryptionKey)
+		keyText, keyErr := crypto.Decrypt(p.MegaMasterKeyEncrypted, s.encryptionKey)
+		masterKey, decodeErr := base64.StdEncoding.DecodeString(keyText)
+		if idErr != nil || keyErr != nil || decodeErr != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
+			return
+		}
+		providerCtx = storage.WithMegaSession(providerCtx, storage.MegaSession{ID: sessionID, MasterKey: masterKey})
+	}
+	client, err := storage.NewProvider(providerCtx, p.Provider, p.URL, p.Username, password)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -451,8 +515,30 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 	ok, cerr := client.Connect(ctx)
 	if !ok {
 		log.Printf("handleTestProfile: connection failed for profile %s (provider %s): %v", id, p.Provider, cerr)
+		if errors.Is(cerr, storage.ErrMegaMFARequired) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
+	}
+	if megaClient, isMega := client.(*storage.MegaProvider); isMega {
+		session := megaClient.Session()
+		defer func() {
+			for i := range session.MasterKey {
+				session.MasterKey[i] = 0
+			}
+		}()
+		sessionIDEncrypted, encErr := crypto.Encrypt(session.ID, s.encryptionKey)
+		if encErr != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
+			return
+		}
+		masterKeyEncrypted, encErr := crypto.Encrypt(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey)
+		if encErr != nil || db.UpdateConnectionProfileMegaSession(r.Context(), s.db, p.ID, sessionIDEncrypted, masterKeyEncrypted, p.MegaSessionIDEncrypted) != nil {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }

@@ -37,6 +37,16 @@ var ErrNotFound = errors.New("resource not found")
 // ErrUnsupportedOnPlatform is returned when an operation is unsupported on the host operating system platform.
 var ErrUnsupportedOnPlatform = errors.New("operation unsupported on this platform")
 
+// ErrNotConnected indicates an operation was attempted before Connect.
+var ErrNotConnected = errors.New("storage provider is not connected")
+
+// ErrAmbiguousPath indicates multiple provider entries match one path segment.
+var ErrAmbiguousPath = errors.New("ambiguous storage path")
+
+// ErrMegaMFARequired identifies MEGA accounts that require an interactive
+// second factor, which is intentionally unsupported by this provider.
+var ErrMegaMFARequired = errors.New("mega multi-factor authentication is not supported")
+
 type FileMetadata struct {
 	ModifiedTime time.Time         `json:"modified_time,omitempty"`
 	Description  string            `json:"description,omitempty"`
@@ -101,6 +111,31 @@ type UploadReceipt struct {
 
 type uploadReceiptContextKey struct{}
 type targetResourceIDContextKey struct{}
+type megaSessionContextKey struct{}
+
+// MegaSession holds the short-lived MEGA login material. Callers must persist
+// it only after encrypting both fields and must clear MasterKey when finished.
+type MegaSession struct {
+	ID        string
+	MasterKey []byte
+}
+
+// WithMegaSession attaches task-scoped MEGA session material without widening
+// NewProvider or placing secrets into URLs or generic credentials.
+func WithMegaSession(ctx context.Context, session MegaSession) context.Context {
+	key := append([]byte(nil), session.MasterKey...)
+	return context.WithValue(ctx, megaSessionContextKey{}, MegaSession{ID: session.ID, MasterKey: key})
+}
+
+// MegaSessionFromContext returns an independent copy of scoped MEGA material.
+func MegaSessionFromContext(ctx context.Context) (MegaSession, bool) {
+	session, ok := ctx.Value(megaSessionContextKey{}).(MegaSession)
+	if !ok || session.ID == "" || len(session.MasterKey) == 0 {
+		return MegaSession{}, false
+	}
+	session.MasterKey = append([]byte(nil), session.MasterKey...)
+	return session, true
+}
 
 // WithTransferMetadata supplies provider-specific upload attributes without
 // widening StorageProvider or persisting plaintext credentials.

@@ -28,6 +28,15 @@ const formInputClass = 'ui-input w-full px-4 py-2.5 text-sm font-sans';
 const formMonoInputClass = `${formInputClass} font-mono`;
 const formTextareaClass = `${formMonoInputClass} resize-none`;
 
+function MegaCredentialFields({ username, password, onUsernameChange, onPasswordChange }: { username: string; password: string; onUsernameChange: (value: string) => void; onPasswordChange: (value: string) => void }) {
+  const { t } = useTranslation();
+  return <>
+    <div className="ui-alert ui-alert-info p-4 flex items-start gap-2"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><p className="text-xs font-sans leading-relaxed">{t('connect.megaInfo')}</p></div>
+    <div className="space-y-1"><label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.megaEmail')}</label><input type="email" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={formInputClass} placeholder="name@example.com" /></div>
+    <div className="space-y-1"><label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label><input type="password" required value={password} onChange={(e) => onPasswordChange(e.target.value)} className={formInputClass} /></div>
+  </>;
+}
+
 export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiUrl, token, localStorageEnabled = false, oauthProviders = {}, onBack }) => {
   const [sourceUrl, setSourceUrl] = useState('');
   const [sourceUser, setSourceUser] = useState('');
@@ -157,7 +166,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}?host_key=${encodeURIComponent(sourceSftpHostKey.trim())}`
     : sourceProvider === 'ftp'
     ? buildFtpUrl(sourceFtpHost, sourceFtpPort, sourceFtpTlsMode)
-    : sourceProvider === 'magentacloud' || sourceProvider === 'local'
+    : sourceProvider === 'magentacloud' || sourceProvider === 'local' || sourceProvider === 'mega'
     ? ''
     : (isOAuthProvider(sourceProvider) ? (sourceProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${sourceProvider}.com`) : sourceUrl));
 
@@ -170,7 +179,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${targetSftpHost}:${targetSftpPort}?host_key=${encodeURIComponent(targetSftpHostKey.trim())}`
     : targetProvider === 'ftp'
     ? buildFtpUrl(targetFtpHost, targetFtpPort, targetFtpTlsMode)
-    : targetProvider === 'magentacloud' || targetProvider === 'local'
+    : targetProvider === 'magentacloud' || targetProvider === 'local' || targetProvider === 'mega'
     ? ''
     : (isOAuthProvider(targetProvider) ? (targetProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${targetProvider}.com`) : targetUrl));
   // Build the final credentials for the source side (reuses shared URL/user/pass logic).
@@ -638,6 +647,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 's3', name: 'S3' },
     { id: 'sftp', name: 'SFTP' },
     { id: 'ftp', name: 'FTPS' },
+		{ id: 'mega', name: 'MEGA' },
     ...(localStorageEnabled ? [{ id: 'immich' as const, name: 'Immich' }] : []),
     ...(oauthProviders.dropbox ? [{ id: 'dropbox' as const, name: 'Dropbox' }] : []),
 	...(oauthProviders.google ? [{ id: 'google' as const, name: 'Google' }] : []),
@@ -1070,6 +1080,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                 </>
+              ) : sourceProvider === 'mega' ? (
+                <MegaCredentialFields username={sourceUser} password={sourcePass} onUsernameChange={setSourceUser} onPasswordChange={setSourcePass} />
               ) : sourceProvider === 'nextcloud' || sourceProvider === 'opencloud' || sourceProvider === 'seafile' || sourceProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
@@ -1607,6 +1619,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                 </>
+              ) : targetProvider === 'mega' ? (
+                <MegaCredentialFields username={targetUser} password={targetPass} onUsernameChange={setTargetUser} onPasswordChange={setTargetPass} />
               ) : targetProvider === 'nextcloud' || targetProvider === 'opencloud' || targetProvider === 'seafile' || targetProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">

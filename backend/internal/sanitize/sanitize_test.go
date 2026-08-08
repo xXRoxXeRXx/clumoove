@@ -3,6 +3,7 @@ package sanitize
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestSanitizeFilename_ForbiddenChars(t *testing.T) {
@@ -67,6 +68,13 @@ func TestSanitizeFilename_ForbiddenChars(t *testing.T) {
 			input:    "a/b.txt",
 			provider: "google",
 			expected: "a_b.txt",
+			reason:   "forbidden_char",
+		},
+		{
+			name:     "MEGA slash",
+			input:    "folder/file.txt",
+			provider: "mega",
+			expected: "folder_file.txt",
 			reason:   "forbidden_char",
 		},
 		{
@@ -166,6 +174,20 @@ func TestSanitizeFilename_HiDriveLengthTruncation(t *testing.T) {
 	}
 	if IsPathTooLong(strings.Repeat("a", 1020), "hidrive") {
 		t.Error("expected IsPathTooLong=false for 1020 chars on hidrive")
+	}
+}
+
+func TestSanitizeFilename_MegaLengthTruncation(t *testing.T) {
+	longName := strings.Repeat("a", 252) + ".pdf"
+	result := SanitizeFilename(longName, "mega")
+	if utf8.RuneCountInString(result.SanitizedName) > 255 {
+		t.Errorf("expected MEGA filename length <= 255 runes, got %d", utf8.RuneCountInString(result.SanitizedName))
+	}
+	if !strings.HasSuffix(result.SanitizedName, ".pdf") {
+		t.Error("expected extension .pdf to be preserved")
+	}
+	if !containsReason(result.Reasons, "length_truncated") {
+		t.Errorf("expected reason length_truncated, got %v", result.Reasons)
 	}
 }
 
@@ -273,6 +295,11 @@ func TestGetForbiddenChars(t *testing.T) {
 	dropboxChars := GetForbiddenChars("dropbox")
 	if len(dropboxChars) != 1 || dropboxChars[0] != '/' {
 		t.Errorf("expected [/] for dropbox, got %v", dropboxChars)
+	}
+
+	megaChars := GetForbiddenChars("mega")
+	if len(megaChars) != 1 || megaChars[0] != '/' {
+		t.Errorf("expected [/] for mega, got %v", megaChars)
 	}
 
 	s3Chars := GetForbiddenChars("s3")

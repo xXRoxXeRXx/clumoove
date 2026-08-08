@@ -416,6 +416,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (target_token_expires_at): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS source_mega_session_id_encrypted TEXT, ADD COLUMN IF NOT EXISTS source_mega_master_key_encrypted TEXT, ADD COLUMN IF NOT EXISTS target_mega_session_id_encrypted TEXT, ADD COLUMN IF NOT EXISTS target_mega_master_key_encrypted TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations MEGA sessions): %v\n", err)
+			}
 
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS picker_session_id TEXT`)
 			if err != nil {
@@ -519,6 +523,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (connection_profiles column defaults): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE connection_profiles ADD COLUMN IF NOT EXISTS mega_session_id_encrypted TEXT, ADD COLUMN IF NOT EXISTS mega_master_key_encrypted TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (connection_profiles MEGA sessions): %v\n", err)
+			}
 
 			// Keep this bootstrap DDL in sync with db/schema.sql. It must precede
 			// the tasks.sync_job_id foreign key below.
@@ -572,6 +580,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0`)
 			if err != nil {
 				log.Printf("Failed schema migration (sync_jobs run_generation): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS source_mega_session_id_encrypted TEXT, ADD COLUMN IF NOT EXISTS source_mega_master_key_encrypted TEXT, ADD COLUMN IF NOT EXISTS target_mega_session_id_encrypted TEXT, ADD COLUMN IF NOT EXISTS target_mega_master_key_encrypted TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync_jobs MEGA sessions): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_user_id ON sync_jobs(user_id)`)

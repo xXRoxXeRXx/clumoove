@@ -15,6 +15,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/megasecret"
 	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
@@ -97,7 +98,13 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		}
 	}
 
-	sourceClient, err := storage.NewProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	sourceCtx, err := megasecret.WithSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, idx.encryptionKey)
+	if err != nil {
+		crypto.ZeroString(&sourcePass)
+		failMigration(idx.db, migID, "Failed to decrypt source connection session.")
+		return
+	}
+	sourceClient, err := storage.NewProvider(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
 		crypto.ZeroString(&sourcePass)
 		// Log the detailed (sanitized) error server-side for diagnostics, but do

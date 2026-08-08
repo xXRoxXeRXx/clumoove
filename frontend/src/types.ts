@@ -23,7 +23,9 @@ export type Provider =
   | 'sftp'
   | 'ftp'
   | 'local'
-  | 'immich';
+  | 'immich'
+  | 'mega';
+
 
 export type ProviderId = Provider;
 

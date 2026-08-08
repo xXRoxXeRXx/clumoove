@@ -199,6 +199,16 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
+	sourceMegaSessionIDEncrypted, sourceMegaMasterKeyEncrypted, err := s.encryptMegaSession(src.MegaSession)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
+	targetMegaSessionIDEncrypted, targetMegaMasterKeyEncrypted, err := s.encryptMegaSession(tgt.MegaSession)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
 
 	// Persist OAuth refresh tokens so the engine can rotate them before expiry.
 	// Without this, OAuth-based sync jobs (Dropbox/Google) would fail as soon as
@@ -228,28 +238,32 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job := &db.SyncJob{
-		UserID:                      userID,
-		SourceURL:                   req.SourceURL,
-		SourceUsername:              req.SourceUsername,
-		SourcePasswordEncrypted:     sEnc,
-		SourceRefreshTokenEncrypted: sourceRefreshEnc,
-		SourceTokenExpiresAt:        sourceTokenExpiresAt,
-		TargetURL:                   req.TargetURL,
-		TargetUsername:              req.TargetUsername,
-		TargetPasswordEncrypted:     tEnc,
-		TargetRefreshTokenEncrypted: targetRefreshEnc,
-		TargetTokenExpiresAt:        targetTokenExpiresAt,
-		SourceProvider:              req.SourceProvider,
-		TargetProvider:              req.TargetProvider,
-		Direction:                   req.Direction,
-		ConflictStrategy:            req.ConflictStrategy,
-		DeletePropagation:           req.DeletePropagation,
-		IntervalMinutes:             req.IntervalMinutes,
-		Threads:                     req.Threads,
-		BandwidthLimitMbps:          req.BandwidthLimitMbps,
-		Status:                      "IDLE",
-		TargetDir:                   req.TargetDir,
-		SelectedPaths:               req.SelectedPaths,
+		UserID:                       userID,
+		SourceURL:                    req.SourceURL,
+		SourceUsername:               req.SourceUsername,
+		SourcePasswordEncrypted:      sEnc,
+		SourceRefreshTokenEncrypted:  sourceRefreshEnc,
+		SourceTokenExpiresAt:         sourceTokenExpiresAt,
+		SourceMegaSessionIDEncrypted: sourceMegaSessionIDEncrypted,
+		SourceMegaMasterKeyEncrypted: sourceMegaMasterKeyEncrypted,
+		TargetURL:                    req.TargetURL,
+		TargetUsername:               req.TargetUsername,
+		TargetPasswordEncrypted:      tEnc,
+		TargetRefreshTokenEncrypted:  targetRefreshEnc,
+		TargetTokenExpiresAt:         targetTokenExpiresAt,
+		TargetMegaSessionIDEncrypted: targetMegaSessionIDEncrypted,
+		TargetMegaMasterKeyEncrypted: targetMegaMasterKeyEncrypted,
+		SourceProvider:               req.SourceProvider,
+		TargetProvider:               req.TargetProvider,
+		Direction:                    req.Direction,
+		ConflictStrategy:             req.ConflictStrategy,
+		DeletePropagation:            req.DeletePropagation,
+		IntervalMinutes:              req.IntervalMinutes,
+		Threads:                      req.Threads,
+		BandwidthLimitMbps:           req.BandwidthLimitMbps,
+		Status:                       "IDLE",
+		TargetDir:                    req.TargetDir,
+		SelectedPaths:                req.SelectedPaths,
 	}
 
 	// Create a duration-based linked schedule. Cron's minute field is limited to
@@ -1001,13 +1015,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 	}
 	defer crypto.ZeroString(&password)
 
-	allowedProviders := map[string]bool{
-		"nextcloud": true, "opencloud": true, "webdav": true, "dropbox": true,
-		"google": true, "onedrive": true, "hidrive": true,
-		"smb": true, "s3": true, "sftp": true, "ftp": true,
-		"magentacloud": true, "local": true, "immich": true, "seafile": true,
-	}
-	if !allowedProviders[provider] {
+	if !storage.IsValidProvider(provider) {
 		errCode := ErrSourceUrlInvalid
 		if role == "target" {
 			errCode = ErrTargetUrlInvalid
@@ -1130,4 +1138,3 @@ func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
-

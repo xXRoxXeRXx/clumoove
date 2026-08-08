@@ -102,6 +102,7 @@ const (
 	ErrTargetUrlInvalid             APIErrorCode = "TARGET_URL_INVALID"
 	ErrSourceConnectionFailed       APIErrorCode = "SOURCE_CONNECTION_FAILED"
 	ErrTargetConnectionFailed       APIErrorCode = "TARGET_CONNECTION_FAILED"
+	ErrMegaMFAUnsupported           APIErrorCode = "MEGA_MFA_UNSUPPORTED"
 	ErrListFailed                   APIErrorCode = "LIST_FAILED"
 	ErrProviderUnsupported          APIErrorCode = "PROVIDER_UNSUPPORTED"
 	ErrFolderPathInvalid            APIErrorCode = "FOLDER_PATH_INVALID"
@@ -159,9 +160,9 @@ const (
 	ErrPasswordChangeRequired APIErrorCode = "PASSWORD_CHANGE_REQUIRED"
 
 	// Sync Engine
-	ErrSyncIdMissing      APIErrorCode = "SYNC_ID_MISSING"
-	ErrSyncNotFound       APIErrorCode = "SYNC_NOT_FOUND"
-	ErrSyncNotOwned       APIErrorCode = "SYNC_NOT_OWNED"
+	ErrSyncIdMissing       APIErrorCode = "SYNC_ID_MISSING"
+	ErrSyncNotFound        APIErrorCode = "SYNC_NOT_FOUND"
+	ErrSyncNotOwned        APIErrorCode = "SYNC_NOT_OWNED"
 	ErrSyncAlreadyRunning  APIErrorCode = "SYNC_ALREADY_RUNNING"
 	ErrSyncInvalidState    APIErrorCode = "SYNC_INVALID_STATE"
 	ErrSyncIntervalInvalid APIErrorCode = "SYNC_INTERVAL_INVALID"

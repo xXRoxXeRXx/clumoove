@@ -77,6 +77,8 @@
     "email": "Email address",
     "emailPlaceholder": "Enter email",
     "password": "Password",
+	"megaEmail": "MEGA email address",
+	"megaInfo": "MEGA two-factor authentication is not supported. Sign in once in the regular MEGA browser app before connecting.",
     "passwordPlaceholder": "Enter password",
     "showPassword": "Show password",
     "hidePassword": "Hide password",
@@ -572,6 +574,7 @@
     "transfer": "TRANSFER"
   },
   "errors": {
+	"MEGA_MFA_UNSUPPORTED": "MEGA accounts with two-factor authentication are not supported.",
     "SEAFILE_AUTH_FAILED": "Seafile authentication failed. Please check your credentials.",
     "SETUP_ALREADY_COMPLETED": "Administrator initial setup has already been completed.",
     "UNKNOWN": "An unexpected error occurred.",

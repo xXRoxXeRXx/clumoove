@@ -92,7 +92,7 @@ File-scoped commands referenced in `AGENTS.md`:
 - Every provider implements `StorageProvider` (`storage/provider.go`) and is registered in
   `factory.go`.
 - Valid provider values are whitelisted: `nextcloud`, `opencloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
-  `sftp`, `ftp`, `magentacloud`, `local`, `immich`, `seafile`. Never pass unvalidated provider strings to `NewProvider`.
+  `sftp`, `ftp`, `magentacloud`, `local`, `immich`, `seafile`, `mega`. Never pass unvalidated provider strings to `NewProvider`.
 - `ftp` is files-only FTPS. Accept only explicit `ftp://host:21?tls=explicit` or implicit `ftps://host:990`; reject
   cleartext FTP and URL userinfo. Use system-CA hostname/SNI validation only, without insecure or custom-CA options.
   Control and passive data connections must use the SSRF-safe egress dialer; prefer EPSV and pin PASV data connections
@@ -100,6 +100,9 @@ File-scoped commands referenced in `AGENTS.md`:
   port 21 or 990 and the server's configured passive range, with no inbound Docker port required.
 - Resource types: `files`, `calendars`, `contacts`. Calendars/contacts are always overwritten on
   conflict.
+- `mega` is a files-only personal Cloud Drive provider. It authenticates with email/password over forced HTTPS;
+  reusable session ID and master-key material are stored encrypted, MFA is unsupported, same-name siblings
+  are rejected as ambiguous, and verification is `size_only`.
 - S3 `insecure=true` endpoints must check literal IPs / `*.local`/`localhost` without DNS resolution.
 
 ### FTPS test and deployment notes

@@ -17,7 +17,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 - `JWT` — requires `Authorization: Bearer <access_token>`.
 - `admin` — JWT + `role == ADMIN` (enforced inside the handler).
 
-Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migration starts default an omitted strategy to `SKIP`; sync creation defaults it to `OVERWRITE`. Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Immich endpoints use a server URL and API key supplied in the password field; no username is required.
+Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migration starts default an omitted strategy to `SKIP`; sync creation defaults it to `OVERWRITE`. Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Immich endpoints use a server URL and API key supplied in the password field; no username is required. MEGA endpoints use an email address in the username field and a password, with no provider URL; reusable MEGA session material is persisted encrypted after connection. MEGA supports files only, excludes accounts requiring MFA, and verifies transfers by target existence and size.
 
 ---
 
@@ -200,12 +200,13 @@ If a user suspension commits but a Redis sync-cancellation event cannot be publi
 Validation rules applied server-side:
 - At least one of `paths`/`calendars`/`contacts` required.
 - Provider values must be in the whitelist (`nextcloud`, `opencloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
-  `sftp`, `ftp`, `magentacloud`, `local`, `immich`, `seafile`).
-- `ftp`, `magentacloud`, `onedrive`, `hidrive`, `local`, `seafile`, and `immich` are files-only (reject calendars/contacts on source or target).
+  `sftp`, `ftp`, `magentacloud`, `local`, `immich`, `seafile`, `mega`).
+- `ftp`, `magentacloud`, `onedrive`, `hidrive`, `local`, `seafile`, `immich`, and `mega` are files-only (reject calendars/contacts on source or target).
 - `ftp` accepts only `ftp://host:21?tls=explicit` for explicit FTPS or `ftps://host:990` for implicit FTPS. Plain FTP,
   URL userinfo, certificate-validation bypasses, and custom CAs are not supported. Credentials belong in the encrypted
   username/password request fields, not the URL.
 - An Immich target requires `conflict_strategy: "SKIP"`; Immich relies on native duplicate detection and does not support overwrite or rename. Immich can be used only for one-time migrations, not sync jobs.
+- MEGA uses its personal Cloud Drive over HTTPS. Accounts requiring MEGA MFA are unsupported. Same-name sibling nodes are rejected as ambiguous rather than selected by path.
 - Per-user cap of `maxActiveMigrations` (10) simultaneous active migrations.
 - `threads` clamped to 1–16; `bandwidth_limit_mbps` clamped to 0–1000.
 - `scheduled_time`, when present, must parse as RFC3339 and be in the future.

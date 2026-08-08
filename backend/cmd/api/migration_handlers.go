@@ -51,18 +51,15 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sourceCreds := profileCreds{Provider: req.SourceProvider, URL: req.SourceURL, Username: req.SourceUsername, Password: req.SourcePassword}
 	if req.SourceProfileID != "" {
-		src, err := s.loadProfile(r, req.SourceProfileID, profileCreds{
-			Provider: req.SourceProvider,
-			URL:      req.SourceURL,
-			Username: req.SourceUsername,
-			Password: req.SourcePassword,
-		})
+		src, err := s.loadProfile(r, req.SourceProfileID, sourceCreds)
 		if err == nil {
 			req.SourceProvider = src.Provider
 			req.SourceURL = src.URL
 			req.SourceUsername = src.Username
 			req.SourcePassword = src.Password
+			sourceCreds = src
 		}
 	}
 
@@ -75,7 +72,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := storage.NewProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), sourceCreds), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -88,6 +85,10 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 	ok, err := sourceClient.Connect(ctx)
 	if !ok {
 		log.Printf("handleBrowse: source connection failed for provider %s: %v", req.SourceProvider, err)
+		if errors.Is(err, storage.ErrMegaMFARequired) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
 	}
@@ -145,13 +146,9 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		req.TargetProvider = "nextcloud"
 	}
 
+	targetCreds := profileCreds{Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername, Password: req.TargetPassword}
 	if req.TargetProfileID != "" {
-		tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
-			Provider: req.TargetProvider,
-			URL:      req.TargetURL,
-			Username: req.TargetUsername,
-			Password: req.TargetPassword,
-		})
+		tgt, err := s.loadProfile(r, req.TargetProfileID, targetCreds)
 		if err != nil {
 			log.Printf("handleTargetBrowse: failed to load target profile: %v", err)
 			writeError(w, http.StatusNotFound, ErrProfileNotFound)
@@ -163,9 +160,10 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 		if req.TargetPassword == "" {
 			req.TargetPassword = tgt.Password
 		}
+		targetCreds = tgt
 	}
 
-	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -178,6 +176,10 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
 		log.Printf("handleTargetBrowse: connection failed for provider %s: %v", req.TargetProvider, err)
+		if errors.Is(err, storage.ErrMegaMFARequired) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
@@ -228,13 +230,9 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targetCreds := profileCreds{Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername, Password: req.TargetPassword}
 	if req.TargetProfileID != "" {
-		tgt, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
-			Provider: req.TargetProvider,
-			URL:      req.TargetURL,
-			Username: req.TargetUsername,
-			Password: req.TargetPassword,
-		})
+		tgt, err := s.loadProfile(r, req.TargetProfileID, targetCreds)
 		if err != nil {
 			log.Printf("handleTargetMkdir: failed to load target profile: %v", err)
 			writeError(w, http.StatusNotFound, ErrProfileNotFound)
@@ -246,9 +244,10 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 		if req.TargetPassword == "" {
 			req.TargetPassword = tgt.Password
 		}
+		targetCreds = tgt
 	}
 
-	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), targetCreds), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -261,6 +260,10 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
 		log.Printf("handleTargetMkdir: connection failed for provider %s: %v", req.TargetProvider, err)
+		if errors.Is(err, storage.ErrMegaMFARequired) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
@@ -631,7 +634,8 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client, err := storage.NewProvider(r.Context(), provider, url, username, password)
+	providerCtx := withMegaProfileSession(r.Context(), creds)
+	client, err := storage.NewProvider(providerCtx, provider, url, username, password)
 	if err != nil {
 		code := ErrSourceUrlInvalid
 		if role == "target" {
@@ -649,6 +653,10 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		code := ErrSourceConnectionFailed
 		if role == "target" {
 			code = ErrTargetConnectionFailed
+		}
+		if errors.Is(err, storage.ErrMegaMFARequired) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": code})
 		return
@@ -729,7 +737,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sourceClient, err := storage.NewProvider(r.Context(), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
+	sourceClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), src), req.SourceProvider, req.SourceURL, req.SourceUsername, req.SourcePassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceUrlInvalid})
 		return
@@ -740,11 +748,15 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	srcCancel()
 	if !sourceOK {
 		log.Printf("handleConnect: source connection failed for provider %s: %v", req.SourceProvider, err)
+		if errors.Is(err, storage.ErrMegaMFARequired) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 		return
 	}
 
-	targetClient, err := storage.NewProvider(r.Context(), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
+	targetClient, err := storage.NewProvider(withMegaProfileSession(r.Context(), tgt), req.TargetProvider, req.TargetURL, req.TargetUsername, req.TargetPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetUrlInvalid})
 		return
@@ -755,6 +767,10 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	tgtCancel()
 	if !targetOK {
 		log.Printf("handleConnect: target connection failed for provider %s: %v", req.TargetProvider, err)
+		if errors.Is(err, storage.ErrMegaMFARequired) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrTargetConnectionFailed})
 		return
 	}
@@ -921,6 +937,16 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
+	sourceMegaSessionIDEncrypted, sourceMegaMasterKeyEncrypted, err := s.encryptMegaSession(src.MegaSession)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
+	targetMegaSessionIDEncrypted, targetMegaMasterKeyEncrypted, err := s.encryptMegaSession(tgt.MegaSession)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
 
 	var sourceRefreshEnc sql.NullString
 	var sourceTokenExpiresAt sql.NullTime
@@ -998,28 +1024,32 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	m := &db.Migration{
-		UserID:                      sql.NullString{String: userID, Valid: userID != ""},
-		SourceURL:                   req.SourceURL,
-		SourceUsername:              req.SourceUsername,
-		SourcePasswordEncrypted:     sourcePassEnc,
-		SourceRefreshTokenEncrypted: sourceRefreshEnc,
-		SourceTokenExpiresAt:        sourceTokenExpiresAt,
-		TargetURL:                   req.TargetURL,
-		TargetUsername:              req.TargetUsername,
-		TargetPasswordEncrypted:     targetPassEnc,
-		TargetRefreshTokenEncrypted: targetRefreshEnc,
-		TargetTokenExpiresAt:        targetTokenExpiresAt,
-		SourceProvider:              req.SourceProvider,
-		TargetProvider:              req.TargetProvider,
-		Status:                      initialStatus,
-		ConflictStrategy:            req.ConflictStrategy,
-		TargetDir:                   targetDir,
-		SelectedPaths:               db.StringArray(req.Paths),
-		SelectedCalendars:           db.StringArray(req.Calendars),
-		SelectedContacts:            db.StringArray(req.Contacts),
-		Threads:                     threads,
-		BandwidthLimitMbps:          bandwidthLimit,
-		PickerSessionID:             req.SourcePickerSessionID,
+		UserID:                       sql.NullString{String: userID, Valid: userID != ""},
+		SourceURL:                    req.SourceURL,
+		SourceUsername:               req.SourceUsername,
+		SourcePasswordEncrypted:      sourcePassEnc,
+		SourceRefreshTokenEncrypted:  sourceRefreshEnc,
+		SourceTokenExpiresAt:         sourceTokenExpiresAt,
+		SourceMegaSessionIDEncrypted: sourceMegaSessionIDEncrypted,
+		SourceMegaMasterKeyEncrypted: sourceMegaMasterKeyEncrypted,
+		TargetURL:                    req.TargetURL,
+		TargetUsername:               req.TargetUsername,
+		TargetPasswordEncrypted:      targetPassEnc,
+		TargetRefreshTokenEncrypted:  targetRefreshEnc,
+		TargetTokenExpiresAt:         targetTokenExpiresAt,
+		TargetMegaSessionIDEncrypted: targetMegaSessionIDEncrypted,
+		TargetMegaMasterKeyEncrypted: targetMegaMasterKeyEncrypted,
+		SourceProvider:               req.SourceProvider,
+		TargetProvider:               req.TargetProvider,
+		Status:                       initialStatus,
+		ConflictStrategy:             req.ConflictStrategy,
+		TargetDir:                    targetDir,
+		SelectedPaths:                db.StringArray(req.Paths),
+		SelectedCalendars:            db.StringArray(req.Calendars),
+		SelectedContacts:             db.StringArray(req.Contacts),
+		Threads:                      threads,
+		BandwidthLimitMbps:           bandwidthLimit,
+		PickerSessionID:              req.SourcePickerSessionID,
 	}
 
 	var migrationID string

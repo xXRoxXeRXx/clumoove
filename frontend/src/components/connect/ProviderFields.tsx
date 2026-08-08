@@ -81,8 +81,11 @@ export function ProviderFields(props: ProviderFieldsProps) {
     return <MagentaCloudFields {...props} />;
   }
   if (provider === 'seafile') {
-    return <SeafileFields {...props} />;
+	return <SeafileFields {...props} />;
   }
+	if (provider === 'mega') {
+		return <MegaFields {...props} />;
+	}
   return <NextcloudWebdavFields {...props} />;
 }
 
@@ -469,6 +472,15 @@ export function MagentaCloudFields({
       </div>
     </>
   );
+}
+
+export function MegaFields({ editing, username, onUsernameChange, password, onPasswordChange, ids }: ProviderFieldsProps) {
+	const { t } = useTranslation();
+	return <>
+		<div className="ui-alert ui-alert-info p-4 flex items-start gap-2"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><p className="text-xs font-sans leading-relaxed">{t('connect.megaInfo')}</p></div>
+		<div className="space-y-1.5"><label htmlFor={ids.usernameId} className={labelCls}>{t('connect.megaEmail')}</label><input id={ids.usernameId} type="email" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder="name@example.com" /></div>
+		<div className="space-y-1.5"><label htmlFor={ids.passwordId} className={labelCls}>{t('connect.password')}</label><input id={ids.passwordId} type="password" required={!editing} value={password} onChange={(e) => onPasswordChange(e.target.value)} className={inputCls} placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')} />{editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}</div>
+	</>;
 }
 
 const urlLabelKeys: Record<string, string> = {

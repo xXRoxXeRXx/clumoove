@@ -24,7 +24,7 @@ func localUserID(ctx context.Context) string {
 // request-time whitelist checks (e.g. main.go handleConnect), so adding a
 // provider only requires updating the switch — not every call site.
 var ValidProviders = []string{
-	"nextcloud", "opencloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "ftp", "magentacloud", "local", "immich", "seafile",
+	"nextcloud", "opencloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "ftp", "magentacloud", "local", "immich", "seafile", "mega",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
@@ -120,6 +120,11 @@ var providerRegistry = map[string]ProviderMetadata{
 	"seafile": {
 		Type:                   "seafile",
 		RequiresHost:           true,
+		SupportedResourceTypes: map[string]bool{"files": true},
+	},
+	"mega": {
+		Type:                   "mega",
+		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 }
@@ -219,6 +224,9 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 		return NewImmichProvider(urlStr, password)
 	case "seafile":
 		return NewSeafileProvider(urlStr, username, password)
+	case "mega":
+		session, _ := MegaSessionFromContext(ctx)
+		return NewMegaProvider(username, password, session), nil
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %q", providerType)
 	}

@@ -109,6 +109,7 @@ time, description, tags, etc.) after a successful upload.
 | `local` | `local.go` | Local filesystem (server-side sandbox) | none (no URL/user/pass) | files only |
 | `immich` | `immich.go` | Immich stable v2 API | server URL + API key in encrypted password field | files only, one-time migrations |
 | `seafile` | `seafile.go` | Seafile Web API v2.1 | server URL + user/pass (or Personal Access Token) | files only |
+| `mega` | `mega.go` | MEGA Cloud Drive API over HTTPS | email/password; encrypted reusable session | files only |
 
 ### Verification capabilities
 
@@ -124,6 +125,7 @@ time, description, tags, etc.) after a successful upload.
 | S3 | `size_only` | Multipart ETags are not comparable hashes |
 | SMB, SFTP, FTPS | `size_only` | No portable target-hash API |
 | Immich | `cryptographic_hash` | Asset `checksum` (Base64 SHA-1, normalized to `SHA1:<lowercase-hex>`) |
+| MEGA | `size_only` | No comparable target-hash API |
 
 ---
 
@@ -204,6 +206,23 @@ target `chash` values directly. For a non-HiDrive source, the worker-generated H
 of falling back to a size-only comparison.
 
 QuickXor hashes are base64 values and remain case-sensitive when normalised for comparison.
+
+## 2.4. MEGA Provider (`mega`)
+
+`mega` connects only to the authenticated user's personal Cloud Drive and supports the `files` resource
+type; calendars and contacts are unsupported. It takes an email address in the username field and a
+password in the password field, with no provider URL. The client forces HTTPS and does not follow HTTP
+redirects.
+
+After a successful password login, Clumoove persists the MEGA session ID and master key encrypted with
+the instance encryption key, then supplies them only to the scoped provider operation for later reuse.
+The provider clears in-memory master-key material when it closes. MEGA accounts requiring multi-factor
+authentication cannot be connected because the provider has no interactive second-factor flow.
+
+MEGA permits same-name siblings, which cannot be addressed safely by a path. Listings and mutations reject
+such ambiguous paths rather than selecting an arbitrary node. Otherwise it supports the normal file
+conflict strategies, including atomic temporary-upload then rename for overwrite. MEGA exposes no
+comparable target checksum, so post-transfer verification checks target existence and size only.
 
 The `Local` option appears in the UI **only** when `LOCAL_STORAGE_ROOT` is configured (`local_storage_enabled`
 in `GET /api/settings`). `NewProvider("local")` returns an error if the variable is unset or not a

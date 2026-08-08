@@ -77,6 +77,8 @@
     "email": "E-Mail-Adresse",
     "emailPlaceholder": "E-Mail eingeben",
     "password": "Passwort",
+	"megaEmail": "MEGA-E-Mail-Adresse",
+	"megaInfo": "Die MEGA-Zwei-Faktor-Authentifizierung wird nicht unterstützt. Melden Sie sich vor dem Verbinden einmal in der normalen MEGA-Browser-App an.",
     "passwordPlaceholder": "Passwort eingeben",
     "showPassword": "Passwort anzeigen",
     "hidePassword": "Passwort verbergen",
@@ -572,6 +574,7 @@
     "transfer": "ÜBERTRAGUNG"
   },
   "errors": {
+	"MEGA_MFA_UNSUPPORTED": "MEGA-Konten mit Zwei-Faktor-Authentifizierung werden nicht unterstützt.",
     "SEAFILE_AUTH_FAILED": "Seafile-Authentifizierung fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.",
     "SETUP_ALREADY_COMPLETED": "Die Administrator-Erstanlage wurde bereits durchgeführt.",
     "UNKNOWN": "Ein unerwarteter Fehler ist aufgetreten.",

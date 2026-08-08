@@ -41,6 +41,7 @@ var providerForbiddenChars = map[string][]rune{
 	"webdav":       {'/'},
 	"sftp":         {'/'},
 	"seafile":      {'/'},
+	"mega":         {'/'},
 }
 
 var providerMaxLength = map[string]int{
@@ -54,6 +55,7 @@ var providerMaxLength = map[string]int{
 	"webdav":       255,
 	"sftp":         255,
 	"seafile":      255,
+	"mega":         255, // MEGA limits each path segment to 255 Unicode runes.
 	"s3":           1024,
 }
 

@@ -25,6 +25,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/megasecret"
 	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
@@ -102,9 +103,9 @@ func (*noCopy) Unlock() {}
 // map bounded by concurrent in-flight work instead of by the number of distinct
 // keys the process has ever seen.
 type keyedMutexes struct {
-	_     noCopy
-	mu    sync.Mutex
-	m     map[string]*refMutex
+	_  noCopy
+	mu sync.Mutex
+	m  map[string]*refMutex
 }
 
 // lock acquires the mutex for key and returns a release function that must be
@@ -666,13 +667,21 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	defer crypto.ZeroString(&targetProviderPass)
 
 	// Providers are task-scoped because they retain credentials internally.
-	sourceClient, err := newProvider(ctx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourceProviderPass)
+	sourceCtx, err := megasecret.WithSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, p.secretKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt source MEGA session: %w", err)
+	}
+	targetCtx, err := megasecret.WithSession(ctx, mig.TargetProvider, mig.TargetMegaSessionIDEncrypted, mig.TargetMegaMasterKeyEncrypted, p.secretKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt target MEGA session: %w", err)
+	}
+	sourceClient, err := newProvider(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourceProviderPass)
 	if err != nil {
 		return fmt.Errorf("failed to create source client: %w", err)
 	}
 	defer sourceClient.Close()
 
-	targetClient, err := newProvider(ctx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetProviderPass)
+	targetClient, err := newProvider(targetCtx, mig.TargetProvider, mig.TargetURL, mig.TargetUsername, targetProviderPass)
 	if err != nil {
 		return fmt.Errorf("failed to create target client: %w", err)
 	}

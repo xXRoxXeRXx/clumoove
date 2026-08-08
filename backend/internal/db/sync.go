@@ -13,45 +13,49 @@ import (
 
 // SyncJob represents a fortlaufende Synchronisation job
 type SyncJob struct {
-	ID                          string         `json:"id"`
-	UserID                      string         `json:"user_id"`
-	SourceURL                   string         `json:"source_url"`
-	SourceUsername              string         `json:"source_username"`
-	SourcePasswordEncrypted     string         `json:"-"`
-	SourceRefreshTokenEncrypted sql.NullString `json:"-"`
-	SourceTokenExpiresAt        sql.NullTime   `json:"source_token_expires_at,omitempty"`
-	TargetURL                   string         `json:"target_url"`
-	TargetUsername              string         `json:"target_username"`
-	TargetPasswordEncrypted     string         `json:"-"`
-	TargetRefreshTokenEncrypted sql.NullString `json:"-"`
-	TargetTokenExpiresAt        sql.NullTime   `json:"target_token_expires_at,omitempty"`
-	SourceProvider              string         `json:"source_provider"`
-	TargetProvider              string         `json:"target_provider"`
-	Direction                   string         `json:"direction"`
-	ConflictStrategy            string         `json:"conflict_strategy"`
-	DeletePropagation           bool           `json:"delete_propagation"`
-	IntervalMinutes             int            `json:"interval_minutes"`
-	Threads                     int            `json:"threads"`
-	BandwidthLimitMbps          int            `json:"bandwidth_limit_mbps"`
-	Status                      string         `json:"status"` // IDLE, INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
-	RunGeneration               int            `json:"run_generation"`
-	TargetDir                   string         `json:"target_dir"`
-	SelectedPaths               StringArray    `json:"selected_paths,omitempty"`
-	LastRunAt                   sql.NullTime   `json:"last_run_at,omitempty"`
-	NextRunAt                   sql.NullTime   `json:"next_run_at,omitempty"`
-	LastRunStatus               sql.NullString `json:"last_run_status,omitempty"`
-	ErrorMessage                sql.NullString `json:"error_message,omitempty"`
-	TotalFiles                  int            `json:"total_files"`
-	TotalBytes                  int64          `json:"total_bytes"`
-	ProcessedFiles              int            `json:"processed_files"`
-	ProcessedBytes              int64          `json:"processed_bytes"`
-	LiveBytes                   int64          `json:"live_bytes"`
-	ChangedFiles                int            `json:"changed_files"`
-	DeletedFiles                int            `json:"deleted_files"`
-	FailedFiles                 int            `json:"failed_files"`
-	ActiveFiles                 []string       `json:"active_files,omitempty"`
-	CreatedAt                   time.Time      `json:"created_at"`
-	UpdatedAt                   time.Time      `json:"updated_at"`
+	ID                           string         `json:"id"`
+	UserID                       string         `json:"user_id"`
+	SourceURL                    string         `json:"source_url"`
+	SourceUsername               string         `json:"source_username"`
+	SourcePasswordEncrypted      string         `json:"-"`
+	SourceRefreshTokenEncrypted  sql.NullString `json:"-"`
+	SourceTokenExpiresAt         sql.NullTime   `json:"source_token_expires_at,omitempty"`
+	SourceMegaSessionIDEncrypted string         `json:"-"`
+	SourceMegaMasterKeyEncrypted string         `json:"-"`
+	TargetURL                    string         `json:"target_url"`
+	TargetUsername               string         `json:"target_username"`
+	TargetPasswordEncrypted      string         `json:"-"`
+	TargetRefreshTokenEncrypted  sql.NullString `json:"-"`
+	TargetTokenExpiresAt         sql.NullTime   `json:"target_token_expires_at,omitempty"`
+	TargetMegaSessionIDEncrypted string         `json:"-"`
+	TargetMegaMasterKeyEncrypted string         `json:"-"`
+	SourceProvider               string         `json:"source_provider"`
+	TargetProvider               string         `json:"target_provider"`
+	Direction                    string         `json:"direction"`
+	ConflictStrategy             string         `json:"conflict_strategy"`
+	DeletePropagation            bool           `json:"delete_propagation"`
+	IntervalMinutes              int            `json:"interval_minutes"`
+	Threads                      int            `json:"threads"`
+	BandwidthLimitMbps           int            `json:"bandwidth_limit_mbps"`
+	Status                       string         `json:"status"` // IDLE, INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
+	RunGeneration                int            `json:"run_generation"`
+	TargetDir                    string         `json:"target_dir"`
+	SelectedPaths                StringArray    `json:"selected_paths,omitempty"`
+	LastRunAt                    sql.NullTime   `json:"last_run_at,omitempty"`
+	NextRunAt                    sql.NullTime   `json:"next_run_at,omitempty"`
+	LastRunStatus                sql.NullString `json:"last_run_status,omitempty"`
+	ErrorMessage                 sql.NullString `json:"error_message,omitempty"`
+	TotalFiles                   int            `json:"total_files"`
+	TotalBytes                   int64          `json:"total_bytes"`
+	ProcessedFiles               int            `json:"processed_files"`
+	ProcessedBytes               int64          `json:"processed_bytes"`
+	LiveBytes                    int64          `json:"live_bytes"`
+	ChangedFiles                 int            `json:"changed_files"`
+	DeletedFiles                 int            `json:"deleted_files"`
+	FailedFiles                  int            `json:"failed_files"`
+	ActiveFiles                  []string       `json:"active_files,omitempty"`
+	CreatedAt                    time.Time      `json:"created_at"`
+	UpdatedAt                    time.Time      `json:"updated_at"`
 }
 
 // MarshalJSON serializes the sync job with nullable columns (sql.NullString,
@@ -101,13 +105,13 @@ type SyncState struct {
 const createSyncJobQuery = `
 		INSERT INTO sync_jobs (
 			user_id, source_url, source_username, source_password_encrypted,
-			source_refresh_token_encrypted, source_token_expires_at,
+			source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
 			target_url, target_username, target_password_encrypted,
-			target_refresh_token_encrypted, target_token_expires_at,
+			target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
 			source_provider, target_provider, direction, conflict_strategy,
 			delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 			selected_paths
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -124,9 +128,9 @@ func insertSyncJob(database queryExecer, s *SyncJob) error {
 	return database.QueryRow(
 		createSyncJobQuery,
 		s.UserID, s.SourceURL, s.SourceUsername, s.SourcePasswordEncrypted,
-		s.SourceRefreshTokenEncrypted, s.SourceTokenExpiresAt,
+		s.SourceRefreshTokenEncrypted, s.SourceTokenExpiresAt, s.SourceMegaSessionIDEncrypted, s.SourceMegaMasterKeyEncrypted,
 		s.TargetURL, s.TargetUsername, s.TargetPasswordEncrypted,
-		s.TargetRefreshTokenEncrypted, s.TargetTokenExpiresAt,
+		s.TargetRefreshTokenEncrypted, s.TargetTokenExpiresAt, s.TargetMegaSessionIDEncrypted, s.TargetMegaMasterKeyEncrypted,
 		s.SourceProvider, s.TargetProvider, s.Direction, s.ConflictStrategy,
 		s.DeletePropagation, s.IntervalMinutes, s.Threads, s.BandwidthLimitMbps, s.Status, s.TargetDir,
 		s.SelectedPaths,
@@ -180,9 +184,9 @@ func resetSyncJobAndSchedule(job *SyncJob, schedule *Schedule) {
 func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted,
-		       source_refresh_token_encrypted, source_token_expires_at,
+		       source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
 		       target_url, target_username, target_password_encrypted,
-		       target_refresh_token_encrypted, target_token_expires_at,
+		       target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
 		       source_provider, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, run_generation, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
@@ -194,9 +198,9 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 	var s SyncJob
 	err := db.QueryRow(query, id).Scan(
 		&s.ID, &s.UserID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
-		&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt,
+		&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt, &s.SourceMegaSessionIDEncrypted, &s.SourceMegaMasterKeyEncrypted,
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
-		&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt,
+		&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt, &s.TargetMegaSessionIDEncrypted, &s.TargetMegaMasterKeyEncrypted,
 		&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.RunGeneration, &s.TargetDir,
 		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
@@ -1525,4 +1529,3 @@ func UpdateSyncJobInterval(db *sql.DB, syncJobID string, intervalMinutes int) er
 
 	return tx.Commit()
 }
-
