@@ -213,9 +213,9 @@ func resetMigrationAndSchedule(migration *Migration, schedule *Schedule) {
 func GetMigration(db *sql.DB, id string) (*Migration, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted, source_provider,
-		       source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
+		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
 		       target_url, target_username, target_password_encrypted, target_provider,
-		       target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
+		       target_refresh_token_encrypted, target_token_expires_at, COALESCE(target_mega_session_id_encrypted, ''), COALESCE(target_mega_master_key_encrypted, ''),
 		       status, conflict_strategy, total_files, total_bytes, processed_files,
 		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
 		       created_at, updated_at, target_dir, threads, bandwidth_limit_mbps,

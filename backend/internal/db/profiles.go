@@ -75,7 +75,7 @@ func CreateConnectionProfile(database *sql.DB, p *ConnectionProfile) (string, er
 func GetConnectionProfile(ctx context.Context, database *sql.DB, id string) (*ConnectionProfile, error) {
 	query := `
 		SELECT id, user_id, name, provider, url, username,
-		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user, mega_session_id_encrypted, mega_master_key_encrypted,
+		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user, COALESCE(mega_session_id_encrypted, ''), COALESCE(mega_master_key_encrypted, ''),
 		       created_at, updated_at
 		FROM connection_profiles WHERE id = $1
 	`
@@ -98,7 +98,7 @@ func GetConnectionProfiles(ctx context.Context, database *sql.DB, userID, _ stri
 	args := []interface{}{userID}
 	query := `
 		SELECT id, user_id, name, provider, url, username,
-		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user, mega_session_id_encrypted, mega_master_key_encrypted,
+		       password_encrypted, refresh_token_encrypted, token_expires_at, oauth_user, COALESCE(mega_session_id_encrypted, ''), COALESCE(mega_master_key_encrypted, ''),
 		       created_at, updated_at
 		FROM connection_profiles
 		WHERE user_id = $1
