@@ -33,6 +33,7 @@ import { useTranslation } from "react-i18next";
 import { useFormat } from "../utils/format";
 import { useApiError } from "../utils/apiError";
 import { apiFetch } from "../utils/apiClient";
+import { logger } from "../utils/logger";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { Button } from "./Button";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -395,7 +396,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         );
       }
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to load target directory", err);
       setTargetError(
         err instanceof Error ? err.message : t("fileBrowser.errors.loadTarget"),
       );
@@ -478,7 +479,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         );
       }
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to create target directory", err);
       setTargetError(
         err instanceof Error
           ? err.message
@@ -538,7 +539,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           });
         }
       } catch (err) {
-        console.error(err);
+        logger.error("Failed to load calendars", err);
       } finally {
         setLoadingCalendars(false);
       }
@@ -595,7 +596,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           });
         }
       } catch (err) {
-        console.error(err);
+        logger.error("Failed to load contacts", err);
       } finally {
         setLoadingContacts(false);
       }
@@ -695,7 +696,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           );
         }
       } catch (err) {
-        console.error(err);
+        logger.error("Failed to load source directory", err);
         setError(
           err instanceof Error ? err.message : t("fileBrowser.errors.loadDir"),
         );

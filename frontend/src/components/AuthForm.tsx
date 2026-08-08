@@ -4,6 +4,7 @@ import { EyeIcon as Eye, EyeSlashIcon as EyeOff } from '@heroicons/react/24/outl
 import type { User as UserType } from '../types';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 
 interface AuthFormProps {
   apiUrl: string;
@@ -59,7 +60,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         }
       })
       .catch((err) => {
-        console.error('Failed to fetch settings:', err);
+        logger.error('Failed to fetch settings', err);
       });
     return () => { cancelled = true; };
   }, [apiUrl]);
@@ -75,7 +76,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
         }
       })
       .catch((err) => {
-        console.error('Failed to fetch password reset availability:', err);
+        logger.error('Failed to fetch password reset availability', err);
       });
     return () => { cancelled = true; };
   }, [apiUrl]);

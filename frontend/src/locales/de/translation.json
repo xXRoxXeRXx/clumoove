@@ -50,6 +50,14 @@
   "language": {
     "select": "Sprache auswählen"
   },
+  "errorBoundary": {
+    "title": "Etwas ist schiefgelaufen",
+    "description": "Lade die Seite neu, um die Anwendung wiederherzustellen.",
+    "reload": "Seite neu laden",
+    "transferTitle": "Transferansicht konnte nicht angezeigt werden",
+    "transferDescription": "Im Transfer-Dashboard ist ein unerwarteter Fehler aufgetreten. Neu laden oder zur Übersicht zurückkehren.",
+    "backToOverview": "Zurück zur Übersicht"
+  },
   "format": {
     "duration": {
       "seconds": "{{count}} Sek.",

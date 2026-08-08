@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -23,12 +24,13 @@ import (
 	"backend/internal/db"
 	"backend/internal/email"
 	"backend/internal/oauth"
+	"backend/internal/observability"
 )
 
 // handleOAuthAuth handles the OAuth authorization redirect.
 func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
-	log.Printf("handleOAuthAuth: Hit with provider=%q", provider)
+	logger := observability.Logger(r.Context()).With(slog.String("component", "oauth"))
 
 	if provider == "" {
 		writeError(w, http.StatusBadRequest, ErrOauthProviderMissing)
@@ -36,7 +38,6 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	origin := r.URL.Query().Get("origin")
-	log.Printf("handleOAuthAuth: origin query param=%q", origin)
 	if origin == "" {
 		if referer := r.Header.Get("Referer"); referer != "" {
 			if parsed, err := url.Parse(referer); err == nil {
@@ -45,21 +46,20 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if origin == "" {
-		log.Printf("handleOAuthAuth: rejected request with no determinable origin")
+		logger.WarnContext(r.Context(), "oauth_authorization_rejected", slog.String("operation", "authorize"), slog.String("error_kind", "validation"))
 		writeError(w, http.StatusBadRequest, ErrOauthOriginMissing)
 		return
 	}
 	if parsedOrigin, err := url.Parse(origin); err != nil || (parsedOrigin.Scheme != "http" && parsedOrigin.Scheme != "https") {
-		log.Printf("handleOAuthAuth: rejected invalid origin %q", origin)
+		logger.WarnContext(r.Context(), "oauth_authorization_rejected", slog.String("operation", "authorize"), slog.String("error_kind", "validation"))
 		writeError(w, http.StatusBadRequest, ErrOauthOriginInvalid)
 		return
 	}
 	if !allowedOrigins[origin] {
-		log.Printf("handleOAuthAuth: rejected untrusted origin %q", origin)
+		logger.WarnContext(r.Context(), "oauth_authorization_rejected", slog.String("operation", "authorize"), slog.String("error_kind", "authorization"))
 		writeError(w, http.StatusBadRequest, ErrOauthOriginUntrusted)
 		return
 	}
-	log.Printf("handleOAuthAuth: final origin set to %q", origin)
 
 	purpose := r.URL.Query().Get("purpose")
 	if purpose == "" {
@@ -68,7 +68,7 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 
 	stateToken := generateRandomString(16)
 	if stateToken == "" {
-		log.Printf("handleOAuthAuth: Failed to generate state token")
+		logger.ErrorContext(r.Context(), "oauth_authorization_failed", slog.String("operation", "authorize"), slog.String("error_kind", "internal"))
 		writeError(w, http.StatusInternalServerError, ErrOauthGenerationFailed)
 		return
 	}
@@ -87,15 +87,14 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 	stateParam := fmt.Sprintf("%s:%s:%s:%s", stateToken, provider, purpose, origin)
 
 	redirectURI := s.getRedirectURI(r)
-	log.Printf("handleOAuthAuth: constructing authURL with redirectURI=%s", redirectURI)
 	authURL, err := oauth.GetAuthURL(provider, redirectURI, stateParam)
 	if err != nil {
-		log.Printf("handleOAuthAuth: GetAuthURL failed: %v", err)
+		logger.ErrorContext(r.Context(), "oauth_authorization_failed", slog.String("operation", "authorize"), slog.String("provider", provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		writeError(w, http.StatusInternalServerError, ErrOauthGenerationFailed)
 		return
 	}
 
-	log.Printf("handleOAuthAuth: Redirecting user to %s", authURL)
+	logger.InfoContext(r.Context(), "oauth_authorization_started", slog.String("operation", "authorize"), slog.String("provider", provider))
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
@@ -103,17 +102,17 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 
-	log.Printf("handleOAuthCallback: Received request with code length %d, state: %q", len(code), state)
+	logger := observability.Logger(r.Context()).With(slog.String("component", "oauth"))
 
 	if code == "" || state == "" {
-		log.Printf("handleOAuthCallback: Missing code or state")
+		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("error_kind", "validation"))
 		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
 		return
 	}
 
 	parts := strings.SplitN(state, ":", 4)
 	if len(parts) < 3 {
-		log.Printf("handleOAuthCallback: Invalid state format (length %d)", len(parts))
+		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("error_kind", "validation"))
 		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthGenerationFailed)
 		return
 	}
@@ -125,10 +124,8 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		purpose = parts[2]
 	}
 
-	log.Printf("handleOAuthCallback: parsed provider=%s, origin=%s, purpose=%s", provider, origin, purpose)
-
 	if !allowedOrigins[origin] {
-		log.Printf("handleOAuthCallback: rejected untrusted origin %q in state", origin)
+		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("provider", provider), slog.String("error_kind", "authorization"))
 		// Never reflect an untrusted origin into the callback document. Besides not
 		// being a valid postMessage target, it would be embedded in an inline script.
 		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", "http://localhost:5173", ErrOauthOriginUntrusted)
@@ -137,7 +134,7 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	cookie, err := r.Cookie("oauth_state")
 	if err != nil || cookie.Value == "" || cookie.Value != stateToken {
-		log.Printf("handleOAuthCallback: CSRF check failed. Cookie err: %v, stateToken: %q", err, stateToken)
+		logger.WarnContext(r.Context(), "oauth_callback_rejected", slog.String("operation", "callback"), slog.String("provider", provider), slog.String("error_kind", "authorization"))
 		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthGenerationFailed)
 		return
 	}
@@ -154,26 +151,23 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	http.SetCookie(w, clearCookie)
 
 	redirectURI := s.getRedirectURI(r)
-	log.Printf("handleOAuthCallback: using redirectURI=%s", redirectURI)
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
-	log.Printf("handleOAuthCallback: exchanging code for provider %s...", provider)
 	tokenResp, err := oauth.ExchangeCode(ctx, provider, code, redirectURI)
 	if err != nil {
-		log.Printf("handleOAuthCallback: ExchangeCode failed: %v", err)
+		logger.ErrorContext(r.Context(), "oauth_exchange_failed", slog.String("operation", "exchange_code"), slog.String("provider", provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		s.renderOAuthResultHTML(w, "", "", "", 0, "", "", origin, ErrOauthExchangeFailed)
 		return
 	}
 
-	log.Printf("handleOAuthCallback: token exchange successful. Fetching user info...")
 	username, err := oauth.GetUserInfo(ctx, provider, tokenResp.AccessToken)
 	if err != nil {
-		log.Printf("handleOAuthCallback: GetUserInfo failed (defaulting to OAuth User): %v", err)
+		logger.WarnContext(r.Context(), "oauth_user_info_unavailable", slog.String("operation", "get_user_info"), slog.String("provider", provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		username = "OAuth User"
 	}
 
-	log.Printf("handleOAuthCallback: rendering successful login for user %q", username)
+	logger.InfoContext(r.Context(), "oauth_callback_completed", slog.String("operation", "callback"), slog.String("provider", provider))
 	s.renderOAuthResultHTML(w, provider, tokenResp.AccessToken, tokenResp.RefreshToken, tokenResp.ExpiresIn, username, purpose, origin)
 }
 

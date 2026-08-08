@@ -36,7 +36,7 @@ bytes. This prevents key reuse and weak signing keys.
 
 Connection failures can embed URLs with credentials (`https://user:pass@host/…`). The backend:
 
-- Logs the raw error with `log.Printf` (server-side only).
+- Logs the error through structured `slog` (server-side only) after applying log-field redaction.
 - Returns **only** a machine-readable `error_code` to the client — never raw `err.Error()` text.
 - `indexer.sanitizeError` and `db`-level sanitizers redact `user:pass@` from any error string
   **before** persisting it to `migrations.error_message` / `indexing_errors`, so the report and DB
@@ -191,3 +191,32 @@ prevent log injection (CWE-117). Writes never block the primary request.
 The migration report (`/migration/{id}/report`) neutralizes spreadsheet formula-trigger characters
 (`=`, `+`, `-`, `@`, tab, CR) by prefixing cells with a single quote, since file paths/error messages
 originate from the (attacker-influenced) source server.
+
+---
+
+## 15. Structured Logging & Request Correlation
+
+API and worker processes write one JSON record per log event to stdout through `slog`. Operators should
+collect stdout as structured JSON rather than parsing rendered text. Each record includes the log level,
+message, timestamp, `environment` from `LOG_ENVIRONMENT`, and `instance_id` from `INSTANCE_ID` when it
+is configured.
+
+- `LOG_LEVEL` controls the minimum emitted level. Valid values are `DEBUG`, `INFO`, `WARN`, and `ERROR`
+  (case-insensitive); it defaults to `INFO`.
+- `LOG_ENVIRONMENT` is an optional operator-defined deployment label, such as `development`, `staging`,
+  or `production`. It identifies the emitting environment and does not change the configured log level.
+- `INSTANCE_ID` is an optional stable identifier for one API or worker instance. Set a distinct value for
+  each replica so events can be correlated with a process/container during incident response.
+- Every API request receives a request ID. The ID is included in that request's structured logs and is
+  returned in the `X-Request-ID` response header so support and operators can correlate a client report
+  with server-side events.
+
+Logs must never contain plaintext credentials or session material. Redact URL userinfo, `Authorization`
+and `Cookie` headers, passwords, API keys, access/refresh tokens, client secrets, and equivalent values in
+structured fields or error text. Do not log request or response bodies. File paths are personal metadata;
+do not emit them at normal levels. `DEBUG` may include paths needed for diagnosis, so it must be enabled
+only temporarily and only where operators accept that path-privacy risk.
+
+An error is logged once at the boundary that handles it with the available operation context and request
+ID. Callers propagate or wrap errors without logging the same failure again; the client still receives only
+the machine-readable `error_code` described above.

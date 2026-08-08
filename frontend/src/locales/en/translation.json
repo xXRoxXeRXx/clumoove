@@ -50,6 +50,14 @@
   "language": {
     "select": "Select language"
   },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "description": "Reload the page to restore the application.",
+    "reload": "Reload page",
+    "transferTitle": "Transfer view could not be displayed",
+    "transferDescription": "The transfer dashboard hit an unexpected error. Reload or return to the overview.",
+    "backToOverview": "Back to overview"
+  },
   "format": {
     "duration": {
       "seconds": "{{count}} sec",

@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +18,7 @@ import (
 	"backend/internal/db"
 	"backend/internal/indexer"
 	"backend/internal/oauth"
+	"backend/internal/observability"
 	"backend/internal/queue"
 	"backend/internal/scheduler"
 	appSync "backend/internal/sync"
@@ -70,11 +72,15 @@ const (
 )
 
 func main() {
-	log.Println("Starting Migration API Gateway...")
+	if _, err := observability.Configure("api"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	slog.Info("service_starting", slog.String("component", "api"))
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		log.Println("WARNING: DATABASE_URL not set — defaulting to sslmode=require. Set DATABASE_URL explicitly to override (e.g. for a local dev database).")
+		slog.Warn("database_url_defaulted", slog.String("component", "api"))
 		dbURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=require"
 	}
 
@@ -85,27 +91,32 @@ func main() {
 
 	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
 	if encryptionKey == "" {
-		log.Fatal("ENCRYPTION_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "encryption_key_missing"))
+		os.Exit(1)
 	}
 
 	jwtSecret := os.Getenv("JWT_SECRET_KEY")
 	if jwtSecret == "" {
-		log.Fatal("JWT_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "jwt_key_missing"))
+		os.Exit(1)
 	}
 
 	if subtle.ConstantTimeCompare([]byte(encryptionKey), []byte(jwtSecret)) == 1 {
-		log.Fatal("ENCRYPTION_SECRET_KEY and JWT_SECRET_KEY must be different to maintain cryptographic key segregation.")
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "keys_equal"))
+		os.Exit(1)
 	}
 
 	if len(jwtSecret) < 32 {
-		log.Fatalf("JWT_SECRET_KEY must be at least 32 bytes long (got %d). Refusing to start with an insecure signing key.", len(jwtSecret))
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("error_kind", "configuration"), slog.String("reason", "jwt_key_too_short"))
+		os.Exit(1)
 	}
 
 	// Unknown accounts are checked against this bcrypt hash so their login path
 	// takes the same password-verification work as an existing account.
 	dummyPasswordHash, err := auth.HashPassword("clumoove-login-timing-placeholder")
 	if err != nil {
-		log.Fatalf("Failed to initialize login timing protection: %v", err)
+		slog.Error("startup_failed", slog.String("component", "api"), slog.String("reason", "timing_protection_init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		os.Exit(1)
 	}
 
 	port := os.Getenv("PORT")
@@ -116,10 +127,11 @@ func main() {
 	// 1. Initialize PostgreSQL
 	database, err := db.InitDB(dbURL)
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		slog.Error("startup_failed", slog.String("component", "database"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		os.Exit(1)
 	}
 	defer database.Close()
-	log.Println("Connected to PostgreSQL database.")
+	slog.Info("database_connected", slog.String("component", "database"))
 
 	// 1b. Install the administrator-managed OAuth credential loader. Credentials
 	// live in instance_oauth_providers and are decrypted only when a token is
@@ -129,9 +141,10 @@ func main() {
 	// 2. Initialize Redis Queue
 	q, err := queue.NewQueue(redisURL)
 	if err != nil {
-		log.Fatalf("Failed to initialize Redis queue: %v", err)
+		slog.Error("startup_failed", slog.String("component", "queue"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		os.Exit(1)
 	}
-	log.Println("Connected to Redis.")
+	slog.Info("queue_connected", slog.String("component", "queue"))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -140,7 +153,7 @@ func main() {
 		strings.EqualFold(os.Getenv("TRUSTED_PROXY"), "true")
 
 	if !trustedProxy {
-		log.Println("WARNING: TRUSTED_PROXY is not set. If the API runs behind a reverse proxy, per-IP rate limiting and lockout accounting will be ineffective (all clients share the proxy's address). Set TRUSTED_PROXY=1 if a trusted proxy sits in front of the API.")
+		slog.Warn("trusted_proxy_not_configured", slog.String("component", "api"))
 	}
 
 	syncEng := appSync.NewEngine(database, q, encryptionKey)
@@ -272,7 +285,7 @@ func main() {
 	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
 	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
 
-	handler := server.securityHeadersMiddleware(corsMiddleware(mux))
+	handler := server.requestLogMiddleware(server.securityHeadersMiddleware(corsMiddleware(mux)))
 
 	srv := &http.Server{
 		Addr:         ":" + port,
@@ -293,21 +306,22 @@ func main() {
 	go sched.RunOrphanedSyncJobRecovery(ctx)
 
 	go func() {
-		log.Printf("API Server listening on port %s\n", port)
+		slog.Info("http_server_listening", slog.String("component", "api"))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %s\n", err)
+			slog.Error("http_server_failed", slog.String("component", "api"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		}
 	}()
 
 	sig := <-sigChan
-	log.Printf("Received signal %v. Shutting down API server...\n", sig)
+	slog.Info("shutdown_requested", slog.String("component", "api"), slog.String("signal", sig.String()))
 
 	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("API Server Shutdown Failed:%+v", err)
+		slog.Error("shutdown_failed", slog.String("component", "api"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		return
 	}
-	log.Println("API Server exited gracefully.")
+	slog.Info("service_stopped", slog.String("component", "api"))
 }

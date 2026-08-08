@@ -34,6 +34,9 @@ configuration, scaling, and routine operational tasks.
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
 | `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting and lets the OAuth callback host follow `X-Forwarded-Host`). The callback **scheme** is taken from `X-Forwarded-Proto` regardless, so a TLS-terminating proxy that forwards that header yields an `https://` redirect URI without `TRUSTED_PROXY`. | off |
 | `FRONTEND_URL` | Frontend base URL (used in reset/email-change links). | `http://localhost:5173` |
+| `LOG_LEVEL` | Minimum JSON `slog` level. Valid values: `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive). | `INFO` |
+| `LOG_ENVIRONMENT` | Optional deployment label included in each log record, such as `development`, `staging`, or `production`. | unset |
+| `INSTANCE_ID` | Optional stable, distinct identifier for an API or worker replica; included in log records for correlation. | unset |
 
 > **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. No `*_CLIENT_ID` / `*_CLIENT_SECRET` variables are read. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
 
@@ -135,6 +138,15 @@ of 300 is suitable for up to two 50-thread workers; set it to at least `500` bef
 
 ## 7. Operational Tasks & Notes
 
+- **Structured logs:** API and worker logs are JSON `slog` records on stdout. Configure log collection to
+  preserve JSON fields, including `environment`, `instance_id`, and API request IDs. API responses return
+  the request ID as `X-Request-ID` for support correlation.
+- **Log privacy:** logs redact credentials, session material, URL userinfo, and sensitive headers; they do
+  not include request/response bodies. Paths are personal metadata and are omitted at normal levels.
+  `LOG_LEVEL=DEBUG` may expose paths required for diagnosis, so use it only temporarily in environments
+  where that privacy risk is accepted.
+- **Error volume:** each failure is logged once at its handling boundary with its operation context and,
+  for HTTP work, request ID. Repeated logs for wrapped or propagated copies of the same error are avoided.
 - **Graceful shutdown:** API and worker catch `SIGINT`/`SIGTERM`; the worker drains in-flight tasks
   before exiting.
 - **Completion notifications:** the worker's `RunNotifier` drains durable per-channel deliveries for

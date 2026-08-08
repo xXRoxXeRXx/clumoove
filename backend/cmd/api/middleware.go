@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"backend/internal/observability"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -30,7 +33,7 @@ func (rl *distributedRateLimiter) Allow(ctx context.Context, scope, clientKey st
 	if err != nil {
 		// Redis is required at startup; fail closed if it becomes unavailable so a
 		// transient outage cannot silently disable abuse protection.
-		log.Printf("rate limiter unavailable for scope %q: %v", scope, err)
+		slog.ErrorContext(ctx, "rate_limiter_unavailable", slog.String("component", "rate_limiter"), slog.String("operation", scope), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return false
 	}
 	return result
@@ -59,9 +62,12 @@ func corsMiddleware(next http.Handler) http.Handler {
 				writeError(w, http.StatusForbidden, ErrCorsOriginUntrusted)
 				return
 			}
-			// Credentialed requests are only allowed from the whitelisted origins
+			// Credentialed requests are only allowed from the whitelisted origins.
+			// Expose-Header is set only for trusted origins so rejected origins
+			// receive no CORS metadata.
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 		}
 		// Requests from unknown or empty origins receive no Allow-Origin header (blocked by browser if necessary)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
@@ -74,6 +80,114 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (w *loggingResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *loggingResponseWriter) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	count, err := w.ResponseWriter.Write(data)
+	w.bytes += int64(count)
+	return count, err
+}
+
+func (w *loggingResponseWriter) Flush() {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *loggingResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// requestLogMiddleware is outermost so CORS rejections and preflights are
+// correlated too. Client supplied request IDs are intentionally ignored.
+func (s *APIServer) requestLogMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := observability.NewRequestID()
+		logger := slog.Default().With(slog.String("component", "http"), slog.String("request_id", requestID))
+		r = r.WithContext(observability.WithLogger(r.Context(), logger))
+		w.Header().Set("X-Request-ID", requestID)
+		response := &loggingResponseWriter{ResponseWriter: w}
+		started := time.Now()
+		next.ServeHTTP(response, r)
+		status := response.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		attrs := []slog.Attr{
+			slog.String("operation", "http_request"),
+			slog.String("method", r.Method),
+			slog.String("route", routePattern(r)),
+			slog.Int("http_status", status),
+			slog.Int64("response_bytes", response.bytes),
+			slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+			slog.String("client_ip_category", s.clientIPCategory(r)),
+		}
+		arguments := make([]any, len(attrs))
+		for i, attr := range attrs {
+			arguments[i] = attr
+		}
+		if status >= http.StatusInternalServerError {
+			logger.ErrorContext(r.Context(), "http_request_completed", arguments...)
+		} else {
+			logger.InfoContext(r.Context(), "http_request_completed", arguments...)
+		}
+	})
+}
+
+func routePattern(r *http.Request) string {
+	if r.Pattern != "" {
+		return r.Pattern
+	}
+	return "unmatched"
+}
+
+func (s *APIServer) clientIPCategory(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	// Reuse the canonical leftmost-IP extraction so proxy chains
+	// ("client, proxy1, proxy2") are classified correctly rather than
+	// collapsing to "unknown".
+	if s.trustedProxy {
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			candidate := strings.TrimSpace(forwarded)
+			if idx := strings.IndexByte(candidate, ','); idx >= 0 {
+				candidate = strings.TrimSpace(candidate[:idx])
+			}
+			if candidate != "" {
+				host = candidate
+			}
+		}
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return "unknown"
+	}
+	if ip.IsLoopback() {
+		return "loopback"
+	}
+	if ip.IsPrivate() {
+		return "private"
+	}
+	return "public"
 }
 
 // securityHeadersMiddleware attaches defensive HTTP response headers to every

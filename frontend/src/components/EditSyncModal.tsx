@@ -23,6 +23,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { useApiError } from "../utils/apiError";
 import { useFormat } from "../utils/format";
 import { apiFetch } from "../utils/apiClient";
+import { logger } from "../utils/logger";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { SyncOptionsForm } from "./SyncOptionsForm";
 import { Button } from "./Button";
@@ -230,7 +231,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         const items = sortEntries(data.items || data.files || []);
         setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
       } catch (err) {
-        console.error("Error loading source directory:", err);
+        logger.error("Error loading source directory", err);
         setError(err instanceof Error ? err.message : t("fileBrowser.errors.loadDir"));
       } finally {
         setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
@@ -260,7 +261,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         const items = sortEntries(data.items || data.files || []);
         setTargetDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
       } catch (err) {
-        console.error("Error loading target directory:", err);
+        logger.error("Error loading target directory", err);
         setTargetError(err instanceof Error ? err.message : t("fileBrowser.errors.loadTarget"));
       } finally {
         setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
@@ -307,7 +308,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
       setNewFolderName("");
       await fetchTargetChildren(parentPath);
     } catch (err) {
-      console.error(err);
+      logger.error("Failed to create target directory", err);
       setTargetError(err instanceof Error ? err.message : t("fileBrowser.mkdirFailed"));
     }
   };
@@ -390,7 +391,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
 
       onSuccess();
     } catch (err) {
-      console.error("Save error:", err);
+      logger.error("Save error", err);
       setError(err instanceof Error ? err.message : t("sync.createFailed"));
     } finally {
       setSaving(false);

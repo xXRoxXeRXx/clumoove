@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"backend/internal/db"
 	"backend/internal/oauth"
+	"backend/internal/observability"
 	"backend/internal/processor"
 	"backend/internal/queue"
 )
@@ -42,26 +43,32 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 }
 
 func main() {
-	log.Println("Starting Migration Worker...")
+	if _, err := observability.Configure("worker"); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	slog.Info("service_starting", slog.String("component", "worker"))
 
 	// Read environment variables
 	if os.Getenv("DATABASE_URL") == "" {
 		// No explicit DATABASE_URL: default to TLS-required rather than
 		// silently falling back to an unencrypted connection.
-		log.Println("WARNING: DATABASE_URL not set — defaulting to sslmode=require. Set DATABASE_URL explicitly to override (e.g. for a local dev database).")
+		slog.Warn("database_url_defaulted", slog.String("component", "worker"))
 	}
 	config, err := loadWorkerConfig(os.Getenv)
 	if err != nil {
-		log.Fatal("ENCRYPTION_SECRET_KEY is required but not set. Refusing to start with an insecure key.")
+		slog.Error("startup_failed", slog.String("component", "worker"), slog.String("reason", "encryption_key_missing"), slog.String("error_kind", "configuration"), observability.Error(err))
+		os.Exit(1)
 	}
 
 	// 1. Initialize PostgreSQL
 	database, err := db.InitDB(config.databaseURL)
 	if err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		slog.Error("startup_failed", slog.String("component", "database"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		os.Exit(1)
 	}
 	defer database.Close()
-	log.Println("Connected to PostgreSQL database.")
+	slog.Info("database_connected", slog.String("component", "database"))
 
 	// 1b. Install the administrator-managed OAuth credential loader so any inline
 	// token refresh (Finding 9) has a populated credential cache instead of
@@ -72,9 +79,10 @@ func main() {
 	// 2. Initialize Redis Queue
 	q, err := queue.NewQueue(config.redisURL)
 	if err != nil {
-		log.Fatalf("Failed to initialize Redis queue: %v", err)
+		slog.Error("startup_failed", slog.String("component", "queue"), slog.String("reason", "init_failed"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		os.Exit(1)
 	}
-	log.Println("Connected to Redis.")
+	slog.Info("queue_connected", slog.String("component", "queue"))
 
 	// Generate worker ID
 	hostname, err := os.Hostname()
@@ -98,11 +106,11 @@ func main() {
 	// Cancel context on signal, in a separate goroutine so Start() blocks main.
 	go func() {
 		sig := <-sigChan
-		log.Printf("Received signal %v. Initiating graceful shutdown...\n", sig)
+		slog.Info("shutdown_requested", slog.String("component", "worker"), slog.String("signal", sig.String()))
 		cancel()
 	}()
 
 	// Block until context is cancelled AND all in-flight tasks have finished.
 	proc.Start(ctx)
-	log.Println("Worker shut down successfully.")
+	slog.Info("service_stopped", slog.String("component", "worker"))
 }

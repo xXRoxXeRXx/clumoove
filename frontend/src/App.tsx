@@ -10,6 +10,7 @@ import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { AdminPanel } from './components/AdminPanel';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConfirmationProvider } from './contexts/ConfirmationContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -17,6 +18,7 @@ import { useDismissConfirm } from './contexts/useConfirm';
 import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
 import { configureApiClient, apiFetch } from './utils/apiClient';
+import { logger } from './utils/logger';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'reset-password' | 'confirm-email' | 'syncdetail';
 
@@ -56,7 +58,7 @@ function associateUnlinkedFormLabels(root: ParentNode = document) {
 // Security: warn when the API is reached over plaintext HTTP on a non-loopback
 // host, since access tokens and connection credentials would then transit in clear (A04).
 if (API_URL.startsWith('http://') && !/(localhost|127\.0\.0\.1)/.test(new URL(API_URL).hostname)) {
-  console.warn('[security] API communication is over plaintext HTTP. Use HTTPS to protect tokens and credentials.');
+  logger.warn('[security] API communication is over plaintext HTTP. Use HTTPS to protect tokens and credentials.');
 }
 
 function App() {
@@ -193,7 +195,7 @@ function App() {
     try {
       await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' });
     } catch (e) {
-      console.error('Logout request failed:', e);
+      logger.error('Logout request failed', e);
     }
     localStorage.removeItem('has_session');
     setToken('');
@@ -371,7 +373,7 @@ function App() {
         }
       })
       .catch((err) => {
-        console.error('Silent login error:', err);
+        logger.error('Silent login error', err);
         localStorage.removeItem('has_session');
         replaceNav('login', '');
       })
@@ -616,12 +618,19 @@ function App() {
           )}
 
           {step === 'syncdetail' && (
-            <SyncDashboard
-              syncId={syncId}
-              apiUrl={API_URL}
-              onBack={() => goBack()}
-              token={token}
-            />
+            <ErrorBoundary
+              scope="transfer"
+              fallback={() => (
+                <TransferErrorFallback onBack={() => goBack()} />
+              )}
+            >
+              <SyncDashboard
+                syncId={syncId}
+                apiUrl={API_URL}
+                onBack={() => goBack()}
+                token={token}
+              />
+            </ErrorBoundary>
           )}
 
           {step === 'connect' && (
@@ -647,12 +656,19 @@ function App() {
           )}
           
           {step === 'dashboard' && (
-            <Dashboard
-              migrationId={migrationId}
-              apiUrl={API_URL}
-              onReset={handleReset}
-              token={token}
-            />
+            <ErrorBoundary
+              scope="transfer"
+              fallback={() => (
+                <TransferErrorFallback onReset={handleReset} />
+              )}
+            >
+              <Dashboard
+                migrationId={migrationId}
+                apiUrl={API_URL}
+                onReset={handleReset}
+                token={token}
+              />
+            </ErrorBoundary>
           )}
 
           {step === 'settings' && (
@@ -703,3 +719,34 @@ function AppWithTheme() {
 }
 
 export default AppWithTheme;
+
+type TransferErrorFallbackProps = {
+  onReset?: () => void;
+  onBack?: () => void;
+};
+
+function TransferErrorFallback({ onReset, onBack }: TransferErrorFallbackProps) {
+  const { t } = useTranslation();
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[var(--color-bg-primary)] p-6 text-[var(--color-text-primary)]">
+      <section className="ui-card max-w-md space-y-4 p-6 text-center" role="alert" aria-live="assertive">
+        <h1 className="text-xl font-semibold">{t('errorBoundary.transferTitle')}</h1>
+        <p className="text-[var(--color-text-secondary)]">{t('errorBoundary.transferDescription')}</p>
+        <div className="flex justify-center gap-3">
+          <button className="ui-button-primary px-4 py-2" type="button" onClick={() => window.location.reload()}>
+            {t('errorBoundary.reload')}
+          </button>
+          {(onReset || onBack) && (
+            <button
+              className="ui-button-secondary px-4 py-2"
+              type="button"
+              onClick={() => (onReset ?? onBack)?.()}
+            >
+              {t('errorBoundary.backToOverview')}
+            </button>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}

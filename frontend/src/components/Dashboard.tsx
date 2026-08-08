@@ -16,6 +16,7 @@ import { TransferEndpoints } from './TransferEndpoints';
 import { ActiveTransfersPanel, TransferStatusPanel } from './TransferRunSummary';
 import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
+import { logger } from '../utils/logger';
 import {
   QueueListIcon,
   SignalIcon,
@@ -135,7 +136,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error(err);
+      logger.error('Failed to download migration report', err);
       toast(t('dashboard.downloadFailed'));
     }
   };
@@ -160,7 +161,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
       // Status is reflected by the migration SSE stream.
     } catch (err) {
-      console.error(err);
+      logger.error(`Failed to ${action} migration`, err);
       toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setControlLoading(null);
@@ -183,7 +184,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         throw new Error(translateApiError(body.error_code));
       }
     } catch (err) {
-      console.error(err);
+      logger.error('Failed to update migration bandwidth limit', err);
       toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setBandwidthLoading(false);
@@ -206,7 +207,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         throw new Error(translateApiError(body.error_code));
       }
     } catch (err) {
-      console.error(err);
+      logger.error('Failed to update migration thread count', err);
       toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setThreadsLoading(false);
@@ -252,7 +253,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         toast(t('dashboard.noFailed'), 'info');
       }
     } catch (err) {
-      console.error(err);
+      logger.error('Failed to retry migration tasks', err);
       toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
     } finally {
       setControlLoading(null);
@@ -286,7 +287,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           setData((prev) => (prev ? { ...initialData, ...prev } : initialData));
         }
       })
-      .catch((err) => console.error('Initial migration fetch error:', err));
+      .catch((err) => logger.error('Initial migration fetch error', err));
 
     void connectSseLoop({
       url: `${apiUrl}/api/migration/${migrationId}/stream`,
@@ -305,7 +306,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           try {
             payload = JSON.parse(eventData);
           } catch (err) {
-            console.error('Failed to parse migration SSE data:', err);
+            logger.error('Failed to parse migration SSE data', err);
             return;
           }
           payload.error_message = sanitizeErrorMsg(payload.error_message);

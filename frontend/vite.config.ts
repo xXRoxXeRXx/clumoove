@@ -21,6 +21,11 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
+  build: {
+    // No production source maps: client-side code must not expose source paths
+    // or implementation details in shipped bundles.
+    sourcemap: false,
+  },
   server: {
     port: 3000,
     host: true,

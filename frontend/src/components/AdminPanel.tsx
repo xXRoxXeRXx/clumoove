@@ -7,6 +7,7 @@ import { useFormat } from '../utils/format';
 import { useConfirm } from '../contexts/useConfirm';
 import { MessageBanner } from './MessageBanner';
 import { apiFetch } from '../utils/apiClient';
+import { logger } from '../utils/logger';
 import { Toggle } from './Toggle';
 import { Badge, StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
@@ -644,7 +645,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
         if (!cancelled) setRegistrationsEnabled(data.registrations_enabled === 'true');
       })
       .catch((err) => {
-        console.error('Failed to fetch settings:', err);
+        logger.error('Failed to fetch settings', err);
       });
     return () => { cancelled = true; };
   }, [apiUrl]);

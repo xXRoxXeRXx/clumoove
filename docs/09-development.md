@@ -114,14 +114,28 @@ File-scoped commands referenced in `AGENTS.md`:
 ### Security
 - Credentials: never pass plaintext to background goroutines; query + decrypt at the last moment
   (`crypto.Decrypt`).
-- Error messages: never forward raw `err.Error()` for connection failures; log with `log.Printf` and
-  return only a machine-readable `error_code`.
+- Error messages: never forward raw `err.Error()` for connection failures; log through structured `slog`
+  after redaction and return only a machine-readable `error_code`.
 - `ENCRYPTION_SECRET_KEY` is used only for AES-GCM; `JWT_SECRET_KEY` only for JWT signing. API refuses
   to start if either is missing or they are equal.
 - OAuth2 access/refresh tokens are stored AES-GCM encrypted; token refresh must invalidate the old
   refresh token before storing the new one.
 - CORS uses a static `allowedOrigins` whitelist; unknown origins get no `Access-Control-Allow-Origin`.
 - Redis requires a password; connection fails on empty/known-default passwords.
+
+### Structured logging
+- API and worker processes emit JSON `slog` records to stdout. Collect stdout as structured JSON.
+- `LOG_LEVEL` sets the minimum level; valid values are `DEBUG`, `INFO`, `WARN`, and `ERROR`
+  (case-insensitive), with `INFO` as the default.
+- `LOG_ENVIRONMENT` is an optional operator-defined deployment label; `INSTANCE_ID` is an optional stable,
+  per-replica identifier. Both are included in structured log records when configured.
+- API requests have a request ID, included in request logs and returned in `X-Request-ID` for support
+  correlation.
+- Redact URL userinfo, `Authorization`/`Cookie` headers, passwords, API keys, access/refresh tokens,
+  client secrets, and equivalents. Never log request/response bodies. File paths are personal metadata:
+  omit them at normal levels; `DEBUG` path logging is a privacy risk and must be temporary.
+- Log an error once at the handling boundary with operation context and request ID. Propagate or wrap it
+  without logging it again; clients still receive only an `error_code`.
 
 ### Multi-tenancy & ownership
 - All per-migration endpoints call `auth.GetUserIDFromContext(r.Context())` and compare with

@@ -9,6 +9,7 @@ import { Badge, StatusBadge } from './StatusBadge';
 import { apiFetch } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
+import { logger } from '../utils/logger';
 import { ErrorOverview } from './ErrorOverview';
 import { TransferDetailHeader } from './TransferDetailHeader';
 import { TransferProgress } from './TransferProgress';
@@ -92,7 +93,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         if (job?.threads) setThreads(job.threads);
       }
     } catch (err) {
-      console.error(err);
+      logger.error('Failed to update sync thread count', err);
       toast(t('dashboard.threadsFailed'));
       if (job?.threads) setThreads(job.threads);
     } finally {
@@ -114,7 +115,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         setBandwidthLimit(job?.bandwidth_limit_mbps ?? 0);
       }
     } catch (err) {
-      console.error(err);
+      logger.error('Failed to update sync bandwidth limit', err);
       toast(t('dashboard.bandwidthFailed'));
       setBandwidthLimit(job?.bandwidth_limit_mbps ?? 0);
     } finally {
@@ -277,7 +278,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      console.error(err);
+      logger.error('Failed to download sync report', err);
       toast(t('dashboard.downloadFailed'));
     }
   };
@@ -582,7 +583,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 setJob(updated);
               }
             } catch (err) {
-              console.error('Failed to re-fetch sync job details after edit:', err);
+              logger.error('Failed to re-fetch sync job details after edit', err);
             }
           }}
         />
