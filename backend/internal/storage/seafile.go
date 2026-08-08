@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +26,28 @@ type SeafileProvider struct {
 
 	mu        sync.RWMutex
 	repoCache map[string]string // maps repo name -> repo ID
+}
+
+// RetryAfterError indicates that a provider asked the caller to defer a retry.
+// It intentionally contains only the server-provided delay, never credentials
+// or response content.
+type RetryAfterError struct {
+	After time.Duration
+}
+
+func (e *RetryAfterError) Error() string {
+	return fmt.Sprintf("provider rate limited request; retry after %s", e.After)
+}
+
+var seafileAccountTokens = struct {
+	sync.Mutex
+	tokens        map[string]string
+	retryAfter    map[string]time.Time
+	inFlightAuths map[string]chan struct{}
+}{
+	tokens:        make(map[string]string),
+	retryAfter:    make(map[string]time.Time),
+	inFlightAuths: make(map[string]chan struct{}),
 }
 
 type seafileRepo struct {
@@ -74,8 +98,19 @@ func (p *SeafileProvider) Close() error {
 
 func (p *SeafileProvider) invalidateToken() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	token := p.Token
 	p.Token = ""
+	p.mu.Unlock()
+
+	if p.Username == "" || token == "" {
+		return
+	}
+	key := p.accountTokenCacheKey()
+	seafileAccountTokens.Lock()
+	if seafileAccountTokens.tokens[key] == token {
+		delete(seafileAccountTokens.tokens, key)
+	}
+	seafileAccountTokens.Unlock()
 }
 
 func (p *SeafileProvider) getToken(ctx context.Context) (string, error) {
@@ -99,6 +134,59 @@ func (p *SeafileProvider) getToken(ctx context.Context) (string, error) {
 		p.Token = p.Password
 		return p.Token, nil
 	}
+	key := p.accountTokenCacheKey()
+	for {
+		seafileAccountTokens.Lock()
+		if token := seafileAccountTokens.tokens[key]; token != "" {
+			seafileAccountTokens.Unlock()
+			p.Token = token
+			return token, nil
+		}
+		if retryAt := seafileAccountTokens.retryAfter[key]; retryAt.After(time.Now()) {
+			after := time.Until(retryAt)
+			seafileAccountTokens.Unlock()
+			return "", &RetryAfterError{After: after}
+		}
+		if wait := seafileAccountTokens.inFlightAuths[key]; wait != nil {
+			seafileAccountTokens.Unlock()
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-wait:
+				continue
+			}
+		}
+		wait := make(chan struct{})
+		seafileAccountTokens.inFlightAuths[key] = wait
+		seafileAccountTokens.Unlock()
+
+		token, retryAfter, err := p.fetchAccountToken(ctx)
+
+		seafileAccountTokens.Lock()
+		if err == nil {
+			seafileAccountTokens.tokens[key] = token
+			delete(seafileAccountTokens.retryAfter, key)
+		} else if retryAfter != nil {
+			seafileAccountTokens.retryAfter[key] = time.Now().Add(retryAfter.After)
+		}
+		delete(seafileAccountTokens.inFlightAuths, key)
+		close(wait)
+		seafileAccountTokens.Unlock()
+
+		if err != nil {
+			return "", err
+		}
+		p.Token = token
+		return token, nil
+	}
+}
+
+func (p *SeafileProvider) accountTokenCacheKey() string {
+	key := sha256.Sum256([]byte(p.BaseURL + "\x00" + p.Username + "\x00" + p.Password))
+	return string(key[:])
+}
+
+func (p *SeafileProvider) fetchAccountToken(ctx context.Context) (string, *RetryAfterError, error) {
 
 	tokenURL := fmt.Sprintf("%s/api2/auth-token/", p.BaseURL)
 	form := url.Values{}
@@ -107,34 +195,47 @@ func (p *SeafileProvider) getToken(ctx context.Context) (string, error) {
 
 	req, err := http.NewRequestWithContext(ctx, "POST", tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("failed to create auth request: %w", err)
+		return "", nil, fmt.Errorf("failed to create auth request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("%w: seafile auth request failed", ErrAuth)
+		return "", nil, fmt.Errorf("%w: seafile auth request failed", ErrAuth)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusBadRequest {
-		return "", fmt.Errorf("%w: invalid seafile credentials", ErrAuth)
+		return "", nil, fmt.Errorf("%w: invalid seafile credentials", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		return "", retryAfter, retryAfter
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("seafile auth failed with status %d", resp.StatusCode)
+		return "", nil, fmt.Errorf("seafile auth failed with status %d", resp.StatusCode)
 	}
 
 	var authResp struct {
 		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil || authResp.Token == "" {
-		return "", fmt.Errorf("%w: failed to parse auth token response", ErrAuth)
+		return "", nil, fmt.Errorf("%w: failed to parse auth token response", ErrAuth)
 	}
 
-	p.Token = authResp.Token
-	return p.Token, nil
+	return authResp.Token, nil, nil
+}
+
+func parseRetryAfter(value string, now time.Time) *RetryAfterError {
+	after := time.Second
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		after = time.Duration(seconds) * time.Second
+	} else if retryAt, err := http.ParseTime(value); err == nil && retryAt.After(now) {
+		after = time.Until(retryAt)
+	}
+	return &RetryAfterError{After: after}
 }
 
 func (p *SeafileProvider) newAuthRequest(ctx context.Context, method, reqURL string, body io.Reader) (*http.Request, error) {

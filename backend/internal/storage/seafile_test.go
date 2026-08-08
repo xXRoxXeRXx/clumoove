@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type testTransport struct {
@@ -67,6 +71,86 @@ func TestSeafileProviderNonFilesRejected(t *testing.T) {
 	}
 	if err := p.StreamUpload(ctx, "contacts", "/card.vcf", strings.NewReader(""), 0); err != ErrUnsupportedResourceType {
 		t.Errorf("expected ErrUnsupportedResourceType for contacts upload, got %v", err)
+	}
+}
+
+func TestSeafileProviderSharesAccountTokenAcrossTaskScopedClients(t *testing.T) {
+	var authRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/auth-token/" {
+			http.NotFound(w, r)
+			return
+		}
+		authRequests.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]string{"token": "shared-token"})
+	}))
+	defer server.Close()
+
+	const clients = 20
+	errs := make(chan error, clients)
+	var wg sync.WaitGroup
+	for range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p := &SeafileProvider{
+				BaseURL:    server.URL,
+				Username:   "user@example.com",
+				Password:   "pass123",
+				HTTPClient: server.Client(),
+				repoCache:  make(map[string]string),
+			}
+			_, err := p.getToken(context.Background())
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("getToken() error = %v", err)
+		}
+	}
+	if got := authRequests.Load(); got != 1 {
+		t.Fatalf("auth endpoint requests = %d, want 1", got)
+	}
+}
+
+func TestSeafileProviderHonorsAuthRetryAfterAcrossTaskScopedClients(t *testing.T) {
+	var authRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authRequests.Add(1)
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	newProvider := func() *SeafileProvider {
+		return &SeafileProvider{
+			BaseURL:    server.URL,
+			Username:   "user@example.com",
+			Password:   "pass123",
+			HTTPClient: server.Client(),
+			repoCache:  make(map[string]string),
+		}
+	}
+
+	_, err := newProvider().getToken(context.Background())
+	var retryAfterErr *RetryAfterError
+	if !errors.As(err, &retryAfterErr) {
+		t.Fatalf("getToken() error = %v, want RetryAfterError", err)
+	}
+	if retryAfterErr.After != time.Minute {
+		t.Fatalf("RetryAfterError.After = %s, want 1m", retryAfterErr.After)
+	}
+
+	_, err = newProvider().getToken(context.Background())
+	if !errors.As(err, &retryAfterErr) {
+		t.Fatalf("second getToken() error = %v, want RetryAfterError", err)
+	}
+	if got := authRequests.Load(); got != 1 {
+		t.Fatalf("auth endpoint requests = %d, want 1", got)
 	}
 }
 

@@ -394,6 +394,17 @@ func retryBackoff(attempt int) time.Duration {
 	return time.Duration(sec) * time.Second
 }
 
+// retryDelay respects a provider's explicit rate-limit window while retaining
+// the standard migration retry floor for all other transient failures.
+func retryDelay(err error, attempt int) time.Duration {
+	delay := retryBackoff(attempt)
+	var retryAfterErr *storage.RetryAfterError
+	if errors.As(err, &retryAfterErr) && retryAfterErr.After > delay {
+		return retryAfterErr.After
+	}
+	return delay
+}
+
 // queryTargetSize reports whether the target file exists and its size. When retry
 // is true, transient query errors are retried (used for integrity checks where a
 // transient Nextcloud 502/503/423 must not be mistaken for a corrupt transfer).
@@ -1497,7 +1508,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 
 	// If it is a normal file transfer failure
 	if task.Attempts < 3 && !isPermanent {
-		backoff := retryBackoff(task.Attempts)
+		backoff := retryDelay(procErr, task.Attempts)
 		nextRetry := time.Now().Add(backoff)
 		task.Status = "FAILED" // Kept as failed until cron schedules retry
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}

@@ -111,6 +111,8 @@ time, description, tags, etc.) after a successful upload.
 | `seafile` | `seafile.go` | Seafile Web API v2.1 | server URL + user/pass (or Personal Access Token) | files only |
 | `mega` | `mega.go` | MEGA Cloud Drive API over HTTPS | email/password; encrypted reusable session | files only |
 
+For Seafile username/password connections, workers share an in-memory account-token cache per server/account. A single in-flight authentication is allowed for each cache key; HTTP `429 Too Many Requests` honors the server's `Retry-After` value before another authentication is attempted. Tokens are never persisted by this cache and are removed when the server rejects them with `401` or `403`.
+
 ### Verification capabilities
 
 | Provider | Mode | Basis |

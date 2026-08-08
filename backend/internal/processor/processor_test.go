@@ -21,6 +21,15 @@ func (*sizeRetryProvider) FileExists(context.Context, string, string) (bool, int
 	return false, 0, errors.New("transient target error")
 }
 
+func TestRetryDelayHonorsProviderRetryAfter(t *testing.T) {
+	if got := retryDelay(&storage.RetryAfterError{After: time.Minute}, 1); got != time.Minute {
+		t.Fatalf("retryDelay() = %s, want 1m", got)
+	}
+	if got := retryDelay(&storage.RetryAfterError{After: time.Second}, 1); got != 10*time.Second {
+		t.Fatalf("retryDelay() = %s, want standard 10s minimum", got)
+	}
+}
+
 func TestExpectedSizeReader(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -703,4 +712,3 @@ func TestShouldEvictThrottler(t *testing.T) {
 		})
 	}
 }
-

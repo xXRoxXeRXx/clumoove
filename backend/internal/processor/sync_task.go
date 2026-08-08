@@ -651,7 +651,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 	}
 
 	if task.Attempts < 3 && !isPermanent {
-		backoff := retryBackoff(task.Attempts)
+		backoff := retryDelay(procErr, task.Attempts)
 		nextRetry := time.Now().Add(backoff)
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
