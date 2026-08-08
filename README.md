@@ -48,7 +48,7 @@ durable, multi-user jobs.
 | **Durable execution** | A PostgreSQL task queue persists individual transfer tasks, progress, errors, schedules, and reports. Multiple workers can claim work atomically; liveness, retry, orphan recovery, and connection-loss recovery are built in. | Commands and RC jobs run in a process. The RC documentation describes finished asynchronous jobs as retained for 60 seconds; longer-running automation is normally composed around rclone. |
 | **Scheduling and operations** | Deferred and recurring migrations plus interval-based syncs are first-class persisted jobs, with overlap protection, distributed schedule locks, live authenticated progress, downloadable CSV reports, and durable completion notifications. | rclone supports the transfer commands and `bisync`; its `bisync` guide recommends configuring cron for recurring runs. |
 | **Migration semantics** | Purpose-built conflict choices (`SKIP`, `OVERWRITE`, `RENAME`), pre-transfer inventory, case-collision handling, selected-path workflows, and a provider-aware three-way source/in-memory/target hash check with safe fallbacks. | Flexible commands and flags support copy, sync, bisync, checksums, filters, metadata, and backend-specific behaviour; verification depends on command options and the capabilities shared by the chosen backends. |
-| **Supported data** | Fourteen selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
+| **Supported data** | Fifteen selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
 
 This comparison describes product scope rather than claiming that rclone lacks a GUI, API, checksums, or bidirectional
 sync. Consult the [rclone usage documentation](https://rclone.org/docs/), [GUI documentation](https://rclone.org/gui/),
@@ -61,6 +61,7 @@ sync. Consult the [rclone usage documentation](https://rclone.org/docs/), [GUI d
 | :--- | :--- | :--- | :--- |
 | **Nextcloud** | WebDAV + OC extensions | User / password | Files, calendars, contacts |
 | **OpenCloud** | WebDAV (`dav/spaces/`) + TUS 1.0.0 | User / password or Bearer token | Files |
+| **Seafile** | Web API v2.1 | User / password or Personal Access Token | Files |
 | **MagentaCLOUD** | WebDAV (fixed endpoint) | User / password | Files |
 | **Generic WebDAV** | WebDAV | User / password | Files |
 | **Dropbox** | Dropbox API v2 | OAuth2 | Files |
