@@ -78,6 +78,13 @@ func TestSanitizeFilename_ForbiddenChars(t *testing.T) {
 			reason:   "forbidden_char",
 		},
 		{
+			name:     "Seafile emoji",
+			input:    "🚀 Internal Projects & Campaign Planning",
+			provider: "seafile",
+			expected: "_ Internal Projects & Campaign Planning",
+			reason:   "unsupported_unicode_symbol",
+		},
+		{
 			name:     "Nextcloud no forbidden",
 			input:    "normal.pdf",
 			provider: "nextcloud",

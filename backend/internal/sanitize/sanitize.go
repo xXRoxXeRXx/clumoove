@@ -3,6 +3,7 @@ package sanitize
 import (
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -128,6 +129,18 @@ func SanitizeFilename(name string, targetProvider string) SanitizeResult {
 		}
 	}
 
+	// Some Seafile deployments reject Unicode symbol characters (including
+	// emoji) in file and directory names. Replace them before creating target
+	// paths so a single unsupported source name does not fail a migration.
+	if targetProvider == "seafile" {
+		sanitized := replaceUnicodeSymbols(result.SanitizedName)
+		if sanitized != result.SanitizedName {
+			result.SanitizedName = sanitized
+			result.Changed = true
+			result.Reasons = append(result.Reasons, "unsupported_unicode_symbol")
+		}
+	}
+
 	if targetProvider == "smb" || targetProvider == "onedrive" {
 		sanitized := trimWindowsTrailing(result.SanitizedName)
 		if sanitized != result.SanitizedName {
@@ -165,6 +178,19 @@ func replaceForbidden(name string, forbidden []rune) string {
 		} else {
 			b.WriteRune(r)
 		}
+	}
+	return b.String()
+}
+
+func replaceUnicodeSymbols(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		if unicode.Is(unicode.So, r) {
+			b.WriteRune('_')
+			continue
+		}
+		b.WriteRune(r)
 	}
 	return b.String()
 }
