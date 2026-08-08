@@ -77,6 +77,27 @@ func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
 	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: rejectEgressRedirect}, nil
 }
 
+// NewEgressStreamingHTTPClient returns an SSRF-protected HTTP client for
+// long-running streamed transfers. Unlike NewEgressHTTPClient, it deliberately
+// has no total request deadline: a healthy large upload must be allowed to run
+// for longer than a small control-plane request. Connection setup is still
+// bounded by the transport defaults and the server must produce its response
+// headers within five minutes after the request body has been sent.
+func NewEgressStreamingHTTPClient(rawURL string) (*http.Client, error) {
+	if err := validateEgressURL(rawURL); err != nil {
+		return nil, err
+	}
+	u, _ := url.Parse(rawURL)
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		base = &http.Transport{}
+	}
+	transport := base.Clone()
+	transport.DialContext = egressDialer(u.Hostname())
+	transport.ResponseHeaderTimeout = 5 * time.Minute
+	return &http.Client{Transport: transport, Timeout: 0, CheckRedirect: rejectEgressRedirect}, nil
+}
+
 // rejectEgressRedirect returns the redirect response without issuing a request
 // to its Location target. This prevents redirects from changing an egress
 // destination after the original user-supplied URL has been validated.

@@ -37,6 +37,9 @@ func TestNewSeafileProviderValid(t *testing.T) {
 	if p.BaseURL != "http://1.1.1.1" {
 		t.Errorf("expected BaseURL http://1.1.1.1, got %s", p.BaseURL)
 	}
+	if p.HTTPClient.Timeout != 0 {
+		t.Errorf("expected streaming HTTP client without total request timeout, got %s", p.HTTPClient.Timeout)
+	}
 }
 
 func TestNewSeafileProviderInvalidURL(t *testing.T) {

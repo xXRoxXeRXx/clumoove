@@ -75,7 +75,7 @@ func NewSeafileProvider(urlStr, username, password string) (*SeafileProvider, er
 		return nil, fmt.Errorf("invalid seafile server URL: %w", err)
 	}
 
-	client, err := NewEgressHTTPClient(urlStr)
+	client, err := NewEgressStreamingHTTPClient(urlStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client for seafile: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestValidateEgressURL(t *testing.T) {
@@ -135,5 +136,25 @@ func TestSSRFProtectedClientsRejectRedirects(t *testing.T) {
 		if err := client.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
 			t.Errorf("%s client follows redirects: %v", name, err)
 		}
+	}
+}
+
+func TestEgressStreamingHTTPClientAllowsLongTransfers(t *testing.T) {
+	client, err := NewEgressStreamingHTTPClient("https://8.8.8.8/upload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Timeout != 0 {
+		t.Fatalf("expected no total request timeout for streaming transfers, got %s", client.Timeout)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != 5*time.Minute {
+		t.Fatalf("expected 5 minute response-header timeout, got %s", transport.ResponseHeaderTimeout)
+	}
+	if err := client.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("streaming client follows redirects: %v", err)
 	}
 }
