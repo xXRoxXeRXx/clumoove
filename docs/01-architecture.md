@@ -37,7 +37,7 @@ cache, and migration workers. Every migration is tied to a user account and isol
        │      │                  └──────────────────────────┘
        ▼      ▼
 ┌──────────────┐   ┌──────────────┐
- │  Source Store │   │ Target Store  │  (Nextcloud, WebDAV, Dropbox, Google, OneDrive,
+ │  Source Store │   │ Target Store  │  (Nextcloud, OpenCloud, Seafile, WebDAV, Dropbox, Google, OneDrive,
 └──────────────┘   └──────────────┘   S3, SMB, SFTP, FTPS, MagentaCLOUD, Local, Immich)
 ```
 

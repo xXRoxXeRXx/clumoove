@@ -262,7 +262,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 
 See [Storage Providers](./05-storage-providers.md) for the full interface and provider list.
 `NewProvider` (factory) whitelists provider types, strips credentials from WebDAV/Nextcloud URLs,
-applies SSRF egress validation for `nextcloud`/`webdav`/`smb`/`sftp`/`ftp`, and returns the concrete
+applies SSRF egress validation for `nextcloud`/`webdav`/`smb`/`sftp`/`ftp`/`immich`/`seafile`, and returns the concrete
 implementation. `magentacloud` uses a fixed endpoint (URL ignored).
 
 `ftp` is a files-only FTPS provider. It accepts only explicit FTPS

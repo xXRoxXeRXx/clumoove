@@ -108,6 +108,7 @@ time, description, tags, etc.) after a successful upload.
 | `ftp` | `ftp.go` | FTPS: explicit or implicit TLS | user/pass | files |
 | `local` | `local.go` | Local filesystem (server-side sandbox) | none (no URL/user/pass) | files only |
 | `immich` | `immich.go` | Immich stable v2 API | server URL + API key in encrypted password field | files only, one-time migrations |
+| `seafile` | `seafile.go` | Seafile Web API v2.1 | server URL + user/pass (or Personal Access Token) | files only |
 
 ### Verification capabilities
 
@@ -118,6 +119,7 @@ time, description, tags, etc.) after a successful upload.
 | OneDrive | `cryptographic_hash` | QuickXor |
 | HiDrive | `cryptographic_hash` | HiDrive `chash` |
 | Local | `cryptographic_hash` | SHA-256 |
+| Seafile | `cryptographic_hash` | SHA-1 |
 | Nextcloud, OpenCloud, MagentaCLOUD, WebDAV | `size_only` | ETags are not integrity evidence (OpenCloud parses dynamic `oc:checksums` header when provided) |
 | S3 | `size_only` | Multipart ETags are not comparable hashes |
 | SMB, SFTP, FTPS | `size_only` | No portable target-hash API |
