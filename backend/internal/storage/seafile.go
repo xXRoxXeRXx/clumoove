@@ -188,10 +188,71 @@ func (p *SeafileProvider) listRepos(ctx context.Context) ([]seafileRepo, error) 
 	return repos, nil
 }
 
-func (p *SeafileProvider) resolveRepoAndPath(ctx context.Context, pth string) (repoID string, repoPath string, err error) {
+func (p *SeafileProvider) getDefaultRepo(ctx context.Context) (repoID string, repoName string, err error) {
+	repos, err := p.listRepos(ctx)
+	if err != nil {
+		return "", "", err
+	}
+
+	for _, r := range repos {
+		if r.Name == "My Library" || r.Name == "Meine Bibliothek" {
+			return r.ID, r.Name, nil
+		}
+	}
+
+	if len(repos) > 0 {
+		return repos[0].ID, repos[0].Name, nil
+	}
+
+	reqURL := fmt.Sprintf("%s/api2/repos/", p.BaseURL)
+	form := url.Values{}
+	form.Set("name", "My Library")
+
+	req, err := p.newAuthRequest(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create default seafile library: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		p.invalidateToken()
+		return "", "", ErrAuth
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", "", fmt.Errorf("seafile create default repo failed status %d", resp.StatusCode)
+	}
+
+	var created struct {
+		RepoID string `json:"repo_id"`
+		ID     string `json:"id"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	repoID = created.RepoID
+	if repoID == "" {
+		repoID = created.ID
+	}
+	if repoID != "" {
+		p.mu.Lock()
+		p.repoCache["My Library"] = repoID
+		p.repoCache[repoID] = repoID
+		p.mu.Unlock()
+		return repoID, "My Library", nil
+	}
+
+	return "", "", fmt.Errorf("failed to obtain ID for created default library")
+}
+
+func (p *SeafileProvider) resolveRepoAndPath(ctx context.Context, pth string) (repoID string, repoPath string, fullPath string, err error) {
 	clean := strings.Trim(pth, "/")
 	if clean == "" {
-		return "", "", nil
+		return "", "", "/", nil
 	}
 
 	parts := strings.Split(clean, "/")
@@ -203,22 +264,36 @@ func (p *SeafileProvider) resolveRepoAndPath(ctx context.Context, pth string) (r
 
 	if found {
 		relPath := "/" + strings.Join(parts[1:], "/")
-		return cachedID, relPath, nil
+		return cachedID, relPath, "/" + clean, nil
 	}
 
 	repos, err := p.listRepos(ctx)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	for _, r := range repos {
 		if r.Name == targetRepo || r.ID == targetRepo {
 			relPath := "/" + strings.Join(parts[1:], "/")
-			return r.ID, relPath, nil
+			var fPath string
+			if r.ID == targetRepo && r.Name != "" {
+				parts[0] = r.Name
+				fPath = "/" + strings.Join(parts, "/")
+			} else {
+				fPath = "/" + clean
+			}
+			return r.ID, relPath, fPath, nil
 		}
 	}
 
-	return "", "", ErrNotFound
+	defID, defName, err := p.getDefaultRepo(ctx)
+	if err != nil {
+		return "", "", "", err
+	}
+
+	repoPath = "/" + clean
+	fullPath = "/" + defName + "/" + clean
+	return defID, repoPath, fullPath, nil
 }
 
 func (p *SeafileProvider) Connect(ctx context.Context) (bool, error) {
@@ -236,7 +311,7 @@ func (p *SeafileProvider) GetDirectoryListing(ctx context.Context, resourceType,
 		return nil, ErrUnsupportedResourceType
 	}
 
-	repoID, repoPath, err := p.resolveRepoAndPath(ctx, dirPath)
+	repoID, repoPath, fullPath, err := p.resolveRepoAndPath(ctx, dirPath)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +361,7 @@ func (p *SeafileProvider) GetDirectoryListing(ctx context.Context, resourceType,
 		return nil, fmt.Errorf("failed to decode seafile directory listing: %w", err)
 	}
 
-	cleanDir := strings.TrimRight(dirPath, "/")
+	cleanDir := strings.TrimRight(fullPath, "/")
 	var resources []CloudResource
 	for _, item := range items {
 		itemPath := cleanDir + "/" + item.Name
@@ -317,7 +392,7 @@ func (p *SeafileProvider) InspectResource(ctx context.Context, resourceType, pth
 		return CloudResource{Path: "/", Name: "", IsDir: true}, nil
 	}
 
-	repoID, repoPath, err := p.resolveRepoAndPath(ctx, pth)
+	repoID, repoPath, fullPath, err := p.resolveRepoAndPath(ctx, pth)
 	if err != nil {
 		return CloudResource{}, err
 	}
@@ -340,13 +415,13 @@ func (p *SeafileProvider) InspectResource(ctx context.Context, resourceType, pth
 		return CloudResource{}, ErrNotFound
 	}
 
-	parentPath := path.Dir(pth)
+	parentPath := path.Dir(fullPath)
 	items, err := p.GetDirectoryListing(ctx, resourceType, parentPath)
 	if err != nil {
 		return CloudResource{}, err
 	}
 
-	baseName := path.Base(pth)
+	baseName := path.Base(fullPath)
 	for _, item := range items {
 		if item.Name == baseName {
 			return item, nil
@@ -361,7 +436,7 @@ func (p *SeafileProvider) StreamDownload(ctx context.Context, resourceType, file
 		return nil, ErrUnsupportedResourceType
 	}
 
-	repoID, repoPath, err := p.resolveRepoAndPath(ctx, filePath)
+	repoID, repoPath, _, err := p.resolveRepoAndPath(ctx, filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -422,25 +497,9 @@ func (p *SeafileProvider) StreamUpload(ctx context.Context, resourceType, filePa
 		return ErrUnsupportedResourceType
 	}
 
-	repoID, repoPath, err := p.resolveRepoAndPath(ctx, filePath)
-	if err != nil && err != ErrNotFound {
+	repoID, repoPath, _, err := p.resolveRepoAndPath(ctx, filePath)
+	if err != nil {
 		return err
-	}
-
-	if repoID == "" {
-		clean := strings.Trim(filePath, "/")
-		parts := strings.Split(clean, "/")
-		if len(parts) < 2 {
-			return fmt.Errorf("cannot upload to root without a target library")
-		}
-		repoName := parts[0]
-		if err := p.CreateDirectory(ctx, "files", "/"+repoName); err != nil {
-			return fmt.Errorf("failed to create target library %s: %w", repoName, err)
-		}
-		repoID, repoPath, err = p.resolveRepoAndPath(ctx, filePath)
-		if err != nil {
-			return fmt.Errorf("failed to resolve newly created target library %s: %w", repoName, err)
-		}
 	}
 
 	parentDir := path.Dir(repoPath)
@@ -565,7 +624,7 @@ func (p *SeafileProvider) DeleteFile(ctx context.Context, resourceType, filePath
 		return ErrUnsupportedResourceType
 	}
 
-	repoID, repoPath, err := p.resolveRepoAndPath(ctx, filePath)
+	repoID, repoPath, _, err := p.resolveRepoAndPath(ctx, filePath)
 	if err != nil {
 		if err == ErrNotFound {
 			return nil
@@ -610,10 +669,10 @@ func (p *SeafileProvider) CreateDirectory(ctx context.Context, resourceType, dir
 	}
 
 	parts := strings.Split(clean, "/")
-	repoName := parts[0]
+	topName := parts[0]
 
 	p.mu.RLock()
-	cachedID, found := p.repoCache[repoName]
+	cachedID, found := p.repoCache[topName]
 	p.mu.RUnlock()
 
 	var repoID string
@@ -625,7 +684,7 @@ func (p *SeafileProvider) CreateDirectory(ctx context.Context, resourceType, dir
 			return err
 		}
 		for _, r := range repos {
-			if r.Name == repoName || r.ID == repoName {
+			if r.Name == topName || r.ID == topName {
 				repoID = r.ID
 				break
 			}
@@ -633,56 +692,68 @@ func (p *SeafileProvider) CreateDirectory(ctx context.Context, resourceType, dir
 	}
 
 	if repoID == "" {
-		// Create library via API
-		reqURL := fmt.Sprintf("%s/api2/repos/", p.BaseURL)
-		form := url.Values{}
-		form.Set("name", repoName)
+		if len(parts) == 1 {
+			reqURL := fmt.Sprintf("%s/api2/repos/", p.BaseURL)
+			form := url.Values{}
+			form.Set("name", topName)
 
-		req, err := p.newAuthRequest(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
+			req, err := p.newAuthRequest(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			resp, err := p.HTTPClient.Do(req)
+			if err != nil {
+				return fmt.Errorf("failed to create seafile library: %w", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				p.invalidateToken()
+				return ErrAuth
+			}
+
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+				return fmt.Errorf("seafile create repo failed status %d", resp.StatusCode)
+			}
+
+			var created struct {
+				RepoID string `json:"repo_id"`
+				ID     string `json:"id"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&created)
+			if created.RepoID != "" {
+				repoID = created.RepoID
+			} else {
+				repoID = created.ID
+			}
+			if repoID != "" {
+				p.mu.Lock()
+				p.repoCache[topName] = repoID
+				p.repoCache[repoID] = repoID
+				p.mu.Unlock()
+			}
+			return nil
+		}
+
+		defID, _, err := p.getDefaultRepo(ctx)
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-		resp, err := p.HTTPClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("failed to create seafile library: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			p.invalidateToken()
-			return ErrAuth
-		}
-
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-			return fmt.Errorf("seafile create repo failed status %d", resp.StatusCode)
-		}
-
-		var created struct {
-			RepoID string `json:"repo_id"`
-			ID     string `json:"id"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&created)
-		if created.RepoID != "" {
-			repoID = created.RepoID
-		} else {
-			repoID = created.ID
-		}
-		if repoID != "" {
-			p.mu.Lock()
-			p.repoCache[repoName] = repoID
-			p.repoCache[repoID] = repoID
-			p.mu.Unlock()
-		}
+		repoID = defID
 	}
 
-	if len(parts) == 1 {
+	if len(parts) == 1 && repoID != "" {
 		return nil
 	}
 
-	relPath := "/" + strings.Join(parts[1:], "/")
-	reqURL := fmt.Sprintf("%s/api2/repos/%s/dir/?p=%s", p.BaseURL, repoID, url.QueryEscape(relPath))
+	_, repoPath, _, err := p.resolveRepoAndPath(ctx, dirPath)
+	if err != nil {
+		return err
+	}
+
+	reqURL := fmt.Sprintf("%s/api2/repos/%s/dir/?p=%s", p.BaseURL, repoID, url.QueryEscape(repoPath))
 	form := url.Values{}
 	form.Set("operation", "mkdir")
 
@@ -711,7 +782,12 @@ func (p *SeafileProvider) CreateDirectory(ctx context.Context, resourceType, dir
 }
 
 func (p *SeafileProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
-	parentDir := path.Dir(filePath)
+	_, _, fullPath, err := p.resolveRepoAndPath(ctx, filePath)
+	if err != nil {
+		return err
+	}
+
+	parentDir := path.Dir(fullPath)
 	if parentDir == "." || parentDir == "/" || parentDir == "" {
 		return nil
 	}
@@ -723,7 +799,7 @@ func (p *SeafileProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 		return ErrUnsupportedResourceType
 	}
 
-	repoID, oldRepoPath, err := p.resolveRepoAndPath(ctx, oldPath)
+	repoID, oldRepoPath, _, err := p.resolveRepoAndPath(ctx, oldPath)
 	if err != nil {
 		return err
 	}

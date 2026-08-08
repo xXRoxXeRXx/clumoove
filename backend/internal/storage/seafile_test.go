@@ -232,6 +232,11 @@ func TestSeafileProviderAuthAndOperations(t *testing.T) {
 		t.Fatalf("StreamUpload failed: %v", err)
 	}
 
+	// Test StreamUpload directly at root /rootfile.txt (fallbacks to default library MyLibrary)
+	if err := p.StreamUpload(ctx, "files", "/rootfile.txt", bytes.NewReader(uploadData), int64(len(uploadData))); err != nil {
+		t.Fatalf("StreamUpload at root failed: %v", err)
+	}
+
 	// Test GetFileHash returns ErrChecksumNotAvailable
 	_, err = p.GetFileHash(ctx, "files", "/MyLibrary/document.pdf")
 	if err != ErrChecksumNotAvailable {
