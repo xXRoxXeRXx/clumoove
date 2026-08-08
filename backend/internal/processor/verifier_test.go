@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"backend/internal/db"
 	"backend/internal/storage"
@@ -164,6 +166,86 @@ func TestIsNonRetryableHashError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkerCapacity(t *testing.T) {
+	for _, tc := range []struct {
+		maxThreads, transfers, verifiers int
+	}{
+		{1, 1, 1},
+		{2, 2, 2},
+		{4, 4, 4},
+		{16, 16, 4},
+	} {
+		transfers, verifiers := workerCapacity(tc.maxThreads)
+		if transfers != tc.transfers || verifiers != tc.verifiers {
+			t.Errorf("workerCapacity(%d) = (%d, %d), want (%d, %d)", tc.maxThreads, transfers, verifiers, tc.transfers, tc.verifiers)
+		}
+		if transfers != tc.maxThreads {
+			t.Errorf("workerCapacity(%d) must retain all transfer workers", tc.maxThreads)
+		}
+	}
+}
+
+func TestVerificationDispatcherDeduplicatesQueuedEntity(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &Processor{verificationWorkers: 1, migrationVerificationQueue: make(chan verificationWork, 2), syncVerificationQueue: make(chan verificationWork, 2), providerSlots: make(chan struct{}, 1)}
+	p.startVerificationDispatcher(ctx)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var runs atomic.Int32
+	run := func(context.Context) {
+		runs.Add(1)
+		close(started)
+		<-release
+	}
+	p.scheduleVerification(ctx, "migration", "same", run)
+	p.scheduleVerification(ctx, "migration", "same", run)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("verification work did not start")
+	}
+	close(release)
+	cancel()
+	p.verificationWG.Wait()
+	if got := runs.Load(); got != 1 {
+		t.Fatalf("verification runs = %d, want 1", got)
+	}
+}
+
+func TestVerificationDispatcherServesSyncWhileMigrationsAreQueued(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &Processor{verificationWorkers: 1, migrationVerificationQueue: make(chan verificationWork, 2), syncVerificationQueue: make(chan verificationWork, 2), providerSlots: make(chan struct{}, 1)}
+	p.startVerificationDispatcher(ctx)
+
+	started := make(chan string, 3)
+	releaseFirstMigration := make(chan struct{})
+	p.scheduleVerification(ctx, "migration", "first", func(context.Context) {
+		started <- "migration:first"
+		<-releaseFirstMigration
+	})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first migration verification did not start")
+	}
+	p.scheduleVerification(ctx, "migration", "second", func(context.Context) { started <- "migration:second" })
+	p.scheduleVerification(ctx, "sync", "waiting", func(context.Context) { started <- "sync:waiting" })
+	close(releaseFirstMigration)
+
+	select {
+	case got := <-started:
+		if got != "sync:waiting" {
+			t.Fatalf("next verification = %q, want sync work to avoid starvation", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("sync verification was starved by queued migrations")
+	}
+	cancel()
+	p.verificationWG.Wait()
 }
 
 func TestVerificationPassMarksDirectoryAsVerified(t *testing.T) {

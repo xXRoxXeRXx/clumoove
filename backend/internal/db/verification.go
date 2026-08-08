@@ -50,6 +50,47 @@ func ReleaseMigrationVerificationLease(db *sql.DB, ctx context.Context, migratio
 	return err
 }
 
+// ClaimSyncJobVerification grants one worker a fenced verification pass for a
+// specific sync run. A new lease generation invalidates stale verifier writes.
+func ClaimSyncJobVerification(db *sql.DB, ctx context.Context, syncJobID string) (int, bool, error) {
+	var generation int
+	err := db.QueryRowContext(ctx, `
+		UPDATE sync_jobs
+		SET verification_generation = verification_generation + 1,
+		    verification_lease_until = NOW() + INTERVAL '2 minutes',
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'VERIFYING'
+		  AND (verification_lease_until IS NULL OR verification_lease_until <= NOW())
+		RETURNING verification_generation
+	`, syncJobID).Scan(&generation)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return generation, err == nil, err
+}
+
+func RenewSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID string, runGeneration, verificationGeneration int) (bool, error) {
+	res, err := db.ExecContext(ctx, `
+		UPDATE sync_jobs
+		SET verification_lease_until = NOW() + INTERVAL '2 minutes', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'VERIFYING' AND run_generation = $2
+		  AND verification_generation = $3 AND verification_lease_until > NOW()
+	`, syncJobID, runGeneration, verificationGeneration)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+func ReleaseSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID string, verificationGeneration int) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE sync_jobs SET verification_lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'VERIFYING' AND verification_generation = $2
+	`, syncJobID, verificationGeneration)
+	return err
+}
+
 func MarkMigrationTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID string, targetHash string, generation int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
 		UPDATE tasks AS t

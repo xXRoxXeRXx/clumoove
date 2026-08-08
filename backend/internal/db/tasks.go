@@ -224,15 +224,20 @@ func MarkTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHas
 
 // MarkSyncTaskChecksumVerifiedWhileVerifying rejects writes after an engine
 // timeout has withdrawn the sync pass from VERIFYING.
-func MarkSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID, targetHash string) (bool, error) {
+func MarkSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID, targetHash string, runGeneration, verificationGeneration int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
 		UPDATE tasks AS t
 		SET checksum_verified = TRUE,
 		    target_hash = CASE WHEN $2 <> '' THEN $2 ELSE t.target_hash END,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE t.id = $1
-		  AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status = 'VERIFYING')
-	`, taskID, targetHash)
+		WHERE t.id = $1 AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
+		  AND t.pass_generation = $3
+		  AND EXISTS (
+			SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id
+			  AND sj.status = 'VERIFYING' AND sj.run_generation = $3
+			  AND sj.verification_generation = $4 AND sj.verification_lease_until > NOW()
+		  )
+	`, taskID, targetHash, runGeneration, verificationGeneration)
 	if err != nil {
 		return false, err
 	}
@@ -242,16 +247,21 @@ func MarkSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context,
 
 // MarkSyncTaskChecksumMismatchWhileVerifying records a mismatch only while
 // the verifier owns VERIFYING. It does not schedule a retry during finalization.
-func MarkSyncTaskChecksumMismatchWhileVerifying(db *sql.DB, ctx context.Context, task *Task) (bool, error) {
+func MarkSyncTaskChecksumMismatchWhileVerifying(db *sql.DB, ctx context.Context, task *Task, runGeneration, verificationGeneration int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
 		UPDATE tasks AS t
 		SET status = $1, attempts = $2, error_message = $3, next_retry_at = NULL,
 		    worker_hash = $4, source_hash = $5, target_hash = $6,
 		    checksum_verified = $7, updated_at = CURRENT_TIMESTAMP
-		WHERE t.id = $8
-		  AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status = 'VERIFYING')
+		WHERE t.id = $8 AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
+		  AND t.pass_generation = $9
+		  AND EXISTS (
+			SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id
+			  AND sj.status = 'VERIFYING' AND sj.run_generation = $9
+			  AND sj.verification_generation = $10 AND sj.verification_lease_until > NOW()
+		  )
 	`, task.Status, task.Attempts, task.ErrorMessage, task.WorkerHash, task.SourceHash,
-		task.TargetHash, task.ChecksumVerified, task.ID)
+		task.TargetHash, task.ChecksumVerified, task.ID, runGeneration, verificationGeneration)
 	if err != nil {
 		return false, err
 	}

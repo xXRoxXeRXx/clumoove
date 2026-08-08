@@ -39,6 +39,8 @@ type SyncJob struct {
 	BandwidthLimitMbps           int            `json:"bandwidth_limit_mbps"`
 	Status                       string         `json:"status"` // IDLE, INDEXING, RUNNING, PAUSED, PAUSED_CONNECTION_LOSS, COMPLETED, FAILED
 	RunGeneration                int            `json:"run_generation"`
+	VerificationGeneration       int            `json:"-"`
+	VerificationLeaseUntil       sql.NullTime   `json:"-"`
 	TargetDir                    string         `json:"target_dir"`
 	SelectedPaths                StringArray    `json:"selected_paths,omitempty"`
 	LastRunAt                    sql.NullTime   `json:"last_run_at,omitempty"`
@@ -188,7 +190,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		       target_url, target_username, target_password_encrypted,
 		       target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
 		       source_provider, target_provider, direction, conflict_strategy,
-		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, run_generation, target_dir,
+		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, run_generation, verification_generation, verification_lease_until, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
 		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
 		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
@@ -202,7 +204,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
 		&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt, &s.TargetMegaSessionIDEncrypted, &s.TargetMegaMasterKeyEncrypted,
 		&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
-		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.RunGeneration, &s.TargetDir,
+		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.RunGeneration, &s.VerificationGeneration, &s.VerificationLeaseUntil, &s.TargetDir,
 		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
 		&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 		&s.CreatedAt, &s.UpdatedAt,
@@ -273,7 +275,10 @@ func UpdateSyncJobStatus(db *sql.DB, id string, status string, errMsg *string) e
 	}
 	query := `
 		UPDATE sync_jobs
-		SET status = $1, error_message = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE error_message END, updated_at = CURRENT_TIMESTAMP
+		SET status = $1,
+		    verification_lease_until = CASE WHEN $1 = 'VERIFYING' THEN verification_lease_until ELSE NULL END,
+		    error_message = CASE WHEN $2::text IS NOT NULL THEN $2 ELSE error_message END,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3
 	`
 	_, err := db.Exec(query, status, errVal, id)
@@ -287,7 +292,7 @@ func UpdateSyncJobStatusForGeneration(db *sql.DB, id string, generation int, sta
 	if errMsg != nil {
 		errVal = sql.NullString{String: *errMsg, Valid: true}
 	}
-	_, err := db.Exec(`UPDATE sync_jobs SET status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND run_generation = $4`, status, errVal, id, generation)
+	_, err := db.Exec(`UPDATE sync_jobs SET status = $1, verification_lease_until = CASE WHEN $1 = 'VERIFYING' THEN verification_lease_until ELSE NULL END, error_message = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3 AND run_generation = $4`, status, errVal, id, generation)
 	return err
 }
 
@@ -323,7 +328,7 @@ func PauseSyncJob(db *sql.DB, id string, errMsg *string) (bool, error) {
 	var pausedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
-		SET status = 'PAUSED',
+		SET status = 'PAUSED', verification_lease_until = NULL,
 		    error_message = CASE WHEN $1::text IS NOT NULL THEN $1 ELSE error_message END,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $2 AND status IN ('IDLE', 'INDEXING', 'RUNNING', 'VERIFYING')
@@ -385,14 +390,14 @@ func TransitionSyncJobToRunning(db *sql.DB, id string, generation int) (bool, er
 // TransitionSyncJobToVerifying atomically hands an active pass to checksum
 // verification. It must only transition from RUNNING so a task-worker failure
 // cannot be revived as VERIFYING.
-func TransitionSyncJobToVerifying(db *sql.DB, id string) (bool, error) {
+func TransitionSyncJobToVerifying(db *sql.DB, id string, generation int) (bool, error) {
 	var transitionedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
-		SET status = 'VERIFYING', updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status = 'RUNNING'
+		SET status = 'VERIFYING', verification_lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'RUNNING' AND run_generation = $2
 		RETURNING id
-	`, id).Scan(&transitionedID)
+	`, id, generation).Scan(&transitionedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -406,14 +411,14 @@ func TransitionSyncJobToVerifying(db *sql.DB, id string) (bool, error) {
 // keeping the engine as the sole owner of final run statistics and the eventual
 // RUNNING -> IDLE transition. RUNNING is safe here because all transfer tasks
 // were already observed as terminal before verification began.
-func AbortSyncJobVerification(db *sql.DB, id string) (bool, error) {
+func AbortSyncJobVerification(db *sql.DB, id string, generation int) (bool, error) {
 	var transitionedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
-		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND status = 'VERIFYING'
+		SET status = 'RUNNING', verification_lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'VERIFYING' AND run_generation = $2
 		RETURNING id
-	`, id).Scan(&transitionedID)
+	`, id, generation).Scan(&transitionedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -685,7 +690,7 @@ func finalizeSyncJobPass(db *sql.DB, id string, generation int, lastRunStatus st
 	var finalizedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
-		SET status = 'IDLE',
+		SET status = 'IDLE', verification_lease_until = NULL,
 		    last_run_status = $1,
 		    error_message = $2,
 		    last_run_at = CURRENT_TIMESTAMP,
@@ -717,7 +722,7 @@ func FailSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool
 	var failedID string
 	err := db.QueryRow(`
 		UPDATE sync_jobs
-		SET status = 'FAILED',
+		SET status = 'FAILED', verification_lease_until = NULL,
 		    last_run_status = 'FAILED',
 		    error_message = $1,
 		    last_run_at = CURRENT_TIMESTAMP,
@@ -1373,15 +1378,15 @@ func ListAllSyncJobs(database *sql.DB, p SyncListParams) ([]AdminSyncView, int, 
 }
 
 // GetUnverifiedCompletedSyncTasks fetches tasks for a sync job that completed but have checksum_verified = FALSE.
-func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID string) ([]*Task, error) {
+func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID string, generation int) ([]*Task, error) {
 	query := `
-		SELECT id, sync_job_id, resource_type, file_path, file_size, status,
+		SELECT id, sync_job_id, pass_generation, resource_type, file_path, file_size, status,
 		       attempts, error_message, next_retry_at, worker_hash, source_hash, target_hash,
-		       checksum_verified, created_at, updated_at
+		       checksum_verified, COALESCE(metadata, '{}'::jsonb), created_at, updated_at
 		FROM tasks
-		WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE
+		WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE
 	`
-	rows, err := db.QueryContext(ctx, query, syncJobID)
+	rows, err := db.QueryContext(ctx, query, syncJobID, generation)
 	if err != nil {
 		return nil, err
 	}
@@ -1391,9 +1396,9 @@ func GetUnverifiedCompletedSyncTasks(db *sql.DB, ctx context.Context, syncJobID 
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(
-			&t.ID, &t.SyncJobID, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
+			&t.ID, &t.SyncJobID, &t.PassGeneration, &t.ResourceType, &t.FilePath, &t.FileSize, &t.Status,
 			&t.Attempts, &t.ErrorMessage, &t.NextRetryAt, &t.WorkerHash, &t.SourceHash, &t.TargetHash,
-			&t.ChecksumVerified, &t.CreatedAt, &t.UpdatedAt,
+			&t.ChecksumVerified, &t.Metadata, &t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

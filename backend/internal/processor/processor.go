@@ -48,11 +48,17 @@ type activeTaskInfo struct {
 }
 
 type Processor struct {
-	db         *sql.DB
-	queue      *queue.Queue
-	workerID   string
-	secretKey  string
-	maxThreads int
+	db                         *sql.DB
+	queue                      *queue.Queue
+	workerID                   string
+	secretKey                  string
+	maxThreads                 int
+	transferWorkers            int
+	verificationWorkers        int
+	migrationVerificationQueue chan verificationWork
+	syncVerificationQueue      chan verificationWork
+	verificationWG             sync.WaitGroup
+	providerSlots              chan struct{}
 	// dbConnStr is the raw PostgreSQL DSN used to open a dedicated LISTEN
 	// connection for pg_notify-based wake-up (see ListenForTasks in queue).
 	// Set via SetDBConnStr before calling Start. If empty, the worker falls back
@@ -84,6 +90,11 @@ type Processor struct {
 	// released automatically, so a long-lived worker holds a mutex only for the
 	// target paths it is actively transferring to.
 	targetFileLocks keyedMutexes
+}
+
+type verificationWork struct {
+	key string
+	run func(context.Context)
 }
 
 type refMutex struct {
@@ -229,12 +240,93 @@ func NewProcessor(database *sql.DB, q *queue.Queue, workerID string, secretKey s
 		}
 	}
 
+	transferWorkers, verificationWorkers := workerCapacity(maxThreads)
 	return &Processor{
-		db:         database,
-		queue:      q,
-		workerID:   workerID,
-		secretKey:  secretKey,
-		maxThreads: maxThreads,
+		db:                         database,
+		queue:                      q,
+		workerID:                   workerID,
+		secretKey:                  secretKey,
+		maxThreads:                 maxThreads,
+		transferWorkers:            transferWorkers,
+		verificationWorkers:        verificationWorkers,
+		migrationVerificationQueue: make(chan verificationWork, maxThreads*2),
+		syncVerificationQueue:      make(chan verificationWork, maxThreads*2),
+		providerSlots:              make(chan struct{}, maxThreads),
+	}
+}
+
+func (p *Processor) acquireProviderSlot(ctx context.Context) bool {
+	select {
+	case p.providerSlots <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (p *Processor) releaseProviderSlot() {
+	<-p.providerSlots
+}
+
+// workerCapacity starts enough dequeue loops to use every configured provider
+// slot. Verification workers share those slots, so idle verification capacity
+// never reduces transfer throughput.
+func workerCapacity(maxThreads int) (transferWorkers, verificationWorkers int) {
+	if maxThreads < 1 {
+		maxThreads = 1
+	}
+	return maxThreads, min(4, maxThreads)
+}
+
+// dequeueVerificationWork alternates preference when both entity queues have
+// work. Separate queues prevent a long migration backlog from starving sync
+// passes whose coordinator is waiting in VERIFYING.
+func (p *Processor) dequeueVerificationWork(ctx context.Context, preferSync bool) (verificationWork, bool) {
+	preferred, alternate := p.migrationVerificationQueue, p.syncVerificationQueue
+	if preferSync {
+		preferred, alternate = alternate, preferred
+	}
+	select {
+	case work := <-preferred:
+		return work, true
+	default:
+	}
+	select {
+	case work := <-alternate:
+		return work, true
+	default:
+	}
+	select {
+	case <-ctx.Done():
+		return verificationWork{}, false
+	case work := <-preferred:
+		return work, true
+	case work := <-alternate:
+		return work, true
+	}
+}
+
+func (p *Processor) startVerificationDispatcher(ctx context.Context) {
+	for i := 0; i < p.verificationWorkers; i++ {
+		p.verificationWG.Add(1)
+		go func() {
+			defer p.verificationWG.Done()
+			preferSync := false
+			for {
+				work, ok := p.dequeueVerificationWork(ctx, preferSync)
+				if !ok {
+					return
+				}
+				preferSync = !preferSync
+				if !p.acquireProviderSlot(ctx) {
+					p.verifyingEntities.Delete(work.key)
+					return
+				}
+				work.run(ctx)
+				p.releaseProviderSlot()
+				p.verifyingEntities.Delete(work.key)
+			}
+		}()
 	}
 }
 
@@ -343,6 +435,8 @@ func (p *Processor) Start(ctx context.Context) {
 		log.Printf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
 	}
 
+	p.startVerificationDispatcher(ctx)
+
 	// Spawn background schedulers
 	go p.RunWorkerLiveness(ctx)
 	go p.RunRetryScheduler(ctx)
@@ -409,7 +503,7 @@ func (p *Processor) Start(ctx context.Context) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < p.maxThreads; i++ {
+	for i := 0; i < p.transferWorkers; i++ {
 		wg.Add(1)
 		go func(threadID int) {
 			defer wg.Done()
@@ -453,6 +547,9 @@ func (p *Processor) Start(ctx context.Context) {
 						}
 						continue
 					}
+					if !p.acquireProviderSlot(ctx) {
+						return
+					}
 
 					if payload.SyncJobID != "" {
 						log.Printf("[Worker %s] Thread %d processing sync task %s for job %s\n", p.workerID, threadID, payload.TaskID, payload.SyncJobID)
@@ -473,6 +570,7 @@ func (p *Processor) Start(ctx context.Context) {
 							log.Printf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
 						}
 					}
+					p.releaseProviderSlot()
 				}
 			}
 		}(i)
@@ -482,6 +580,7 @@ func (p *Processor) Start(ctx context.Context) {
 	<-ctx.Done()
 	log.Printf("[Worker %s] Shutdown signal received. Waiting for active tasks to finish...\n", p.workerID)
 	wg.Wait()
+	p.verificationWG.Wait()
 	log.Printf("[Worker %s] Worker loop stopped.\n", p.workerID)
 	// Background schedulers (RunWorkerLiveness, RunRetryScheduler, RunProgressReconciler,
 	// RunOrphanedRunningTasksRecovery, RunConnectionRecoveryScheduler) are located in schedulers.go.

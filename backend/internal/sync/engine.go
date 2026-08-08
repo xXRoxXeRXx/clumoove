@@ -789,7 +789,7 @@ SyncTasksDone:
 	_ = e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&unverifiedCount)
 	if unverifiedCount > 0 {
 		log.Printf("[SyncEngine] Transitioning job %s to VERIFYING status (%d unverified tasks)...\n", syncJobID, unverifiedCount)
-		verifying, err := db.TransitionSyncJobToVerifying(e.db, job.ID)
+		verifying, err := db.TransitionSyncJobToVerifying(e.db, job.ID, generation)
 		if err != nil {
 			log.Printf("[SyncEngine] Failed to set VERIFYING status for job %s: %v\n", syncJobID, err)
 			return
@@ -799,42 +799,30 @@ SyncTasksDone:
 			return
 		}
 
-		verifyTimeout := time.After(2 * time.Minute)
 		verifyTicker := time.NewTicker(1 * time.Second)
+		defer verifyTicker.Stop()
 
 		for verifying := true; verifying; {
 			select {
 			case <-ctx.Done():
-				_, _ = db.AbortSyncJobVerification(e.db, job.ID)
-				verifying = false
-			case <-verifyTimeout:
-				log.Printf("[SyncEngine] Verification timeout reached for job %s\n", syncJobID)
-				// The worker polls this persisted status before and during its
-				// verification pass. Moving out of VERIFYING is therefore the
-				// cross-process cancellation signal; the engine still owns final
-				// stats, sync_state, and the transition to IDLE below.
-				if aborted, err := db.AbortSyncJobVerification(e.db, job.ID); err != nil {
-					log.Printf("[SyncEngine] Failed to abort timed-out verification for job %s: %v\n", syncJobID, err)
-				} else if !aborted {
-					log.Printf("[SyncEngine] Verification for job %s already changed status before timeout abort\n", syncJobID)
-				}
+				_, _ = db.AbortSyncJobVerification(e.db, job.ID, generation)
 				verifying = false
 			case <-verifyTicker.C:
 				var currentStatus string
-				if err := e.db.QueryRow(`SELECT status FROM sync_jobs WHERE id = $1`, job.ID).Scan(&currentStatus); err == nil {
-					if currentStatus != "VERIFYING" {
+				var currentGeneration int
+				if err := e.db.QueryRow(`SELECT status, run_generation FROM sync_jobs WHERE id = $1`, job.ID).Scan(&currentStatus, &currentGeneration); err == nil {
+					if currentStatus != "VERIFYING" || currentGeneration != generation {
 						verifying = false
 						continue
 					}
 					var remaining int
-					if err := e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID).Scan(&remaining); err == nil && remaining == 0 {
+					if err := e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&remaining); err == nil && remaining == 0 {
 						log.Printf("[SyncEngine] Verification completed for job %s\n", syncJobID)
 						verifying = false
 					}
 				}
 			}
 		}
-		verifyTicker.Stop()
 	}
 
 	// A task worker may have stopped this pass while the engine was polling or
@@ -845,7 +833,7 @@ SyncTasksDone:
 		log.Printf("[SyncEngine] Failed to read final status for job %s: %v\n", syncJobID, err)
 		return
 	}
-	if currentJob.Status != "RUNNING" && currentJob.Status != "VERIFYING" {
+	if currentJob.RunGeneration != generation || (currentJob.Status != "RUNNING" && currentJob.Status != "VERIFYING") {
 		log.Printf("[SyncEngine] Stopping completion for job %s; current status is %s\n", syncJobID, currentJob.Status)
 		return
 	}
@@ -861,9 +849,9 @@ SyncTasksDone:
 			COUNT(*) FILTER (WHERE status = 'SKIPPED') as skipped,
 			COUNT(*) FILTER (WHERE status = 'FAILED' OR status = 'CANCELLED') as failed
 		FROM tasks
-		WHERE sync_job_id = $1
+		WHERE sync_job_id = $1 AND pass_generation = $2
 	`
-	err = e.db.QueryRow(query, job.ID).Scan(&total, &completed, &skipped, &failed)
+	err = e.db.QueryRow(query, job.ID, generation).Scan(&total, &completed, &skipped, &failed)
 	if err != nil {
 		log.Printf("[SyncEngine] Error querying task statistics for job %s: %v\n", syncJobID, err)
 		// Fallback to defaults
@@ -871,7 +859,7 @@ SyncTasksDone:
 
 	// Query task statuses to build success map for sync states
 	taskOutcomes := make(map[string]string) // filePath -> status (COMPLETED, SKIPPED, FAILED)
-	rows, err := e.db.Query(`SELECT file_path, status FROM tasks WHERE sync_job_id = $1`, job.ID)
+	rows, err := e.db.Query(`SELECT file_path, status FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2`, job.ID, generation)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -899,7 +887,7 @@ SyncTasksDone:
 
 	// We count uploads/renames/conflict copies as changed files, and propagates as deleted
 	var changedCount, deletedCount int
-	taskRows, err := e.db.Query(`SELECT file_path, status, metadata FROM tasks WHERE sync_job_id = $1`, job.ID)
+	taskRows, err := e.db.Query(`SELECT file_path, status, metadata FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2`, job.ID, generation)
 	if err == nil {
 		defer taskRows.Close()
 		for taskRows.Next() {

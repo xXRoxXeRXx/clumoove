@@ -80,6 +80,27 @@ func (p *Processor) RunChecksumVerifier(ctx context.Context) {
 	}
 }
 
+func (p *Processor) scheduleVerification(ctx context.Context, entityType, entityID string, run func(context.Context)) {
+	key := fmt.Sprintf("%s:%s", entityType, entityID)
+	if _, loaded := p.verifyingEntities.LoadOrStore(key, true); loaded {
+		return
+	}
+	work := verificationWork{key: key, run: run}
+	queue := p.migrationVerificationQueue
+	if entityType == "sync" {
+		queue = p.syncVerificationQueue
+	}
+	select {
+	case <-ctx.Done():
+		p.verifyingEntities.Delete(key)
+	case queue <- work:
+	default:
+		// Keep discovery non-blocking. The next tick retries a pass when the
+		// bounded dispatcher has capacity again.
+		p.verifyingEntities.Delete(key)
+	}
+}
+
 func (p *Processor) processVerifyingMigrations(ctx context.Context) {
 	query := `SELECT id FROM migrations WHERE status = 'VERIFYING'`
 	rows, err := p.db.QueryContext(ctx, query)
@@ -95,9 +116,15 @@ func (p *Processor) processVerifyingMigrations(ctx context.Context) {
 			migIDs = append(migIDs, id)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[VERIFIER] Listing verifying migrations: %v", err)
+		return
+	}
 
 	for _, migID := range migIDs {
-		p.verifyMigrationChecksums(ctx, migID)
+		p.scheduleVerification(ctx, "migration", migID, func(passCtx context.Context) {
+			p.verifyMigrationChecksums(passCtx, migID, true)
+		})
 	}
 }
 
@@ -116,23 +143,30 @@ func (p *Processor) processVerifyingSyncJobs(ctx context.Context) {
 			syncIDs = append(syncIDs, id)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[VERIFIER] Listing verifying sync jobs: %v", err)
+		return
+	}
 
 	for _, syncID := range syncIDs {
-		p.verifySyncJobChecksums(ctx, syncID)
+		p.scheduleVerification(ctx, "sync", syncID, func(passCtx context.Context) {
+			p.verifySyncJobChecksums(passCtx, syncID, true)
+		})
 	}
 }
 
 type verificationPassConfig struct {
-	EntityType     string // "Migration" or "Sync job"
-	EntityID       string
-	UserID         string
-	SourceProvider string
-	TargetProvider string
-	TargetURL      string
-	TargetUsername string
-	TargetPassword string
-	TargetDir      string
-	Threads        int
+	GuardAlreadyHeld bool
+	EntityType       string // "Migration" or "Sync job"
+	EntityID         string
+	UserID           string
+	SourceProvider   string
+	TargetProvider   string
+	TargetURL        string
+	TargetUsername   string
+	TargetPassword   string
+	TargetDir        string
+	Threads          int
 	// TargetClient is test-only injection for a connected target. Production
 	// callers leave it nil and construct a scoped provider below.
 	TargetClient      storage.StorageProvider
@@ -152,9 +186,11 @@ type verificationPassConfig struct {
 
 func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPassConfig) {
 	guardKey := fmt.Sprintf("%s:%s", strings.ToLower(cfg.EntityType), cfg.EntityID)
-	if _, loaded := p.verifyingEntities.LoadOrStore(guardKey, true); loaded {
-		log.Printf("[VERIFIER] Verification pass already in progress for %s %s, skipping tick.\n", cfg.EntityType, cfg.EntityID)
-		return
+	if !cfg.GuardAlreadyHeld {
+		if _, loaded := p.verifyingEntities.LoadOrStore(guardKey, true); loaded {
+			log.Printf("[VERIFIER] Verification pass already in progress for %s %s, skipping tick.\n", cfg.EntityType, cfg.EntityID)
+			return
+		}
 	}
 	defer p.verifyingEntities.Delete(guardKey)
 	if cfg.Release != nil {
@@ -304,13 +340,10 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	// for the entire pass so size-only targets never enter the hash-query path.
 	verificationMode := targetClient.VerificationMode()
 
-	numWorkers := cfg.Threads
-	if numWorkers <= 0 {
-		numWorkers = 4
-	}
-	if numWorkers > total {
-		numWorkers = total
-	}
+	// The dispatcher reserves exactly one process-wide verification slot for a
+	// pass. Keep task verification serial to honour that global budget and avoid
+	// assuming provider clients are safe for concurrent use.
+	numWorkers := 1
 
 	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in %s %s (%d workers)\n", total, cfg.EntityType, cfg.EntityID, numWorkers)
 
@@ -511,7 +544,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	log.Printf("[VERIFIER] %s %s checksum verification pass completed.\n", cfg.EntityType, cfg.EntityID)
 }
 
-func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID string) {
+func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID string, guardAlreadyHeld bool) {
 	generation, claimed, err := db.ClaimMigrationVerification(p.db, ctx, migrationID)
 	if err != nil {
 		log.Printf("[VERIFIER] Cannot claim verification for migration %s: %v\n", migrationID, err)
@@ -542,16 +575,17 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 	}
 
 	cfg := verificationPassConfig{
-		EntityType:     "Migration",
-		EntityID:       migrationID,
-		UserID:         mig.UserID.String,
-		SourceProvider: mig.SourceProvider,
-		TargetProvider: mig.TargetProvider,
-		TargetURL:      mig.TargetURL,
-		TargetUsername: mig.TargetUsername,
-		TargetPassword: targetPass,
-		TargetDir:      mig.TargetDir,
-		Threads:        mig.Threads,
+		GuardAlreadyHeld: guardAlreadyHeld,
+		EntityType:       "Migration",
+		EntityID:         migrationID,
+		UserID:           mig.UserID.String,
+		SourceProvider:   mig.SourceProvider,
+		TargetProvider:   mig.TargetProvider,
+		TargetURL:        mig.TargetURL,
+		TargetUsername:   mig.TargetUsername,
+		TargetPassword:   targetPass,
+		TargetDir:        mig.TargetDir,
+		Threads:          mig.Threads,
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
 			return db.GetUnverifiedCompletedTasks(p.db, ctx, migrationID)
 		},
@@ -581,11 +615,24 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 	p.runVerificationPass(ctx, cfg)
 }
 
-func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string) {
-	job, err := db.GetSyncJob(p.db, syncJobID)
-	if err != nil || job.Status != "VERIFYING" {
+func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string, guardAlreadyHeld bool) {
+	verificationGeneration, claimed, err := db.ClaimSyncJobVerification(p.db, ctx, syncJobID)
+	if err != nil {
+		log.Printf("[VERIFIER] Cannot claim verification for sync job %s: %v", syncJobID, err)
 		return
 	}
+	if !claimed {
+		return
+	}
+	job, err := db.GetSyncJob(p.db, syncJobID)
+	if err != nil || job.Status != "VERIFYING" {
+		if releaseErr := db.ReleaseSyncJobVerificationLease(p.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
+			log.Printf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
+		}
+		return
+	}
+	var leaseOwned atomic.Bool
+	leaseOwned.Store(true)
 
 	targetPass := ""
 	if job.TargetPasswordEncrypted != "" {
@@ -597,28 +644,31 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	targetPass, err = p.ensureFreshSyncOAuthToken(ctx, job, "target", targetPass)
 	if err != nil {
 		log.Printf("[VERIFIER] Failed to refresh target OAuth token for sync job %s: %v\n", syncJobID, err)
+		if releaseErr := db.ReleaseSyncJobVerificationLease(p.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
+			log.Printf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
+		}
 		return
 	}
 
 	cfg := verificationPassConfig{
-		EntityType:     "Sync job",
-		EntityID:       syncJobID,
-		UserID:         job.UserID,
-		SourceProvider: job.SourceProvider,
-		TargetProvider: job.TargetProvider,
-		TargetURL:      job.TargetURL,
-		TargetUsername: job.TargetUsername,
-		TargetPassword: targetPass,
-		TargetDir:      job.TargetDir,
-		Threads:        job.Threads,
+		GuardAlreadyHeld: guardAlreadyHeld,
+		EntityType:       "Sync job",
+		EntityID:         syncJobID,
+		UserID:           job.UserID,
+		SourceProvider:   job.SourceProvider,
+		TargetProvider:   job.TargetProvider,
+		TargetURL:        job.TargetURL,
+		TargetUsername:   job.TargetUsername,
+		TargetPassword:   targetPass,
+		TargetDir:        job.TargetDir,
 		GetTasks: func(ctx context.Context) ([]*db.Task, error) {
-			return db.GetUnverifiedCompletedSyncTasks(p.db, ctx, syncJobID)
+			return db.GetUnverifiedCompletedSyncTasks(p.db, ctx, syncJobID, job.RunGeneration)
 		},
 		MarkVerified: func(ctx context.Context, task *db.Task, targetHash string) (bool, error) {
-			return db.MarkSyncTaskChecksumVerifiedWhileVerifying(p.db, ctx, task.ID, targetHash)
+			return db.MarkSyncTaskChecksumVerifiedWhileVerifying(p.db, ctx, task.ID, targetHash, job.RunGeneration, verificationGeneration)
 		},
 		MarkMismatch: func(ctx context.Context, task *db.Task) (bool, error) {
-			return db.MarkSyncTaskChecksumMismatchWhileVerifying(p.db, ctx, task)
+			return db.MarkSyncTaskChecksumMismatchWhileVerifying(p.db, ctx, task, job.RunGeneration, verificationGeneration)
 		},
 		// The engine applies all durable sync-state changes after it owns the
 		// successful finalization, so verification itself only changes tasks.
@@ -628,12 +678,16 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 			// the engine and leave an IDLE job without a completed-run record.
 			return nil
 		},
-		IsStillVerifying: func(ctx context.Context) (bool, error) {
-			var status string
-			if err := p.db.QueryRowContext(ctx, `SELECT status FROM sync_jobs WHERE id = $1`, syncJobID).Scan(&status); err != nil {
-				return false, err
+		RenewLease: func(ctx context.Context) (bool, error) {
+			owned, err := db.RenewSyncJobVerificationLease(p.db, ctx, syncJobID, job.RunGeneration, verificationGeneration)
+			leaseOwned.Store(owned && err == nil)
+			return owned, err
+		},
+		CanWrite: leaseOwned.Load,
+		Release: func(ctx context.Context) {
+			if err := db.ReleaseSyncJobVerificationLease(p.db, ctx, syncJobID, verificationGeneration); err != nil {
+				log.Printf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, err)
 			}
-			return status == "VERIFYING", nil
 		},
 	}
 

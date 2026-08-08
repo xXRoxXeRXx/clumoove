@@ -27,6 +27,7 @@ openspec/
 .agents/
 .specify/
 specs/
+.codex/
 
 # Ignore backend build binaries
 backend/bin/

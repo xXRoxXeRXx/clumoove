@@ -36,6 +36,8 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 			id TEXT PRIMARY KEY,
 			status TEXT NOT NULL,
 			run_generation INTEGER NOT NULL DEFAULT 0,
+			verification_generation INTEGER NOT NULL DEFAULT 0,
+			verification_lease_until TIMESTAMP WITH TIME ZONE,
 			last_run_status TEXT,
 			error_message TEXT,
 			last_run_at TIMESTAMP WITH TIME ZONE,
@@ -177,7 +179,7 @@ func TestSyncJobLifecycleTransitions(t *testing.T) {
 		t.Fatalf("INDEXING -> RUNNING: transitioned=%v, err=%v", transitioned, err)
 	}
 
-	transitioned, err = TransitionSyncJobToVerifying(database, "indexing")
+	transitioned, err = TransitionSyncJobToVerifying(database, "indexing", 0)
 	if err != nil || !transitioned || syncClaimStatus(t, database, "indexing") != "VERIFYING" {
 		t.Fatalf("RUNNING -> VERIFYING: transitioned=%v, err=%v", transitioned, err)
 	}
@@ -185,7 +187,7 @@ func TestSyncJobLifecycleTransitions(t *testing.T) {
 	for _, status := range []string{"FAILED", "PAUSED", "PAUSED_CONNECTION_LOSS"} {
 		id := "do-not-revive-" + status
 		insertSyncClaimJob(t, database, id, status)
-		transitioned, err := TransitionSyncJobToVerifying(database, id)
+		transitioned, err := TransitionSyncJobToVerifying(database, id, 0)
 		if err != nil || transitioned {
 			t.Errorf("%s -> VERIFYING: transitioned=%v, err=%v; want false, nil", status, transitioned, err)
 		}
@@ -215,15 +217,51 @@ func TestAbortSyncJobVerification(t *testing.T) {
 	database := setupSyncClaimTestDB(t)
 	insertSyncClaimJob(t, database, "verifying", "VERIFYING")
 
-	aborted, err := AbortSyncJobVerification(database, "verifying")
+	aborted, err := AbortSyncJobVerification(database, "verifying", 0)
 	if err != nil || !aborted || syncClaimStatus(t, database, "verifying") != "RUNNING" {
 		t.Fatalf("VERIFYING -> RUNNING abort: aborted=%v, err=%v", aborted, err)
 	}
 
 	insertSyncClaimJob(t, database, "idle", "IDLE")
-	aborted, err = AbortSyncJobVerification(database, "idle")
+	aborted, err = AbortSyncJobVerification(database, "idle", 0)
 	if err != nil || aborted || syncClaimStatus(t, database, "idle") != "IDLE" {
 		t.Fatalf("IDLE abort: aborted=%v, err=%v", aborted, err)
+	}
+}
+
+func TestSyncVerificationClaimLeaseAndGeneration(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "verifying-lease", "VERIFYING")
+
+	first, claimed, err := ClaimSyncJobVerification(database, context.Background(), "verifying-lease")
+	if err != nil || !claimed || first != 1 {
+		t.Fatalf("first claim = (%d, %v, %v), want (1, true, nil)", first, claimed, err)
+	}
+	if _, claimed, err = ClaimSyncJobVerification(database, context.Background(), "verifying-lease"); err != nil || claimed {
+		t.Fatalf("live lease second claim = (%v, %v), want (false, nil)", claimed, err)
+	}
+	if renewed, err := RenewSyncJobVerificationLease(database, context.Background(), "verifying-lease", 0, first); err != nil || !renewed {
+		t.Fatalf("renew = (%v, %v), want (true, nil)", renewed, err)
+	}
+	if _, err := database.Exec(`UPDATE sync_jobs SET verification_lease_until = NOW() - INTERVAL '1 second' WHERE id = 'verifying-lease'`); err != nil {
+		t.Fatal(err)
+	}
+	second, claimed, err := ClaimSyncJobVerification(database, context.Background(), "verifying-lease")
+	if err != nil || !claimed || second != 2 {
+		t.Fatalf("expired lease claim = (%d, %v, %v), want (2, true, nil)", second, claimed, err)
+	}
+	if renewed, err := RenewSyncJobVerificationLease(database, context.Background(), "verifying-lease", 0, first); err != nil || renewed {
+		t.Fatalf("stale renew = (%v, %v), want (false, nil)", renewed, err)
+	}
+	if aborted, err := AbortSyncJobVerification(database, "verifying-lease", 0); err != nil || !aborted {
+		t.Fatalf("abort = (%v, %v), want (true, nil)", aborted, err)
+	}
+	var lease sql.NullTime
+	if err := database.QueryRow(`SELECT verification_lease_until FROM sync_jobs WHERE id = 'verifying-lease'`).Scan(&lease); err != nil {
+		t.Fatal(err)
+	}
+	if lease.Valid {
+		t.Fatal("abort must clear the verification lease")
 	}
 }
 

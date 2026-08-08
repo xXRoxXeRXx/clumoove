@@ -553,6 +553,8 @@ func InitDB(connStr string) (*sql.DB, error) {
 				bandwidth_limit_mbps INT NOT NULL DEFAULT 0,
 				status TEXT NOT NULL DEFAULT 'IDLE',
 				run_generation INT NOT NULL DEFAULT 0,
+				verification_generation INT NOT NULL DEFAULT 0,
+				verification_lease_until TIMESTAMP WITH TIME ZONE,
 				target_dir TEXT NOT NULL DEFAULT '/',
 				selected_paths JSONB,
 				last_run_at TIMESTAMP WITH TIME ZONE,
@@ -580,6 +582,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0`)
 			if err != nil {
 				log.Printf("Failed schema migration (sync_jobs run_generation): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS verification_generation INT NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS verification_lease_until TIMESTAMP WITH TIME ZONE`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync_jobs verification lease): %v\n", err)
 			}
 			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS source_mega_session_id_encrypted TEXT, ADD COLUMN IF NOT EXISTS source_mega_master_key_encrypted TEXT, ADD COLUMN IF NOT EXISTS target_mega_session_id_encrypted TEXT, ADD COLUMN IF NOT EXISTS target_mega_master_key_encrypted TEXT`)
 			if err != nil {
