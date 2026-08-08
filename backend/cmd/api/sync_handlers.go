@@ -1002,10 +1002,10 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 	defer crypto.ZeroString(&password)
 
 	allowedProviders := map[string]bool{
-		"nextcloud": true, "webdav": true, "dropbox": true,
+		"nextcloud": true, "opencloud": true, "webdav": true, "dropbox": true,
 		"google": true, "onedrive": true, "hidrive": true,
 		"smb": true, "s3": true, "sftp": true, "ftp": true,
-		"magentacloud": true, "local": true, "immich": true,
+		"magentacloud": true, "local": true, "immich": true, "seafile": true,
 	}
 	if !allowedProviders[provider] {
 		errCode := ErrSourceUrlInvalid

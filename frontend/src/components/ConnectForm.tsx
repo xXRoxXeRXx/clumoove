@@ -631,6 +631,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const providerOptions: { id: ProviderId; name: string }[] = [
     { id: 'nextcloud', name: 'Nextcloud' },
     { id: 'opencloud', name: 'OpenCloud' },
+    { id: 'seafile', name: 'Seafile' },
     { id: 'webdav', name: 'WebDAV' },
     { id: 'magentacloud', name: 'MagentaCLOUD' },
     { id: 'smb', name: 'SMB/CIFS' },
@@ -1069,15 +1070,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                 </>
-              ) : sourceProvider === 'nextcloud' || sourceProvider === 'opencloud' || sourceProvider === 'webdav' ? (
+              ) : sourceProvider === 'nextcloud' || sourceProvider === 'opencloud' || sourceProvider === 'seafile' || sourceProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                      {sourceProvider === 'opencloud' ? t('connect.opencloudUrl') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
+                      {sourceProvider === 'seafile' ? t('connect.seafileUrl') : sourceProvider === 'opencloud' ? t('connect.opencloudUrl') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
                       type="url"
-                      placeholder={sourceProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
+                      placeholder={sourceProvider === 'seafile' ? t('connect.seafileUrlPlaceholder') : sourceProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={sourceUrl}
                       onChange={(e) => setSourceUrl(e.target.value)}
                       className={formInputClass}
@@ -1606,15 +1607,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                 </>
-              ) : targetProvider === 'nextcloud' || targetProvider === 'opencloud' || targetProvider === 'webdav' ? (
+              ) : targetProvider === 'nextcloud' || targetProvider === 'opencloud' || targetProvider === 'seafile' || targetProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
                     <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
-                      {targetProvider === 'opencloud' ? t('connect.opencloudUrl') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
+                      {targetProvider === 'seafile' ? t('connect.seafileUrl') : targetProvider === 'opencloud' ? t('connect.opencloudUrl') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
                       type="url"
-                      placeholder={targetProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
+                      placeholder={targetProvider === 'seafile' ? t('connect.seafileUrlPlaceholder') : targetProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={targetUrl}
                       onChange={(e) => setTargetUrl(e.target.value)}
                       className={formInputClass}
