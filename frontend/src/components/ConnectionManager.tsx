@@ -129,6 +129,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     (): { id: ProviderId; name: string }[] => [
       { id: 'nextcloud', name: 'Nextcloud' },
       { id: 'opencloud', name: 'OpenCloud' },
+      { id: 'seafile', name: 'Seafile' },
       { id: 'webdav', name: 'WebDAV' },
       { id: 'magentacloud', name: 'MagentaCLOUD' },
       { id: 'smb', name: 'SMB/CIFS' },

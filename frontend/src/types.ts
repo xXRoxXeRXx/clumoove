@@ -11,6 +11,7 @@ export interface CloudFile {
 export type Provider =
   | 'nextcloud'
   | 'opencloud'
+  | 'seafile'
   | 'dropbox'
   | 'webdav'
   | 'magentacloud'

@@ -145,6 +145,7 @@
     "secretKey": "Secret key",
     "nextcloudUrl": "Nextcloud WebDAV address",
     "opencloudUrl": "OpenCloud address",
+    "seafileUrl": "Seafile Server Address",
     "webdavUrl": "WebDAV address",
     "immichUrl": "Immich server URL",
     "immichUrlPlaceholder": "https://immich.example.com",
@@ -155,6 +156,7 @@
     "profileNamePlaceholder": "e.g. My Cloud",
     "nextcloudUrlPlaceholder": "https://nextcloud.example.com",
     "opencloudUrlPlaceholder": "https://opencloud.example.com",
+    "seafileUrlPlaceholder": "https://seafile.example.com",
     "webdavUrlPlaceholder": "https://webdav.example.com/dav",
     "s3EndpointPlaceholder": "https://s3.wasabisys.com or http://localhost:9000",
     "bucketPlaceholder": "my-bucket",
@@ -570,6 +572,7 @@
     "transfer": "TRANSFER"
   },
   "errors": {
+    "SEAFILE_AUTH_FAILED": "Seafile authentication failed. Please check your credentials.",
     "SETUP_ALREADY_COMPLETED": "Administrator initial setup has already been completed.",
     "UNKNOWN": "An unexpected error occurred.",
     "INVALID_BODY": "Invalid request.",

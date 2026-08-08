@@ -5,6 +5,7 @@ import {
   SiGoogledrive,
   SiDeutschetelekom,
   SiImmich,
+  SiSeafile,
 } from 'react-icons/si';
 import {
   TbBrandOnedrive,
@@ -29,6 +30,9 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className 
   switch (p) {
     case 'nextcloud':
       return <SiNextcloud className={iconCls} />;
+
+    case 'seafile':
+      return <SiSeafile className={iconCls} />;
 
     case 'opencloud':
       return (

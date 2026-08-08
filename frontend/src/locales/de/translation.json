@@ -145,6 +145,7 @@
     "secretKey": "Geheimer Schlüssel",
     "nextcloudUrl": "Nextcloud WebDAV-Adresse",
     "opencloudUrl": "OpenCloud-Adresse",
+    "seafileUrl": "Seafile Server-Adresse",
     "webdavUrl": "WebDAV-Adresse",
     "immichUrl": "Immich-Server-URL",
     "immichUrlPlaceholder": "https://immich.beispiel.de",
@@ -155,6 +156,7 @@
     "profileNamePlaceholder": "z. B. Meine Cloud",
     "nextcloudUrlPlaceholder": "https://nextcloud.beispiel.de",
     "opencloudUrlPlaceholder": "https://opencloud.beispiel.de",
+    "seafileUrlPlaceholder": "https://seafile.beispiel.de",
     "webdavUrlPlaceholder": "https://webdav.beispiel.de/dav",
     "s3EndpointPlaceholder": "https://s3.wasabisys.com oder http://localhost:9000",
     "bucketPlaceholder": "mein-bucket",
@@ -570,6 +572,7 @@
     "transfer": "ÜBERTRAGUNG"
   },
   "errors": {
+    "SEAFILE_AUTH_FAILED": "Seafile-Authentifizierung fehlgeschlagen. Bitte überprüfe deine Zugangsdaten.",
     "SETUP_ALREADY_COMPLETED": "Die Administrator-Erstanlage wurde bereits durchgeführt.",
     "UNKNOWN": "Ein unerwarteter Fehler ist aufgetreten.",
     "INVALID_BODY": "Ungültige Anfrage.",

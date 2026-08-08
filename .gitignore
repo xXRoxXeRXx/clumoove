@@ -26,6 +26,7 @@ desktop.ini
 openspec/
 .agents/
 .specify/
+specs/
 
 # Ignore backend build binaries
 backend/bin/

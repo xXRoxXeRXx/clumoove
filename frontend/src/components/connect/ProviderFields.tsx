@@ -80,6 +80,9 @@ export function ProviderFields(props: ProviderFieldsProps) {
   if (provider === 'magentacloud') {
     return <MagentaCloudFields {...props} />;
   }
+  if (provider === 'seafile') {
+    return <SeafileFields {...props} />;
+  }
   return <NextcloudWebdavFields {...props} />;
 }
 
@@ -471,11 +474,13 @@ export function MagentaCloudFields({
 const urlLabelKeys: Record<string, string> = {
   opencloud: 'connect.opencloudUrl',
   nextcloud: 'connect.nextcloudUrl',
+  seafile: 'connect.seafileUrl',
 };
 
 const urlPlaceholderKeys: Record<string, string> = {
   opencloud: 'connect.opencloudUrlPlaceholder',
   nextcloud: 'connect.nextcloudUrlPlaceholder',
+  seafile: 'connect.seafileUrlPlaceholder',
 };
 
 export function NextcloudWebdavFields({
@@ -518,6 +523,51 @@ export function NextcloudWebdavFields({
           onChange={(e) => onPasswordChange(e.target.value)}
           className={inputCls}
           placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : (provider === 'nextcloud' ? '•••• •••• •••• ••••' : t('connect.password'))}
+          required={!editing}
+        />
+        {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
+      </div>
+    </>
+  );
+}
+
+export function SeafileFields({
+  editing,
+  url, onUrlChange,
+  username, onUsernameChange,
+  password, onPasswordChange,
+  ids,
+}: ProviderFieldsProps) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.urlId} className={labelCls}>
+          {t('connect.seafileUrl')}
+        </label>
+        <input
+          id={ids.urlId}
+          type="url"
+          required
+          value={url}
+          onChange={(e) => onUrlChange(e.target.value)}
+          className={inputCls}
+          placeholder={t('connect.seafileUrlPlaceholder')}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
+        <input id={ids.usernameId} type="text" value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.passwordId} className={labelCls}>{t('connect.password')}</label>
+        <input
+          id={ids.passwordId}
+          type="password"
+          value={password}
+          onChange={(e) => onPasswordChange(e.target.value)}
+          className={inputCls}
+          placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')}
           required={!editing}
         />
         {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}

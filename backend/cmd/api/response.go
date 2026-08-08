@@ -148,6 +148,7 @@ const (
 	ErrEmailChangeTokenInvalid      APIErrorCode = "EMAIL_CHANGE_TOKEN_INVALID"
 	ErrCorsOriginUntrusted          APIErrorCode = "CORS_ORIGIN_UNTRUSTED"
 	ErrSetupAlreadyCompleted        APIErrorCode = "SETUP_ALREADY_COMPLETED"
+	ErrSeafileAuthFailed            APIErrorCode = "SEAFILE_AUTH_FAILED"
 	ErrInternalError                APIErrorCode = "INTERNAL_ERROR"
 
 	ErrUserDisabled           APIErrorCode = "USER_DISABLED"
