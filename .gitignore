@@ -24,6 +24,8 @@ desktop.ini
 .kilo/
 .agent/
 openspec/
+.agents/
+.specify/
 
 # Ignore backend build binaries
 backend/bin/
