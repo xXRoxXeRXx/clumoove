@@ -928,7 +928,8 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 		headReq = headReq.WithContext(ctx)
 		if headResp, err := p.HTTPClient.Do(headReq); err == nil {
 			headResp.Body.Close()
-			if headResp.StatusCode == http.StatusOK {
+			switch headResp.StatusCode {
+			case http.StatusOK:
 				if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
 					return chk, nil
 				}
@@ -938,11 +939,11 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 					fallbackETag = "ETAG:" + strings.Trim(etag, `"`)
 				}
 				// 200 OK without OC-Checksum: fall through to PROPFIND for XML <oc:checksums/>
-			} else if headResp.StatusCode == http.StatusNotFound {
+			case http.StatusNotFound:
 				return "", fmt.Errorf("file not found: %s", filePath)
-			} else if headResp.StatusCode == http.StatusUnauthorized {
+			case http.StatusUnauthorized:
 				return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)
-			} else {
+			default:
 				return "", fmt.Errorf("HEAD for hash failed: status %d", headResp.StatusCode)
 			}
 		}

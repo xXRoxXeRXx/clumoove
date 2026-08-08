@@ -844,7 +844,7 @@ func unescapeICSValue(s string) string {
 // unfoldLines implements RFC 5545 / RFC 6350 line unfolding:
 // a CRLF or LF immediately followed by a whitespace character (SPACE or TAB)
 // is a fold and must be removed, joining the continuation to the previous line.
-func unfoldLines(r io.Reader) []string {
+func unfoldLines(r io.Reader) ([]string, error) {
 	scanner := bufio.NewScanner(r)
 	var lines []string
 	var current strings.Builder
@@ -861,17 +861,24 @@ func unfoldLines(r io.Reader) []string {
 			current.WriteString(raw)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 	if current.Len() > 0 {
 		lines = append(lines, current.String())
 	}
-	return lines
+	return lines, nil
 }
 
 func parseICS(r io.Reader) (*calendar.Event, error) {
 	event := &calendar.Event{}
 
+	lines, err := unfoldLines(r)
+	if err != nil {
+		return nil, err
+	}
 	var inEvent bool
-	for _, line := range unfoldLines(r) {
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "BEGIN:VEVENT" {
 			inEvent = true
@@ -964,7 +971,11 @@ func formatPersonToVCF(p *people.Person) string {
 func parseVCF(r io.Reader) (*people.Person, error) {
 	person := &people.Person{}
 
-	for _, line := range unfoldLines(r) {
+	lines, err := unfoldLines(r)
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		parts := strings.SplitN(line, ":", 2)
 		if len(parts) < 2 {

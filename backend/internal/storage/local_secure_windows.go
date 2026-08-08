@@ -16,32 +16,32 @@ import (
 // symlink race this provider is intended to prevent.
 type localRoot struct{}
 
-func openLocalRoot(path string) (*localRoot, error) { return &localRoot{}, nil }
-func ensureLocalRoot(container, userID string) (*localRoot, error) {
+func openLocalRoot(_ string) (*localRoot, error) { return &localRoot{}, nil }
+func ensureLocalRoot(_, _ string) (*localRoot, error) {
 	return nil, fmt.Errorf("local provider mutations are unsupported on Windows")
 }
 func (r *localRoot) close() error { return nil }
 func (r *localRoot) healthy() error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }
-func (r *localRoot) mkdirAll(parts []string) error {
+func (r *localRoot) mkdirAll(_ []string) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }
-func (r *localRoot) openDirectory(parts []string) (*os.File, error) {
+func (r *localRoot) openDirectory(_ []string) (*os.File, error) {
 	return nil, fmt.Errorf("local provider reads are unsupported on Windows")
 }
-func (r *localRoot) open(parts []string) (*os.File, error) {
+func (r *localRoot) open(_ []string) (*os.File, error) {
 	return nil, fmt.Errorf("local provider reads are unsupported on Windows")
 }
-func (r *localRoot) upload(ctx context.Context, parts []string, stream io.Reader, progress chan<- int64) error {
+func (r *localRoot) upload(_ context.Context, _ []string, _ io.Reader, _ chan<- int64) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }
-func (r *localRoot) remove(parts []string) error {
+func (r *localRoot) remove(_ []string) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }
-func (r *localRoot) rename(oldParts, newParts []string) error {
+func (r *localRoot) rename(_, _ []string) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows")
 }
-func (r *localRoot) chtimes(parts []string, modTime time.Time) error {
+func (r *localRoot) chtimes(_ []string, _ time.Time) error {
 	return fmt.Errorf("local provider mutations are unsupported on Windows: %w", ErrUnsupportedOnPlatform)
 }
