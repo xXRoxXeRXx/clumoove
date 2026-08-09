@@ -1,4 +1,4 @@
-﻿package totp2fa
+package totp2fa
 
 import (
 	"strings"

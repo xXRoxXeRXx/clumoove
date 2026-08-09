@@ -191,7 +191,6 @@ func TestIsImmichMedia(t *testing.T) {
 	}
 }
 
-
 type indexFolderTestProvider struct{ listing []storage.CloudResource }
 
 func (p indexFolderTestProvider) Close() error                          { return nil }

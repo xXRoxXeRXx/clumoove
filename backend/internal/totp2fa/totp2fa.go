@@ -120,4 +120,3 @@ func randomCode(n int) (string, error) {
 	}
 	return string(b), nil
 }
-

@@ -229,7 +229,7 @@ func kindFromHTTPStatus(status int) string {
 func errorKindFromMessage(msg string) string {
 	lower := strings.ToLower(msg)
 	switch {
-	case strings.Contains(lower, "not found"), strings.Contains(lower, "no such") , strings.Contains(lower, "does not exist"):
+	case strings.Contains(lower, "not found"), strings.Contains(lower, "no such"), strings.Contains(lower, "does not exist"):
 		return "not_found"
 	case strings.Contains(lower, "conflict"), strings.Contains(lower, "already exists"), strings.Contains(lower, "duplicate"):
 		return "conflict"

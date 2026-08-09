@@ -15,12 +15,12 @@ import (
 )
 
 type Claims struct {
-	UserID           string `json:"sub"`
-	Email            string `json:"email"`
-	DisplayName      string `json:"name"`
-	Role             string `json:"role"`
-	TwoFAPending     bool   `json:"2fa_pending"`
-	MustChangePassword bool `json:"must_change_password"`
+	UserID             string `json:"sub"`
+	Email              string `json:"email"`
+	DisplayName        string `json:"name"`
+	Role               string `json:"role"`
+	TwoFAPending       bool   `json:"2fa_pending"`
+	MustChangePassword bool   `json:"must_change_password"`
 	jwt.RegisteredClaims
 }
 
@@ -44,10 +44,10 @@ func GenerateAccessToken(user *db.User, secretKey string) (string, error) {
 
 	expirationTime := time.Now().Add(15 * time.Minute)
 	claims := &Claims{
-		UserID:      user.ID,
-		Email:       user.Email,
-		DisplayName: user.DisplayName,
-		Role:        user.Role,
+		UserID:             user.ID,
+		Email:              user.Email,
+		DisplayName:        user.DisplayName,
+		Role:               user.Role,
 		MustChangePassword: user.MustChangePassword,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
@@ -147,10 +147,10 @@ func GenerateMustChangePasswordToken(user *db.User, secretKey string) (string, e
 
 	expirationTime := time.Now().Add(5 * time.Minute)
 	claims := &Claims{
-		UserID:            user.ID,
-		Email:             user.Email,
-		DisplayName:       user.DisplayName,
-		Role:              user.Role,
+		UserID:             user.ID,
+		Email:              user.Email,
+		DisplayName:        user.DisplayName,
+		Role:               user.Role,
 		MustChangePassword: true,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),

@@ -7,13 +7,28 @@ func TestUserConfiguredHTTPProvidersRejectPlaintextHTTP(t *testing.T) {
 		name string
 		new  func() error
 	}{
-		{"nextcloud", func() error { _, err := NewNextcloudProvider("http://nextcloud.example.test", "user", "pass"); return err }},
-		{"opencloud", func() error { _, err := NewOpenCloudProvider("http://opencloud.example.test", "user", "pass"); return err }},
-		{"webdav", func() error { _, err := NewWebDAVProvider("http://webdav.example.test/dav", "user", "pass"); return err }},
+		{"nextcloud", func() error {
+			_, err := NewNextcloudProvider("http://nextcloud.example.test", "user", "pass")
+			return err
+		}},
+		{"opencloud", func() error {
+			_, err := NewOpenCloudProvider("http://opencloud.example.test", "user", "pass")
+			return err
+		}},
+		{"webdav", func() error {
+			_, err := NewWebDAVProvider("http://webdav.example.test/dav", "user", "pass")
+			return err
+		}},
 		{"immich", func() error { _, err := NewImmichProvider("http://immich.example.test", "api-key"); return err }},
 		{"seafile", func() error { _, err := NewSeafileProvider("http://seafile.example.test", "user", "pass"); return err }},
-		{"s3 custom endpoint", func() error { _, err := NewS3Provider("s3://bucket?endpoint=http%3A%2F%2Fs3.example.test", "access-key", "secret-key"); return err }},
-		{"s3 legacy insecure option", func() error { _, err := NewS3Provider("s3://bucket?endpoint=https%3A%2F%2Fs3.example.test&insecure=true", "access-key", "secret-key"); return err }},
+		{"s3 custom endpoint", func() error {
+			_, err := NewS3Provider("s3://bucket?endpoint=http%3A%2F%2Fs3.example.test", "access-key", "secret-key")
+			return err
+		}},
+		{"s3 legacy insecure option", func() error {
+			_, err := NewS3Provider("s3://bucket?endpoint=https%3A%2F%2Fs3.example.test&insecure=true", "access-key", "secret-key")
+			return err
+		}},
 	}
 
 	for _, tt := range tests {

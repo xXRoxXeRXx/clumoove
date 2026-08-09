@@ -50,4 +50,3 @@ func TestNextcloudPathsResourceURLEncodesSubDelims(t *testing.T) {
 		t.Errorf("uploadsURL = %s, want %s", gotUpload, wantUpload)
 	}
 }
-

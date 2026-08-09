@@ -46,7 +46,6 @@ func setupVerificationClaimTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
-
 func TestChecksumMismatchRetryKeepsMigrationRunnableUntilRecopyIsVerified(t *testing.T) {
 	database := setupVerificationClaimTestDB(t)
 	ctx := context.Background()

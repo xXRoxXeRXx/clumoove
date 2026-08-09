@@ -389,4 +389,3 @@ func TestHiDriveInspectResourceNotFound(t *testing.T) {
 		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
 	}
 }
-

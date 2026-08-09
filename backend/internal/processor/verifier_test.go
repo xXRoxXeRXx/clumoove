@@ -39,7 +39,7 @@ type verifierProvider struct {
 
 type connectableVerifierProvider struct {
 	verifierProvider
-	connected bool
+	connected  bool
 	connectErr error
 	connects   int
 }
