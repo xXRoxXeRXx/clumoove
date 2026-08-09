@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	mega "github.com/t3rm1n4l/go-mega"
 )
 
 func TestCleanMegaPath(t *testing.T) {
@@ -30,6 +32,15 @@ func TestMegaCapabilities(t *testing.T) {
 	p := NewMegaProvider("user@example.com", "password", MegaSession{})
 	if p.VerificationMode() != VerificationSizeOnly || !p.SupportsAtomicRename() {
 		t.Fatal("unexpected MEGA capabilities")
+	}
+}
+
+func TestIsMegaContainerType(t *testing.T) {
+	if !isMegaContainerType(mega.ROOT) || !isMegaContainerType(mega.FOLDER) {
+		t.Fatal("MEGA root and folders must both be accepted as upload containers")
+	}
+	if isMegaContainerType(mega.FILE) {
+		t.Fatal("MEGA files must not be accepted as upload containers")
 	}
 }
 

@@ -141,6 +141,13 @@ func (p *MegaProvider) requireFiles(resourceType string) error {
 	return nil
 }
 
+// isMegaContainerType includes MEGA's special root node. The root can contain
+// files and folders just like an ordinary folder, but go-mega represents it
+// with a distinct ROOT type.
+func isMegaContainerType(nodeType int) bool {
+	return nodeType == mega.FOLDER || nodeType == mega.ROOT
+}
+
 func cleanMegaPath(value string) ([]string, string, error) {
 	if strings.Contains(value, "\\") {
 		return nil, "", ErrPathEscapesRoot
@@ -215,7 +222,7 @@ func (p *MegaProvider) GetDirectoryListing(ctx context.Context, resourceType, di
 	if err != nil {
 		return nil, err
 	}
-	if dir.GetType() != mega.FOLDER {
+	if !isMegaContainerType(dir.GetType()) {
 		return nil, ErrNotFound
 	}
 	children, err := p.client.FS.GetChildren(dir)
@@ -344,7 +351,7 @@ func (p *MegaProvider) StreamUploadChunked(ctx context.Context, resourceType, fi
 	if err != nil {
 		return err
 	}
-	if parent.GetType() != mega.FOLDER {
+	if !isMegaContainerType(parent.GetType()) {
 		return ErrNotFound
 	}
 	if _, _, err := p.uniqueChild(parent, parts[len(parts)-1]); err != nil && !errors.Is(err, ErrNotFound) {
