@@ -94,3 +94,39 @@ func TestOAuthCallbackDoesNotReflectUntrustedOrigin(t *testing.T) {
 		t.Fatal("OAuth callback reflected an untrusted origin")
 	}
 }
+
+func TestSanitizeAuditToken(t *testing.T) {
+	const maxTokenLen = 254
+	// All C0 control bytes plus DEL; must stay in sync with sanitizeAuditToken.
+	const allControls = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +
+		"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x7f"
+
+	cases := map[string]struct {
+		in   string
+		want string
+	}{
+		"empty":           {"", ""},
+		"plain ipv4":      {"192.0.2.10", "192.0.2.10"},
+		"plain ipv6":      {"2001:db8::1", "2001:db8::1"},
+		"hostname":        {"api.example.com", "api.example.com"},
+		"strips cr lf":    {"1.2.3.4\r\n1.2.3.5", "1.2.3.41.2.3.5"},
+		"strips nul":      {"1.2.3.4\x00", "1.2.3.4"},
+		"strips del":      {"1.2.3.4\x7f", "1.2.3.4"},
+		"strips all c0":   {allControls, ""},
+		"keeps printable": {"abc123.-:[]", "abc123.-:[]"},
+		// Multi-byte UTF-8 bytes are all >= 0x80, so the ContainsAny fast path
+		// must return them unchanged, matching the rune-stripping slow path.
+		"keeps multibyte": {"\u00e4\u2192\u00e0", "\u00e4\u2192\u00e0"},
+		"mixed ctrl utf8": {"a\rb\nc\u00e9\x00", "abc\u00e9"},
+		"truncates":       {strings.Repeat("x", maxTokenLen+5), strings.Repeat("x", maxTokenLen)},
+		"truncates ctrl":  {strings.Repeat("\n", maxTokenLen+5), ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := sanitizeAuditToken(tc.in)
+			if got != tc.want {
+				t.Fatalf("sanitizeAuditToken(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
