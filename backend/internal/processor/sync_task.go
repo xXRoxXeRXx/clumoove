@@ -125,6 +125,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		var mkClient storage.StorageProvider
 		var mkPath string
 		var mkProvider string
+		var mkURL, mkUsername string
 		if side == "source" {
 			mkClient, err = storage.NewProvider(sourceCtx, job.SourceProvider, job.SourceURL, job.SourceUsername, sourceProviderPass)
 			if err != nil {
@@ -133,6 +134,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			defer mkClient.Close()
 			mkPath = task.FilePath
 			mkProvider = job.SourceProvider
+			mkURL, mkUsername = job.SourceURL, job.SourceUsername
 		} else {
 			mkClient, err = storage.NewProvider(targetCtx, job.TargetProvider, job.TargetURL, job.TargetUsername, targetProviderPass)
 			if err != nil {
@@ -141,6 +143,15 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			defer mkClient.Close()
 			mkPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
 			mkProvider = job.TargetProvider
+			mkURL, mkUsername = job.TargetURL, job.TargetUsername
+		}
+		unlockMegaTarget := p.lockMegaTarget(mkProvider, mkURL, mkUsername)
+		defer unlockMegaTarget()
+		if ok, err := mkClient.Connect(ctx); !ok {
+			if err == nil {
+				err = errors.New("provider rejected connection")
+			}
+			return fmt.Errorf("failed to connect to %s provider for mkdir: %w", mkProvider, err)
 		}
 
 		// Sanitize directory name
@@ -283,6 +294,24 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		tgtPath = path.Clean(path.Join(job.TargetDir, task.FilePath))
 		srcProvider = job.SourceProvider
 		tgtProvider = job.TargetProvider
+	}
+	targetURL, targetUsername := job.TargetURL, job.TargetUsername
+	if tgtProvider == job.SourceProvider {
+		targetURL, targetUsername = job.SourceURL, job.SourceUsername
+	}
+	unlockMegaTarget := p.lockMegaTarget(tgtProvider, targetURL, targetUsername)
+	defer unlockMegaTarget()
+	if ok, err := srcClient.Connect(ctx); !ok {
+		if err == nil {
+			err = errors.New("provider rejected connection")
+		}
+		return fmt.Errorf("failed to connect to source provider: %w", err)
+	}
+	if ok, err := tgtClient.Connect(ctx); !ok {
+		if err == nil {
+			err = errors.New("provider rejected connection")
+		}
+		return fmt.Errorf("failed to connect to target provider: %w", err)
 	}
 	// Create directories if needed
 	if err := tgtClient.CreateParentDirectories(ctx, task.ResourceType, tgtPath); err != nil {

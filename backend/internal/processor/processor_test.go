@@ -608,6 +608,29 @@ func TestLockTargetFileSerializes(t *testing.T) {
 	}
 }
 
+func TestLockMegaTargetSerializesSameAccount(t *testing.T) {
+	p := &Processor{}
+	const n = 8
+	var wg sync.WaitGroup
+	wg.Add(n)
+	var inside int32
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			release := p.lockMegaTarget("mega", "", "user@example.com")
+			if cur := atomic.AddInt32(&inside, 1); cur != 1 {
+				t.Errorf("MEGA target entered %d times concurrently", cur)
+			}
+			atomic.AddInt32(&inside, -1)
+			release()
+		}()
+	}
+	wg.Wait()
+	if got := p.megaTargetLocks.entryCount(); got != 0 {
+		t.Fatalf("entryCount = %d, want 0", got)
+	}
+}
+
 func TestRefreshOAuthTokenIfNeededNoTokenTakesNoLock(t *testing.T) {
 	p := &Processor{}
 	mig := &db.Migration{ID: "m1", SourceRefreshTokenEncrypted: sql.NullString{}}
@@ -633,14 +656,14 @@ func TestShouldEvictThrottler(t *testing.T) {
 		want   bool
 	}{
 		{
-			name: "terminal migration evicts",
+			name:   "terminal migration evicts",
 			status: "COMPLETED",
 			err:    nil,
 			lookup: func() (string, error) { t.Fatal("lookup should not be called"); return "", nil },
 			want:   true,
 		},
 		{
-			name: "active migration keeps",
+			name:   "active migration keeps",
 			status: "RUNNING",
 			err:    nil,
 			lookup: func() (string, error) { t.Fatal("lookup should not be called"); return "", nil },

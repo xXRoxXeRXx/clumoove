@@ -91,6 +91,10 @@ type Processor struct {
 	// released automatically, so a long-lived worker holds a mutex only for the
 	// target paths it is actively transferring to.
 	targetFileLocks keyedMutexes
+	// megaTargetLocks serializes access to an individual MEGA account within this
+	// worker. MEGA permits duplicate same-name folders, and independent clients
+	// with stale filesystem trees can otherwise race while creating parents.
+	megaTargetLocks keyedMutexes
 }
 
 type verificationWork struct {
@@ -154,6 +158,13 @@ func (p *Processor) lockTargetFile(targetPath string) func() {
 		return func() {}
 	}
 	return p.targetFileLocks.lock(targetPath)
+}
+
+func (p *Processor) lockMegaTarget(providerType, urlStr, username string) func() {
+	if providerType != "mega" || username == "" {
+		return func() {}
+	}
+	return p.megaTargetLocks.lock(providerType + "\x00" + urlStr + "\x00" + strings.ToLower(username))
 }
 
 // ResolveTargetPath computes the target file or directory path for a task
@@ -818,6 +829,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 		return fmt.Errorf("failed to connect to source provider: %w", err)
 	}
+	// MEGA's remote tree permits duplicate same-name folders. Serialize the
+	// complete target operation before connecting, so each client sees the
+	// preceding task's tree and cannot race its parent-directory creation.
+	unlockMegaTarget := p.lockMegaTarget(mig.TargetProvider, mig.TargetURL, mig.TargetUsername)
+	defer unlockMegaTarget()
 	if connected, err := targetClient.Connect(ctx); !connected {
 		if err == nil {
 			err = errors.New("provider rejected connection")
