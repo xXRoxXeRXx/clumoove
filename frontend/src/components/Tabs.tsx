@@ -18,11 +18,35 @@ interface TabsProps<T extends string> {
 export function Tabs<T extends string>({ label, items, value, onChange, className = '', children }: TabsProps<T>) {
   const id = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const selectAt = (index: number) => {
+
+  function selectAt(index: number): void {
     const next = (index + items.length) % items.length;
     onChange(items[next].value);
     tabRefs.current[next]?.focus();
-  };
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number): void {
+    switch (event.key) {
+      case 'ArrowRight':
+        event.preventDefault();
+        selectAt(index + 1);
+        return;
+      case 'ArrowLeft':
+        event.preventDefault();
+        selectAt(index - 1);
+        return;
+      case 'Home':
+        event.preventDefault();
+        selectAt(0);
+        return;
+      case 'End':
+        event.preventDefault();
+        selectAt(items.length - 1);
+        return;
+      default:
+        return;
+    }
+  }
 
   return (
     <>
@@ -40,12 +64,7 @@ export function Tabs<T extends string>({ label, items, value, onChange, classNam
               aria-controls={`${id}-panel-${item.value}`}
               tabIndex={selected ? 0 : -1}
               onClick={() => onChange(item.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { event.preventDefault(); selectAt(index + 1); }
-                if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); selectAt(index - 1); }
-                if (event.key === 'Home') { event.preventDefault(); selectAt(0); }
-                if (event.key === 'End') { event.preventDefault(); selectAt(items.length - 1); }
-              }}
+              onKeyDown={(event) => handleKeyDown(event, index)}
               className={`ui-tab ${selected ? 'ui-tab-active' : ''}`}
             >
               {item.label}

@@ -309,6 +309,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
               <button
                 type="button"
                 onClick={() => setIsModalOpen(true)}
+                aria-haspopup="dialog"
                 className="ui-button-secondary inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium hover:bg-[var(--color-bg-tertiary)] group"
               >
                 <Eye className="w-3 h-3 text-[var(--color-text-secondary)]" />
@@ -373,6 +374,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={t('paths.searchPlaceholder')}
+                    aria-label={t('paths.searchLabel')}
                     className="ui-input w-full py-2 pl-9 pr-8 text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
                   />
                   {searchQuery && (
@@ -388,11 +390,11 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                 </div>
 
                 {/* View Mode Toggle: Tree vs List */}
-                <div className="flex bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-1 rounded-xl shrink-0">
+                <div className="flex bg-[var(--color-bg-tertiary)] border border-[var(--color-border)] p-1 rounded-xl shrink-0" role="group" aria-label={t('paths.viewModeLabel')}>
                   <button
                     type="button"
                     onClick={() => setViewMode('tree')}
-                    aria-pressed={viewMode === 'list'}
+                    aria-pressed={viewMode === 'tree'}
                     className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                       viewMode === 'tree'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'
@@ -406,6 +408,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                   <button
                     type="button"
                     onClick={() => setViewMode('list')}
+                    aria-pressed={viewMode === 'list'}
                     className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                       viewMode === 'list'
                         ? 'ui-button-primary text-[var(--color-text-inverse)]'

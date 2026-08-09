@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { User, Migration, SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
@@ -21,6 +21,8 @@ interface MigrationsDashboardProps {
   onSelectActiveSync?: (id: string) => void;
 }
 
+type DashboardTab = 'migrations' | 'sync';
+
 export function MigrationsDashboard({
   apiUrl,
   token,
@@ -29,7 +31,7 @@ export function MigrationsDashboard({
   onSelectActiveMigration,
   onSelectActiveSync,
 }: MigrationsDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'migrations' | 'sync'>('migrations');
+  const [activeTab, setActiveTab] = useState<DashboardTab>('migrations');
   const [migrations, setMigrations] = useState<Migration[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
@@ -43,6 +45,10 @@ export function MigrationsDashboard({
 
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const tabRefs = useRef<Record<DashboardTab, HTMLButtonElement | null>>({
+    migrations: null,
+    sync: null,
+  });
 
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
@@ -315,6 +321,35 @@ export function MigrationsDashboard({
   const totalBytesMigrated = migrations.reduce((acc, m) => acc + (m.processed_bytes || 0), 0)
     + syncJobs.reduce((acc, s) => acc + (s.processed_bytes || 0), 0);
 
+  // The shared Tabs component cannot yet preserve this tablist's count badges and adjacent filters.
+  // Keep its horizontal keyboard contract in sync when those extension points are added.
+  function selectTab(tab: DashboardTab): void {
+    setActiveTab(tab);
+    tabRefs.current[tab]?.focus();
+  }
+
+  function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, tab: DashboardTab): void {
+    let nextTab: DashboardTab;
+
+    switch (event.key) {
+      case 'ArrowRight':
+      case 'ArrowLeft':
+        nextTab = tab === 'migrations' ? 'sync' : 'migrations';
+        break;
+      case 'Home':
+        nextTab = 'migrations';
+        break;
+      case 'End':
+        nextTab = 'sync';
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    selectTab(nextTab);
+  }
+
   return (
     <div className="w-full space-y-6">
       
@@ -390,20 +425,21 @@ export function MigrationsDashboard({
       </div>
 
       {/* Main Section with Segmented Pill Tabs & Search Filter Bar */}
-       <div className="ui-card p-6 space-y-6 min-h-[560px]">
-        
+      <div className="ui-card min-h-[560px] space-y-6 p-6">
+
         {/* Navigation Tabs & Controls Header */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 gap-4">
           {/* Segmented Pill Tabs */}
           <div className="flex items-center gap-1 border-b border-[var(--color-border)]" role="tablist" aria-label={t('migrations.title')}>
-             <button
-               id="migrations-tab"
-               onClick={() => setActiveTab('migrations')}
-               role="tab"
-               aria-selected={activeTab === 'migrations'}
-               aria-controls="migrations-panel"
-               tabIndex={activeTab === 'migrations' ? 0 : -1}
-               onKeyDown={(event) => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'Home' || event.key === 'End') { event.preventDefault(); setActiveTab('sync'); } }}
+            <button
+                ref={(node) => { tabRefs.current.migrations = node; }}
+                id="migrations-tab"
+              onClick={() => setActiveTab('migrations')}
+              role="tab"
+              aria-selected={activeTab === 'migrations'}
+              aria-controls="migrations-panel"
+              tabIndex={activeTab === 'migrations' ? 0 : -1}
+              onKeyDown={(event) => handleTabKeyDown(event, 'migrations')}
               className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'migrations'
                   ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
@@ -411,18 +447,19 @@ export function MigrationsDashboard({
               }`}
             >
               <span>{t('sync.tabMigrations')}</span>
-               <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'migrations' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+              <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'migrations' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {migrations.length}
               </span>
             </button>
-             <button
-               id="sync-tab"
-               onClick={() => setActiveTab('sync')}
-               role="tab"
-               aria-selected={activeTab === 'sync'}
-               aria-controls="sync-panel"
-               tabIndex={activeTab === 'sync' ? 0 : -1}
-               onKeyDown={(event) => { if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'Home' || event.key === 'End') { event.preventDefault(); setActiveTab('migrations'); } }}
+            <button
+                ref={(node) => { tabRefs.current.sync = node; }}
+              id="sync-tab"
+              onClick={() => setActiveTab('sync')}
+              role="tab"
+              aria-selected={activeTab === 'sync'}
+              aria-controls="sync-panel"
+              tabIndex={activeTab === 'sync' ? 0 : -1}
+              onKeyDown={(event) => handleTabKeyDown(event, 'sync')}
               className={`flex items-center gap-2 px-3 py-2 text-sm ${
                 activeTab === 'sync'
                   ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
@@ -430,7 +467,7 @@ export function MigrationsDashboard({
               }`}
             >
               <span>{t('sync.tabSyncs')}</span>
-               <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'sync' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+              <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'sync' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {syncJobs.length}
               </span>
             </button>
@@ -444,6 +481,7 @@ export function MigrationsDashboard({
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder={t('migrations.searchPlaceholder')}
+                aria-label={t('migrations.searchLabel')}
                 className="ui-input h-9 w-full px-3 text-sm text-[var(--color-text-primary)]"
               />
             </div>
@@ -451,7 +489,8 @@ export function MigrationsDashboard({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-               className="ui-input h-9 px-3 text-xs font-mono text-[var(--color-text-secondary)] cursor-pointer"
+              aria-label={t('migrations.statusFilterLabel')}
+              className="ui-input h-9 cursor-pointer px-3 text-xs font-mono text-[var(--color-text-secondary)]"
             >
               <option value="all">{t('migrations.filterAll')}</option>
               <option value="active">{t('migrations.filterActive')}</option>
