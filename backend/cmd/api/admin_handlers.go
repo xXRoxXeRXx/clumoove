@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -317,21 +318,6 @@ func (s *APIServer) adminActorID(w http.ResponseWriter, r *http.Request) (string
 	return claims.UserID, true
 }
 
-func (s *APIServer) wouldRemoveLastActiveAdmin(targetID string) (bool, error) {
-	u, err := db.GetUserByID(s.db, targetID)
-	if err != nil {
-		return false, err
-	}
-	if u.Role != "ADMIN" || !u.Active {
-		return false, nil
-	}
-	count, err := db.CountActiveAdmins(s.db)
-	if err != nil {
-		return false, err
-	}
-	return count <= 1, nil
-}
-
 type AdminCreateUserRequest struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
@@ -417,19 +403,12 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	last, err := s.wouldRemoveLastActiveAdmin(id)
-	if err != nil {
-		log.Printf("Admin suspend %s error checking last admin: %v\n", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if last {
-		writeError(w, http.StatusConflict, ErrLastAdmin)
-		return
-	}
-
 	syncJobIDs, err := db.SuspendUser(s.db, id)
 	if err != nil {
+		if errors.Is(err, db.ErrLastActiveAdmin) {
+			writeError(w, http.StatusConflict, ErrLastAdmin)
+			return
+		}
 		log.Printf("Admin suspend %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -496,18 +475,11 @@ func (s *APIServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	last, err := s.wouldRemoveLastActiveAdmin(id)
-	if err != nil {
-		log.Printf("Admin delete %s error checking last admin: %v\n", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if last {
-		writeError(w, http.StatusConflict, ErrLastAdmin)
-		return
-	}
-
 	if err := db.DeleteUser(s.db, id); err != nil {
+		if errors.Is(err, db.ErrLastActiveAdmin) {
+			writeError(w, http.StatusConflict, ErrLastAdmin)
+			return
+		}
 		log.Printf("Admin delete %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -559,19 +531,13 @@ func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, ErrCannotModifySelf)
 			return
 		}
-		last, err := s.wouldRemoveLastActiveAdmin(id)
-		if err != nil {
-			log.Printf("Admin role change %s error checking last admin: %v\n", id, err)
-			writeError(w, http.StatusInternalServerError, ErrInternalError)
-			return
-		}
-		if last {
-			writeError(w, http.StatusConflict, ErrLastAdmin)
-			return
-		}
 	}
 
 	if err := db.UpdateUserRole(s.db, id, req.Role); err != nil {
+		if errors.Is(err, db.ErrLastActiveAdmin) {
+			writeError(w, http.StatusConflict, ErrLastAdmin)
+			return
+		}
 		log.Printf("Admin role change %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

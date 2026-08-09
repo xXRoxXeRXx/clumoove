@@ -54,6 +54,32 @@ func setupTestDB(t *testing.T) *sql.DB {
 			used BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
+		`CREATE TABLE IF NOT EXISTS migrations (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			status TEXT NOT NULL DEFAULT 'IDLE',
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS sync_jobs (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			status TEXT NOT NULL DEFAULT 'IDLE',
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS tasks (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE,
+			status TEXT NOT NULL DEFAULT 'PENDING',
+			worker_hash TEXT,
+			next_retry_at TIMESTAMPTZ,
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
+		`CREATE TABLE IF NOT EXISTS schedules (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)`,
 	}
 	for _, s := range schema {
 		if _, err := db.Exec(s); err != nil {
@@ -62,12 +88,12 @@ func setupTestDB(t *testing.T) *sql.DB {
 	}
 
 	// Ensure a clean slate for the test.
-	if _, err := db.Exec(`DELETE FROM email_change_tokens; DELETE FROM refresh_tokens; DELETE FROM users;`); err != nil {
+	if _, err := db.Exec(`DELETE FROM email_change_tokens; DELETE FROM refresh_tokens; DELETE FROM tasks; DELETE FROM schedules; DELETE FROM sync_jobs; DELETE FROM migrations; DELETE FROM users;`); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
 	t.Cleanup(func() {
-		_, _ = db.Exec(`DELETE FROM email_change_tokens; DELETE FROM refresh_tokens; DELETE FROM users;`)
+		_, _ = db.Exec(`DELETE FROM email_change_tokens; DELETE FROM refresh_tokens; DELETE FROM tasks; DELETE FROM schedules; DELETE FROM sync_jobs; DELETE FROM migrations; DELETE FROM users;`)
 		_ = db.Close()
 	})
 	return db

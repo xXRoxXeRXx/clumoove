@@ -8,9 +8,17 @@ import (
 	"time"
 )
 
-const initialAdminSetupLockID int64 = 84736292
+const (
+	initialAdminSetupLockID   int64 = 84736292
+	activeAdminMutationLockID int64 = 84736293
+)
 
-var ErrSetupAlreadyCompleted = errors.New("initial setup already completed")
+var (
+	ErrSetupAlreadyCompleted = errors.New("initial setup already completed")
+	// ErrLastActiveAdmin is returned when a governance mutation would remove
+	// the installation's final active administrator.
+	ErrLastActiveAdmin = errors.New("cannot remove the last active administrator")
+)
 
 type User struct {
 	ID                  string       `json:"id"`
@@ -334,19 +342,79 @@ func UpdateUserRole(database *sql.DB, id, role string) error {
 	if !ValidRoles[role] {
 		return fmt.Errorf("invalid role %q", role)
 	}
-	_, err := database.Exec(`UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, role, id)
-	return err
+
+	tx, err := beginActiveAdminMutation(database)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if role != "ADMIN" {
+		if err := ensureNotLastActiveAdmin(tx, id); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, role, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// beginActiveAdminMutation serializes every operation that can remove an
+// active administrator. The advisory lock also covers the empty result set
+// case, which row locks alone cannot protect. READ COMMITTED keeps the count
+// current after acquiring that lock without introducing serializable aborts
+// from unrelated account updates.
+func beginActiveAdminMutation(database *sql.DB) (*sql.Tx, error) {
+	tx, err := database.BeginTx(context.Background(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, activeAdminMutationLockID); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	return tx, nil
+}
+
+// ensureNotLastActiveAdmin re-counts while the transaction-scoped governance
+// lock is held, immediately before a mutation that can remove an admin.
+func ensureNotLastActiveAdmin(tx *sql.Tx, id string) error {
+	var role string
+	var active bool
+	if err := tx.QueryRow(`SELECT role, active FROM users WHERE id = $1 FOR UPDATE`, id).Scan(&role, &active); err != nil {
+		// User mutations historically treat a target that disappears after route
+		// handling as a no-op.
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if role != "ADMIN" || !active {
+		return nil
+	}
+	var count int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM users WHERE role = 'ADMIN' AND active = TRUE`).Scan(&count); err != nil {
+		return err
+	}
+	if count <= 1 {
+		return ErrLastActiveAdmin
+	}
+	return nil
 }
 
 // SuspendUser deactivates an account and abandons every active sync pass. It
 // returns the affected jobs so the API can cancel their in-flight coordinators
 // and worker streams after this transaction commits.
 func SuspendUser(database *sql.DB, id string) ([]string, error) {
-	tx, err := database.Begin()
+	tx, err := beginActiveAdminMutation(database)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := ensureNotLastActiveAdmin(tx, id); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(`UPDATE users SET active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, id); err != nil {
 		return nil, err
@@ -432,8 +500,18 @@ func UpdateUserActive(database *sql.DB, id string, active bool) error {
 }
 
 func DeleteUser(database *sql.DB, id string) error {
-	_, err := database.Exec(`DELETE FROM users WHERE id = $1`, id)
-	return err
+	tx, err := beginActiveAdminMutation(database)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := ensureNotLastActiveAdmin(tx, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM users WHERE id = $1`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func CountActiveAdmins(database *sql.DB) (int, error) {
