@@ -19,16 +19,15 @@ import { useTranslation } from 'react-i18next';
 import type { User, MigrationConfig, CloudFile } from './types';
 import { configureApiClient, apiFetch } from './utils/apiClient';
 import { logger } from './utils/logger';
+import { configuredApiOrigin } from './utils/runtimeConfig';
 
 type Step = 'login' | 'history' | 'connect' | 'select' | 'dashboard' | 'settings' | 'admin' | 'reset-password' | 'confirm-email' | 'syncdetail';
 
-const getApiUrl = () => {
-  const envUrl = import.meta.env.VITE_API_URL;
-  // If the env variable is set and NOT pointing to localhost/127.0.0.1, use it.
-  // Otherwise, dynamically determine it based on the browser address.
-  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
-    return envUrl;
-  }
+function getApiUrl(): string {
+  // Production nginx injects a validated runtime origin before this bundle
+  // loads. VITE_API_URL remains a development/build-time fallback.
+  const configuredOrigin = configuredApiOrigin();
+  if (configuredOrigin) return configuredOrigin;
   // Fallback: Dynamically determine the backend API URL.
   // If we are running on standard ports (no port, 80, or 443) on a custom domain,
   // use the same host without a port to route through the reverse proxy.
@@ -39,7 +38,7 @@ const getApiUrl = () => {
     return `${protocol}//${hostname}`;
   }
   return `${protocol}//${hostname}:8001`;
-};
+}
 
 const API_URL = getApiUrl();
 

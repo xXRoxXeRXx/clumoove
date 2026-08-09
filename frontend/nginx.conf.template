@@ -2,19 +2,17 @@ server {
     listen 3000;
     server_name localhost;
 
-    # Security headers for the SPA documents (M-2). The /api/ mux applies its
-    # own stricter set; these protect the HTML/asset responses served here.
+    # Security headers for the SPA documents. The /api/ mux applies its own
+    # stricter set; these protect the HTML/asset responses served here.
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "no-referrer" always;
     # X-XSS-Protection is deprecated and can introduce vulnerabilities in legacy
     # browsers; real protection comes from the CSP above. Disable it explicitly.
     add_header X-XSS-Protection "0" always;
-    # The Google Photos Picker API has no embeddable widget: the pickerUri is
-    # opened in a NEW TAB (its own Google-origin page, not governed by this
-    # CSP), and selection status is polled via our own backend. So the strict
-    # 'self'-only CSP is sufficient again — no Google origins need whitelisting.
-    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
+    # CLUMOOVE_API_CSP_SOURCE is either empty (same-origin API) or one
+    # validated, origin-only HTTP(S) source supplied at container startup.
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'${CLUMOOVE_API_CSP_SOURCE}; frame-ancestors 'none'; object-src 'none'; base-uri 'self'" always;
     # window.open() for the picker tab requires popups to remain referenceable.
     # 'same-origin-allow-popups' keeps document isolation while allowing popups
     # we open (avoids the "Cross-Origin-Opener-Policy would block window.closed"

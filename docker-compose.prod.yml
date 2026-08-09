@@ -94,8 +94,9 @@ services:
     ports:
       - "3001:3000"
     environment:
-      - VITE_API_URL=http://localhost:8001
-      - VITE_ALLOWED_HOSTS=${VITE_ALLOWED_HOSTS:-}
+      # Read by nginx at container startup, not by Vite during image build.
+      # Leave empty for a same-origin API proxy.
+      - CLUMOOVE_API_URL=${CLUMOOVE_API_URL:-}
     ulimits:
       nofile:
         soft: 65536

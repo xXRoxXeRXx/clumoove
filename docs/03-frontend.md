@@ -98,11 +98,18 @@ type Step =
 `App.tsx → getApiUrl()` resolves the backend URL dynamically (see also
 [Deployment](./08-deployment.md)):
 
-1. If `import.meta.env.VITE_API_URL` is set and **not** localhost/127.0.0.1 → use it (production proxy).
-2. Else, if on a custom domain with no/80/443 port → use same host without a port (reverse proxy).
-3. Else → `http://<hostname>:8001` (local dev).
+1. In the production image, `/runtime-config.js` supplies a validated `CLUMOOVE_API_URL` origin at
+   container startup. It takes precedence and supports a configured cross-origin API.
+2. In Vite development, `import.meta.env.VITE_API_URL` is the build/dev-server fallback.
+3. Otherwise, on a custom domain with no/80/443 port, use the same origin (reverse-proxy routing).
+4. Else use `http://<hostname>:8001` (local dev).
 
-A console warning is emitted when the API is reached over plaintext HTTP on a non-loopback host.
+`CLUMOOVE_API_URL` must be an origin-only HTTP(S) URL: it cannot contain a path, credentials, query, or
+fragment. nginx derives `connect-src` from that exact value, while an unset value leaves the CSP at
+`connect-src 'self'` for same-origin API proxying. A console warning is emitted when the API is reached
+over plaintext HTTP on a non-loopback host. Unlike the previous resolution behavior, an origin-only
+`VITE_API_URL` now takes precedence even when it points to `localhost` or `127.0.0.1`; this makes an
+explicit Vite development API target deterministic.
 
 ---
 

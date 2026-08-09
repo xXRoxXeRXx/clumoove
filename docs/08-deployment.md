@@ -26,6 +26,7 @@ configuration, scaling, and routine operational tasks.
 | `REDIS_URL` | Redis connection (`redis://:pw@host:6379`). | `localhost:6379` |
 | `REDIS_PASSWORD` | Redis password (required; strong/unique). | – |
 | `CORS_ALLOWED_ORIGIN` | Allowed CORS origin for production. | – |
+| `CLUMOOVE_API_URL` | Origin-only API URL injected by the frontend nginx container at startup; unset for same-origin proxying. | unset |
 | `POSTGRES_MAX_CONNECTIONS` | PostgreSQL connection limit for the production Compose stack; increase when scaling workers. | `300` |
 | `VITE_ALLOWED_HOSTS` | Allowed hosts for the Vite dev server. | – |
 | `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `60` |
@@ -103,16 +104,26 @@ API auto-detects proxied CORS/hosts; set `CORS_ALLOWED_ORIGIN`, `FRONTEND_URL`, 
 
 ---
 
-## 5. Dynamic API URL (Frontend)
+## 5. Runtime API URL and CSP (Frontend)
 
-`src/App.tsx → getApiUrl()` resolves the backend URL automatically:
+The production frontend is a pre-built Vite bundle: `VITE_*` variables set in its Compose service
+environment cannot change that bundle. Configure a separate API origin with `CLUMOOVE_API_URL` instead.
+The nginx startup hook validates it as an origin-only `http://` or `https://` URL, writes it to
+`/runtime-config.js`, and emits it as the only additional `connect-src` source in the SPA CSP. Invalid
+values (paths, credentials, query strings, fragments, or invalid origin syntax) prevent the frontend
+container from starting.
 
-1. `import.meta.env.VITE_API_URL` set and not localhost/127.0.0.1 → use directly (production proxy).
-2. Custom domain with no/80/443 port → same host without port (reverse-proxy routing).
-3. Local → port `8001`.
+Use one of these modes:
 
-This ensures correct resolution in dev (`:8001`), behind a reverse proxy (no port), and with an explicit
-`VITE_API_URL`.
+- **Same origin (recommended):** leave `CLUMOOVE_API_URL` unset and proxy `/api` through the public
+  frontend origin. The CSP remains `connect-src 'self'`; no CORS configuration is needed.
+- **Cross origin:** set `CLUMOOVE_API_URL=https://api.example.test` on the frontend service and set
+  `CORS_ALLOWED_ORIGIN=https://app.example.test` on the API. The browser permits fetch and authenticated
+  SSE connections only to that API origin (and the frontend origin).
+
+`VITE_API_URL` remains available for Vite development, but it is not a production runtime configuration
+mechanism. When neither runtime nor Vite configuration is set, `App.tsx` falls back to same-origin
+custom-domain proxying, then `http://<hostname>:8001` locally.
 
 ---
 
