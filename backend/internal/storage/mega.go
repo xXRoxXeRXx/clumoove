@@ -26,6 +26,11 @@ type MegaProvider struct {
 	mu         sync.Mutex
 }
 
+const (
+	megaConnectAttempts  = 3
+	megaConnectRetryWait = 500 * time.Millisecond
+)
+
 func NewMegaProvider(email, password string, session MegaSession) *MegaProvider {
 	return &MegaProvider{email: email, password: password, session: session}
 }
@@ -57,30 +62,58 @@ func (p *MegaProvider) Connect(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("%w: missing MEGA email or password", ErrAuth)
 	}
 
-	httpClient := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
-	client := mega.New().SetClient(httpClient)
-	client.SetHTTPS(true)
-	client.SetLogger(func(string, ...any) {})
-	client.SetDebugger(func(string, ...any) {})
+	var lastErr error
+	for attempt := 0; attempt < megaConnectAttempts; attempt++ {
+		httpClient := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}}
+		client := mega.New().SetClient(httpClient)
+		client.SetHTTPS(true)
+		client.SetLogger(func(string, ...any) {})
+		client.SetDebugger(func(string, ...any) {})
 
-	if p.session.ID != "" && len(p.session.MasterKey) > 0 {
-		if err := client.LoginWithKeys(p.session.ID, p.session.MasterKey); err == nil {
+		if p.session.ID != "" && len(p.session.MasterKey) > 0 {
+			if err := client.LoginWithKeys(p.session.ID, p.session.MasterKey); err == nil {
+				p.client, p.httpClient = client, httpClient
+				return true, nil
+			} else {
+				lastErr = err
+			}
+		}
+		if err := client.Login(p.email, p.password); err == nil {
+			key := append([]byte(nil), client.GetMasterKey()...)
+			for i := range p.session.MasterKey {
+				p.session.MasterKey[i] = 0
+			}
+			p.session = MegaSession{ID: client.GetSessionID(), MasterKey: key}
 			p.client, p.httpClient = client, httpClient
 			return true, nil
+		} else {
+			lastErr = err
+		}
+
+		if !isTransientMegaConnectError(lastErr) || attempt == megaConnectAttempts-1 {
+			break
+		}
+		timer := time.NewTimer(megaConnectRetryWait * time.Duration(attempt+1))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false, ctx.Err()
+		case <-timer.C:
 		}
 	}
-	if err := client.Login(p.email, p.password); err != nil {
-		return false, classifyMegaError(err)
+	return false, classifyMegaError(lastErr)
+}
+
+// isTransientMegaConnectError identifies malformed, incomplete API replies
+// that MEGA occasionally returns during authentication. Retrying these is safe:
+// no filesystem mutation has happened yet.
+func isTransientMegaConnectError(err error) bool {
+	if err == nil {
+		return false
 	}
-	key := append([]byte(nil), client.GetMasterKey()...)
-	for i := range p.session.MasterKey {
-		p.session.MasterKey[i] = 0
-	}
-	p.session = MegaSession{ID: client.GetSessionID(), MasterKey: key}
-	p.client, p.httpClient = client, httpClient
-	return true, nil
+	return errors.Is(err, io.ErrUnexpectedEOF) || strings.Contains(strings.ToLower(err.Error()), "unexpected end of json input")
 }
 
 // Session returns an independent copy suitable for encryption by the caller.

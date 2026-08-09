@@ -937,6 +937,15 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 	}
 
+	// Directory tasks are queued independently and can run after a file task.
+	// Ensure the destination hierarchy here as well, so parallel scheduling
+	// cannot make an upload fail merely because its parent has not been created.
+	if task.ResourceType == "files" {
+		if err := targetClient.CreateParentDirectories(ctx, task.ResourceType, targetPath); err != nil {
+			return fmt.Errorf("failed to create target directories: %w", err)
+		}
+	}
+
 	// The database and API allow only SKIP, OVERWRITE, and RENAME, but retain
 	// this guard for legacy rows and direct database writes. Falling through to
 	// an upload would overwrite an existing WebDAV target via PUT.
