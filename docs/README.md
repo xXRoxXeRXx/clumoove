@@ -32,12 +32,12 @@ There is also a conceptual document:
 
 - **Backend:** One Go module (`backend/`) with two entrypoints — `cmd/api` (HTTP gateway) and
   `cmd/worker` (migration engine). Routing uses the Go 1.22 standard mux (no third-party router libs).
-- **Queue:** Native in PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`). Redis is used **only** for
-  worker heartbeats, distributed recovery locks (`SET NX`), and cancel/bandwidth Pub/Sub.
+- **Queue:** Native in PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`). Redis provides worker heartbeats,
+  distributed schedule/recovery/OAuth locks (`SET NX`), rate limiting, and cancel/bandwidth Pub/Sub.
 - **Frontend:** React 19 + TypeScript SPA, bundled with Vite 8, Tailwind CSS v4.
 - **Data:** PostgreSQL 15 (metadata, users, migrations, sync jobs, sync state, profiles, tasks, schedules, audit log) + Redis 7 (coordination).
 - **Email:** One administrator-managed SMTP configuration is encrypted in PostgreSQL and serves account mail plus optional email notifications.
-- **Languages:** `de` (fallback) and `en`, localized via `i18next`/`react-i18next`.
+- **Languages:** `de` and `en` (fallback), localized via `i18next`/`react-i18next`.
 
 ---
 

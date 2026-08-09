@@ -131,8 +131,8 @@ File-scoped commands referenced in `AGENTS.md`:
   after redaction and return only a machine-readable `error_code`.
 - `ENCRYPTION_SECRET_KEY` is used only for AES-GCM; `JWT_SECRET_KEY` only for JWT signing. API refuses
   to start if either is missing or they are equal.
-- OAuth2 access/refresh tokens are stored AES-GCM encrypted; token refresh must invalidate the old
-  refresh token before storing the new one.
+- Login-session refresh tokens are consumed and replaced inside one database transaction. OAuth token
+  pairs are encrypted and conditionally persisted atomically against the previous refresh-token ciphertext.
 - CORS uses a static `allowedOrigins` whitelist; unknown origins get no `Access-Control-Allow-Origin`.
 - Redis requires a password; connection fails on empty/known-default passwords.
 
@@ -199,7 +199,8 @@ File-scoped commands referenced in `AGENTS.md`:
 - Use the semantic `ui-*` utilities and light/dark tokens from `frontend/src/index.css` for cards, fields,
   buttons, feedback, status badges, progress, empty/loading states, and pagination. Do not reintroduce
   `portal-*`, `glass-*`, `shadow-portal*`, decorative gradients, blur, large shadows, or scale hover effects.
-- `@heroicons/react` is the sole icon library. Icon-only actions need localized `aria-label` and `title`.
+- Use `@heroicons/react` for application UI/action icons. `react-icons` is limited to provider-brand icons in
+  `components/connect/ProviderIcon.tsx`. Icon-only actions need localized `aria-label` and `title`.
 - Prefer native controls. Tabs, menus, dialogs, and tree controls must be keyboard operable; dialogs require
   a name, modal semantics, Escape handling, focus trapping, and focus restoration.
 - For frontend changes, run the typecheck and lint commands above, plus `(cd frontend && npm test)` and

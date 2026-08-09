@@ -34,12 +34,10 @@ type StorageProvider interface {
 > default; the compiler enforces it for *all* implementers, including test mocks. When adding a new
 > provider, add this method alongside the others.
 >
-> - Return `true` for providers that support an atomic "upload to `<path>.tmp` then rename to `<path>`"
->   overwrite pattern (all standard file providers: Nextcloud/WebDAV, S3, SMB, SFTP, FTPS, Dropbox, Google
->   Drive, Local).
-> - Return `false` for providers that **cannot** rename or delete (for example, `immich`, which writes
->   an asset directly and relies on its native duplicate handling). The processor then skips the
->   temp-file + rename step entirely.
+> - Return `true` only when the provider can atomically promote a staged `<path>.tmp` upload to `<path>`.
+> - Return `false` when that promotion is not atomic (including S3 and Seafile) or unsupported (Immich).
+>   The processor then uploads directly to the final path. `false` does not imply that the provider lacks
+>   every rename or delete operation.
 
 `VerificationMode()` is also mandatory. Return `cryptographic_hash` only when
 `GetFileHash` provides a target hash that can be compared with a source or
@@ -121,8 +119,8 @@ For Seafile username/password connections, workers share an in-memory account-to
 | Google Drive | `cryptographic_hash` | MD5 |
 | OneDrive | `cryptographic_hash` | QuickXor |
 | HiDrive | `cryptographic_hash` | HiDrive `chash` |
-| Local | `cryptographic_hash` | SHA-256 |
-| Seafile | `cryptographic_hash` | SHA-1 |
+| Local | `cryptographic_hash` | SHA-1 |
+| Seafile | `size_only` | Its API exposes Seafile object IDs, not a comparable SHA-1 hash of the complete file content |
 | Nextcloud, OpenCloud, MagentaCLOUD, WebDAV | `size_only` | ETags are not integrity evidence (OpenCloud parses dynamic `oc:checksums` header when provided) |
 | S3 | `size_only` | Multipart ETags are not comparable hashes |
 | SMB, SFTP, FTPS | `size_only` | No portable target-hash API |

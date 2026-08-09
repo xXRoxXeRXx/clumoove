@@ -57,9 +57,9 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 ## 4. OAuth2 & Token Rotation
 
-- OAuth2 access/refresh tokens are stored AES-GCM encrypted in `migrations`
+- OAuth2 access/refresh tokens are stored AES-GCM encrypted on migrations and sync jobs
   (`source_refresh_token_encrypted`, `target_refresh_token_encrypted`).
-- `RunOAuthRotationDaemon` (API gateway) proactively refreshes Dropbox/Google/OneDrive/Google Photos tokens before expiry.
+- `RunOAuthRotationDaemon` (API gateway) proactively refreshes Dropbox, Google, OneDrive, and HiDrive tokens before expiry.
 - The worker also refreshes inline when a token is expired or within 2 minutes of expiry, using a
   per-migration mutex (`getOrCreateRefreshLock`) to serialize refreshes.
 - **Token rotation:** the new token pair is encrypted and persisted **atomically** before the old

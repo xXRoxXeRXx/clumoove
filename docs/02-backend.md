@@ -145,6 +145,7 @@ Redis is used for:
 - `TryClaimWorkerRecoveryLock` — distributed recovery lock (`worker:recovery-lock:{id}`, `SET NX`).
 - `TryClaimScheduleLock` — schedule trigger lock (`schedule:lock:{id}`, `SET NX`, 2-min TTL).
 - `TryClaimOrphanedSyncRecoveryLock` — orphaned sync-job recovery lock (`sync:orphaned-recovery-lock`, `SET NX`).
+- `TryClaimOAuthLock` — per-job/role OAuth refresh lock (`oauth:lock:{type}:{id}:{role}`, `SET NX`).
 - `PublishCancelEvent` / `SubscribeToCancelEvents` — cancel Pub/Sub with auto-reconnect backoff.
 - `PublishBandwidthChange` / `SubscribeToBandwidthChanges` — migration and sync-job bandwidth Pub/Sub with auto-reconnect.
 
@@ -158,7 +159,7 @@ Redis is used for:
 
 1. Recovers any abandoned tasks on startup.
 2. Spawns background schedulers: `RunWorkerLiveness`, `RunRetryScheduler`, `RunConnectionRecoveryScheduler`,
-   `RunOrphanedRunningTasksRecovery`, `RunNotifier`.
+   `RunOrphanedRunningTasksRecovery`, `RunNotifier`, `RunProgressReconciler`, and `RunChecksumVerifier`.
    On recovered sync connectivity, the worker atomically moves the job from
    `PAUSED_CONNECTION_LOSS` to `IDLE` and sets its active schedule's `next_run_at` to `NOW()`;
    it never starts a sync-pass coordinator itself. Connection recovery runs every 60 seconds and probes
@@ -268,7 +269,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 
 See [Storage Providers](./05-storage-providers.md) for the full interface and provider list.
 `NewProvider` (factory) whitelists provider types, strips credentials from WebDAV/Nextcloud URLs,
-applies SSRF egress validation for `nextcloud`/`webdav`/`smb`/`sftp`/`ftp`/`immich`/`seafile`, and returns the concrete
+applies SSRF egress validation for `nextcloud`/`opencloud`/`webdav`/`smb`/`sftp`/`ftp`/`immich`/`seafile`, and returns the concrete
 implementation. `magentacloud` uses a fixed endpoint (URL ignored).
 
 `ftp` is a files-only FTPS provider. It accepts only explicit FTPS
@@ -346,11 +347,9 @@ flow (`/api/auth/2fa/*`). Lockout after 5 failed attempts for 15 minutes is enfo
 
 ## 15. Configuration Contract (hard requirements)
 
-The API/worker **refuse to start** when:
-
-- `ENCRYPTION_SECRET_KEY` is empty.
-- `JWT_SECRET_KEY` is empty, equals `ENCRYPTION_SECRET_KEY`, or is < 32 bytes.
-- `REDIS_PASSWORD` is empty or a known default.
-- The database DSN uses `postgres:postgres@` on a publicly reachable host.
+Both API and worker refuse to start when `ENCRYPTION_SECRET_KEY` is empty, `REDIS_PASSWORD` is empty or
+a known default, or the database DSN uses `postgres:postgres@` on a publicly reachable host. The API
+additionally refuses to start when `JWT_SECRET_KEY` is empty, equals `ENCRYPTION_SECRET_KEY`, or is shorter
+than 32 bytes; the worker does not use a JWT key.
 
 See [Deployment](./08-deployment.md) for the full environment-variable reference.
