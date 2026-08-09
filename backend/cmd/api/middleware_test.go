@@ -9,7 +9,66 @@ import (
 	"regexp"
 	"testing"
 	"time"
+
+	"backend/internal/auth"
 )
+
+func TestAdminMiddleware(t *testing.T) {
+	withClaims := func(claims *auth.Claims) func(http.Handler) http.Handler {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), auth.ClaimsKey, claims)))
+			})
+		}
+	}
+
+	t.Run("rejects non-admin users", func(t *testing.T) {
+		called := false
+		rec := httptest.NewRecorder()
+		adminMiddleware(withClaims(&auth.Claims{Role: "USER"}))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			called = true
+		})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/admin/users", nil))
+
+		if called {
+			t.Fatal("admin handler was called for a non-admin user")
+		}
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+		}
+	})
+
+	t.Run("rejects missing claims", func(t *testing.T) {
+		noop := func(next http.Handler) http.Handler { return next }
+		called := false
+		rec := httptest.NewRecorder()
+		adminMiddleware(noop)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			called = true
+		})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/admin/users", nil))
+
+		if called {
+			t.Fatal("admin handler was called without claims")
+		}
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+		}
+	})
+
+	t.Run("allows admins", func(t *testing.T) {
+		called := false
+		rec := httptest.NewRecorder()
+		adminMiddleware(withClaims(&auth.Claims{Role: "ADMIN"}))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			called = true
+			w.WriteHeader(http.StatusNoContent)
+		})).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/admin/users", nil))
+
+		if !called {
+			t.Fatal("admin handler was not called")
+		}
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+		}
+	})
+}
 
 func TestRequestLogMiddlewareGeneratesRequestID(t *testing.T) {
 	s := &APIServer{}

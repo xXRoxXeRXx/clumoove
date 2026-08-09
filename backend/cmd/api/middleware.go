@@ -9,9 +9,27 @@ import (
 	"strings"
 	"time"
 
+	"backend/internal/auth"
 	"backend/internal/observability"
 	"github.com/redis/go-redis/v9"
 )
+
+// adminMiddleware authenticates the request before requiring the current user
+// to hold the ADMIN role. Keeping both checks in one route middleware prevents
+// new administrative handlers from accidentally being registered as JWT-only.
+// Handlers may retain an equivalent check as defense in depth.
+func adminMiddleware(authenticate func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
+			if !ok || claims == nil || claims.Role != "ADMIN" {
+				writeError(w, http.StatusForbidden, ErrAdminOnly)
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
+}
 
 type distributedRateLimiter struct {
 	client *redis.Client

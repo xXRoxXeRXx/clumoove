@@ -275,14 +275,8 @@ type UpdateSettingRequest struct {
 }
 
 func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) {
-	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
-	if !ok || claims == nil {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
-		return
-	}
-
-	if claims.Role != "ADMIN" {
-		writeError(w, http.StatusForbidden, ErrAdminOnly)
+	actor, ok := s.adminActorID(w, r)
+	if !ok {
 		return
 	}
 
@@ -307,13 +301,15 @@ func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.writeAudit(r, db.AuditSettingUpdated, req.Key, claims.UserID, map[string]interface{}{"value": req.Value})
+	s.writeAudit(r, db.AuditSettingUpdated, req.Key, actor, map[string]interface{}{"value": req.Value})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 func (s *APIServer) adminActorID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	claims, ok := r.Context().Value(auth.ClaimsKey).(*auth.Claims)
+	// Admin routes are wrapped by adminMiddleware; this repeats the role check
+	// as defense in depth for direct handler use or future route changes.
 	if !ok || claims == nil || claims.Role != "ADMIN" {
 		writeError(w, http.StatusForbidden, ErrAdminOnly)
 		return "", false
