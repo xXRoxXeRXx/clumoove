@@ -45,6 +45,21 @@ func isGoogleAuthError(err error) bool {
 		strings.Contains(errStr, "403")
 }
 
+// wrapGoogleError translates Google API authentication failures to ErrAuth while
+// retaining the original error for diagnostics.
+func wrapGoogleError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrAuth) {
+		return err
+	}
+	if isGoogleAuthError(err) {
+		return fmt.Errorf("%s: %w: %w", operation, ErrAuth, err)
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
 func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, error) {
 	if token == "" {
 		return nil, fmt.Errorf("google provider requires an oauth token")
@@ -100,24 +115,15 @@ func (p *GoogleProvider) Connect(ctx context.Context) (bool, error) {
 	defer cancel()
 	// Verify Drive access
 	if _, err := p.driveService.About.Get().Fields("user").Context(ctx).Do(); err != nil {
-		if isGoogleAuthError(err) {
-			return false, fmt.Errorf("google drive connect: %w", ErrAuth)
-		}
-		return false, fmt.Errorf("google drive not accessible: %w", err)
+		return false, wrapGoogleError("google drive connect", err)
 	}
 	// Verify Calendar access
 	if _, err := p.calendarService.CalendarList.List().MaxResults(1).Context(ctx).Do(); err != nil {
-		if isGoogleAuthError(err) {
-			return false, fmt.Errorf("google calendar connect: %w", ErrAuth)
-		}
-		return false, fmt.Errorf("google calendar not accessible: %w", err)
+		return false, wrapGoogleError("google calendar connect", err)
 	}
 	// Verify People (Contacts) access
 	if _, err := p.peopleService.People.Get("people/me").PersonFields("names").Context(ctx).Do(); err != nil {
-		if isGoogleAuthError(err) {
-			return false, fmt.Errorf("google contacts connect: %w", ErrAuth)
-		}
-		return false, fmt.Errorf("google contacts (people) not accessible: %w", err)
+		return false, wrapGoogleError("google contacts connect", err)
 	}
 	return true, nil
 }
@@ -148,7 +154,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 			}
 			result, err := call.Do()
 			if err != nil {
-				return nil, err
+				return nil, wrapGoogleError("google drive listing", err)
 			}
 			for _, f := range result.Files {
 				isDir := f.MimeType == "application/vnd.google-apps.folder"
@@ -191,7 +197,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 		if dirPath == "/" || dirPath == "" {
 			list, err := p.calendarService.CalendarList.List().Context(ctx).Do()
 			if err != nil {
-				return nil, err
+				return nil, wrapGoogleError("google calendar listing", err)
 			}
 			for _, c := range list.Items {
 				resources = append(resources, CloudResource{
@@ -215,7 +221,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 				}
 				events, err := call.Do()
 				if err != nil {
-					return nil, err
+					return nil, wrapGoogleError("google calendar listing", err)
 				}
 				for _, e := range events.Items {
 					modTime, _ := time.Parse(time.RFC3339, e.Updated)
@@ -261,7 +267,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 				}
 				res, err := call.Do()
 				if err != nil {
-					return nil, err
+					return nil, wrapGoogleError("google contacts listing", err)
 				}
 				for _, conn := range res.Connections {
 					name := "Unknown"
@@ -340,7 +346,7 @@ func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (str
 		query := driveFolderQuery(currentID, part)
 		res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
 		if err != nil {
-			return "", err
+			return "", wrapGoogleError("google drive path lookup", err)
 		}
 		if len(res.Files) == 0 {
 			return "", fmt.Errorf("google inspect: %w", ErrNotFound)
@@ -384,7 +390,7 @@ func (p *GoogleProvider) resolveDriveFileID(ctx context.Context, filePath string
 
 	res, err := p.driveService.Files.List().Q(query).Fields("files(id, name, mimeType)").Context(ctx).Do()
 	if err != nil {
-		return "", err
+		return "", wrapGoogleError("google drive file lookup", err)
 	}
 	if len(res.Files) == 0 {
 		return "", fmt.Errorf("google inspect: %w", ErrNotFound)
@@ -421,14 +427,14 @@ func googleDocsExtension(mimeType string) (exportMIME, extension string) {
 }
 
 func wrapGoogleNotFound(err error) error {
-	if errors.Is(err, ErrNotFound) {
+	if errors.Is(err, ErrAuth) || errors.Is(err, ErrNotFound) {
 		return err
 	}
 	var gErr *googleapi.Error
 	if errors.As(err, &gErr) && gErr.Code == http.StatusNotFound {
 		return fmt.Errorf("google inspect: %w", ErrNotFound)
 	}
-	return err
+	return wrapGoogleError("google inspect", err)
 }
 
 func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error) {
@@ -487,21 +493,21 @@ func (p *GoogleProvider) StreamDownload(ctx context.Context, resourceType, fileP
 
 		fileMeta, err := p.driveService.Files.Get(id).Fields("mimeType").Context(ctx).Do()
 		if err != nil {
-			return nil, err
+			return nil, wrapGoogleError("google drive download metadata", err)
 		}
 
 		exportMIME, _ := googleDocsExtension(fileMeta.MimeType)
 		if exportMIME != "" {
 			resp, err := p.driveService.Files.Export(id, exportMIME).Context(ctx).Download()
 			if err != nil {
-				return nil, err
+				return nil, wrapGoogleError("google drive export download", err)
 			}
 			return resp.Body, nil
 		}
 
 		resp, err := p.driveService.Files.Get(id).Context(ctx).Download()
 		if err != nil {
-			return nil, err
+			return nil, wrapGoogleError("google drive download", err)
 		}
 		return resp.Body, nil
 
@@ -512,7 +518,7 @@ func (p *GoogleProvider) StreamDownload(ctx context.Context, resourceType, fileP
 			eventID := strings.TrimSuffix(parts[1], ".ics")
 			event, err := p.calendarService.Events.Get(calendarID, eventID).Context(ctx).Do()
 			if err != nil {
-				return nil, err
+				return nil, wrapGoogleError("google calendar download", err)
 			}
 			icsData := formatEventToICS(event)
 			return io.NopCloser(strings.NewReader(icsData)), nil
@@ -527,7 +533,7 @@ func (p *GoogleProvider) StreamDownload(ctx context.Context, resourceType, fileP
 				PersonFields("names,emailAddresses,phoneNumbers").
 				Context(ctx).Do()
 			if err != nil {
-				return nil, err
+				return nil, wrapGoogleError("google contact download", err)
 			}
 			vcfData := formatPersonToVCF(person)
 			return io.NopCloser(strings.NewReader(vcfData)), nil
@@ -575,7 +581,7 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 		}
 
 		_, err = p.driveService.Files.Create(f).Context(ctx).Media(uploadStream).Do()
-		return err
+		return wrapGoogleError("google drive upload", err)
 
 	case "calendars":
 		parts := strings.Split(strings.TrimPrefix(filePath, "/"), "/")
@@ -589,14 +595,17 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 			// Overwrite conflict strategy (Finding 15)
 			if event.ICalUID != "" {
 				existingList, err := p.calendarService.Events.List(calendarID).ICalUID(event.ICalUID).Context(ctx).Do()
-				if err == nil && len(existingList.Items) > 0 {
+				if err != nil {
+					return wrapGoogleError("google calendar event lookup", err)
+				}
+				if len(existingList.Items) > 0 {
 					_, err = p.calendarService.Events.Update(calendarID, existingList.Items[0].Id, event).Context(ctx).Do()
-					return err
+					return wrapGoogleError("google calendar update", err)
 				}
 			}
 
 			_, err = p.calendarService.Events.Insert(calendarID, event).Context(ctx).Do()
-			return err
+			return wrapGoogleError("google calendar insert", err)
 		}
 		return fmt.Errorf("invalid calendar event path: %s", filePath)
 
@@ -608,17 +617,21 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 
 		// Overwrite conflict strategy (Finding 15)
 		resourceName, err := p.findExistingContact(ctx, person)
-		if err == nil && resourceName != "" {
+		if err != nil {
+			return err
+		}
+		if resourceName != "" {
 			existing, err := p.peopleService.People.Get(resourceName).PersonFields("names,emailAddresses,phoneNumbers,metadata").Context(ctx).Do()
-			if err == nil {
-				person.Etag = existing.Etag
-				_, err = p.peopleService.People.UpdateContact(resourceName, person).UpdatePersonFields("names,emailAddresses,phoneNumbers").Context(ctx).Do()
-				return err
+			if err != nil {
+				return wrapGoogleError("google contact lookup", err)
 			}
+			person.Etag = existing.Etag
+			_, err = p.peopleService.People.UpdateContact(resourceName, person).UpdatePersonFields("names,emailAddresses,phoneNumbers").Context(ctx).Do()
+			return wrapGoogleError("google contact update", err)
 		}
 
 		_, err = p.peopleService.People.CreateContact(person).Context(ctx).Do()
-		return err
+		return wrapGoogleError("google contact create", err)
 
 	default:
 		return fmt.Errorf("StreamUpload not implemented for %s", resourceType)
@@ -638,9 +651,6 @@ func (p *GoogleProvider) FileExists(ctx context.Context, resourceType, filePath 
 			if strings.Contains(strings.ToLower(err.Error()), "not found") {
 				return false, 0, nil
 			}
-			if isGoogleAuthError(err) {
-				return false, 0, fmt.Errorf("google file-exists: %w", ErrAuth)
-			}
 			return false, 0, err
 		}
 		return true, res.Size, nil
@@ -657,7 +667,7 @@ func (p *GoogleProvider) DeleteFile(ctx context.Context, resourceType, filePath 
 		if err != nil {
 			return err
 		}
-		return p.driveService.Files.Delete(id).Context(ctx).Do()
+		return wrapGoogleError("google drive delete", p.driveService.Files.Delete(id).Context(ctx).Do())
 	default:
 		return fmt.Errorf("DeleteFile not implemented for %s", resourceType)
 	}
@@ -680,7 +690,7 @@ func (p *GoogleProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 		Name: newName,
 	}
 	_, err = p.driveService.Files.Update(id, f).Context(ctx).Do()
-	return err
+	return wrapGoogleError("google drive rename", err)
 }
 
 // SupportsAtomicRename is true: Google Drive supports file rename.
@@ -744,7 +754,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 		query := driveFolderQuery(currentID, part)
 		res, err := p.driveService.Files.List().Q(query).Fields("files(id)").Context(ctx).Do()
 		if err != nil {
-			return err
+			return wrapGoogleError("google drive directory lookup", err)
 		}
 		if len(res.Files) == 0 {
 			f := &drive.File{
@@ -754,7 +764,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 			}
 			created, err := p.driveService.Files.Create(f).Context(ctx).Do()
 			if err != nil {
-				return err
+				return wrapGoogleError("google drive directory create", err)
 			}
 			currentID = created.Id
 		} else {
@@ -1025,7 +1035,7 @@ func (p *GoogleProvider) findExistingContact(ctx context.Context, person *people
 
 	res, err := p.peopleService.People.SearchContacts().Query(query).ReadMask("names,emailAddresses").Context(ctx).Do()
 	if err != nil {
-		return "", err
+		return "", wrapGoogleError("google contact lookup", err)
 	}
 
 	for _, match := range res.Results {
@@ -1060,6 +1070,9 @@ func (p *GoogleProvider) ApplyMetadata(ctx context.Context, resourceType, filePa
 	}
 	fileID, err := p.resolveDriveFileID(ctx, filePath)
 	if err != nil {
+		if errors.Is(err, ErrAuth) {
+			return err
+		}
 		return nil
 	}
 	update := &drive.File{}
@@ -1071,6 +1084,10 @@ func (p *GoogleProvider) ApplyMetadata(ctx context.Context, resourceType, filePa
 	}
 	_, err = p.driveService.Files.Update(fileID, update).Context(ctx).Do()
 	if err != nil {
+		err = wrapGoogleError("google metadata update", err)
+		if errors.Is(err, ErrAuth) {
+			return err
+		}
 		return nil
 	}
 	return nil

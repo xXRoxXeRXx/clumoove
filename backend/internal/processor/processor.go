@@ -1228,8 +1228,13 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	if applier, ok := targetClient.(storage.MetadataApplier); ok {
 		if !transferMeta.ModifiedTime.IsZero() || transferMeta.Description != "" {
-			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, transferMeta); err != nil && !errors.Is(err, storage.ErrUnsupportedOnPlatform) {
-				log.Printf("Warning: failed to apply metadata for %s: %v", targetPath, err)
+			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, transferMeta); err != nil {
+				if errors.Is(err, storage.ErrAuth) {
+					return err
+				}
+				if !errors.Is(err, storage.ErrUnsupportedOnPlatform) {
+					log.Printf("Warning: failed to apply metadata for %s: %v", targetPath, err)
+				}
 			}
 		}
 	}

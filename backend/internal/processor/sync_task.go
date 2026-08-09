@@ -526,10 +526,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	if srcRes, err := srcClient.InspectResource(ctx, task.ResourceType, srcPath); err == nil && !srcRes.LastModified.IsZero() {
 		if applier, ok := tgtClient.(storage.MetadataApplier); ok {
 			metaCtx, metaCancel := context.WithTimeout(ctx, 15*time.Second)
-			_ = applier.ApplyMetadata(metaCtx, task.ResourceType, tgtPath, storage.FileMetadata{
+			err := applier.ApplyMetadata(metaCtx, task.ResourceType, tgtPath, storage.FileMetadata{
 				ModifiedTime: srcRes.LastModified,
 			})
 			metaCancel()
+			if errors.Is(err, storage.ErrAuth) {
+				return err
+			}
 		}
 	}
 
