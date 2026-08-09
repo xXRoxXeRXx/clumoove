@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+
+	"backend/internal/totp2fa"
 )
 
 type activeAdminMutation struct {
@@ -200,5 +202,73 @@ func TestActiveAdminGovernanceMutationsAreConcurrentSafe(t *testing.T) {
 				t.Fatal("governance mutation removed every active administrator")
 			}
 		})
+	}
+}
+
+func TestConsumeTOTPBackupCode_ConcurrentRequestsConsumeOnlyOnce(t *testing.T) {
+	database := setupTestDB(t)
+	user, err := CreateUser(database, "totp-recovery@example.test", "hash", "Recovery User", "en")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	code := "ABCDEFGH23"
+	hash, err := totp2fa.HashBackupCode(code)
+	if err != nil {
+		t.Fatalf("hash backup code: %v", err)
+	}
+	if _, err := database.Exec(`
+		UPDATE users
+		SET totp_enabled = TRUE,
+		    totp_backup_codes = $1,
+		    totp_failed_attempts = 3
+		WHERE id = $2
+	`, StringArray{hash}, user.ID); err != nil {
+		t.Fatalf("configure TOTP user: %v", err)
+	}
+
+	type consumeResult struct {
+		consumed bool
+		err      error
+	}
+
+	start := make(chan struct{})
+	results := make(chan consumeResult, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			consumed, err := ConsumeTOTPBackupCode(context.Background(), database, user.ID, hash)
+			results <- consumeResult{consumed: consumed, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var consumed int
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("consume backup code: %v", result.err)
+		}
+		if result.consumed {
+			consumed++
+		}
+	}
+	if consumed != 1 {
+		t.Fatalf("backup-code consumption successes = %d, want 1", consumed)
+	}
+
+	updated, err := GetUserByID(database, user.ID)
+	if err != nil {
+		t.Fatalf("load updated user: %v", err)
+	}
+	if len(updated.TotpBackupCodes) != 0 {
+		t.Fatalf("backup codes remaining = %d, want 0", len(updated.TotpBackupCodes))
+	}
+	if updated.TotpFailedAttempts != 0 || updated.TotpLockedUntil.Valid {
+		t.Fatalf("TOTP failure state not reset: attempts=%d locked=%v", updated.TotpFailedAttempts, updated.TotpLockedUntil.Valid)
 	}
 }

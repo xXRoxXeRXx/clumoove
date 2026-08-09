@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"strconv"
@@ -82,25 +84,17 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	valid := totp2fa.Validate(secret, req.Code)
-
-	if !valid && len(u.TotpBackupCodes) > 0 {
-		// Note: backup-code consumption is read-then-write and not fully atomic.
-		// Two concurrent requests presenting the same code could both succeed
-		// before ReplaceUsedBackupCode commits. This is acceptable here: both
-		// requests belong to the same authenticating user, and the outcome is
-		// only that one backup code is spent instead of one — no privilege gain.
-		idx := totp2fa.VerifyBackupCode([]string(u.TotpBackupCodes), req.Code)
-		if idx >= 0 {
-			valid = true
-			remaining := make(db.StringArray, 0, len(u.TotpBackupCodes)-1)
-			remaining = append(remaining, u.TotpBackupCodes[:idx]...)
-			remaining = append(remaining, u.TotpBackupCodes[idx+1:]...)
-			if err := db.ReplaceUsedBackupCode(s.db, u.ID, remaining); err != nil {
-				log.Printf("handleTOTP: failed to consume backup code for user %s: %v\n", u.ID, err)
-				writeError(w, http.StatusInternalServerError, ErrInternalError)
-				return
-			}
+	backupCodeConsumed := false
+	if !valid {
+		backupCodeConsumed, err = consumeTOTPBackupCode(r.Context(), s.db, u, req.Code)
+		if err != nil {
+			log.Printf("handleTOTP: failed to consume backup code for user %s: %v\n", u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
 		}
+		// A false result is either an invalid backup code or one another request
+		// already consumed; intentionally account for both as authentication failures.
+		valid = backupCodeConsumed
 	}
 
 	if !valid {
@@ -120,10 +114,12 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Success: clear failed attempts/lockout and issue normal tokens.
-	if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
-		log.Printf("handleTOTP: failed to reset attempts for user %s: %v\n", u.ID, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
+	if !backupCodeConsumed {
+		if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
+			log.Printf("handleTOTP: failed to reset attempts for user %s: %v\n", u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
 	}
 
 	s.issueTokens(w, r, u)
@@ -314,16 +310,14 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 
 	valid := totp2fa.Validate(secret, req.Code)
 	usedBackupCode := false
-	var remainingBackupCodes db.StringArray
-	if !valid && len(u.TotpBackupCodes) > 0 {
-		idx := totp2fa.VerifyBackupCode([]string(u.TotpBackupCodes), req.Code)
-		if idx >= 0 {
-			valid = true
-			usedBackupCode = true
-			remainingBackupCodes = make(db.StringArray, 0, len(u.TotpBackupCodes)-1)
-			remainingBackupCodes = append(remainingBackupCodes, u.TotpBackupCodes[:idx]...)
-			remainingBackupCodes = append(remainingBackupCodes, u.TotpBackupCodes[idx+1:]...)
+	if !valid {
+		usedBackupCode, err = consumeTOTPBackupCode(r.Context(), s.db, u, req.Code)
+		if err != nil {
+			log.Printf("handle2FADisable: failed to consume backup code for user %s: %v\n", u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
 		}
+		valid = usedBackupCode
 	}
 
 	if !valid {
@@ -342,20 +336,12 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Spend a recovery code before making any further state changes. This keeps
-	// it single-use even if disabling 2FA fails after successful verification.
-	if usedBackupCode {
-		if err := db.ReplaceUsedBackupCode(s.db, u.ID, remainingBackupCodes); err != nil {
-			log.Printf("handle2FADisable: failed to consume backup code for user %s: %v\n", u.ID, err)
+	if !usedBackupCode {
+		if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
+			log.Printf("handle2FADisable: failed to reset attempts for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
-	}
-
-	if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
-		log.Printf("handle2FADisable: failed to reset attempts for user %s: %v\n", u.ID, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
 	}
 
 	if err := db.DisableUserTOTP(s.db, userID); err != nil {
@@ -385,6 +371,21 @@ func (s *APIServer) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"totp_enabled": u.TotpEnabled})
+}
+
+// consumeTOTPBackupCode verifies a backup code against the user's loaded hashes
+// and atomically removes its matching hash when it is still available.
+func consumeTOTPBackupCode(ctx context.Context, database *sql.DB, user *db.User, code string) (bool, error) {
+	if len(user.TotpBackupCodes) == 0 {
+		return false, nil
+	}
+
+	index := totp2fa.VerifyBackupCode([]string(user.TotpBackupCodes), code)
+	if index < 0 {
+		return false, nil
+	}
+
+	return db.ConsumeTOTPBackupCode(ctx, database, user.ID, user.TotpBackupCodes[index])
 }
 
 // issueTokens mints a fresh access + refresh token pair for the given user,

@@ -629,17 +629,33 @@ func DisableUserTOTP(database *sql.DB, userID string) error {
 	return err
 }
 
-func ReplaceUsedBackupCode(database *sql.DB, userID string, remainingHashes StringArray) error {
+// ConsumeTOTPBackupCode removes a verified backup-code hash only if it is still
+// present for an enabled user, and atomically clears the TOTP failure state.
+// PostgreSQL rechecks the predicate after waiting on a concurrent update, so a
+// recovery code can be consumed only once. Callers rely on a successful result
+// to skip ResetTOTPFailed.
+func ConsumeTOTPBackupCode(ctx context.Context, database *sql.DB, userID, codeHash string) (bool, error) {
+	// The JSONB - operator removes all exact duplicates. Bcrypt hashes are unique
+	// per generated backup code, so this consumes one code in practice.
 	query := `
 		UPDATE users
-		SET totp_backup_codes = $1,
+		SET totp_backup_codes = totp_backup_codes - $2,
 		    totp_failed_attempts = 0,
 		    totp_locked_until = NULL,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $2
+		WHERE id = $1
+		  AND totp_enabled = TRUE
+		  AND totp_backup_codes ? $2
 	`
-	_, err := database.Exec(query, remainingHashes, userID)
-	return err
+	result, err := database.ExecContext(ctx, query, userID, codeHash)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
 }
 
 func IncrementTOTPFailed(database *sql.DB, userID string, maxAttempts int, lockDuration time.Duration) (bool, error) {

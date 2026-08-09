@@ -24,6 +24,10 @@ import (
 	appSync "backend/internal/sync"
 )
 
+type rateLimiter interface {
+	Allow(context.Context, string, string, int, time.Duration) bool
+}
+
 type APIServer struct {
 	db            *sql.DB
 	queue         *queue.Queue
@@ -34,7 +38,7 @@ type APIServer struct {
 	// backgroundCtx owns long-running work started after a request returns.
 	// Request handlers use r.Context() for request-scoped operations.
 	backgroundCtx     context.Context
-	rateLimiter       *distributedRateLimiter
+	rateLimiter       rateLimiter
 	dummyPasswordHash string
 	// activeStreams tracks the number of open SSE migration-stream connections
 	// per user so we can cap concurrent streams (each polls the DB on an

@@ -86,6 +86,16 @@ func setupTestDB(t *testing.T) *sql.DB {
 			t.Fatalf("create schema: %v", err)
 		}
 	}
+	for _, statement := range []string{
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_codes JSONB`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_failed_attempts INT NOT NULL DEFAULT 0`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_locked_until TIMESTAMPTZ`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("add TOTP test column: %v", err)
+		}
+	}
 
 	// Ensure a clean slate for the test.
 	if _, err := db.Exec(`DELETE FROM email_change_tokens; DELETE FROM refresh_tokens; DELETE FROM tasks; DELETE FROM schedules; DELETE FROM sync_jobs; DELETE FROM migrations; DELETE FROM users;`); err != nil {
