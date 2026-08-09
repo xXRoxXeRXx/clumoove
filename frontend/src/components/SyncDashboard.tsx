@@ -125,10 +125,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
   useEffect(() => {
     let cancelled = false;
-    const fetchJob = async () => {
+    let hasStreamData = false;
+    const snapshotController = new AbortController();
+    async function fetchJob(): Promise<void> {
       try {
         const res = await apiFetch(`${apiUrl}/api/sync/${syncId}`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: snapshotController.signal,
         });
         if (!res.ok) {
           let msg = t('sync.loadFailed');
@@ -139,36 +142,44 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           throw new Error(msg);
         }
         const data: SyncJob = await res.json();
-        if (!cancelled) {
+        if (!cancelled && !hasStreamData) {
           setJob(data);
           updateMetrics(data);
           setLoading(false);
         }
       } catch (err: unknown) {
-        if (!cancelled) {
+        if (!cancelled && !hasStreamData) {
           setError(err instanceof Error ? err.message : t('sync.loadFailed'));
           setLoading(false);
         }
       }
-    };
+    }
 
-    fetchJob();
+    void fetchJob();
 
-    const controller = new AbortController();
+    const streamController = new AbortController();
     void connectSseLoop({
       url: `${apiUrl}/api/sync/stream`,
       token,
-      signal: controller.signal,
+      signal: streamController.signal,
       fetchImpl: apiFetch,
       handlers: {
         onEvent: (event, data) => {
           if (event !== 'sync_jobs' || !data || cancelled) return;
           try {
             const jobs: SyncJob[] = JSON.parse(data);
-            const updated = jobs.find((j) => j.id === syncId);
-            if (updated) {
-              setJob(updated);
-              updateMetrics(updated);
+            const updatedJob = jobs.find((job) => job.id === syncId);
+            hasStreamData = true;
+            snapshotController.abort();
+            setError('');
+            setLoading(false);
+            if (updatedJob) {
+              setJob(updatedJob);
+              updateMetrics(updatedJob);
+            } else {
+              // The list frame is authoritative: this job was deleted while
+              // its detail snapshot was still in flight.
+              setJob(null);
             }
           } catch { /* ignore */ }
         },
@@ -177,7 +188,8 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
     return () => {
       cancelled = true;
-      controller.abort();
+      snapshotController.abort();
+      streamController.abort();
     };
   }, [apiUrl, syncId, token, t, translateApiError, updateMetrics]);
 

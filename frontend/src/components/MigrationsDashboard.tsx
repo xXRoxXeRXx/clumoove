@@ -49,6 +49,13 @@ export function MigrationsDashboard({
     migrations: null,
     sync: null,
   });
+  // A live stream frame is newer than the initial HTTP snapshot, regardless of
+  // which response happens to arrive first.
+  const hasMigrationStreamDataRef = useRef(false);
+  const hasSyncStreamDataRef = useRef(false);
+  const snapshotGenerationRef = useRef(0);
+  const migrationSnapshotAbortRef = useRef<AbortController | null>(null);
+  const syncSnapshotAbortRef = useRef<AbortController | null>(null);
 
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
@@ -56,27 +63,47 @@ export function MigrationsDashboard({
   const confirm = useConfirm();
   const toast = useToast();
 
-  const fetchSyncJobs = useCallback(async () => {
+  const fetchSyncJobs = useCallback(async function fetchSyncJobs(signal: AbortSignal, snapshotGeneration: number): Promise<void> {
+    function acceptsSnapshot(): boolean {
+      return !signal.aborted
+        && snapshotGenerationRef.current === snapshotGeneration
+        && !hasSyncStreamDataRef.current;
+    }
+
     try {
       const res = await apiFetch(`${apiUrl}/api/sync`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       });
       if (!res.ok) throw new Error(t('sync.loadFailed'));
       const data = await res.json();
-      setSyncJobs(data || []);
+      if (acceptsSnapshot()) {
+        setSyncJobs(data || []);
+      }
     } catch (err: unknown) {
-      setSyncError(err instanceof Error ? err.message : t('sync.loadFailed'));
+      if (acceptsSnapshot()) {
+        setSyncError(err instanceof Error ? err.message : t('sync.loadFailed'));
+      }
     } finally {
-      setSyncLoading(false);
+      if (acceptsSnapshot()) {
+        setSyncLoading(false);
+      }
     }
   }, [apiUrl, token, t]);
 
-  const fetchMigrations = useCallback(async () => {
+  const fetchMigrations = useCallback(async function fetchMigrations(signal: AbortSignal, snapshotGeneration: number): Promise<void> {
+    function acceptsSnapshot(): boolean {
+      return !signal.aborted
+        && snapshotGenerationRef.current === snapshotGeneration
+        && !hasMigrationStreamDataRef.current;
+    }
+
     try {
       const response = await apiFetch(`${apiUrl}/api/migration`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
+        signal,
       });
       if (!response.ok) {
         let message = t('migrations.loadFailed');
@@ -91,26 +118,59 @@ export function MigrationsDashboard({
         throw new Error(message);
       }
       const data = await response.json();
-      setMigrations(data || []);
+      if (acceptsSnapshot()) {
+        setMigrations(data || []);
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : t('migrations.connectionError'));
+      if (acceptsSnapshot()) {
+        setError(err instanceof Error ? err.message : t('migrations.connectionError'));
+      }
     } finally {
-      setLoading(false);
+      if (acceptsSnapshot()) {
+        setLoading(false);
+      }
     }
   }, [apiUrl, token, t, translateApiError]);
 
   // Load both lists immediately instead of waiting for the initial SSE frames.
   // The streams remain responsible for live updates after this first snapshot.
   useEffect(() => {
-    const loadInitialSnapshot = () => {
-      void Promise.all([fetchMigrations(), fetchSyncJobs()]);
-    };
+    snapshotGenerationRef.current += 1;
+    migrationSnapshotAbortRef.current?.abort();
+    syncSnapshotAbortRef.current?.abort();
+    migrationSnapshotAbortRef.current = null;
+    syncSnapshotAbortRef.current = null;
+    hasMigrationStreamDataRef.current = false;
+    hasSyncStreamDataRef.current = false;
+  }, [apiUrl, token]);
+
+  useEffect(() => {
+    const migrationController = new AbortController();
+    const syncController = new AbortController();
+    const snapshotGeneration = snapshotGenerationRef.current;
+    migrationSnapshotAbortRef.current = migrationController;
+    syncSnapshotAbortRef.current = syncController;
+    function loadInitialSnapshot(): void {
+      void fetchMigrations(migrationController.signal, snapshotGeneration);
+      void fetchSyncJobs(syncController.signal, snapshotGeneration);
+    }
     const timeoutId = window.setTimeout(loadInitialSnapshot, 0);
-    return () => window.clearTimeout(timeoutId);
+    return () => {
+      window.clearTimeout(timeoutId);
+      migrationController.abort();
+      syncController.abort();
+      if (migrationSnapshotAbortRef.current === migrationController) {
+        migrationSnapshotAbortRef.current = null;
+      }
+      if (syncSnapshotAbortRef.current === syncController) {
+        syncSnapshotAbortRef.current = null;
+      }
+    };
   }, [fetchMigrations, fetchSyncJobs]);
 
   useEffect(() => {
     const controller = new AbortController();
+    const snapshotGeneration = snapshotGenerationRef.current;
     void connectSseLoop({
       url: `${apiUrl}/api/migration/stream`,
       token,
@@ -118,9 +178,13 @@ export function MigrationsDashboard({
       fetchImpl: apiFetch,
       handlers: {
         onEvent: (event, data) => {
+          if (snapshotGeneration !== snapshotGenerationRef.current) return;
           if (event === 'migrations' && data) {
             try {
-              setMigrations(JSON.parse(data) || []);
+              const migrations = JSON.parse(data) || [];
+              hasMigrationStreamDataRef.current = true;
+              migrationSnapshotAbortRef.current?.abort();
+              setMigrations(migrations);
               setError('');
               setLoading(false);
             } catch {
@@ -132,6 +196,7 @@ export function MigrationsDashboard({
           }
         },
         onError: () => {
+          if (snapshotGeneration !== snapshotGenerationRef.current) return;
           setError(t('migrations.connectionError'));
           setLoading(false);
         },
@@ -142,6 +207,7 @@ export function MigrationsDashboard({
 
   useEffect(() => {
     const controller = new AbortController();
+    const snapshotGeneration = snapshotGenerationRef.current;
     void connectSseLoop({
       url: `${apiUrl}/api/sync/stream`,
       token,
@@ -149,9 +215,13 @@ export function MigrationsDashboard({
       fetchImpl: apiFetch,
       handlers: {
         onEvent: (event, data) => {
+          if (snapshotGeneration !== snapshotGenerationRef.current) return;
           if (event === 'sync_jobs' && data) {
             try {
-              setSyncJobs(JSON.parse(data) || []);
+              const jobs = JSON.parse(data) || [];
+              hasSyncStreamDataRef.current = true;
+              syncSnapshotAbortRef.current?.abort();
+              setSyncJobs(jobs);
               setSyncError('');
               setSyncLoading(false);
             } catch {
@@ -160,6 +230,7 @@ export function MigrationsDashboard({
           }
         },
         onError: () => {
+          if (snapshotGeneration !== snapshotGenerationRef.current) return;
           setSyncError(t('sync.loadFailed'));
           setSyncLoading(false);
         },
