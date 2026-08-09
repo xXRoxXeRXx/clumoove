@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestNewNextcloudProviderURLNormalization(t *testing.T) {
@@ -320,5 +321,58 @@ func TestNextcloudInspectResourceNotFound(t *testing.T) {
 	_, err = p.InspectResource(context.Background(), "files", "/missing.txt")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestNextcloudApplyMetadataReportsPROPPATCHFailures(t *testing.T) {
+	cases := []struct {
+		name         string
+		statusCode   int
+		responseBody string
+		wantErr      bool
+		wantAuth     bool
+	}{
+		{name: "ok", statusCode: http.StatusOK},
+		{name: "multi-status", statusCode: http.StatusMultiStatus, responseBody: successfulPROPPATCHMultiStatus},
+		{name: "multi-status property failure", statusCode: http.StatusMultiStatus, responseBody: failedPROPPATCHPropertyMultiStatus, wantErr: true},
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, wantErr: true, wantAuth: true},
+		{name: "server error", statusCode: http.StatusInternalServerError, wantErr: true},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "PROPPATCH" {
+					t.Errorf("method = %s, want PROPPATCH", r.Method)
+				}
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.responseBody))
+			}))
+			defer server.Close()
+
+			p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.BaseURL = server.URL + "/remote.php/dav"
+			p.HTTPClient = server.Client()
+
+			err = p.ApplyMetadata(context.Background(), "files", "/file.txt", FileMetadata{ModifiedTime: time.Now()})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("ApplyMetadata() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if test.wantAuth && !errors.Is(err, ErrAuth) {
+				t.Fatalf("ApplyMetadata() error = %v, want ErrAuth", err)
+			}
+		})
+	}
+
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.HTTPClient = &http.Client{Transport: failingRoundTripper{}}
+	if err := p.ApplyMetadata(context.Background(), "files", "/file.txt", FileMetadata{ModifiedTime: time.Now()}); err == nil {
+		t.Fatal("ApplyMetadata() succeeded after transport failure")
 	}
 }

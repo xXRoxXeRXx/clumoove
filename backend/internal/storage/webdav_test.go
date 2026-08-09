@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestNewWebDAVProviderValid(t *testing.T) {
@@ -229,5 +230,51 @@ func TestWebDAVCreateParentDirectoriesVerifiesMKCOLMethodNotAllowed(t *testing.T
 	}
 	if _, ok := p.createdDirs.Load("/folder"); !ok {
 		t.Error("confirmed parent directory was not cached")
+	}
+}
+
+func TestWebDAVApplyMetadataReportsPROPPATCHFailures(t *testing.T) {
+	cases := []struct {
+		name         string
+		statusCode   int
+		responseBody string
+		wantErr      bool
+		wantAuth     bool
+	}{
+		{name: "ok", statusCode: http.StatusOK},
+		{name: "multi-status", statusCode: http.StatusMultiStatus, responseBody: successfulPROPPATCHMultiStatus},
+		{name: "multi-status property failure", statusCode: http.StatusMultiStatus, responseBody: failedPROPPATCHPropertyMultiStatus, wantErr: true},
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, wantErr: true, wantAuth: true},
+		{name: "server error", statusCode: http.StatusInternalServerError, wantErr: true},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "PROPPATCH" {
+					t.Errorf("method = %s, want PROPPATCH", r.Method)
+				}
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.responseBody))
+			}))
+			defer server.Close()
+
+			p := &WebDAVProvider{BaseURL: server.URL, HTTPClient: server.Client()}
+			err := p.ApplyMetadata(context.Background(), "files", "/file.txt", FileMetadata{ModifiedTime: time.Now()})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("ApplyMetadata() error = %v, wantErr %v", err, test.wantErr)
+			}
+			if test.wantAuth && !errors.Is(err, ErrAuth) {
+				t.Fatalf("ApplyMetadata() error = %v, want ErrAuth", err)
+			}
+		})
+	}
+
+	p := &WebDAVProvider{
+		BaseURL:    "https://webdav.example.test",
+		HTTPClient: &http.Client{Transport: failingRoundTripper{}},
+	}
+	if err := p.ApplyMetadata(context.Background(), "files", "/file.txt", FileMetadata{ModifiedTime: time.Now()}); err == nil {
+		t.Fatal("ApplyMetadata() succeeded after transport failure")
 	}
 }

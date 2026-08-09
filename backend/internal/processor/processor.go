@@ -1229,11 +1229,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if applier, ok := targetClient.(storage.MetadataApplier); ok {
 		if !transferMeta.ModifiedTime.IsZero() || transferMeta.Description != "" {
 			if err := applier.ApplyMetadata(ctx, task.ResourceType, targetPath, transferMeta); err != nil {
-				if errors.Is(err, storage.ErrAuth) {
-					return err
-				}
 				if !errors.Is(err, storage.ErrUnsupportedOnPlatform) {
-					log.Printf("Warning: failed to apply metadata for %s: %v", targetPath, err)
+					// Metadata propagation is non-fatal, but must remain visible to
+					// operators rather than allowing the task to appear silently complete.
+					log.Printf("Warning: metadata propagation failed for task %s (target provider %s): %v", task.ID, mig.TargetProvider, err)
 				}
 			}
 		}

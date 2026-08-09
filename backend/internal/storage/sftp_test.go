@@ -208,6 +208,18 @@ func TestSFTPConnectReturnsCancelledContext(t *testing.T) {
 	}
 }
 
+func TestSFTPApplyMetadataReturnsConnectionFailure(t *testing.T) {
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", "")
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+
+	err = p.ApplyMetadata(context.Background(), "files", "/file.txt", FileMetadata{ModifiedTime: time.Now()})
+	if err == nil {
+		t.Fatal("ApplyMetadata() succeeded when SFTP authentication was not configured")
+	}
+}
+
 func TestSFTPHandshakeDeadlineUsesSoonerContextDeadline(t *testing.T) {
 	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
 	ctx, cancel := context.WithDeadline(context.Background(), now.Add(time.Second))

@@ -670,12 +670,14 @@ func (p *SFTPProvider) ApplyMetadata(ctx context.Context, resourceType, filePath
 	}
 	cleanPath := p.cleanPath(filePath)
 	if err := p.operation(ctx, func() error {
-		// Metadata propagation is intentionally best effort, but still needs to
-		// be interruptible so it cannot retain a worker after cancellation.
-		_ = p.sftpClient.Chtimes(cleanPath, time.Now(), meta.ModifiedTime)
+		// Metadata propagation is intentionally best effort at the processor,
+		// but provider failures must be returned so it can record the warning.
+		if err := p.sftpClient.Chtimes(cleanPath, time.Now(), meta.ModifiedTime); err != nil {
+			return fmt.Errorf("sftp apply metadata: set file modification time: %w", err)
+		}
 		return nil
-	}); err != nil && ctx != nil && ctx.Err() != nil {
-		return ctx.Err()
+	}); err != nil {
+		return err
 	}
 	return nil
 }

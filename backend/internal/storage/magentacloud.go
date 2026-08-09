@@ -54,9 +54,10 @@ var _ StorageProvider = (*MagentacloudProvider)(nil)
 func NewMagentacloudProvider(username, password string) (*MagentacloudProvider, error) {
 	return &MagentacloudProvider{
 		davProvider: &davProvider{
-			BaseURL:  magentaCloudBaseURL,
-			Username: username,
-			Password: password,
+			providerName: "magentacloud",
+			BaseURL:      magentaCloudBaseURL,
+			Username:     username,
+			Password:     password,
 			HTTPClient: &http.Client{
 				Transport:     newDAVTransport("magentacloud.de"),
 				Timeout:       0,

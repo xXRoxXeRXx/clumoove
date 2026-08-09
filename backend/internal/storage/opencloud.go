@@ -81,9 +81,10 @@ func NewOpenCloudProvider(rawURL, username, password string) (*OpenCloudProvider
 	}
 
 	dp := &davProvider{
-		BaseURL:  baseURL,
-		Username: username,
-		Password: password,
+		providerName: "opencloud",
+		BaseURL:      baseURL,
+		Username:     username,
+		Password:     password,
 		HTTPClient: &http.Client{
 			Transport:     newDAVTransport(parsed.Hostname()),
 			Timeout:       0,

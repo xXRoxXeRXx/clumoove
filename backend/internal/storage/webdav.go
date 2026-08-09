@@ -712,6 +712,7 @@ func (p *WebDAVProvider) ApplyMetadata(ctx context.Context, resourceType, filePa
 	}
 
 	u := p.buildResourceURL(filePath)
+	operation := "webdav apply metadata"
 	unixSec := meta.ModifiedTime.Unix()
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propertyupdate xmlns:d="DAV:">
@@ -724,7 +725,7 @@ func (p *WebDAVProvider) ApplyMetadata(ctx context.Context, resourceType, filePa
 
 	req, err := p.newRequest("PROPPATCH", u, strings.NewReader(body))
 	if err != nil {
-		return nil
+		return fmt.Errorf("%s: create PROPPATCH request: %w", operation, err)
 	}
 	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
 	req.Header.Set("X-OC-MTime", strconv.FormatInt(unixSec, 10))
@@ -732,9 +733,19 @@ func (p *WebDAVProvider) ApplyMetadata(ctx context.Context, resourceType, filePa
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return nil
+		return fmt.Errorf("%s: send PROPPATCH request: %w", operation, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%s: %w", operation, ErrAuth)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("%s: PROPPATCH returned status %d", operation, resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusMultiStatus {
+		return validateDAVMultiStatus(operation, resp.Body)
+	}
 
 	return nil
 }

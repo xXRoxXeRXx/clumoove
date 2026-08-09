@@ -5,7 +5,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewMagentacloudProviderValid(t *testing.T) {
@@ -24,6 +26,19 @@ func TestNewMagentacloudProviderValid(t *testing.T) {
 	}
 	if err := p.Close(); err != nil {
 		t.Errorf("Close returned error: %v", err)
+	}
+}
+
+func TestMagentacloudApplyMetadataUsesProviderName(t *testing.T) {
+	p, err := NewMagentacloudProvider("user@telekom.de", "pass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.HTTPClient = &http.Client{Transport: failingRoundTripper{}}
+
+	err = p.ApplyMetadata(context.Background(), "files", "/file.txt", FileMetadata{ModifiedTime: time.Now()})
+	if err == nil || !strings.Contains(err.Error(), "magentacloud apply metadata") {
+		t.Fatalf("ApplyMetadata() error = %v, want magentacloud provider name", err)
 	}
 }
 

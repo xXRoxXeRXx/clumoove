@@ -31,6 +31,7 @@ type pathBuilder interface {
 // supply a pathBuilder plus transport configuration. Behaviour of
 // NextcloudProvider is unchanged by this extraction.
 type davProvider struct {
+	providerName         string
 	BaseURL              string
 	Username             string
 	Password             string
@@ -56,7 +57,7 @@ func (p *davProvider) assertResourceType(resourceType string) error {
 	return fmt.Errorf("resource type %q not supported by provider", resourceType)
 }
 
-// XML structures for PROPFIND
+// XML structures shared by PROPFIND and PROPPATCH responses.
 type XMLMultistatus struct {
 	XMLName   xml.Name      `xml:"multistatus"`
 	Responses []XMLResponse `xml:"response"`
@@ -64,6 +65,7 @@ type XMLMultistatus struct {
 
 type XMLResponse struct {
 	Href     string        `xml:"href"`
+	Status   string        `xml:"status"`
 	Propstat []XMLPropstat `xml:"propstat"`
 }
 
@@ -92,6 +94,54 @@ type XMLResourceType struct {
 
 type XMLChecksums struct {
 	Checksum []string `xml:"checksum"`
+}
+
+func (p *davProvider) name() string {
+	if p.providerName != "" {
+		return p.providerName
+	}
+	return "dav"
+}
+
+func requireDAVSuccessStatus(operation, status string) error {
+	parts := strings.Fields(status)
+	if len(parts) < 2 {
+		return fmt.Errorf("%s: invalid DAV response status %q", operation, status)
+	}
+	code, err := strconv.Atoi(parts[1])
+	if err != nil || code < http.StatusOK || code >= http.StatusMultipleChoices {
+		return fmt.Errorf("%s: DAV property update returned status %q", operation, status)
+	}
+	return nil
+}
+
+// validateDAVMultiStatus checks every response and property status in a 207
+// PROPPATCH response. A 207 only means the server processed the request; the
+// requested property can still have failed.
+func validateDAVMultiStatus(operation string, body io.Reader) error {
+	var multistatus XMLMultistatus
+	if err := xml.NewDecoder(body).Decode(&multistatus); err != nil {
+		return fmt.Errorf("%s: decode PROPPATCH multistatus: %w", operation, err)
+	}
+	if len(multistatus.Responses) == 0 {
+		return fmt.Errorf("%s: PROPPATCH multistatus contained no responses", operation)
+	}
+	for _, response := range multistatus.Responses {
+		if response.Status != "" {
+			if err := requireDAVSuccessStatus(operation, response.Status); err != nil {
+				return err
+			}
+		}
+		if len(response.Propstat) == 0 && response.Status == "" {
+			return fmt.Errorf("%s: PROPPATCH response contained no property status", operation)
+		}
+		for _, propstat := range response.Propstat {
+			if err := requireDAVSuccessStatus(operation, propstat.Status); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func newDAVTransport(host string) *http.Transport {
@@ -133,9 +183,10 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 
 	return &NextcloudProvider{
 		davProvider: &davProvider{
-			BaseURL:  baseURL,
-			Username: username,
-			Password: password,
+			providerName: "nextcloud",
+			BaseURL:      baseURL,
+			Username:     username,
+			Password:     password,
 			HTTPClient: &http.Client{
 				Transport:     newLoggingTransport(newDAVTransport(host)),
 				Timeout:       0,
@@ -1195,6 +1246,7 @@ func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath 
 	}
 
 	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	operation := p.name() + " apply metadata"
 	unixSec := meta.ModifiedTime.Unix()
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" ?>
 <d:propertyupdate xmlns:d="DAV:">
@@ -1207,7 +1259,7 @@ func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath 
 
 	req, err := p.newRequest("PROPPATCH", u, strings.NewReader(body))
 	if err != nil {
-		return nil
+		return fmt.Errorf("%s: create PROPPATCH request: %w", operation, err)
 	}
 	req.Header.Set("Content-Type", "application/xml; charset=utf-8")
 	req.Header.Set("X-OC-MTime", strconv.FormatInt(unixSec, 10))
@@ -1215,9 +1267,19 @@ func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath 
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return nil
+		return fmt.Errorf("%s: send PROPPATCH request: %w", operation, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("%s: %w", operation, ErrAuth)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("%s: PROPPATCH returned status %d", operation, resp.StatusCode)
+	}
+	if resp.StatusCode == http.StatusMultiStatus {
+		return validateDAVMultiStatus(operation, resp.Body)
+	}
 
 	return nil
 }
