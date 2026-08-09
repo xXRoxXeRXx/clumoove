@@ -115,6 +115,20 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		return
 	}
 	defer sourceClient.Close()
+	// Providers whose resource APIs depend on a session-backed filesystem tree
+	// (notably MEGA) must be connected before any InspectResource or directory
+	// listing call. Some HTTP providers can perform those calls lazily, which
+	// previously hid this missing lifecycle step until MEGA was used as source.
+	connected, err := sourceClient.Connect(ctx)
+	if err != nil || !connected {
+		if err != nil {
+			log.Printf("Migration %s: failed to connect source storage provider: %s", migID, sanitizeError(err.Error()))
+		} else {
+			log.Printf("Migration %s: source storage provider reported an unsuccessful connection", migID)
+		}
+		failMigration(idx.db, migID, "Failed to connect to the source. Please verify the source connection settings.")
+		return
+	}
 	var totalFiles int
 	var totalDirs int
 	var totalBytes int64
