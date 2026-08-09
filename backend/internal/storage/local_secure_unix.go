@@ -211,6 +211,11 @@ func (r *localRoot) upload(ctx context.Context, parts []string, stream io.Reader
 		}
 		n, readErr := stream.Read(buf)
 		if n > 0 {
+			// stream.Read may return data after ctx is cancelled; re-check before touching the temp file.
+			if err := ctx.Err(); err != nil {
+				tmp.Close()
+				return err
+			}
 			if _, err := tmp.Write(buf[:n]); err != nil {
 				tmp.Close()
 				return err
@@ -233,6 +238,9 @@ func (r *localRoot) upload(ctx context.Context, parts []string, stream io.Reader
 		}
 	}
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := unix.Renameat(parent, tmpName, parent, parts[len(parts)-1]); err != nil {

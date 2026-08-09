@@ -1,4 +1,4 @@
-﻿package throttle
+package throttle
 
 import (
 	"bytes"
@@ -71,8 +71,11 @@ func TestThrottledReaderContextCancel(t *testing.T) {
 	defer cancel()
 	r := NewThrottledReader(bytes.NewReader(make([]byte, 1<<20)), mt, ctx)
 	buf := make([]byte, 1<<20)
-	_, err := r.Read(buf)
+	n, err := r.Read(buf)
 	if err == nil {
 		t.Fatal("expected error from Read when context is cancelled")
+	}
+	if n != 0 {
+		t.Fatalf("Read returned %d bytes after the limiter rejected the read, want 0", n)
 	}
 }

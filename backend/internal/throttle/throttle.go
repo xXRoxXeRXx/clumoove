@@ -49,19 +49,19 @@ func NewUploadThrottledReader(r io.Reader, mt *MigrationThrottler, ctx context.C
 }
 
 func (tr *ThrottledReader) Read(p []byte) (int, error) {
+	if err := tr.ctx.Err(); err != nil {
+		return 0, err
+	}
 	n, err := tr.r.Read(p)
 	if n > 0 {
+		limiter := tr.mt.downloadLimiter.Load()
 		if tr.upload {
-			if limiter := tr.mt.uploadLimiter.Load(); limiter != nil {
-				if werr := limiter.WaitN(tr.ctx, n); werr != nil {
-					return n, werr
-				}
-			}
-		} else {
-			if limiter := tr.mt.downloadLimiter.Load(); limiter != nil {
-				if werr := limiter.WaitN(tr.ctx, n); werr != nil {
-					return n, werr
-				}
+			limiter = tr.mt.uploadLimiter.Load()
+		}
+		if limiter != nil {
+			if werr := limiter.WaitN(tr.ctx, n); werr != nil {
+				// A rejected read must not expose bytes: io.Copy writes n even when err != nil.
+				return 0, werr
 			}
 		}
 	}

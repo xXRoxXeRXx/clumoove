@@ -561,6 +561,39 @@ func TestLocalProviderUploadCleanupOnContextCancel(t *testing.T) {
 	}
 }
 
+func TestLocalProviderUploadDoesNotWriteBufferReadAfterCancellation(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := p.StreamUpload(context.Background(), "files", "cancdir/existing.bin", bytes.NewReader([]byte("original")), int64(len("original"))); err != nil {
+		t.Fatalf("seed existing file: %v", err)
+	}
+
+	reader := &cancellingReader{data: []byte("replacement"), cancel: cancel}
+	err := p.StreamUpload(ctx, "files", "cancdir/existing.bin", reader, int64(len(reader.data)))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("StreamUpload error = %v, want context.Canceled", err)
+	}
+
+	rc, err := p.StreamDownload(context.Background(), "files", "cancdir/existing.bin")
+	if err != nil {
+		t.Fatalf("download existing file: %v", err)
+	}
+	defer rc.Close()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read existing file: %v", err)
+	}
+	if string(got) != "original" {
+		t.Fatalf("existing file = %q, want original", got)
+	}
+
+	if tmpFiles := countTempFiles(t, filepath.Join(p.root, "cancdir")); tmpFiles != 0 {
+		t.Fatalf("expected 0 temp files after cancelled upload, found %d", tmpFiles)
+	}
+}
+
 func TestLocalProviderUploadProgressContextCancel(t *testing.T) {
 	p := newTestLocalProvider(t)
 
@@ -650,6 +683,22 @@ type delayedReader struct {
 	delay time.Duration
 }
 
+type cancellingReader struct {
+	data   []byte
+	read   bool
+	cancel context.CancelFunc
+}
+
+func (r *cancellingReader) Read(p []byte) (int, error) {
+	if r.read {
+		return 0, io.EOF
+	}
+	r.read = true
+	n := copy(p, r.data)
+	r.cancel()
+	return n, nil
+}
+
 func (r *delayedReader) Read(p []byte) (int, error) {
 	if r.pos >= len(r.data) {
 		return 0, io.EOF
@@ -699,4 +748,3 @@ func TestLocalApplyMetadata(t *testing.T) {
 		t.Errorf("LastModified = %v, want %v", res.LastModified, expectedTime)
 	}
 }
-
