@@ -37,6 +37,18 @@ type verifierProvider struct {
 	verificationMode storage.VerificationMode
 }
 
+type connectableVerifierProvider struct {
+	verifierProvider
+	connected bool
+	connectErr error
+	connects   int
+}
+
+func (p *connectableVerifierProvider) Connect(context.Context) (bool, error) {
+	p.connects++
+	return p.connected, p.connectErr
+}
+
 func (p *verifierProvider) FileExists(context.Context, string, string) (bool, int64, error) {
 	p.fileExistsCalls++
 	return p.exists, p.size, p.fileExistsErr
@@ -52,6 +64,36 @@ func (p *verifierProvider) VerificationMode() storage.VerificationMode {
 		return storage.VerificationCryptographicHash
 	}
 	return p.verificationMode
+}
+
+func TestVerificationPassConnectsConstructedTargetProvider(t *testing.T) {
+	provider := &connectableVerifierProvider{verifierProvider: verifierProvider{
+		exists:           true,
+		size:             3,
+		verificationMode: storage.VerificationSizeOnly,
+	}, connected: true}
+	verified := false
+	(&Processor{}).runVerificationPass(context.Background(), verificationPassConfig{
+		EntityType: "Migration",
+		EntityID:   "connect-target",
+		NewTargetProvider: func(context.Context, string, string, string, string) (storage.StorageProvider, error) {
+			return provider, nil
+		},
+		GetTasks: func(context.Context) ([]*db.Task, error) {
+			return []*db.Task{{ID: "task", ResourceType: "files", FilePath: "/file", FileSize: 3}}, nil
+		},
+		ReconcileProgress: func() error { return nil },
+		MarkVerified: func(context.Context, *db.Task, string) (bool, error) {
+			verified = true
+			return true, nil
+		},
+	})
+	if provider.connects != 1 {
+		t.Fatalf("target Connect calls = %d, want 1", provider.connects)
+	}
+	if !verified {
+		t.Fatal("connected target was not verified")
+	}
 }
 
 func TestBestSourceHash(t *testing.T) {

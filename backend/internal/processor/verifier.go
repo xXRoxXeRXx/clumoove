@@ -169,7 +169,10 @@ type verificationPassConfig struct {
 	Threads          int
 	// TargetClient is test-only injection for a connected target. Production
 	// callers leave it nil and construct a scoped provider below.
-	TargetClient      storage.StorageProvider
+	TargetClient storage.StorageProvider
+	// NewTargetProvider is test-only injection for constructing a provider that
+	// still needs Connect before verification. Production callers use newProvider.
+	NewTargetProvider func(ctx context.Context, providerType, urlStr, username, password string) (storage.StorageProvider, error)
 	GetTasks          func(ctx context.Context) ([]*db.Task, error)
 	ReconcileProgress func() error
 	MarkVerified      func(ctx context.Context, task *db.Task, targetHash string) (bool, error)
@@ -329,12 +332,23 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	passCtx = storage.WithLocalUserScope(passCtx, cfg.UserID)
 	targetClient := cfg.TargetClient
 	if targetClient == nil {
-		targetClient, err = newProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
+		newTargetProvider := cfg.NewTargetProvider
+		if newTargetProvider == nil {
+			newTargetProvider = newProvider
+		}
+		targetClient, err = newTargetProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
 		if err != nil {
-			log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+			log.Printf("[VERIFIER] Failed to create target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 			return
 		}
 		defer targetClient.Close()
+		if connected, connectErr := targetClient.Connect(passCtx); !connected {
+			if connectErr == nil {
+				connectErr = errors.New("provider rejected connection")
+			}
+			log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, connectErr)
+			return
+		}
 	}
 	// This is a provider capability, not a per-file property. Resolve it once
 	// for the entire pass so size-only targets never enter the hash-query path.
