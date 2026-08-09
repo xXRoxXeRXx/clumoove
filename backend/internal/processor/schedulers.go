@@ -274,6 +274,34 @@ type recoveryState struct {
 	attempts    int
 }
 
+// maxMigrationRecoveryProbesPerTick bounds recovery attempts, including
+// credential decryptions and provider connection probes, triggered by a shared
+// connection outage. Entries currently in backoff do not consume the budget.
+const maxMigrationRecoveryProbesPerTick = 10
+
+func (p *Processor) recoveryCursor(syncJob bool) string {
+	p.recoveryCursorMu.Lock()
+	defer p.recoveryCursorMu.Unlock()
+	if syncJob {
+		return p.syncRecoveryCursor
+	}
+	return p.migrationRecoveryCursor
+}
+
+func (p *Processor) setRecoveryCursor(syncJob bool, id string) {
+	p.recoveryCursorMu.Lock()
+	defer p.recoveryCursorMu.Unlock()
+	if syncJob {
+		p.syncRecoveryCursor = id
+		return
+	}
+	p.migrationRecoveryCursor = id
+}
+
+func (p *Processor) recordRecoveryFailure(id string, attempts int) {
+	p.recoveryAttempts.Store(id, recoveryState{lastAttempt: time.Now(), attempts: attempts + 1})
+}
+
 func recoveryBackoff(attempts int) time.Duration {
 	switch {
 	case attempts <= 0:
@@ -292,14 +320,20 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		       source_provider, target_provider
 		FROM migrations
 		WHERE status = 'PAUSED_CONNECTION_LOSS'
+		ORDER BY (id::text <= $1), id
 	`
-	rows, err := p.db.QueryContext(ctx, query)
+	rows, err := p.db.QueryContext(ctx, query, p.recoveryCursor(false))
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 
+	probes := 0
 	for rows.Next() {
+		if probes >= maxMigrationRecoveryProbesPerTick {
+			break
+		}
+
 		var id, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
 		var userID sql.NullString
 		if err := rows.Scan(&id, &userID, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
@@ -313,24 +347,30 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		if backoff := recoveryBackoff(ra.attempts); backoff > 0 && time.Since(ra.lastAttempt) < backoff {
 			continue
 		}
+		probes++
+		p.setRecoveryCursor(false, id)
 
 		sPass, err := crypto.Decrypt(sPassEnc, p.secretKey)
 		if err != nil {
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 		tPass, err := crypto.Decrypt(tPassEnc, p.secretKey)
 		if err != nil {
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 
 		userCtx := storage.WithLocalUserScope(ctx, userID.String)
 		sClient, err := storage.NewProvider(userCtx, sProv, sURL, sUser, sPass)
 		if err != nil {
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 		tClient, err := storage.NewProvider(userCtx, tProv, tURL, tUser, tPass)
 		if err != nil {
 			sClient.Close()
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 
@@ -354,7 +394,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 			}
 			p.recoveryAttempts.Delete(id)
 		} else {
-			p.recoveryAttempts.Store(id, recoveryState{lastAttempt: time.Now(), attempts: ra.attempts + 1})
+			p.recordRecoveryFailure(id, ra.attempts)
 		}
 	}
 	if err := rows.Err(); err != nil {

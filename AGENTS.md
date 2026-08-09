@@ -24,7 +24,7 @@
 - **Worker background schedulers** (all started by `processor.Start()`):
   - `RunWorkerLiveness` — heartbeat every 10 s, detects dead workers and reclaims their tasks
   - `RunRetryScheduler` — re-enqueues tasks whose `next_retry_at <= NOW()` every 10 s
-  - `RunConnectionRecoveryScheduler` — re-activates `PAUSED_CONNECTION_LOSS` migrations every 60 s; for sync jobs it only returns the job to `IDLE` and makes its active schedule due, so the API scheduler exclusively starts the pass
+  - `RunConnectionRecoveryScheduler` — probes up to 10 round-robin `PAUSED_CONNECTION_LOSS` migrations and 10 sync jobs every 60 s (with failure backoff); it re-activates migrations, while sync jobs only return to `IDLE` and make their active schedule due, so the API scheduler exclusively starts the pass
   - `RunOrphanedRunningTasksRecovery` — resets tasks stuck in `RUNNING` for > 10 min
   - `RunChecksumVerifier` — performs automated post-migration cryptographic checksum validation for `VERIFYING` migrations every 10 s; PostgreSQL lease/generation fencing makes each migration verification pass single-writer across worker processes
 - **OAuth daemon**: `RunOAuthRotationDaemon` in `cmd/api` rotates Dropbox/Google/Google Photos refresh tokens before expiry.

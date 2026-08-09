@@ -669,6 +669,8 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 	}
 }
 
+const maxSyncRecoveryProbesPerTick = 10
+
 // recoverPausedSyncJobs checks connection-loss paused sync jobs and restores connection.
 func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 	query := `
@@ -677,14 +679,20 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		       source_provider, target_provider
 		FROM sync_jobs
 		WHERE status = 'PAUSED_CONNECTION_LOSS'
+		ORDER BY (id::text <= $1), id
 	`
-	rows, err := p.db.QueryContext(ctx, query)
+	rows, err := p.db.QueryContext(ctx, query, p.recoveryCursor(true))
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 
+	probes := 0
 	for rows.Next() {
+		if probes >= maxSyncRecoveryProbesPerTick {
+			break
+		}
+
 		var id, userID, sURL, sUser, sPassEnc, tURL, tUser, tPassEnc, sProv, tProv string
 		if err := rows.Scan(&id, &userID, &sURL, &sUser, &sPassEnc, &tURL, &tUser, &tPassEnc, &sProv, &tProv); err != nil {
 			continue
@@ -697,24 +705,30 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		if backoff := recoveryBackoff(ra.attempts); backoff > 0 && time.Since(ra.lastAttempt) < backoff {
 			continue
 		}
+		probes++
+		p.setRecoveryCursor(true, id)
 
 		sPass, err := crypto.Decrypt(sPassEnc, p.secretKey)
 		if err != nil {
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 		tPass, err := crypto.Decrypt(tPassEnc, p.secretKey)
 		if err != nil {
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 
 		userCtx := storage.WithLocalUserScope(ctx, userID)
 		sClient, err := storage.NewProvider(userCtx, sProv, sURL, sUser, sPass)
 		if err != nil {
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 		tClient, err := storage.NewProvider(userCtx, tProv, tURL, tUser, tPass)
 		if err != nil {
 			sClient.Close()
+			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
 
@@ -739,7 +753,7 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 			}
 			p.recoveryAttempts.Delete(id)
 		} else {
-			p.recoveryAttempts.Store(id, recoveryState{lastAttempt: time.Now(), attempts: ra.attempts + 1})
+			p.recordRecoveryFailure(id, ra.attempts)
 		}
 	}
 }

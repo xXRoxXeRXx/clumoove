@@ -74,6 +74,11 @@ type Processor struct {
 	// instead of probing a server that is still down on every 60s tick. Keyed by
 	// migration id.
 	recoveryAttempts sync.Map
+	// recoveryCursorMu guards the round-robin cursors used to spread bounded
+	// connection-recovery probes across paused migrations and sync jobs.
+	recoveryCursorMu        sync.Mutex
+	migrationRecoveryCursor string
+	syncRecoveryCursor      string
 	// connLossTaskAttempts tracks, per task, how many consecutive connection-loss
 	// failures it has seen. This lets the per-task connection-loss cap
 	// (maxConnLossTaskAttempts) count only network errors, not unrelated failures,

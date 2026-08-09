@@ -158,7 +158,10 @@ Redis is used for:
    `RunOrphanedRunningTasksRecovery`, `RunNotifier`.
    On recovered sync connectivity, the worker atomically moves the job from
    `PAUSED_CONNECTION_LOSS` to `IDLE` and sets its active schedule's `next_run_at` to `NOW()`;
-   it never starts a sync-pass coordinator itself.
+   it never starts a sync-pass coordinator itself. Connection recovery runs every 60 seconds and probes
+   at most 10 paused migrations and 10 paused sync jobs per tick. Independent round-robin cursors
+   distribute probes across each population, and any failed decrypt, provider creation, or connection
+   check enters increasing recovery backoff.
 3. Subscribes to cancel & bandwidth events (cancel invokes `activeTaskInfo.cancel()`; bandwidth updates
    the per-migration or per-sync-job throttler).
 4. Spawns `maxThreads` worker goroutines (default 16, overridden by `MAX_THREADS`) that loop over
