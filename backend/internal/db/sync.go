@@ -859,21 +859,6 @@ func DeleteSyncJobCascade(db *sql.DB, syncJobID string) error {
 	return err
 }
 
-// CancelRemainingPendingSyncTasks marks all pending sync tasks as CANCELLED
-func CancelRemainingPendingSyncTasks(dbsql *sql.DB, syncJobID string) (int, error) {
-	query := `
-		UPDATE tasks
-		SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP
-		WHERE sync_job_id = $1 AND status = 'PENDING'
-	`
-	res, err := dbsql.Exec(query, syncJobID)
-	if err != nil {
-		return 0, err
-	}
-	rows, err := res.RowsAffected()
-	return int(rows), err
-}
-
 func CancelRemainingPendingSyncTasksForGeneration(dbsql *sql.DB, syncJobID string, generation int) (int, error) {
 	res, err := dbsql.Exec(`UPDATE tasks SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'PENDING'`, syncJobID, generation)
 	if err != nil {
@@ -912,10 +897,10 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 			COUNT(*) FILTER (WHERE status = 'CANCELLED') as cancelled,
 			COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL)) as open
 		FROM tasks
-		WHERE sync_job_id = $1
+		WHERE sync_job_id = $1 AND pass_generation = $2
 	`
 	var completed, skipped, failed, cancelled, open int
-	err := dbsql.QueryRow(query, syncJobID).Scan(&completed, &skipped, &failed, &cancelled, &open)
+	err := dbsql.QueryRow(query, syncJobID, generation).Scan(&completed, &skipped, &failed, &cancelled, &open)
 	if err != nil {
 		return err
 	}
@@ -980,16 +965,16 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 	return nil
 }
 
-// GetFailedSyncTasksForReport retrieves failed sync tasks for a CSV report
-func GetFailedSyncTasksForReport(db *sql.DB, syncJobID string) ([]Task, error) {
+// GetFailedSyncTasksForReport retrieves failed tasks for one sync pass.
+func GetFailedSyncTasksForReport(db *sql.DB, syncJobID string, generation int) ([]Task, error) {
 	query := `
 		SELECT id, sync_job_id, file_path, file_size, source_hash, worker_hash, target_hash,
 		       status, error_message, attempts, next_retry_at, created_at, updated_at, resource_type, metadata
 		FROM tasks
-		WHERE sync_job_id = $1 AND status = 'FAILED'
+		WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'FAILED'
 		ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query, syncJobID)
+	rows, err := db.Query(query, syncJobID, generation)
 	if err != nil {
 		return nil, err
 	}

@@ -279,17 +279,6 @@ func MarkAllMigrationTasksVerified(db *sql.DB, ctx context.Context, migrationID 
 	return err
 }
 
-func MarkAllSyncTasksVerified(db *sql.DB, ctx context.Context, syncJobID string) error {
-	query := `
-		UPDATE tasks AS t
-		SET checksum_verified = TRUE, updated_at = CURRENT_TIMESTAMP
-		WHERE t.sync_job_id = $1 AND t.checksum_verified = FALSE
-		  AND EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status = 'VERIFYING')
-	`
-	_, err := db.ExecContext(ctx, query, syncJobID)
-	return err
-}
-
 func UpdateTaskFilePath(db *sql.DB, taskID, newFilePath string) error {
 	query := `UPDATE tasks SET file_path = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	_, err := db.Exec(query, newFilePath, taskID)

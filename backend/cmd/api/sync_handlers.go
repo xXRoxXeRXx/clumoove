@@ -551,7 +551,13 @@ func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	failedTasks, err := db.GetFailedSyncTasksForReport(s.db, id)
+	job, err := db.GetSyncJob(s.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return
+	}
+
+	failedTasks, err := db.GetFailedSyncTasksForReport(s.db, id, job.RunGeneration)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

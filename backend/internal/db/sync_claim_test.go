@@ -79,8 +79,92 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 		database.Close()
 		t.Fatalf("create temp sync_state: %v", err)
 	}
+	if _, err := database.Exec(`
+		CREATE TEMP TABLE tasks (
+			id TEXT PRIMARY KEY,
+			sync_job_id TEXT NOT NULL,
+			pass_generation INTEGER NOT NULL,
+			file_path TEXT NOT NULL,
+			file_size BIGINT NOT NULL DEFAULT 0,
+			source_hash TEXT,
+			worker_hash TEXT,
+			target_hash TEXT,
+			status TEXT NOT NULL,
+			error_message TEXT,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			next_retry_at TIMESTAMP WITH TIME ZONE,
+			checksum_verified BOOLEAN NOT NULL DEFAULT FALSE,
+			resource_type TEXT NOT NULL DEFAULT 'files',
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		database.Close()
+		t.Fatalf("create temp tasks: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestSyncPassGenerationFencesVerificationReconciliationAndReporting(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "generation-fence", "VERIFYING")
+	if _, err := database.Exec(`UPDATE sync_jobs SET run_generation = 2, verification_generation = 7, verification_lease_until = NOW() + INTERVAL '1 minute' WHERE id = 'generation-fence'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Generation 1 intentionally contains an unverified completion and a
+	// failure on the same path that generation 2 successfully completes.
+	if _, err := database.Exec(`
+		INSERT INTO tasks (id, sync_job_id, pass_generation, file_path, status, checksum_verified, error_message) VALUES
+			('old-unverified', 'generation-fence', 1, '/same-path', 'COMPLETED', FALSE, NULL),
+			('old-failed', 'generation-fence', 1, '/old-path', 'FAILED', FALSE, 'old failure'),
+			('current-completed', 'generation-fence', 2, '/same-path', 'COMPLETED', FALSE, NULL),
+			('current-failed', 'generation-fence', 2, '/current-path', 'FAILED', FALSE, 'current failure')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	verified, err := MarkSyncTaskChecksumVerifiedWhileVerifying(database, context.Background(), "current-completed", "", 2, 7)
+	if err != nil || !verified {
+		t.Fatalf("mark current task verified = %v, %v; want true, nil", verified, err)
+	}
+	var historicalVerified, currentVerified bool
+	if err := database.QueryRow(`SELECT checksum_verified FROM tasks WHERE id = 'old-unverified'`).Scan(&historicalVerified); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRow(`SELECT checksum_verified FROM tasks WHERE id = 'current-completed'`).Scan(&currentVerified); err != nil {
+		t.Fatal(err)
+	}
+	if historicalVerified || !currentVerified {
+		t.Fatalf("verification fence = historical %v, current %v; want false, true", historicalVerified, currentVerified)
+	}
+
+	unverified, err := GetUnverifiedCompletedSyncTasks(database, context.Background(), "generation-fence", 2)
+	if err != nil || len(unverified) != 0 {
+		t.Fatalf("current unverified tasks = %d, %v; want 0, nil", len(unverified), err)
+	}
+
+	if _, err := database.Exec(`UPDATE sync_jobs SET status = 'RUNNING' WHERE id = 'generation-fence'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileSyncJobProgress(database, "generation-fence", 2); err != nil {
+		t.Fatalf("reconcile current pass: %v", err)
+	}
+	var status, result string
+	var total, processed, failed int
+	if err := database.QueryRow(`SELECT status, last_run_status, total_files, processed_files, failed_files FROM sync_jobs WHERE id = 'generation-fence'`).Scan(&status, &result, &total, &processed, &failed); err != nil {
+		t.Fatal(err)
+	}
+	if status != "IDLE" || result != "PARTIAL" || total != 0 || processed != 1 || failed != 1 {
+		t.Fatalf("reconciled current pass = status=%s result=%s total=%d processed=%d failed=%d; want IDLE/PARTIAL/0/1/1", status, result, total, processed, failed)
+	}
+
+	reportTasks, err := GetFailedSyncTasksForReport(database, "generation-fence", 2)
+	if err != nil || len(reportTasks) != 1 || reportTasks[0].ID != "current-failed" {
+		t.Fatalf("current pass report = %#v, %v; want only current-failed", reportTasks, err)
+	}
 }
 
 func TestFinalizeSyncJobPassWithStatesRollsBackLifecycleOnStateFailure(t *testing.T) {
