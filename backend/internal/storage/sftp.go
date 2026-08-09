@@ -38,6 +38,14 @@ const sftpConnectTimeout = 15 * time.Second
 
 var _ StorageProvider = (*SFTPProvider)(nil)
 
+func sftpHandshakeDeadline(ctx context.Context, now time.Time) time.Time {
+	deadline := now.Add(sftpConnectTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
+}
+
 func NewSFTPProvider(rawURL, username, password string) (*SFTPProvider, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -227,6 +235,15 @@ func (p *SFTPProvider) ensureConnected(ctx context.Context) error {
 		}
 		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
 	}
+	// ssh.NewClientConn does not apply ClientConfig.Timeout when it receives an
+	// already-dialed socket. Keep the socket deadline in place through both the
+	// SSH handshake and SFTP subsystem startup, then clear it only for a fully
+	// established session. The cancellation watcher below also closes the socket
+	// for contexts cancelled before their deadline.
+	if err := conn.SetDeadline(sftpHandshakeDeadline(dialCtx, time.Now())); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("failed to set SFTP connection deadline: %w", err)
+	}
 	// ssh.Client is not available until NewClientConn succeeds, so close the
 	// raw connection during both the handshake and SFTP subsystem startup.
 	stopped := make(chan struct{})
@@ -262,6 +279,11 @@ func (p *SFTPProvider) ensureConnected(ctx context.Context) error {
 		_ = sftpClient.Close()
 		_ = sshClient.Close()
 		return dialCtx.Err()
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = sftpClient.Close()
+		_ = sshClient.Close()
+		return fmt.Errorf("failed to clear SFTP connection deadline: %w", err)
 	}
 
 	p.sshClient = sshClient

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/url"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -204,5 +205,33 @@ func TestSFTPConnectReturnsCancelledContext(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Connect() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestSFTPHandshakeDeadlineUsesSoonerContextDeadline(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(time.Second))
+	defer cancel()
+
+	if got, want := sftpHandshakeDeadline(ctx, now), now.Add(time.Second); !got.Equal(want) {
+		t.Fatalf("sftpHandshakeDeadline() = %v, want %v", got, want)
+	}
+}
+
+func TestSFTPHandshakeDeadlineCapsConnectionSetup(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithDeadline(context.Background(), now.Add(2*sftpConnectTimeout))
+	defer cancel()
+
+	if got, want := sftpHandshakeDeadline(ctx, now), now.Add(sftpConnectTimeout); !got.Equal(want) {
+		t.Fatalf("sftpHandshakeDeadline() = %v, want %v", got, want)
+	}
+}
+
+func TestSFTPHandshakeDeadlineUsesConnectionTimeoutWithoutContextDeadline(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+
+	if got, want := sftpHandshakeDeadline(context.Background(), now), now.Add(sftpConnectTimeout); !got.Equal(want) {
+		t.Fatalf("sftpHandshakeDeadline() = %v, want %v", got, want)
 	}
 }

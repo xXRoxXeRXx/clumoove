@@ -145,7 +145,9 @@ fingerprint are rejected before authentication, preventing a network attacker
 from impersonating the SFTP server or receiving password authentication
 credentials.
 
-SFTP connection setup derives its 15-second maximum from the caller's context.
+SFTP connection setup derives its 15-second maximum from the caller's context
+and sets that bound as a socket deadline for both the SSH handshake and SFTP
+subsystem startup; the deadline is cleared only after the session is ready.
 Because `pkg/sftp` has no context-aware request API, every session operation
 watches that context and closes the underlying SSH client on cancellation or a
 deadline. Operations are serialized while a download stream is open, so a
