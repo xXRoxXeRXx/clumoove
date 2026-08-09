@@ -64,6 +64,8 @@ type seafileDirItem struct {
 	Mtime int64  `json:"mtime"`
 }
 
+const seafileResumableChunkSize int64 = 64 * 1024 * 1024
+
 // NewSeafileProvider creates a new Seafile storage provider instance.
 func NewSeafileProvider(urlStr, username, password string) (*SeafileProvider, error) {
 	urlStr = strings.TrimRight(urlStr, "/")
@@ -702,11 +704,142 @@ func (p *SeafileProvider) StreamUpload(ctx context.Context, resourceType, filePa
 }
 
 func (p *SeafileProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
-	pr := &ProgressReader{
-		Reader:       stream,
-		ProgressChan: progressChan,
+	if resourceType != "files" {
+		return ErrUnsupportedResourceType
 	}
-	return p.StreamUpload(ctx, resourceType, filePath, pr, size)
+
+	repoID, repoPath, _, err := p.resolveRepoAndPath(ctx, filePath)
+	if err != nil {
+		return err
+	}
+	parentDir := path.Dir(repoPath)
+	if parentDir == "." || parentDir == "" {
+		parentDir = "/"
+	}
+	fileName := path.Base(repoPath)
+
+	// Seafile's resumable-upload support is optional. Probe it before consuming
+	// the source stream so older servers retain the ordinary upload path.
+	statusURL := fmt.Sprintf("%s/api/v2.1/repos/%s/file-uploaded-bytes/?parent_dir=%s&file_name=%s", p.BaseURL, repoID, url.QueryEscape(parentDir), url.QueryEscape(fileName))
+	statusReq, err := p.newAuthRequest(ctx, http.MethodGet, statusURL, nil)
+	if err != nil {
+		return err
+	}
+	statusResp, err := p.HTTPClient.Do(statusReq)
+	if err != nil {
+		return fmt.Errorf("failed to check seafile resumable upload support: %w", err)
+	}
+	var uploaded struct {
+		UploadedBytes int64 `json:"uploadedBytes"`
+	}
+	supportsResumable := statusResp.StatusCode == http.StatusOK && strings.EqualFold(statusResp.Header.Get("Accept-Ranges"), "bytes")
+	if supportsResumable {
+		err = json.NewDecoder(statusResp.Body).Decode(&uploaded)
+	}
+	statusResp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("failed to decode seafile uploaded bytes: %w", err)
+	}
+	if !supportsResumable {
+		return p.StreamUpload(ctx, resourceType, filePath, &ProgressReader{Reader: stream, ProgressChan: progressChan}, size)
+	}
+	if uploaded.UploadedBytes < 0 || uploaded.UploadedBytes > size {
+		return fmt.Errorf("seafile returned invalid resumable upload offset")
+	}
+	if uploaded.UploadedBytes > 0 {
+		if _, err := io.CopyN(io.Discard, stream, uploaded.UploadedBytes); err != nil {
+			return fmt.Errorf("failed to advance source stream for seafile resumable upload: %w", err)
+		}
+	}
+
+	linkURL := fmt.Sprintf("%s/api2/repos/%s/upload-link/?p=%s", p.BaseURL, repoID, url.QueryEscape(parentDir))
+	linkReq, err := p.newAuthRequest(ctx, http.MethodGet, linkURL, nil)
+	if err != nil {
+		return err
+	}
+	linkResp, err := p.HTTPClient.Do(linkReq)
+	if err != nil {
+		return fmt.Errorf("failed to get seafile upload link: %w", err)
+	}
+	if linkResp.StatusCode == http.StatusUnauthorized || linkResp.StatusCode == http.StatusForbidden {
+		linkResp.Body.Close()
+		p.invalidateToken()
+		return ErrAuth
+	}
+	if linkResp.StatusCode != http.StatusOK {
+		linkResp.Body.Close()
+		return fmt.Errorf("seafile get upload link status %d", linkResp.StatusCode)
+	}
+	linkBytes, err := io.ReadAll(linkResp.Body)
+	linkResp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("failed to read upload link: %w", err)
+	}
+	uploadURL := strings.Trim(string(linkBytes), `"`)
+	if err := validateEgressURL(uploadURL); err != nil {
+		return fmt.Errorf("seafile upload URL failed egress check: %w", err)
+	}
+
+	for offset := uploaded.UploadedBytes; offset < size; {
+		chunkSize := min(seafileResumableChunkSize, size-offset)
+		if err := p.uploadResumableChunk(ctx, uploadURL, parentDir, fileName, stream, offset, chunkSize, size, progressChan); err != nil {
+			return err
+		}
+		offset += chunkSize
+	}
+	return nil
+}
+
+func (p *SeafileProvider) uploadResumableChunk(ctx context.Context, uploadURL, parentDir, fileName string, stream io.Reader, offset, chunkSize, totalSize int64, progressChan chan<- int64) error {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	go func() {
+		var writeErr error
+		defer func() {
+			_ = writer.Close()
+			_ = pw.CloseWithError(writeErr)
+		}()
+		if err := writer.WriteField("parent_dir", parentDir); err != nil {
+			writeErr = err
+			return
+		}
+		if err := writer.WriteField("replace", "1"); err != nil {
+			writeErr = err
+			return
+		}
+		part, err := writer.CreateFormFile("file", fileName)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		_, writeErr = io.Copy(part, &ProgressReader{Reader: io.LimitReader(stream, chunkSize), ProgressChan: progressChan})
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, pr)
+	if err != nil {
+		_ = pr.Close()
+		return fmt.Errorf("failed to create seafile resumable upload request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, totalSize))
+	req.Header.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+	if token, _ := p.getToken(ctx); token != "" {
+		req.Header.Set("Authorization", "Token "+token)
+	}
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		_ = pr.Close()
+		return fmt.Errorf("failed to execute seafile resumable upload: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		p.invalidateToken()
+		return ErrAuth
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("seafile resumable upload failed with status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (p *SeafileProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
@@ -857,6 +990,7 @@ func (p *SeafileProvider) CreateDirectory(ctx context.Context, resourceType, dir
 	reqURL := fmt.Sprintf("%s/api2/repos/%s/dir/?p=%s", p.BaseURL, repoID, url.QueryEscape(repoPath))
 	form := url.Values{}
 	form.Set("operation", "mkdir")
+	form.Set("create_parents", "true")
 
 	req, err := p.newAuthRequest(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
 	if err != nil {
