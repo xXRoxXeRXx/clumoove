@@ -473,6 +473,10 @@ type LoginRequest struct {
 
 func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.rateLimiter.Allow(r.Context(), "login", s.clientIP(r), loginRateLimit, loginRateWindow) {
+		// Retry-After describes the IP-wide limiter only. Do not emit it for an
+		// account lockout, since that would reveal account state to unauthenticated
+		// callers.
+		w.Header().Set("Retry-After", strconv.Itoa(int(loginRateWindow.Seconds())))
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -508,11 +512,6 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u.LoginLockedUntil.Valid && time.Now().Before(u.LoginLockedUntil.Time) {
-		retryAfter := int(time.Until(u.LoginLockedUntil.Time).Seconds())
-		if retryAfter < 1 {
-			retryAfter = 1
-		}
-		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
@@ -526,7 +525,6 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if locked {
 			log.Printf("Security: account %s locked for %v after reaching %d failed login attempts (source IP %s)",
 				u.ID, loginLockDuration, loginMaxAttempts, s.clientIP(r))
-			w.Header().Set("Retry-After", strconv.Itoa(int(loginLockDuration.Seconds())))
 			writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 			return
 		}
