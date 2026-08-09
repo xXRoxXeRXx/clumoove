@@ -29,10 +29,12 @@ type SFTPProvider struct {
 	PrivateKey  string
 	hostKeyHash [sha256.Size]byte
 
-	mu         sync.Mutex
-	sshClient  *ssh.Client
-	sftpClient *sftp.Client
+	operationGate chan struct{}
+	sshClient     *ssh.Client
+	sftpClient    *sftp.Client
 }
+
+const sftpConnectTimeout = 15 * time.Second
 
 var _ StorageProvider = (*SFTPProvider)(nil)
 
@@ -69,12 +71,13 @@ func NewSFTPProvider(rawURL, username, password string) (*SFTPProvider, error) {
 	}
 
 	return &SFTPProvider{
-		Host:        host,
-		Port:        port,
-		Username:    username,
-		Password:    password,
-		PrivateKey:  privateKey,
-		hostKeyHash: hostKeyHash,
+		Host:          host,
+		Port:          port,
+		Username:      username,
+		Password:      password,
+		PrivateKey:    privateKey,
+		hostKeyHash:   hostKeyHash,
+		operationGate: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -137,12 +140,51 @@ func (p *SFTPProvider) handleError(err error) error {
 	return err
 }
 
+// lock serializes access to the SSH/SFTP session while still allowing a caller
+// waiting for an in-flight transfer to abandon its request.
+func (p *SFTPProvider) lock(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case p.operationGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *SFTPProvider) unlock() { <-p.operationGate }
+
+// closeWhenDone closes only the captured SSH client when the operation context
+// expires. It never accesses provider state. pkg/sftp has no context-aware
+// operations; closing the underlying SSH client is the supported way to
+// unblock its pending requests.
+func closeWhenDone(ctx context.Context, sshClient *ssh.Client) func() {
+	if ctx == nil || ctx.Done() == nil {
+		return func() {}
+	}
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			if sshClient != nil {
+				_ = sshClient.Close()
+			}
+		case <-stopped:
+		}
+	}()
+	return func() { close(stopped) }
+}
+
 // ensureConnected establishes the SSH and SFTP connections if not already connected.
-// Note: pkg/sftp does not support context propagation on individual operations
-// (no WithContext equivalent). The SSH dial uses a fixed 15s timeout.
-func (p *SFTPProvider) ensureConnected() error {
+// It must be called with operationGate held.
+func (p *SFTPProvider) ensureConnected(ctx context.Context) error {
 	if p.sftpClient != nil {
 		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	var authMethods []ssh.AuthMethod
@@ -164,7 +206,7 @@ func (p *SFTPProvider) ensureConnected() error {
 		User:            p.Username,
 		Auth:            authMethods,
 		HostKeyCallback: p.verifyHostKey,
-		Timeout:         15 * time.Second,
+		Timeout:         sftpConnectTimeout,
 	}
 
 	// Pin egress to a re-validated IP on every connection so a DNS rebind
@@ -176,23 +218,50 @@ func (p *SFTPProvider) ensureConnected() error {
 	// this x/crypto version, so we dial the connection ourselves via
 	// egressDialer and hand it to NewClientConn.
 	addr := net.JoinHostPort(p.Host, p.Port)
-	dialCtx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+	dialCtx, cancel := context.WithTimeout(ctx, config.Timeout)
 	defer cancel()
 	conn, err := egressDialer(p.Host)(dialCtx, "tcp", addr)
 	if err != nil {
+		if dialCtx.Err() != nil {
+			return dialCtx.Err()
+		}
 		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
 	}
+	// ssh.Client is not available until NewClientConn succeeds, so close the
+	// raw connection during both the handshake and SFTP subsystem startup.
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-dialCtx.Done():
+			_ = conn.Close()
+		case <-stopped:
+		}
+	}()
+	stopConnectionClose := func() { close(stopped) }
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
-		conn.Close()
+		stopConnectionClose()
+		_ = conn.Close()
+		if dialCtx.Err() != nil {
+			return dialCtx.Err()
+		}
 		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
 	}
 	sshClient := ssh.NewClient(sshConn, chans, reqs)
 
 	sftpClient, err := sftp.NewClient(sshClient)
+	stopConnectionClose()
 	if err != nil {
-		sshClient.Close()
+		_ = sshClient.Close()
+		if dialCtx.Err() != nil {
+			return dialCtx.Err()
+		}
 		return fmt.Errorf("failed to create SFTP client: %w", err)
+	}
+	if dialCtx.Err() != nil {
+		_ = sftpClient.Close()
+		_ = sshClient.Close()
+		return dialCtx.Err()
 	}
 
 	p.sshClient = sshClient
@@ -201,6 +270,10 @@ func (p *SFTPProvider) ensureConnected() error {
 }
 
 func (p *SFTPProvider) cleanup() {
+	// cleanup runs with operationGate held. A context watcher can concurrently
+	// close only its captured sshClient; ssh.Client.Close is idempotent, and the
+	// watcher never reads or mutates these provider fields. Keep that ownership
+	// split if this teardown path changes.
 	if p.sftpClient != nil {
 		_ = p.sftpClient.Close()
 		p.sftpClient = nil
@@ -212,34 +285,49 @@ func (p *SFTPProvider) cleanup() {
 }
 
 func (p *SFTPProvider) Close() error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	if err := p.lock(context.Background()); err != nil {
+		return err
+	}
+	defer p.unlock()
 	p.cleanup()
 	return nil
 }
 
-func (p *SFTPProvider) Connect(ctx context.Context) (bool, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// operation runs a non-streaming SFTP request with exclusive session access.
+// The cancellation watcher closes the SSH client to interrupt pkg/sftp calls.
+func (p *SFTPProvider) operation(ctx context.Context, fn func() error) error {
+	if err := p.lock(ctx); err != nil {
+		return err
+	}
+	defer p.unlock()
+	if err := p.ensureConnected(ctx); err != nil {
+		return p.handleError(err)
+	}
+	stop := closeWhenDone(ctx, p.sshClient)
+	err := fn()
+	stop()
+	if ctx != nil && ctx.Err() != nil {
+		p.cleanup()
+		return ctx.Err()
+	}
+	return p.handleError(err)
+}
 
-	if err := p.ensureConnected(); err != nil {
+func (p *SFTPProvider) Connect(ctx context.Context) (bool, error) {
+	err := p.operation(ctx, func() error {
+		_, err := p.sftpClient.ReadDir(".")
+		return err
+	})
+	if err != nil {
 		if isSFTPAuthError(err) {
 			return false, fmt.Errorf("sftp connect: %w", ErrAuth)
+		}
+		if ctx != nil && ctx.Err() != nil {
+			return false, ctx.Err()
 		}
 		log.Printf("sftp connect failed: %v", err)
 		return false, fmt.Errorf("sftp connect: connection failed")
 	}
-
-	_, err := p.sftpClient.ReadDir(".")
-	if err != nil {
-		p.cleanup()
-		if isSFTPAuthError(err) {
-			return false, fmt.Errorf("sftp connect: %w", ErrAuth)
-		}
-		log.Printf("sftp read root failed: %v", err)
-		return false, fmt.Errorf("sftp connect: failed to list root directory")
-	}
-
 	return true, nil
 }
 
@@ -248,17 +336,18 @@ func (p *SFTPProvider) GetDirectoryListing(ctx context.Context, resourceType, di
 		return nil, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return nil, p.handleError(err)
-	}
-
 	cleanDirPath := p.cleanPath(dirPath)
-
-	infos, err := p.sftpClient.ReadDir(cleanDirPath)
+	var infos []os.FileInfo
+	err := p.operation(ctx, func() error {
+		var err error
+		infos, err = p.sftpClient.ReadDir(cleanDirPath)
+		return err
+	})
 	if err != nil {
-		return nil, p.handleError(fmt.Errorf("sftp list directory failed: %w", err))
+		if ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, fmt.Errorf("sftp list directory failed: %w", err)
 	}
 
 	var resources []CloudResource
@@ -288,20 +377,21 @@ func (p *SFTPProvider) InspectResource(ctx context.Context, resourceType, filePa
 		return CloudResource{}, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return CloudResource{}, p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-
-	info, err := p.sftpClient.Stat(cleanPath)
+	var info os.FileInfo
+	err := p.operation(ctx, func() error {
+		var err error
+		info, err = p.sftpClient.Stat(cleanPath)
+		return err
+	})
 	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return CloudResource{}, ctx.Err()
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return CloudResource{}, fmt.Errorf("sftp inspect: %w", ErrNotFound)
 		}
-		return CloudResource{}, p.handleError(fmt.Errorf("sftp inspect resource failed: %w", err))
+		return CloudResource{}, fmt.Errorf("sftp inspect resource failed: %w", err)
 	}
 
 	return CloudResource{
@@ -313,25 +403,70 @@ func (p *SFTPProvider) InspectResource(ctx context.Context, resourceType, filePa
 	}, nil
 }
 
+type sftpDownload struct {
+	file     *sftp.File
+	provider *SFTPProvider
+	ctx      context.Context
+	stop     func()
+	once     sync.Once
+	err      error
+}
+
+func (r *sftpDownload) Read(buf []byte) (int, error) {
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return 0, r.ctx.Err()
+	}
+	n, err := r.file.Read(buf)
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return n, r.ctx.Err()
+	}
+	return n, err
+}
+
+func (r *sftpDownload) Close() error {
+	r.once.Do(func() {
+		r.stop()
+		r.err = r.file.Close()
+		if (r.ctx != nil && r.ctx.Err() != nil) || r.err != nil {
+			r.provider.cleanup()
+		}
+		r.provider.unlock()
+	})
+	return r.err
+}
+
 func (p *SFTPProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return nil, p.handleError(err)
+	if err := p.lock(ctx); err != nil {
+		return nil, err
 	}
-
+	if err := p.ensureConnected(ctx); err != nil {
+		err = p.handleError(err)
+		p.unlock()
+		return nil, err
+	}
 	cleanPath := p.cleanPath(filePath)
-
+	stop := closeWhenDone(ctx, p.sshClient)
 	file, err := p.sftpClient.Open(cleanPath)
 	if err != nil {
-		return nil, p.handleError(fmt.Errorf("sftp open file failed: %w", err))
+		stop()
+		err = p.handleError(fmt.Errorf("sftp open file failed: %w", err))
+		p.unlock()
+		return nil, err
 	}
-
-	return file, nil
+	if ctx != nil && ctx.Err() != nil {
+		stop()
+		_ = file.Close()
+		p.cleanup()
+		p.unlock()
+		return nil, ctx.Err()
+	}
+	// Keep session access exclusively owned until the stream is closed. This
+	// prevents a cancelled stream from closing a session another operation uses.
+	return &sftpDownload{file: file, provider: p, ctx: ctx, stop: stop}, nil
 }
 
 func (p *SFTPProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
@@ -343,25 +478,34 @@ func (p *SFTPProvider) StreamUpload(ctx context.Context, resourceType, filePath 
 		return fmt.Errorf("failed to create parent directories: %w", err)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
+	return p.operation(ctx, func() error {
+		file, err := p.sftpClient.Create(cleanPath)
+		if err != nil {
+			return fmt.Errorf("sftp create file failed: %w", err)
+		}
+		defer file.Close()
+		if _, err := io.Copy(file, &sftpContextReader{ctx: ctx, reader: stream}); err != nil {
+			return fmt.Errorf("sftp write file failed: %w", err)
+		}
+		return nil
+	})
+}
 
-	file, err := p.sftpClient.Create(cleanPath)
-	if err != nil {
-		return p.handleError(fmt.Errorf("sftp create file failed: %w", err))
+type sftpContextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *sftpContextReader) Read(p []byte) (int, error) {
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return 0, r.ctx.Err()
 	}
-	defer file.Close()
-
-	if _, err := io.Copy(file, stream); err != nil {
-		return p.handleError(fmt.Errorf("sftp write file failed: %w", err))
+	n, err := r.reader.Read(p)
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return n, r.ctx.Err()
 	}
-
-	return nil
+	return n, err
 }
 
 func (p *SFTPProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
@@ -377,20 +521,21 @@ func (p *SFTPProvider) FileExists(ctx context.Context, resourceType, filePath st
 		return false, 0, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return false, 0, p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-
-	info, err := p.sftpClient.Stat(cleanPath)
+	var info os.FileInfo
+	err := p.operation(ctx, func() error {
+		var err error
+		info, err = p.sftpClient.Stat(cleanPath)
+		return err
+	})
 	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return false, 0, ctx.Err()
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return false, 0, nil
 		}
-		return false, 0, p.handleError(fmt.Errorf("sftp stat failed: %w", err))
+		return false, 0, fmt.Errorf("sftp stat failed: %w", err)
 	}
 
 	return true, info.Size(), nil
@@ -401,20 +546,16 @@ func (p *SFTPProvider) DeleteFile(ctx context.Context, resourceType, filePath st
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-
-	err := p.sftpClient.Remove(cleanPath)
+	err := p.operation(ctx, func() error { return p.sftpClient.Remove(cleanPath) })
 	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return p.handleError(fmt.Errorf("sftp remove failed: %w", err))
+		return fmt.Errorf("sftp remove failed: %w", err)
 	}
 
 	return nil
@@ -425,18 +566,14 @@ func (p *SFTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return p.handleError(err)
-	}
-
 	cleanOld := p.cleanPath(oldPath)
 	cleanNew := p.cleanPath(newPath)
-
-	err := p.sftpClient.Rename(cleanOld, cleanNew)
+	err := p.operation(ctx, func() error { return p.sftpClient.Rename(cleanOld, cleanNew) })
 	if err != nil {
-		return p.handleError(fmt.Errorf("sftp rename failed: %w", err))
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("sftp rename failed: %w", err)
 	}
 
 	return nil
@@ -452,6 +589,9 @@ func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath s
 	if resourceType != "files" {
 		return "", fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return "", ctx.Err()
+	}
 	return "", fmt.Errorf("checksum not available")
 }
 
@@ -460,6 +600,9 @@ func (p *SFTPProvider) CreateParentDirectories(ctx context.Context, resourceType
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
 
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	dir := path.Dir(filePath)
 	if dir == "." || dir == "/" || dir == "" {
 		return nil
@@ -474,6 +617,9 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
 
 	cleanDirPath := p.cleanPath(dirPath)
 	if cleanDirPath == "." || cleanDirPath == "/" {
@@ -484,16 +630,12 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 	if globalSFTPCreatedDirs.Contains(globalDirKey) {
 		return nil
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return p.handleError(err)
-	}
-
-	err := p.sftpClient.MkdirAll(cleanDirPath)
+	err := p.operation(ctx, func() error { return p.sftpClient.MkdirAll(cleanDirPath) })
 	if err != nil {
-		return p.handleError(fmt.Errorf("sftp mkdirall failed: %w", err))
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("sftp mkdirall failed: %w", err)
 	}
 
 	globalSFTPCreatedDirs.Add(globalDirKey)
@@ -504,14 +646,14 @@ func (p *SFTPProvider) ApplyMetadata(ctx context.Context, resourceType, filePath
 	if resourceType != "files" || meta.ModifiedTime.IsZero() {
 		return nil
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.ensureConnected(); err != nil {
-		return nil
-	}
-
 	cleanPath := p.cleanPath(filePath)
-	_ = p.sftpClient.Chtimes(cleanPath, time.Now(), meta.ModifiedTime)
+	if err := p.operation(ctx, func() error {
+		// Metadata propagation is intentionally best effort, but still needs to
+		// be interruptible so it cannot retain a worker after cancellation.
+		_ = p.sftpClient.Chtimes(cleanPath, time.Now(), meta.ModifiedTime)
+		return nil
+	}); err != nil && ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return nil
 }

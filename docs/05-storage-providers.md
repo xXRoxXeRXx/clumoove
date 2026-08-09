@@ -140,6 +140,13 @@ fingerprint are rejected before authentication, preventing a network attacker
 from impersonating the SFTP server or receiving password authentication
 credentials.
 
+SFTP connection setup derives its 15-second maximum from the caller's context.
+Because `pkg/sftp` has no context-aware request API, every session operation
+watches that context and closes the underlying SSH client on cancellation or a
+deadline. Operations are serialized while a download stream is open, so a
+cancelled stream cannot disrupt another operation; callers receive `ctx.Err()`
+and the next operation establishes a fresh session.
+
 ---
 
 ## 2.1. FTPS Provider (`ftp`)

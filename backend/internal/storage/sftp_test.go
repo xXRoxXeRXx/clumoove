@@ -172,3 +172,37 @@ func TestSFTPProviderNonFilesRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestSFTPProviderCancelledContextDoesNotWaitForSession(t *testing.T) {
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", "pass")
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+	if err := p.lock(context.Background()); err != nil {
+		t.Fatalf("failed to acquire session lock: %v", err)
+	}
+	defer p.unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := p.lock(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("lock() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestSFTPConnectReturnsCancelledContext(t *testing.T) {
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", "pass")
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ok, err := p.Connect(ctx)
+	if ok {
+		t.Fatal("Connect succeeded with a cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Connect() error = %v, want context.Canceled", err)
+	}
+}
