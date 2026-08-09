@@ -641,7 +641,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		if role == "target" {
 			code = ErrTargetUrlInvalid
 		}
-		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": code})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": string(code)})
 		return
 	}
 	defer client.Close()
