@@ -1403,28 +1403,15 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		log.Printf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n",
 			p.workerID, payload.TaskID, payload.MigrationID)
 		authErrMsg := "Authentication failed — please check your credentials and start a new migration"
-		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "FAILED", &authErrMsg)
-		// Drop any connection-loss / recovery tracking for this migration now that
-		// it is terminal, so the in-memory maps do not leak across migrations.
+		finalized, finalizeErr := db.FailMigrationForAuthentication(p.db, ctx, task, authErrMsg)
 		p.clearConnLoss(payload.MigrationID)
 		p.clearConnLossTask(payload.TaskID)
 		p.recoveryAttempts.Delete(payload.MigrationID)
-		// Mark this individual task failed too so progress counters stay accurate
-		task.Status = "FAILED"
-		task.NextRetryAt = sql.NullTime{}
-		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 0, 1, 0); err != nil {
+		if finalizeErr != nil || !finalized {
+			if finalizeErr != nil {
+				log.Printf("[Worker %s] atomically finalizing auth failure for migration %s: %v\n", p.workerID, payload.MigrationID, finalizeErr)
+			}
 			return
-		}
-		// Cancel any remaining PENDING tasks so they are not orphaned: the dequeue
-		// query only selects PENDING while RUNNING/INDEXING, so they would otherwise
-		// stay stuck forever (processed_files never reaches total_files, live stream
-		// never closes, CSV report incomplete). Count them as FAILED (not processed)
-		// so the report does not understate how many files were not migrated.
-		cancelled, cerr := db.CancelRemainingPendingTasks(p.db, task.MigrationID)
-		if cerr != nil {
-			log.Printf("[Worker %s] Error cancelling remaining pending tasks for migration %s: %v\n", p.workerID, task.MigrationID, cerr)
-		} else if cancelled > 0 {
-			_ = db.IncrementMigrationProgress(p.db, ctx, task.MigrationID, 0, 0, 0, cancelled)
 		}
 		if owner, oerr := db.GetMigrationOwnerID(p.db, payload.MigrationID); oerr == nil {
 			db.WriteAuditLog(p.db, db.AuditEntry{

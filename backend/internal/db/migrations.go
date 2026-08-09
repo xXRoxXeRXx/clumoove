@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 )
@@ -15,6 +14,15 @@ var (
 	ErrMigrationNotFailed         = errors.New("migration is not in a failed state")
 	ErrMigrationIndexingClaimLost = errors.New("migration indexing claim lost")
 )
+
+func isTerminalMigrationStatus(status string) bool {
+	switch status {
+	case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED":
+		return true
+	default:
+		return false
+	}
+}
 
 type ResourceStats struct {
 	Total     int `json:"total"`
@@ -325,29 +333,42 @@ func ListAllMigrations(database *sql.DB, p MigrationListParams) ([]AdminMigratio
 }
 
 func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string) error {
+	// Terminal status and its durable outbox record are intentionally atomic:
+	// callers retry the state transition on a database failure, while the repair
+	// sweep protects migrations created by older/interrupted code paths.
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
 	query := `
 		UPDATE migrations
 		SET notification_generation = CASE WHEN status IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED') AND $1 NOT IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED') THEN notification_generation + 1 ELSE notification_generation END,
 		    status = $1, error_message = $2, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3
 	`
-	_, err := db.Exec(query, status, errMsg, id)
+	_, err = tx.Exec(query, status, errMsg, id)
 	if err != nil {
 		return err
 	}
-	if status == "COMPLETED" || status == "COMPLETED_WITH_ERRORS" || status == "FAILED" {
-		if notifyErr := CreateMigrationNotificationEvent(db, id); notifyErr != nil {
-			log.Printf("notification event creation for migration %s failed: %v", id, notifyErr)
+	if isTerminalMigrationStatus(status) {
+		if err := createMigrationNotificationEventTx(tx, id); err != nil {
+			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // FailMigrationWhileIndexing records an indexing failure only if the indexer
 // still owns the migration lifecycle. It prevents a late provider error from
 // replacing a user's CANCELLED status.
 func FailMigrationWhileIndexing(db *sql.DB, id string, errMsg *string) (bool, error) {
-	result, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`
 		UPDATE migrations
 		SET status = 'FAILED', error_message = $1, updated_at = CURRENT_TIMESTAMP,
 		    notification_generation = notification_generation + 1
@@ -363,10 +384,10 @@ func FailMigrationWhileIndexing(db *sql.DB, id string, errMsg *string) (bool, er
 	if rowsAffected != 1 {
 		return false, nil
 	}
-	if err := CreateMigrationNotificationEvent(db, id); err != nil {
-		log.Printf("notification event creation for migration %s failed: %v", id, err)
+	if err := createMigrationNotificationEventTx(tx, id); err != nil {
+		return false, err
 	}
-	return true, nil
+	return true, tx.Commit()
 }
 
 // ClaimScheduledMigrationForIndexing atomically claims a scheduled migration for
@@ -483,7 +504,12 @@ func MaybeRetryFailedMigrationTasks(db *sql.DB, ctx context.Context, migrationID
 // TransitionMigrationIndexingToCompleted completes an empty migration without
 // allowing an indexer that lost its lifecycle claim to overwrite cancellation.
 func TransitionMigrationIndexingToCompleted(db *sql.DB, id string) error {
-	result, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`
 		UPDATE migrations
 		SET status = 'COMPLETED', updated_at = CURRENT_TIMESTAMP,
 		    notification_generation = notification_generation + 1
@@ -499,10 +525,10 @@ func TransitionMigrationIndexingToCompleted(db *sql.DB, id string) error {
 	if rowsAffected != 1 {
 		return ErrMigrationIndexingClaimLost
 	}
-	if err := CreateMigrationNotificationEvent(db, id); err != nil {
-		log.Printf("notification event creation for migration %s failed: %v", id, err)
+	if err := createMigrationNotificationEventTx(tx, id); err != nil {
+		return err
 	}
-	return nil
+	return tx.Commit()
 }
 
 // CreateMigrationTaskWhileIndexing creates a task only while the migration's
@@ -706,8 +732,15 @@ func reconcileMigrationProgress(dbsql *sql.DB, migrationID string, generation *i
 		    live_bytes      = t.done_bytes,
 		    skipped_files   = t.skip_files,
 			failed_files    = t.fail_files + t.cancelled_files,
+			notification_generation = CASE
+				WHEN m.status IN ('RUNNING', 'INDEXING', 'VERIFYING') AND t.active_files = 0 AND t.unverified_files = 0
+				THEN m.notification_generation + 1
+				ELSE m.notification_generation
+			END,
 		    status = CASE
-		        WHEN m.status IN ('CANCELLED', 'PAUSED', 'PAUSED_CONNECTION_LOSS') THEN m.status
+		        -- A scheduler can select RUNNING just before another transaction
+		        -- finalizes it. Terminal states must therefore be sticky here.
+		        WHEN m.status IN ('CANCELLED', 'PAUSED', 'PAUSED_CONNECTION_LOSS', 'COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED') THEN m.status
 		        WHEN t.active_files > 0 THEN 'RUNNING'
 		        WHEN t.unverified_files > 0 THEN 'VERIFYING'
 				WHEN (t.fail_files + t.cancelled_files + e.err_files) > 0 THEN 'COMPLETED_WITH_ERRORS'
@@ -718,7 +751,12 @@ func reconcileMigrationProgress(dbsql *sql.DB, migrationID string, generation *i
 		WHERE m.id = $1
 		  AND ($2::bigint IS NULL OR (m.status = 'VERIFYING' AND m.verification_generation = $2 AND m.verification_lease_until > NOW()))
 	`
-	res, err := dbsql.Exec(query, migrationID, verificationGeneration)
+	tx, err := dbsql.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(query, migrationID, verificationGeneration)
 	if err != nil {
 		return false, fmt.Errorf("ReconcileMigrationProgress exec failed for %s: %w", migrationID, err)
 	}
@@ -730,15 +768,15 @@ func reconcileMigrationProgress(dbsql *sql.DB, migrationID string, generation *i
 		return false, fmt.Errorf("ReconcileMigrationProgress: migration %s not found", migrationID)
 	}
 	var status string
-	if err := dbsql.QueryRow(`SELECT status FROM migrations WHERE id = $1`, migrationID).Scan(&status); err != nil {
+	if err := tx.QueryRow(`SELECT status FROM migrations WHERE id = $1`, migrationID).Scan(&status); err != nil {
 		return false, err
 	}
-	if status == "COMPLETED" || status == "COMPLETED_WITH_ERRORS" || status == "FAILED" {
-		if notifyErr := CreateMigrationNotificationEvent(dbsql, migrationID); notifyErr != nil {
-			log.Printf("notification event creation for reconciled migration %s failed: %v", migrationID, notifyErr)
+	if isTerminalMigrationStatus(status) {
+		if err := createMigrationNotificationEventTx(tx, migrationID); err != nil {
+			return false, err
 		}
 	}
-	return true, nil
+	return true, tx.Commit()
 }
 
 func CountActiveMigrationsForUser(db *sql.DB, userID string) (int, error) {

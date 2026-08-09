@@ -75,24 +75,33 @@ func CreateMigrationNotificationEvent(database *sql.DB, migrationID string) erro
 		return err
 	}
 	defer tx.Rollback()
+	if err := createMigrationNotificationEventTx(tx, migrationID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// createMigrationNotificationEventTx writes the immutable completion event
+// using the same transaction that finalized the migration.
+func createMigrationNotificationEventTx(tx *sql.Tx, migrationID string) error {
 	var userID, status string
 	var generation int
 	var total, processed, failed, skipped int
 	var bytes int64
 	var errMsg sql.NullString
-	err = tx.QueryRow(`SELECT user_id,status,notification_generation,total_files,processed_files,failed_files,skipped_files,processed_bytes,error_message FROM migrations WHERE id=$1 FOR UPDATE`, migrationID).Scan(&userID, &status, &generation, &total, &processed, &failed, &skipped, &bytes, &errMsg)
+	err := tx.QueryRow(`SELECT user_id,status,notification_generation,total_files,processed_files,failed_files,skipped_files,processed_bytes,error_message FROM migrations WHERE id=$1 FOR UPDATE`, migrationID).Scan(&userID, &status, &generation, &total, &processed, &failed, &skipped, &bytes, &errMsg)
 	if err != nil {
 		return err
 	}
-	if status != "COMPLETED" && status != "COMPLETED_WITH_ERRORS" && status != "FAILED" {
-		return tx.Commit()
+	if !isTerminalMigrationStatus(status) {
+		return nil
 	}
 	payload, _ := json.Marshal(map[string]any{"kind": "migration", "name": migrationID, "status": status, "total": total, "processed": processed, "failed": failed, "skipped": skipped, "bytes": bytes, "error_message": nullString(errMsg)})
 	var eventID string
 	err = tx.QueryRow(`INSERT INTO notification_events (user_id,kind,migration_id,run_generation,run_at,payload) VALUES ($1,'migration',$2,$3,CURRENT_TIMESTAMP,$4)
 		ON CONFLICT (migration_id,run_generation) WHERE migration_id IS NOT NULL DO NOTHING RETURNING id`, userID, migrationID, generation, payload).Scan(&eventID)
 	if err == sql.ErrNoRows {
-		return tx.Commit()
+		return nil
 	}
 	if err != nil {
 		return err
@@ -100,7 +109,37 @@ func CreateMigrationNotificationEvent(database *sql.DB, migrationID string) erro
 	if err = createNotificationDeliveries(tx, eventID, userID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
+}
+
+// RepairMissingMigrationNotificationEvents repairs legacy or interrupted
+// terminal transitions. Normal paths write state and the event together.
+func RepairMissingMigrationNotificationEvents(database *sql.DB, limit int) (int, error) {
+	rows, err := database.Query(`SELECT m.id FROM migrations m
+		WHERE m.status IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED')
+		  AND NOT EXISTS (SELECT 1 FROM notification_events e WHERE e.migration_id=m.id AND e.run_generation=m.notification_generation)
+		ORDER BY m.updated_at LIMIT $1`, limit)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if err := CreateMigrationNotificationEvent(database, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(ids), nil
 }
 
 // CreateSyncNotificationEvent creates one immutable event per completed pass.

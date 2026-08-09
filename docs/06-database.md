@@ -90,7 +90,9 @@ sync pass; migrations are unique by `(migration_id, run_generation)` and sync ru
 tracks `PENDING`, `RUNNING`, `SENT`, or `FAILED`, attempts, retry time, and a non-sensitive error
 code. This keeps channel changes from altering already-created events. At delivery time, the worker joins
 the event owner and uses `users.language`; message text comes from the generated backend catalog derived
-from `delivery.*` locale keys.
+from `delivery.*` locale keys. Migration terminal-state transitions write the final task-derived counters
+and their event/delivery rows in one transaction. A worker repair sweep also backfills any terminal
+migration whose current notification generation has no event, protecting historical or interrupted data.
 
 ### `tasks`
 | Column | Type | Notes |

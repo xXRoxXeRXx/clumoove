@@ -103,6 +103,9 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 func (p *Processor) RunProgressReconciler(ctx context.Context) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
+	repairTicker := time.NewTicker(5 * time.Minute)
+	defer repairTicker.Stop()
+	p.repairMissingMigrationNotifications()
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,7 +113,15 @@ func (p *Processor) RunProgressReconciler(ctx context.Context) {
 		case <-ticker.C:
 			p.reconcileActiveMigrations(ctx)
 			p.reconcileActiveSyncJobs(ctx)
+		case <-repairTicker.C:
+			p.repairMissingMigrationNotifications()
 		}
+	}
+}
+
+func (p *Processor) repairMissingMigrationNotifications() {
+	if _, err := db.RepairMissingMigrationNotificationEvents(p.db, 100); err != nil {
+		log.Printf("[NotificationRepair] migration outbox repair: %v\n", err)
 	}
 }
 

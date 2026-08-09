@@ -429,6 +429,56 @@ func CancelRemainingPendingTasks(dbsql *sql.DB, migrationID string) (int, error)
 	return int(n), err
 }
 
+// FailMigrationForAuthentication finalizes the claimed task, all outstanding
+// tasks, migration counters, terminal state, and outbox event in one commit.
+func FailMigrationForAuthentication(db *sql.DB, ctx context.Context, t *Task, errMsg string) (bool, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE tasks SET status='FAILED', next_retry_at=NULL, error_message=$1, updated_at=CURRENT_TIMESTAMP
+		WHERE id=$2 AND migration_id=$3 AND status='RUNNING' AND claim_epoch=$4`, errMsg, t.ID, t.MigrationID, t.ClaimEpoch)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n != 1 {
+		return false, nil
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE tasks SET status='CANCELLED', next_retry_at=NULL, updated_at=CURRENT_TIMESTAMP
+		WHERE migration_id=$1 AND status IN ('PENDING','RUNNING')`, t.MigrationID); err != nil {
+		return false, err
+	}
+	res, err = tx.ExecContext(ctx, `UPDATE migrations m SET
+		status='FAILED', error_message=$1, notification_generation=CASE WHEN m.status NOT IN ('COMPLETED','COMPLETED_WITH_ERRORS','FAILED') THEN m.notification_generation+1 ELSE m.notification_generation END,
+		processed_files=s.processed, processed_bytes=s.bytes, live_bytes=s.bytes, skipped_files=s.skipped, failed_files=s.failed, updated_at=CURRENT_TIMESTAMP
+		FROM (SELECT COUNT(*) FILTER (WHERE status IN ('COMPLETED','SKIPPED','FAILED','CANCELLED'))::int AS processed,
+		COALESCE(SUM(file_size) FILTER (WHERE status='COMPLETED'),0)::bigint AS bytes,
+		COUNT(*) FILTER (WHERE status='SKIPPED')::int AS skipped,
+		COUNT(*) FILTER (WHERE status IN ('FAILED','CANCELLED'))::int AS failed FROM tasks WHERE migration_id=$2) s
+		-- Do not overwrite a user cancellation that committed after the worker
+		-- claimed its task. Returning no row rolls back all task changes above.
+		WHERE m.id=$2 AND m.status IN ('RUNNING','INDEXING')`, errMsg, t.MigrationID)
+	if err != nil {
+		return false, err
+	}
+	n, err = res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n != 1 {
+		return false, nil
+	}
+	if err = createMigrationNotificationEventTx(tx, t.MigrationID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 func CancelPendingTasks(db *sql.DB, migrationID string) error {
 	return CancelPendingTasksCtx(context.Background(), db, migrationID)
 }

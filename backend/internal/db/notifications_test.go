@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
@@ -41,7 +42,11 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 			failed_files INT NOT NULL DEFAULT 0,
 			skipped_files INT NOT NULL DEFAULT 0,
 			processed_bytes BIGINT NOT NULL DEFAULT 0,
-			error_message TEXT
+			live_bytes BIGINT NOT NULL DEFAULT 0,
+			error_message TEXT,
+			verification_generation INT NOT NULL DEFAULT 0,
+			verification_lease_until TIMESTAMPTZ,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TEMP TABLE sync_jobs (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -111,6 +116,13 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
 			next_run_at TIMESTAMPTZ
 		)`,
+		`CREATE TEMP TABLE tasks (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(), migration_id UUID NOT NULL, status TEXT NOT NULL,
+			claim_epoch BIGINT NOT NULL DEFAULT 0, file_size BIGINT NOT NULL DEFAULT 0,
+			next_retry_at TIMESTAMPTZ, error_message TEXT, checksum_verified BOOLEAN NOT NULL DEFAULT FALSE,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TEMP TABLE indexing_errors (migration_id UUID NOT NULL)`,
 	}
 	for _, stmt := range statements {
 		if _, err := database.Exec(stmt); err != nil {
@@ -317,6 +329,110 @@ func TestCreateMigrationNotificationEvent_Idempotency(t *testing.T) {
 	}
 	if deliveryCount != 1 {
 		t.Fatalf("expected exactly 1 notification_delivery, got %d", deliveryCount)
+	}
+}
+
+func TestFailMigrationForAuthentication_FinalizesCountersBeforeOutbox(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO migrations (id,user_id,status,total_files) VALUES ($1,$2,'RUNNING',3)`, testMigrationID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (id,migration_id,status,claim_epoch,file_size) VALUES
+		($1,$2,'RUNNING',7,10), ('00000000-0000-0000-0000-000000000004',$2,'PENDING',0,20), ('00000000-0000-0000-0000-000000000005',$2,'COMPLETED',0,30)`, testTaskID, testMigrationID); err != nil {
+		t.Fatal(err)
+	}
+
+	finalized, err := FailMigrationForAuthentication(db, context.Background(), &Task{ID: testTaskID, MigrationID: testMigrationID, ClaimEpoch: 7}, "authentication failed")
+	if err != nil || !finalized {
+		t.Fatalf("FailMigrationForAuthentication() = (%v, %v)", finalized, err)
+	}
+	var payloadText string
+	if err := db.QueryRow(`SELECT payload::text FROM notification_events WHERE migration_id=$1`, testMigrationID).Scan(&payloadText); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadText), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["processed"] != float64(3) || payload["failed"] != float64(2) || payload["bytes"] != float64(30) {
+		t.Fatalf("payload has stale final counters: %s", payloadText)
+	}
+}
+
+func TestFailMigrationForAuthentication_DoesNotOverwriteCancellation(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO migrations (id,user_id,status) VALUES ($1,$2,'CANCELLED')`, testMigrationID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (id,migration_id,status,claim_epoch) VALUES ($1,$2,'RUNNING',7)`, testTaskID, testMigrationID); err != nil {
+		t.Fatal(err)
+	}
+	finalized, err := FailMigrationForAuthentication(db, context.Background(), &Task{ID: testTaskID, MigrationID: testMigrationID, ClaimEpoch: 7}, "authentication failed")
+	if err != nil || finalized {
+		t.Fatalf("FailMigrationForAuthentication() = (%v, %v), want (false, nil)", finalized, err)
+	}
+	var migrationStatus, taskStatus string
+	if err := db.QueryRow(`SELECT status FROM migrations WHERE id=$1`, testMigrationID).Scan(&migrationStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id=$1`, testTaskID).Scan(&taskStatus); err != nil {
+		t.Fatal(err)
+	}
+	if migrationStatus != "CANCELLED" || taskStatus != "RUNNING" {
+		t.Fatalf("rollback failed: migration=%s task=%s", migrationStatus, taskStatus)
+	}
+}
+
+func TestReconcileMigrationProgress_TerminalStateIsSticky(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO migrations (id,user_id,status) VALUES ($1,$2,'FAILED')`, testMigrationID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (migration_id,status,file_size,checksum_verified) VALUES ($1,'COMPLETED',10,FALSE)`, testMigrationID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReconcileMigrationProgress(db, testMigrationID); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM migrations WHERE id=$1`, testMigrationID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "FAILED" {
+		t.Fatalf("status=%s, want FAILED", status)
+	}
+}
+
+func TestRepairMissingMigrationNotificationEvents(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'test@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO migrations (id,user_id,status,notification_generation) VALUES ($1,$2,'COMPLETED',4)`, testMigrationID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	count, err := RepairMissingMigrationNotificationEvents(db, 10)
+	if err != nil || count != 1 {
+		t.Fatalf("RepairMissingMigrationNotificationEvents() = (%d, %v)", count, err)
+	}
+	var events int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE migration_id=$1 AND run_generation=4`, testMigrationID).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 {
+		t.Fatalf("events = %d, want 1", events)
 	}
 }
 
