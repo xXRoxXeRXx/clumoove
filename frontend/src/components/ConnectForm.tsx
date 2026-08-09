@@ -355,8 +355,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     }
 
-    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local';
-    const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'local';
+    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local' && sourceProvider !== 'mega';
+    const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'local' && targetProvider !== 'mega';
 
     if (
       (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
@@ -490,7 +490,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     }
 
-    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local';
+    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local' && sourceProvider !== 'mega';
     if (
       (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
       (sourceProvider !== 'local' && sourceProvider !== 'immich' && !sourceProfileSelected && !finalSourceUser) ||
