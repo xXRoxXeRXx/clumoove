@@ -806,6 +806,23 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		nc.Threads = mig.Threads
 	}
 
+	// Providers are created per task, so neither client inherits the connection
+	// established while indexing. Connect before every operation below: MEGA in
+	// particular requires this to populate its in-memory filesystem tree before
+	// FileExists or CreateDirectory can run.
+	if connected, err := sourceClient.Connect(ctx); !connected {
+		if err == nil {
+			err = errors.New("provider rejected connection")
+		}
+		return fmt.Errorf("failed to connect to source provider: %w", err)
+	}
+	if connected, err := targetClient.Connect(ctx); !connected {
+		if err == nil {
+			err = errors.New("provider rejected connection")
+		}
+		return fmt.Errorf("failed to connect to target provider: %w", err)
+	}
+
 	// Update task status to RUNNING in DB
 	task.Status = "RUNNING"
 	_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
