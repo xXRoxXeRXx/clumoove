@@ -121,13 +121,7 @@ func (p *SMBProvider) ensureConnected(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
 	}
 
-	dialer := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     p.Username,
-			Password: p.Password,
-			Domain:   p.Domain,
-		},
-	}
+	dialer := p.dialer()
 
 	s, err := dialer.DialContext(ctx, conn)
 	if err != nil {
@@ -146,6 +140,21 @@ func (p *SMBProvider) ensureConnected(ctx context.Context) error {
 	p.session = s
 	p.fs = fs
 	return nil
+}
+
+func (p *SMBProvider) dialer() *smb2.Dialer {
+	return &smb2.Dialer{
+		// The dependency otherwise accepts unsigned responses from servers that
+		// merely advertise (rather than require) SMB signing.
+		Negotiator: smb2.Negotiator{
+			RequireMessageSigning: true,
+		},
+		Initiator: &smb2.NTLMInitiator{
+			User:     p.Username,
+			Password: p.Password,
+			Domain:   p.Domain,
+		},
+	}
 }
 
 func (p *SMBProvider) cleanup() {

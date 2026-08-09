@@ -109,6 +109,11 @@ time, description, tags, etc.) after a successful upload.
 | `seafile` | `seafile.go` | Seafile Web API v2.1 | server URL + user/pass (or Personal Access Token) | files only |
 | `mega` | `mega.go` | MEGA Cloud Drive API over HTTPS | email/password; encrypted reusable session | files only |
 
+SMB clients require SMB message signing, so an SMB server that cannot negotiate signing is rejected. The
+current `go-smb2` API enables SMB3 encryption when the server or mounted share requires it, but does not expose
+a client-side option to require encryption; use SMB only on trusted networks unless the server/share enforces
+SMB3 encryption.
+
 For Seafile username/password connections, workers share an in-memory account-token cache per server/account. A single in-flight authentication is allowed for each cache key; HTTP `429 Too Many Requests` honors the server's `Retry-After` value before another authentication is attempted. Tokens are never persisted by this cache and are removed when the server rejects them with `401` or `403`. Seafile streaming uploads retain SSRF-safe egress validation and redirect rejection, but have no total request deadline; connection setup remains bounded and a response must arrive within five minutes after the upload body is sent.
 
 ### Verification capabilities

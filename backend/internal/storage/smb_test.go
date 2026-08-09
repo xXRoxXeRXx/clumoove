@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"testing"
+
+	"github.com/hirochachacha/go-smb2"
 )
 
 func TestIsSMBAuthError(t *testing.T) {
@@ -100,6 +102,26 @@ func TestNewSMBProviderValid(t *testing.T) {
 				t.Errorf("expected Password %q, got %q", tt.password, provider.Password)
 			}
 		})
+	}
+}
+
+func TestSMBDialerRequiresMessageSigning(t *testing.T) {
+	// This verifies client configuration only; negotiation behaviour requires a
+	// live SMB server that accepts unsigned sessions.
+	var defaultNegotiator smb2.Negotiator
+	if defaultNegotiator.RequireMessageSigning {
+		t.Errorf("go-smb2 default changed; re-evaluate signing override")
+	}
+
+	provider := &SMBProvider{
+		Username: "user",
+		Password: "pass",
+		Domain:   "WORKGROUP",
+	}
+
+	dialer := provider.dialer()
+	if !dialer.Negotiator.RequireMessageSigning {
+		t.Errorf("SMB dialer must require message signing")
 	}
 }
 
