@@ -24,8 +24,9 @@ import (
 )
 
 type S3Provider struct {
-	client *s3.Client
-	bucket string
+	client     *s3.Client
+	bucket     string
+	httpClient *http.Client
 }
 
 // Ensure S3Provider implements StorageProvider
@@ -75,26 +76,25 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 	// Build an HTTP client that pins egress to a re-validated IP on every
 	// connection (closing the DNS-rebinding/TOCTOU window). The keep-alive
 	// pool limits how often DNS is actually hit.
+	transport := &http.Transport{
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          1000,
+		MaxIdleConnsPerHost:   500,
+		MaxConnsPerHost:       500,
+		IdleConnTimeout:       120 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Minute,
+		ReadBufferSize:        256 * 1024,
+		WriteBufferSize:       256 * 1024,
+	}
 	httpClient := &http.Client{
 		CheckRedirect: rejectEgressRedirect,
-		Transport: &http.Transport{
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          1000,
-			MaxIdleConnsPerHost:   500,
-			MaxConnsPerHost:       500,
-			IdleConnTimeout:       120 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-			ResponseHeaderTimeout: 5 * time.Minute,
-			ReadBufferSize:        256 * 1024,
-			WriteBufferSize:       256 * 1024,
-		},
+		Transport:     transport,
 	}
 	if endpoint != "" {
 		if epURL, err := url.Parse(endpoint); err == nil && epURL.Hostname() != "" {
-			if tr, ok := httpClient.Transport.(*http.Transport); ok {
-				tr.DialContext = egressDialer(epURL.Hostname())
-			}
+			transport.DialContext = egressDialer(epURL.Hostname())
 		}
 	}
 
@@ -116,8 +116,9 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 	})
 
 	return &S3Provider{
-		client: client,
-		bucket: bucket,
+		client:     client,
+		bucket:     bucket,
+		httpClient: httpClient,
 	}, nil
 }
 
@@ -142,6 +143,9 @@ func isS3AuthError(err error) bool {
 }
 
 func (p *S3Provider) Close() error {
+	if p.httpClient != nil {
+		p.httpClient.CloseIdleConnections()
+	}
 	return nil
 }
 
