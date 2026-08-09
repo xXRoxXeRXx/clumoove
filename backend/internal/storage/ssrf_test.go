@@ -91,6 +91,35 @@ func TestEgressDialerRejectsChangedHostnameDialAddress(t *testing.T) {
 	}
 }
 
+func TestEgressHTTPClientBlocksDNSRebindingAtRequestTime(t *testing.T) {
+	originalResolver := resolveEgressIPsForDial
+	defer func() { resolveEgressIPsForDial = originalResolver }()
+
+	lookups := 0
+	resolveEgressIPsForDial = func(_ context.Context, host string) ([]net.IP, error) {
+		if host != "rebind.example.test" {
+			t.Fatalf("resolved unexpected host %q", host)
+		}
+		lookups++
+		if lookups == 1 {
+			return []net.IP{net.ParseIP("8.8.8.8")}, nil // construction-time check
+		}
+		return []net.IP{net.ParseIP("127.0.0.1")}, nil // rebinding before dial
+	}
+
+	client, err := NewEgressHTTPClient("https://rebind.example.test/resource")
+	if err != nil {
+		t.Fatalf("initial public DNS result should be allowed: %v", err)
+	}
+	_, err = client.Get("https://rebind.example.test/resource")
+	if err == nil {
+		t.Fatal("DNS-rebound request unexpectedly succeeded")
+	}
+	if lookups != 2 {
+		t.Fatalf("DNS lookups = %d, want construction and per-connection lookups", lookups)
+	}
+}
+
 func TestSSRFProtectedClientsRejectRedirects(t *testing.T) {
 	webdav, err := NewWebDAVProvider("https://8.8.8.8/dav", "user", "password")
 	if err != nil {

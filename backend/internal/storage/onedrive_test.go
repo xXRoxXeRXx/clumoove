@@ -108,6 +108,43 @@ func TestOneDriveProviderUsesRemoteDriveForSharedShortcut(t *testing.T) {
 	}
 }
 
+func TestOneDriveDownloadRedirectStripsAuthorization(t *testing.T) {
+	issued := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("issued download request carried Authorization header %q", got)
+		}
+		_, _ = io.WriteString(w, "pre-authorized content")
+	}))
+	defer issued.Close()
+
+	graph := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer graph-token" {
+			t.Errorf("Graph request Authorization = %q, want bearer token", got)
+		}
+		if strings.HasSuffix(r.URL.Path, "root:/report.txt:") {
+			_, _ = io.WriteString(w, `{"id":"report-id"}`)
+			return
+		}
+		if !strings.HasSuffix(r.URL.Path, "/content") {
+			http.NotFound(w, r)
+			return
+		}
+		http.Redirect(w, r, issued.URL+"/download", http.StatusFound)
+	}))
+	defer graph.Close()
+
+	p := newOneDriveProvider("graph-token", graph.URL+"/v1.0/me/drive", graph.Client())
+	stream, err := p.StreamDownload(context.Background(), "files", "/report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	content, err := io.ReadAll(stream)
+	if err != nil || string(content) != "pre-authorized content" {
+		t.Fatalf("download = %q, %v", content, err)
+	}
+}
+
 func TestOneDriveProviderSharesShortcutResolutionAcrossInstances(t *testing.T) {
 	var mu sync.Mutex
 	rootLookups := 0

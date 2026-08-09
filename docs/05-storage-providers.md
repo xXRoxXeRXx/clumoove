@@ -114,7 +114,7 @@ current `go-smb2` API enables SMB3 encryption when the server or mounted share r
 a client-side option to require encryption; use SMB only on trusted networks unless the server/share enforces
 SMB3 encryption.
 
-For Seafile username/password connections, workers share an in-memory account-token cache per server/account. A single in-flight authentication is allowed for each cache key; HTTP `429 Too Many Requests` honors the server's `Retry-After` value before another authentication is attempted. Tokens are never persisted by this cache and are removed when the server rejects them with `401` or `403`. Seafile streaming uploads retain SSRF-safe egress validation and redirect rejection, but have no total request deadline; connection setup remains bounded and a response must arrive within five minutes after the upload body is sent.
+For Seafile username/password connections, workers share an in-memory account-token cache per server/account. A single in-flight authentication is allowed for each cache key; HTTP `429 Too Many Requests` honors the server's `Retry-After` value before another authentication is attempted. Tokens are never persisted by this cache and are removed when the server rejects them with `401` or `403`. Server-issued download/upload links use their own SSRF-validated, host-pinned client so a Seafile CDN or object-storage host can differ from the configured server; the account token is never sent to a cross-origin link. Seafile streaming uploads retain redirect rejection and have no total request deadline; connection setup remains bounded and a response must arrive within five minutes after the upload body is sent.
 
 ### Verification capabilities
 

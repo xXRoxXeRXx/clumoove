@@ -21,6 +21,11 @@ import (
 var blockPrivateEgress = os.Getenv("MIGRATION_BLOCK_PRIVATE") == "1" ||
 	strings.EqualFold(os.Getenv("MIGRATION_BLOCK_PRIVATE"), "true")
 
+// resolveEgressIPsForDial is replaceable by package tests so they can exercise
+// a full HTTP request across a DNS-rebinding boundary without depending on DNS.
+// Production always uses resolveEgressIPs.
+var resolveEgressIPsForDial = resolveEgressIPs
+
 // validateEgressURL rejects URLs whose host resolves to a blocked (internal)
 // address, defending the API server against Server-Side Request Forgery via the
 // connect/browse endpoints. Both literal IPs and hostnames are checked, and a
@@ -153,7 +158,7 @@ func egressDialer(configuredHost string) func(ctx context.Context, network, addr
 			return nil, fmt.Errorf("egress: dial host %q does not match configured endpoint %q", host, configuredHost)
 		}
 
-		ips, err := resolveEgressIPs(ctx, host)
+		ips, err := resolveEgressIPsForDial(ctx, host)
 		if err != nil {
 			return nil, fmt.Errorf("egress: failed to resolve %q: %w", host, err)
 		}
@@ -237,7 +242,7 @@ func checkHostEgress(ctx context.Context, host string) error {
 
 	// Hostname: resolve and inspect every address. This is defense in
 	// depth alongside the per-connection re-validation in egressDialer.
-	ips, err := resolveEgressIPs(ctx, host)
+	ips, err := resolveEgressIPsForDial(ctx, host)
 	if err != nil {
 		return fmt.Errorf("failed to resolve host %q: %w", host, err)
 	}

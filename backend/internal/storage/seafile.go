@@ -66,6 +66,10 @@ type seafileDirItem struct {
 
 const seafileResumableChunkSize int64 = 64 * 1024 * 1024
 
+// newSeafileIssuedLinkHTTPClient is a seam for transport-level tests. It must
+// retain NewEgressStreamingHTTPClient in production.
+var newSeafileIssuedLinkHTTPClient = NewEgressStreamingHTTPClient
+
 // NewSeafileProvider creates a new Seafile storage provider instance.
 func NewSeafileProvider(urlStr, username, password string) (*SeafileProvider, error) {
 	urlStr = strings.TrimRight(urlStr, "/")
@@ -97,6 +101,45 @@ func (p *SeafileProvider) Close() error {
 		p.HTTPClient.CloseIdleConnections()
 	}
 	return nil
+}
+
+// issuedLinkClient creates a separate, host-pinned client for a server-issued
+// upload or download URL. Seafile deployments may put these links on a CDN or
+// object-storage host, so reusing the base-server client would reject a valid
+// alternate host. The new client retains the same per-connection SSRF checks.
+func (p *SeafileProvider) issuedLinkClient(rawURL string) (*http.Client, bool, error) {
+	link, err := url.Parse(rawURL)
+	if err != nil || link.Hostname() == "" {
+		return nil, false, fmt.Errorf("invalid seafile issued link")
+	}
+	base, err := url.Parse(p.BaseURL)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid seafile base URL: %w", err)
+	}
+	client, err := newSeafileIssuedLinkHTTPClient(rawURL)
+	if err != nil {
+		return nil, false, err
+	}
+	return client, !sameHTTPEndpoint(base, link), nil
+}
+
+func sameHTTPEndpoint(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		httpPort(a) == httpPort(b)
+}
+
+func httpPort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	if strings.EqualFold(u.Scheme, "http") {
+		return "80"
+	}
+	return ""
 }
 
 func (p *SeafileProvider) invalidateToken() {
@@ -574,16 +617,18 @@ func (p *SeafileProvider) StreamDownload(ctx context.Context, resourceType, file
 	}
 
 	downloadURL := strings.Trim(string(bodyBytes), `"`)
-	if err := validateEgressURL(downloadURL); err != nil {
+	linkClient, _, err := p.issuedLinkClient(downloadURL)
+	if err != nil {
 		return nil, fmt.Errorf("seafile download URL failed egress check: %w", err)
 	}
+	defer linkClient.CloseIdleConnections()
 
 	downloadReq, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create download stream request: %w", err)
 	}
 
-	dlResp, err := p.HTTPClient.Do(downloadReq)
+	dlResp, err := linkClient.Do(downloadReq)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute seafile download stream: %w", err)
 	}
@@ -637,10 +682,11 @@ func (p *SeafileProvider) StreamUpload(ctx context.Context, resourceType, filePa
 		return fmt.Errorf("failed to read upload link: %w", err)
 	}
 	uploadURL := strings.Trim(string(linkBytes), `"`)
-
-	if err := validateEgressURL(uploadURL); err != nil {
+	linkClient, crossOrigin, err := p.issuedLinkClient(uploadURL)
+	if err != nil {
 		return fmt.Errorf("seafile upload URL failed egress check: %w", err)
 	}
+	defer linkClient.CloseIdleConnections()
 
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
@@ -680,12 +726,14 @@ func (p *SeafileProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	}
 	uploadReq.Header.Set("Content-Type", writer.FormDataContentType())
 
-	token, _ := p.getToken(ctx)
-	if token != "" {
-		uploadReq.Header.Set("Authorization", "Token "+token)
+	if !crossOrigin {
+		token, _ := p.getToken(ctx)
+		if token != "" {
+			uploadReq.Header.Set("Authorization", "Token "+token)
+		}
 	}
 
-	upResp, err := p.HTTPClient.Do(uploadReq)
+	upResp, err := linkClient.Do(uploadReq)
 	if err != nil {
 		_ = pr.Close()
 		return fmt.Errorf("failed to execute seafile upload: %w", err)
@@ -777,13 +825,15 @@ func (p *SeafileProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		return fmt.Errorf("failed to read upload link: %w", err)
 	}
 	uploadURL := strings.Trim(string(linkBytes), `"`)
-	if err := validateEgressURL(uploadURL); err != nil {
+	linkClient, crossOrigin, err := p.issuedLinkClient(uploadURL)
+	if err != nil {
 		return fmt.Errorf("seafile upload URL failed egress check: %w", err)
 	}
+	defer linkClient.CloseIdleConnections()
 
 	for offset := uploaded.UploadedBytes; offset < size; {
 		chunkSize := min(seafileResumableChunkSize, size-offset)
-		if err := p.uploadResumableChunk(ctx, uploadURL, parentDir, fileName, stream, offset, chunkSize, size, progressChan); err != nil {
+		if err := p.uploadResumableChunk(ctx, linkClient, !crossOrigin, uploadURL, parentDir, fileName, stream, offset, chunkSize, size, progressChan); err != nil {
 			return err
 		}
 		offset += chunkSize
@@ -791,7 +841,7 @@ func (p *SeafileProvider) StreamUploadChunked(ctx context.Context, resourceType,
 	return nil
 }
 
-func (p *SeafileProvider) uploadResumableChunk(ctx context.Context, uploadURL, parentDir, fileName string, stream io.Reader, offset, chunkSize, totalSize int64, progressChan chan<- int64) error {
+func (p *SeafileProvider) uploadResumableChunk(ctx context.Context, client *http.Client, authorize bool, uploadURL, parentDir, fileName string, stream io.Reader, offset, chunkSize, totalSize int64, progressChan chan<- int64) error {
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 	go func() {
@@ -824,10 +874,12 @@ func (p *SeafileProvider) uploadResumableChunk(ctx context.Context, uploadURL, p
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", offset, offset+chunkSize-1, totalSize))
 	req.Header.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
-	if token, _ := p.getToken(ctx); token != "" {
-		req.Header.Set("Authorization", "Token "+token)
+	if authorize {
+		if token, _ := p.getToken(ctx); token != "" {
+			req.Header.Set("Authorization", "Token "+token)
+		}
 	}
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		_ = pr.Close()
 		return fmt.Errorf("failed to execute seafile resumable upload: %w", err)

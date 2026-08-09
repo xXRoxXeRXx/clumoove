@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"reflect"
+	"runtime"
 	"testing"
 )
 
@@ -84,6 +86,120 @@ func TestNewProviderSSRFBlockedByDefault(t *testing.T) {
 		if _, err := NewProvider(context.Background(), c.typ, c.url, "u", "p"); err == nil {
 			t.Errorf("%s with %q: expected SSRF block, got nil error", c.typ, c.url)
 		}
+	}
+}
+
+func TestPublicFactorySSRFGuardsEveryRegisteredEgressProvider(t *testing.T) {
+	// Keep this table deliberately keyed by the registry: adding a host-based
+	// provider without a public-factory SSRF test fails loudly.
+	blockedURLs := map[string]string{
+		"nextcloud": "https://127.0.0.1/remote.php/dav",
+		"opencloud": "https://127.0.0.1",
+		"webdav":    "https://127.0.0.1/dav",
+		"smb":       "smb://127.0.0.1/share",
+		"sftp":      "sftp://127.0.0.1/?host_key=SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"ftp":       "ftps://127.0.0.1",
+		"immich":    "https://127.0.0.1",
+		"seafile":   "https://127.0.0.1",
+	}
+	guarded := 0
+	for providerType, meta := range providerRegistry {
+		if !meta.RequiresEgressValidation {
+			continue
+		}
+		guarded++
+		rawURL, ok := blockedURLs[providerType]
+		if !ok {
+			t.Errorf("%s requires egress validation but has no public factory test", providerType)
+			continue
+		}
+		if _, err := NewProvider(context.Background(), providerType, rawURL, "user", "secret"); err == nil {
+			t.Errorf("NewProvider(%q) allowed a loopback endpoint", providerType)
+		}
+	}
+	if guarded != len(blockedURLs) {
+		t.Fatalf("egress-validated registry providers = %d, test inputs = %d", guarded, len(blockedURLs))
+	}
+}
+
+func TestProviderRegistryCapabilitiesMatchRuntime(t *testing.T) {
+	runtimeProviders := map[string]StorageProvider{
+		"nextcloud":    &NextcloudProvider{davProvider: &davProvider{}},
+		"opencloud":    &OpenCloudProvider{davProvider: &davProvider{}},
+		"webdav":       &WebDAVProvider{},
+		"dropbox":      &DropboxProvider{},
+		"google":       &GoogleProvider{},
+		"onedrive":     &OneDriveProvider{},
+		"hidrive":      &HiDriveProvider{},
+		"smb":          &SMBProvider{},
+		"s3":           &S3Provider{},
+		"sftp":         &SFTPProvider{},
+		"ftp":          &FTPProvider{},
+		"magentacloud": &MagentacloudProvider{davProvider: &davProvider{}},
+		"local":        &LocalProvider{},
+		"immich":       &ImmichProvider{},
+		"seafile":      &SeafileProvider{},
+		"mega":         &MegaProvider{},
+	}
+	for providerType, meta := range providerRegistry {
+		provider, ok := runtimeProviders[providerType]
+		if !ok {
+			t.Errorf("%s is registered without a runtime capability assertion", providerType)
+			continue
+		}
+		if got := provider.VerificationMode(); got != meta.VerificationMode {
+			t.Errorf("%s VerificationMode() = %q, registry = %q", providerType, got, meta.VerificationMode)
+		}
+		if got := provider.SupportsAtomicRename(); got != meta.SupportsAtomicRename {
+			t.Errorf("%s SupportsAtomicRename() = %t, registry = %t", providerType, got, meta.SupportsAtomicRename)
+		}
+	}
+	if len(runtimeProviders) != len(providerRegistry) {
+		t.Fatalf("runtime capability assertions = %d, registry providers = %d", len(runtimeProviders), len(providerRegistry))
+	}
+}
+
+func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
+	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
+	ctx := WithLocalUserScope(context.Background(), "factory-test-user")
+	cases := map[string]struct {
+		url, username, password string
+		expected                StorageProvider
+	}{
+		"nextcloud":    {"https://1.1.1.1", "user", "secret", &NextcloudProvider{}},
+		"opencloud":    {"https://1.1.1.1", "user", "secret", &OpenCloudProvider{}},
+		"webdav":       {"https://1.1.1.1/dav", "user", "secret", &WebDAVProvider{}},
+		"dropbox":      {"", "", "token", &DropboxProvider{}},
+		"google":       {"", "", "token", &GoogleProvider{}},
+		"onedrive":     {"", "", "token", &OneDriveProvider{}},
+		"hidrive":      {"", "", "token", &HiDriveProvider{}},
+		"smb":          {"smb://1.1.1.1/share", "user", "secret", &SMBProvider{}},
+		"s3":           {"s3://bucket", "key", "secret", &S3Provider{}},
+		"sftp":         {"sftp://1.1.1.1/?host_key=SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "user", "secret", &SFTPProvider{}},
+		"ftp":          {"ftps://1.1.1.1", "user", "secret", &FTPProvider{}},
+		"magentacloud": {"", "user", "secret", &MagentacloudProvider{}},
+		"local":        {"", "", "", &LocalProvider{}},
+		"immich":       {"https://1.1.1.1", "", "key", &ImmichProvider{}},
+		"seafile":      {"https://1.1.1.1", "user", "secret", &SeafileProvider{}},
+		"mega":         {"", "user@example.com", "secret", &MegaProvider{}},
+	}
+	for providerType, tt := range cases {
+		t.Run(providerType, func(t *testing.T) {
+			provider, err := NewProvider(ctx, providerType, tt.url, tt.username, tt.password)
+			if err != nil {
+				if providerType == "local" && runtime.GOOS == "windows" {
+					t.Skip("local provider mutations are intentionally unavailable on Windows")
+				}
+				t.Fatal(err)
+			}
+			defer provider.Close()
+			if reflect.TypeOf(provider) != reflect.TypeOf(tt.expected) {
+				t.Fatalf("NewProvider() type = %T, want %T", provider, tt.expected)
+			}
+		})
+	}
+	if len(cases) != len(providerRegistry) {
+		t.Fatalf("factory assertions = %d, registry providers = %d", len(cases), len(providerRegistry))
 	}
 }
 

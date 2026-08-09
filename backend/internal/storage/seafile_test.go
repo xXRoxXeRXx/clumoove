@@ -59,6 +59,69 @@ func TestSeafileProviderCapabilities(t *testing.T) {
 	}
 }
 
+func TestSeafileIssuedLinkUsesSeparateClientAndDoesNotForwardTokenCrossOrigin(t *testing.T) {
+	var issuedRequests atomic.Int32
+	issued := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issuedRequests.Add(1)
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("cross-origin issued link received Authorization header %q", got)
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = io.WriteString(w, "downloaded through issued host")
+		case http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer issued.Close()
+
+	base := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/repos/repo/file/":
+			if r.Header.Get("Authorization") != "Token account-token" {
+				t.Errorf("base request missing account token")
+			}
+			_, _ = io.WriteString(w, `"`+issued.URL+`/download"`)
+		case "/api2/repos/repo/upload-link/":
+			if r.Header.Get("Authorization") != "Token account-token" {
+				t.Errorf("base request missing account token")
+			}
+			_, _ = io.WriteString(w, `"`+issued.URL+`/upload"`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer base.Close()
+
+	original := newSeafileIssuedLinkHTTPClient
+	newSeafileIssuedLinkHTTPClient = func(rawURL string) (*http.Client, error) {
+		if rawURL != issued.URL+"/download" && rawURL != issued.URL+"/upload" {
+			t.Fatalf("unexpected issued URL %q", rawURL)
+		}
+		return issued.Client(), nil
+	}
+	defer func() { newSeafileIssuedLinkHTTPClient = original }()
+
+	p := &SeafileProvider{BaseURL: base.URL, Token: "account-token", HTTPClient: base.Client(), repoCache: map[string]string{"Library": "repo"}}
+	stream, err := p.StreamDownload(context.Background(), "files", "/Library/file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := io.ReadAll(stream)
+	stream.Close()
+	if err != nil || string(content) != "downloaded through issued host" {
+		t.Fatalf("issued download = %q, %v", content, err)
+	}
+	if err := p.StreamUpload(context.Background(), "files", "/Library/file.txt", strings.NewReader("payload"), int64(len("payload"))); err != nil {
+		t.Fatal(err)
+	}
+	if got := issuedRequests.Load(); got != 2 {
+		t.Fatalf("issued-host requests = %d, want 2", got)
+	}
+}
+
 func TestSeafileProviderNonFilesRejected(t *testing.T) {
 	p := &SeafileProvider{}
 	ctx := context.Background()
@@ -266,6 +329,9 @@ func TestSeafileProviderAuthAndOperations(t *testing.T) {
 		base:      client.Transport,
 	}
 	p.HTTPClient = client
+	originalIssuedClient := newSeafileIssuedLinkHTTPClient
+	newSeafileIssuedLinkHTTPClient = func(string) (*http.Client, error) { return client, nil }
+	defer func() { newSeafileIssuedLinkHTTPClient = originalIssuedClient }()
 
 	ctx := context.Background()
 

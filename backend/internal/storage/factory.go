@@ -39,6 +39,8 @@ type ProviderMetadata struct {
 	RequiresEgressValidation bool
 	IsVirtual                bool
 	SupportedResourceTypes   map[string]bool
+	SupportsAtomicRename     bool
+	VerificationMode         VerificationMode
 }
 
 var providerRegistry = map[string]ProviderMetadata{
@@ -48,6 +50,7 @@ var providerRegistry = map[string]ProviderMetadata{
 		RequiresHTTPS:            true,
 		RequiresEgressValidation: true,
 		SupportedResourceTypes:   map[string]bool{"files": true, "calendars": true, "contacts": true},
+		SupportsAtomicRename:     true, VerificationMode: VerificationSizeOnly,
 	},
 	"opencloud": {
 		Type:                     "opencloud",
@@ -55,16 +58,19 @@ var providerRegistry = map[string]ProviderMetadata{
 		RequiresHTTPS:            true,
 		RequiresEgressValidation: true,
 		SupportedResourceTypes:   map[string]bool{"files": true},
+		SupportsAtomicRename:     true, VerificationMode: VerificationSizeOnly,
 	},
 	"google": {
 		Type:                   "google",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
+		SupportsAtomicRename:   true, VerificationMode: VerificationCryptographicHash,
 	},
 	"onedrive": {
 		Type:                   "onedrive",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   true, VerificationMode: VerificationCryptographicHash,
 	},
 	"webdav": {
 		Type:                     "webdav",
@@ -72,49 +78,58 @@ var providerRegistry = map[string]ProviderMetadata{
 		RequiresHTTPS:            true,
 		RequiresEgressValidation: true,
 		SupportedResourceTypes:   map[string]bool{"files": true},
+		SupportsAtomicRename:     true, VerificationMode: VerificationSizeOnly,
 	},
 	"dropbox": {
 		Type:                   "dropbox",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   true, VerificationMode: VerificationCryptographicHash,
 	},
 	"hidrive": {
 		Type:                   "hidrive",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   true, VerificationMode: VerificationCryptographicHash,
 	},
 	"smb": {
 		Type:                     "smb",
 		RequiresHost:             true,
 		RequiresEgressValidation: true,
 		SupportedResourceTypes:   map[string]bool{"files": true},
+		SupportsAtomicRename:     true, VerificationMode: VerificationSizeOnly,
 	},
 	"s3": {
 		Type:                   "s3",
 		RequiresHost:           true,
 		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   false, VerificationMode: VerificationSizeOnly,
 	},
 	"sftp": {
 		Type:                     "sftp",
 		RequiresHost:             true,
 		RequiresEgressValidation: true,
 		SupportedResourceTypes:   map[string]bool{"files": true},
+		SupportsAtomicRename:     true, VerificationMode: VerificationSizeOnly,
 	},
 	"ftp": {
 		Type:                     "ftp",
 		RequiresHost:             true,
 		RequiresEgressValidation: true,
 		SupportedResourceTypes:   map[string]bool{"files": true},
+		SupportsAtomicRename:     true, VerificationMode: VerificationSizeOnly,
 	},
 	"magentacloud": {
 		Type:                   "magentacloud",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   true, VerificationMode: VerificationSizeOnly,
 	},
 	"local": {
 		Type:                   "local",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   true, VerificationMode: VerificationCryptographicHash,
 	},
 	"immich": {
 		Type:                     "immich",
@@ -123,6 +138,7 @@ var providerRegistry = map[string]ProviderMetadata{
 		RequiresEgressValidation: true,
 		IsVirtual:                true,
 		SupportedResourceTypes:   map[string]bool{"files": true},
+		SupportsAtomicRename:     false, VerificationMode: VerificationCryptographicHash,
 	},
 	"seafile": {
 		Type:                     "seafile",
@@ -130,11 +146,13 @@ var providerRegistry = map[string]ProviderMetadata{
 		RequiresHTTPS:            true,
 		RequiresEgressValidation: true,
 		SupportedResourceTypes:   map[string]bool{"files": true},
+		SupportsAtomicRename:     false, VerificationMode: VerificationSizeOnly,
 	},
 	"mega": {
 		Type:                   "mega",
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   true, VerificationMode: VerificationSizeOnly,
 	},
 }
 
