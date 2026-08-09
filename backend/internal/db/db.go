@@ -657,6 +657,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (tasks resource_type): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS source_hash TEXT, ADD COLUMN IF NOT EXISTS target_hash TEXT`)
+			if err != nil {
+				log.Printf("Failed schema migration (tasks hashes): %v\n", err)
+			}
 
 			_, err = db.Exec(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS metadata JSONB`)
 			if err != nil {

@@ -702,7 +702,7 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		if v, ok := p.recoveryAttempts.Load(id); ok {
 			ra = v.(recoveryState)
 		}
-		if backoff := recoveryBackoff(ra.attempts); backoff > 0 && time.Since(ra.lastAttempt) < backoff {
+		if !shouldProbeRecovery(ra, time.Now()) {
 			continue
 		}
 		probes++

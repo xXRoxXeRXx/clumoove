@@ -47,6 +47,8 @@ Run these from the respective component directories:
 ```bash
 # Go (from backend/)
 cd backend && go test ./...
+# Includes a source-level guard that checks each canonical schema column against
+# that table's CREATE/ALTER statements in InitDB's inline bootstrap DDL.
 cd backend && go vet ./...
 cd backend && go build ./...
 
@@ -84,7 +86,8 @@ File-scoped commands referenced in `AGENTS.md`:
 
 ### Database
 - All schema changes go into `db/schema.sql` **and** as an inline `CREATE/ALTER` statement in
-  `InitDB()` for automatic startup migration.
+  `InitDB()` for automatic startup migration. CI checks that each canonical column appears in the
+  corresponding table's `CREATE` or `ALTER` DDL in `InitDB()`.
 - All queries use **parameterized statements** (`$1`, `$2`, …) — never string-interpolate user input
   into SQL.
 
@@ -104,6 +107,16 @@ File-scoped commands referenced in `AGENTS.md`:
   reusable session ID and master-key material are stored encrypted, MFA is unsupported, same-name siblings
   are rejected as ambiguous, and verification is `size_only`.
 - S3 `insecure=true` endpoints must check literal IPs / `*.local`/`localhost` without DNS resolution.
+
+### Transfer and recovery tests
+- `processor/runTransferCore` owns the provider-facing download, stream hash, upload, promotion, and
+  size-verification sequence. It is intentionally independent of queue and database persistence and is
+  covered with in-memory provider doubles.
+- Recovery backoff and the separate migration/sync round-robin cursors have unit coverage. Provider
+  connection probes and state transitions remain exercised through the scheduler integration paths.
+- Storage hash tests include an official HiDrive fixed vector. QuickXorHash coverage verifies the
+  documented algorithm's empty-value and streaming behavior; no Microsoft-published input/output vector
+  is claimed.
 
 ### FTPS test and deployment notes
 - Run `(cd backend && go test -race ./internal/storage)` for storage-provider changes that affect connection lifecycle,

@@ -9,6 +9,7 @@ import (
 
 func TestHiDriveHasherDocumentationVector(t *testing.T) {
 	// HiDrive Synchronization v3.1, section 5: 64 repetitions form one L0 block.
+	// https://developer.hidrive.com/doc/HiDrive_Sync.pdf
 	data := []byte("#ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyz\n")
 	h := NewHiDriveHasher()
 	for i := 0; i < 64; i++ {

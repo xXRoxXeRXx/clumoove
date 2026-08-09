@@ -26,6 +26,8 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Test
         run: go test ./...
+      - name: Check table-scoped canonical schema DDL coverage
+        run: go test ./internal/db -run TestCanonicalSchemaColumnsAppearInInitDB -count=1
       - name: Storage race check
         run: go test -race ./internal/storage
       - name: Vet

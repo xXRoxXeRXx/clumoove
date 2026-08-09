@@ -313,6 +313,11 @@ func recoveryBackoff(attempts int) time.Duration {
 	}
 }
 
+func shouldProbeRecovery(state recoveryState, now time.Time) bool {
+	backoff := recoveryBackoff(state.attempts)
+	return backoff == 0 || now.Sub(state.lastAttempt) >= backoff
+}
+
 func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted,
@@ -344,7 +349,7 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		if v, ok := p.recoveryAttempts.Load(id); ok {
 			ra = v.(recoveryState)
 		}
-		if backoff := recoveryBackoff(ra.attempts); backoff > 0 && time.Since(ra.lastAttempt) < backoff {
+		if !shouldProbeRecovery(ra, time.Now()) {
 			continue
 		}
 		probes++

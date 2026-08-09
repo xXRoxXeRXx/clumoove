@@ -2,9 +2,6 @@ package processor
 
 import (
 	"context"
-	"crypto/md5"
-	"crypto/sha1"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -1026,7 +1023,8 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 	}
 
-	// 4. Download and Upload stream
+	// 4. Download and Upload stream. The provider-facing pipeline is isolated in
+	// runTransferCore below; lifecycle, conflict handling, and persistence stay here.
 	// Providers without atomic-rename support (e.g. S3, Immich) write the
 	// file to its final name during upload, so the ".tmp" suffix must never be
 	// applied — otherwise the provider has to strip it itself and the rename
@@ -1035,90 +1033,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	uploadPath := targetPath
 	if useTempThenRename(targetClient, deleteAfterUpload) {
 		uploadPath = targetPath + ".tmp"
-	}
-
-	// Per-request timeout scaled by file size (same policy as uploads, see
-	// transferTimeout). Computed once and applied to both the download and
-	// upload phases so the two phases share a single, consistent deadline.
-	transferDeadline := transferTimeout(task.FileSize)
-	downloadCtx, downloadCancel := context.WithTimeout(ctx, transferDeadline)
-	defer downloadCancel()
-
-	downloadStream, err := sourceClient.StreamDownload(downloadCtx, task.ResourceType, task.FilePath)
-	if err != nil {
-		return fmt.Errorf("failed to download from source: %w", err)
-	}
-	// Wrap download stream with throttling (before TeeReader to limit actual network I/O)
-	defer downloadStream.Close()
-	throttledDownloadStream := throttle.NewThrottledReader(downloadStream, migrationThrottler, downloadCtx)
-
-	// Handle Hash Algorithm Selection
-	var sourceHasher hash.Hash
-	sourceAlgo := "SHA1" // Default
-	sourceHashStr := ""
-
-	if task.SourceHash.Valid && task.SourceHash.String != "" && mig.SourceProvider != "webdav" {
-		algo, cleanHash := storage.ParseHashString(task.SourceHash.String)
-		// HiDrive's native chash is only comparable with another HiDrive
-		// chash; it cannot be recreated while streaming to another provider.
-		if algo == "SHA1" || algo == "SHA256" || algo == "MD5" || algo == "DROPBOX" {
-			sourceHashStr = cleanHash
-			sourceAlgo = algo
-		}
-	}
-
-	if mig.SourceProvider == "dropbox" {
-		sourceAlgo = "DROPBOX"
-	} else if mig.SourceProvider == "google" {
-		sourceAlgo = "MD5"
-	} else if mig.SourceProvider == "onedrive" {
-		sourceAlgo = "QUICKXOR"
-	}
-
-	// Instantiate source hasher
-	if sourceAlgo == "MD5" {
-		sourceHasher = md5.New()
-	} else if sourceAlgo == "DROPBOX" {
-		sourceHasher = storage.NewDropboxHasher()
-	} else if sourceAlgo == "SHA256" {
-		sourceHasher = sha256.New()
-	} else if sourceAlgo == "QUICKXOR" {
-		sourceHasher = storage.NewQuickXorHasher()
-	} else {
-		sourceHasher = sha1.New()
-		sourceAlgo = "SHA1"
-	}
-
-	// Determine target hasher algorithm
-	var targetHasher hash.Hash
-	targetAlgo := "SHA1" // Default
-	if mig.TargetProvider == "dropbox" {
-		targetAlgo = "DROPBOX"
-		targetHasher = storage.NewDropboxHasher()
-	} else if mig.TargetProvider == "s3" {
-		targetAlgo = "SHA256"
-		targetHasher = sha256.New()
-	} else if mig.TargetProvider == "google" {
-		targetAlgo = "MD5"
-		targetHasher = md5.New()
-	} else if mig.TargetProvider == "hidrive" {
-		targetAlgo = "HIDRIVE"
-		targetHasher = storage.NewHiDriveHasher()
-	} else if mig.TargetProvider == "onedrive" {
-		targetAlgo = "QUICKXOR"
-		targetHasher = storage.NewQuickXorHasher()
-	} else {
-		targetAlgo = "SHA1"
-		targetHasher = sha1.New()
-	}
-
-	// We only need two hashers if the algorithms differ
-	var activeWriter io.Writer
-	if sourceAlgo == targetAlgo {
-		activeWriter = sourceHasher
-		targetHasher = nil // Disable target hasher to save CPU cycles
-	} else {
-		activeWriter = io.MultiWriter(sourceHasher, targetHasher)
 	}
 
 	progressChan := make(chan int64, 10)
@@ -1227,16 +1141,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		close(heartbeatStop)
 	}()
 
-	// Enforce the indexed size before hashing. A clean early EOF must fail instead
-	// of becoming a valid hash for a truncated source stream.
-	sizedReader := newExpectedSizeReader(throttledDownloadStream, task.FileSize)
-	// io.TeeReader writes all data read from the download stream to the hasher in-memory
-	hashingReader := io.TeeReader(sizedReader, activeWriter)
-
-	// Perform Upload (Zero Data Retention - streamed through RAM buffer)
-	// Use the same file-size-scaled deadline as the download phase so neither
-	// times out before the other for a given file size.
-	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
 	var transferMeta storage.FileMetadata
 	if task.Metadata != nil {
 		_ = json.Unmarshal(task.Metadata, &transferMeta)
@@ -1248,35 +1152,40 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			transferMeta.ModifiedTime = srcInfo.LastModified
 		}
 	}
-	uploadCtx = storage.WithTransferMetadata(uploadCtx, transferMeta)
-	verificationCtx := ctx
+	uploadCtx := storage.WithTransferMetadata(ctx, transferMeta)
 	var uploadReceipt *storage.UploadReceipt
 	if mig.TargetProvider == "immich" {
 		uploadReceipt = &storage.UploadReceipt{}
 		uploadCtx = storage.WithUploadReceipt(uploadCtx, uploadReceipt)
 	}
-	if sourceHashStr != "" && sourceAlgo != "ETAG" {
-		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
-	}
-	defer uploadCancel()
-
-	// If size > chunkedUploadThreshold (50 MiB), do chunked upload
-	if task.FileSize > chunkedUploadThreshold {
-		// Wrap hashingReader with upload throttling
-		throttledHashingReader := throttle.NewUploadThrottledReader(hashingReader, migrationThrottler, uploadCtx)
-		err = targetClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, task.FileSize, progressChan)
-	} else {
-		// Simple upload
-		// Wrap with a progress reporting reader
-		progressReader := &ProgressReader{
-			Reader:       hashingReader,
-			ProgressChan: progressChan,
-		}
-		// Wrap progressReader with upload throttling
-		throttledProgressReader := throttle.NewUploadThrottledReader(progressReader, migrationThrottler, uploadCtx)
-		err = targetClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, task.FileSize)
-	}
-
+	transfer, err := runTransferCore(transferRequest{
+		Context:          ctx,
+		UploadContext:    uploadCtx,
+		Source:           sourceClient,
+		Target:           targetClient,
+		SourceProvider:   mig.SourceProvider,
+		TargetProvider:   mig.TargetProvider,
+		ResourceType:     task.ResourceType,
+		SourcePath:       task.FilePath,
+		TargetPath:       uploadPath,
+		VerificationPath: targetPath,
+		FileSize:         task.FileSize,
+		SourceHash:       task.SourceHash.String,
+		Throttler:        migrationThrottler,
+		Progress:         progressChan,
+		Finalize: func(finalizeCtx context.Context) error {
+			if !useTempThenRename(targetClient, deleteAfterUpload) {
+				return nil
+			}
+			return promoteOverwrite(finalizeCtx, targetClient, task.ResourceType, targetPath, uploadPath, overwriteBackupPath(targetPath, task.ID))
+		},
+		VerificationContext: func() context.Context {
+			if uploadReceipt != nil && uploadReceipt.TargetResourceID != "" {
+				return storage.WithTargetResourceID(ctx, uploadReceipt.TargetResourceID)
+			}
+			return ctx
+		},
+	})
 	if err != nil {
 		if errors.Is(err, storage.ErrNativeDuplicate) {
 			return p.skipTask(ctx, task, "Asset already exists in Immich; duplicate handled natively (SKIP)")
@@ -1284,9 +1193,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		if errors.Is(err, storage.ErrDuplicateUID) || isWebDAVSystemConflict(err) {
 			return p.skipTask(ctx, task, fmt.Sprintf("Sabredav/WebDAV target entry skipped (system conflict/forbidden): %v", err))
 		}
-		return fmt.Errorf("upload to target failed: %w", err)
-	}
-	if err := sizedReader.VerifyComplete(); err != nil {
 		return err
 	}
 	if uploadReceipt != nil {
@@ -1302,20 +1208,6 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		if err := db.UpdateClaimedTaskMetadata(p.db, ctx, task.ID, task.ClaimEpoch, task.Metadata); err != nil {
 			return fmt.Errorf("persist immich target asset ID: %w", err)
 		}
-		verificationCtx = storage.WithTargetResourceID(ctx, uploadReceipt.TargetResourceID)
-	}
-
-	// OVERWRITE: now that the upload succeeded, promote the temp file without
-	// deleting the original first. A failed promotion restores the original.
-	//
-	// Providers without atomic-rename support (e.g. S3, Immich) write the file
-	// directly to its final name during upload. S3 rename is copy-and-delete, so
-	// the rename step must be skipped entirely to avoid copy-and-delete loss.
-	if useTempThenRename(targetClient, deleteAfterUpload) {
-		backupPath := overwriteBackupPath(targetPath, task.ID)
-		if err := promoteOverwrite(ctx, targetClient, task.ResourceType, targetPath, uploadPath, backupPath); err != nil {
-			return err
-		}
 	}
 
 	if applier, ok := targetClient.(storage.MetadataApplier); ok {
@@ -1326,29 +1218,19 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 	}
 
-	if task.ResourceType == "files" {
-		exists, targetSize, err := verifyTargetSize(verificationCtx, targetClient, task.ResourceType, targetPath)
-		if err != nil {
-			return fmt.Errorf("failed to verify target size: %w", err)
-		}
-		if !exists || targetSize != task.FileSize {
-			return fmt.Errorf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize)
-		}
-	}
-
 	// 5. Stream Hash Registration & Fast Task Completion
 	// Network hash-verification queries against the target provider are omitted during
 	// the transfer phase for maximum speed. Full checksum verification is performed
 	// post-transfer by the Verifier daemon.
 	if task.ResourceType == "files" {
-		workerHashAlgo := sourceAlgo
-		workerHashVal := formatWorkerHashValue(sourceAlgo, sourceHasher)
+		workerHashAlgo := transfer.SourceAlgorithm
+		workerHashVal := formatWorkerHashValue(transfer.SourceAlgorithm, transfer.SourceHasher)
 		// When source and target use different algorithms, retain the hash
 		// calculated for the bytes written to the target. The verifier promotes
 		// this value when it matches the target provider's native algorithm.
-		if targetHasher != nil {
-			workerHashAlgo = targetAlgo
-			workerHashVal = formatWorkerHashValue(targetAlgo, targetHasher)
+		if transfer.TargetHasher != nil {
+			workerHashAlgo = transfer.TargetAlgorithm
+			workerHashVal = formatWorkerHashValue(transfer.TargetAlgorithm, transfer.TargetHasher)
 		}
 		workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, workerHashVal)
 		task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
