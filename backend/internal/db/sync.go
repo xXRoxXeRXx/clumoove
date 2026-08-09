@@ -104,6 +104,19 @@ type SyncState struct {
 	ETag       string       `json:"etag,omitempty"`
 }
 
+// SyncStateDelete identifies one baseline row to remove during a sync-state
+// reconciliation.
+type SyncStateDelete struct {
+	SyncJobID string
+	Side      string
+	RelPath   string
+}
+
+const (
+	finalizeRunningSyncPass = "status IN ('RUNNING', 'VERIFYING')"
+	finalizeEmptySyncPass   = "status = 'INDEXING'"
+)
+
 const createSyncJobQuery = `
 		INSERT INTO sync_jobs (
 			user_id, source_url, source_username, source_password_encrypted,
@@ -672,23 +685,63 @@ func UpdateSyncJobRunStats(db *sql.DB, id string, lastRunStatus string, errMsg *
 // IDLE only from RUNNING or VERIFYING. It must not accept INDEXING: a newly
 // resumed pass can be INDEXING while a cancelled predecessor is winding down.
 func FinalizeSyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
-	return finalizeSyncJobPass(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status IN ('RUNNING', 'VERIFYING')")
+	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, nil, nil, finalizeRunningSyncPass)
+}
+
+// FinalizeSyncJobPassWithStates atomically stores the next delta baseline and
+// exposes the completed pass. A state-write failure therefore leaves the job
+// active instead of reporting a success that cannot be reconciled next pass.
+func FinalizeSyncJobPassWithStates(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete) (bool, error) {
+	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, upserts, deletes, finalizeRunningSyncPass)
 }
 
 // FinalizeEmptySyncJobPass completes an index-only pass that produced no
 // tasks. This is deliberately separate from transfer finalization.
 func FinalizeEmptySyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int) (bool, error) {
-	return finalizeSyncJobPass(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, "status = 'INDEXING'")
+	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, nil, nil, finalizeEmptySyncPass)
 }
 
-func finalizeSyncJobPass(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, predicate string) (bool, error) {
+// FinalizeEmptySyncJobPassWithStates is the index-only equivalent of
+// FinalizeSyncJobPassWithStates.
+func FinalizeEmptySyncJobPassWithStates(db *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete) (bool, error) {
+	return finalizeSyncJobPassWithStates(db, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, upserts, deletes, finalizeEmptySyncPass)
+}
+
+func finalizeSyncJobPassWithStates(database *sql.DB, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, upserts []*SyncState, deletes []SyncStateDelete, predicate string) (bool, error) {
+	tx, err := database.BeginTx(context.Background(), nil)
+	if err != nil {
+		return false, fmt.Errorf("begin sync finalization: %w", err)
+	}
+	defer tx.Rollback()
+
+	finalized, err := finalizeSyncJobPassTx(tx, id, generation, lastRunStatus, errMsg, total, processed, changed, deleted, failed, predicate)
+	if err != nil || !finalized {
+		return finalized, err
+	}
+	if err := bulkUpsertSyncStatesTx(tx, upserts, deletes); err != nil {
+		return false, fmt.Errorf("finalize sync state: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit sync finalization: %w", err)
+	}
+	// Notification creation is deliberately best-effort and happens after this
+	// transaction. The durable lifecycle and delta baseline are atomic; as with
+	// prior finalization, a process crash before this best-effort handoff can
+	// omit the completion notification.
+	if err := CreateSyncNotificationEvent(database, id); err != nil {
+		log.Printf("notification event creation for sync %s failed: %v", id, err)
+	}
+	return true, nil
+}
+
+func finalizeSyncJobPassTx(tx *sql.Tx, id string, generation int, lastRunStatus string, errMsg *string, total, processed, changed, deleted, failed int, predicate string) (bool, error) {
 	var errVal sql.NullString
 	if errMsg != nil {
 		errVal = sql.NullString{String: *errMsg, Valid: true}
 	}
 
 	var finalizedID string
-	err := db.QueryRow(`
+	err := tx.QueryRow(`
 		UPDATE sync_jobs
 		SET status = 'IDLE', verification_lease_until = NULL,
 		    last_run_status = $1,
@@ -708,9 +761,6 @@ func finalizeSyncJobPass(db *sql.DB, id string, generation int, lastRunStatus st
 	}
 	if err != nil {
 		return false, err
-	}
-	if err := CreateSyncNotificationEvent(db, id); err != nil {
-		log.Printf("notification event creation for sync %s failed: %v", id, err)
 	}
 	return true, nil
 }
@@ -1231,7 +1281,7 @@ func BulkCreateSyncTasks(ctx context.Context, db *sql.DB, tasks []*Task) error {
 // the size/mtime/hash columns are updated; new rows are inserted.
 // This replaces the per-file UpsertSyncState loop and is dramatically faster for
 // large directory trees (e.g. 1000 files → 1 tx with 1000 statements vs 1000 txs).
-func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []struct{ SyncJobID, Side, RelPath string }) error {
+func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []SyncStateDelete) error {
 	if len(upserts) == 0 && len(deletes) == 0 {
 		return nil
 	}
@@ -1241,6 +1291,16 @@ func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []struct{ Sy
 		return fmt.Errorf("bulk upsert sync states: begin tx: %w", err)
 	}
 	defer tx.Rollback()
+	if err := bulkUpsertSyncStatesTx(tx, upserts, deletes); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func bulkUpsertSyncStatesTx(tx *sql.Tx, upserts []*SyncState, deletes []SyncStateDelete) error {
+	if len(upserts) == 0 && len(deletes) == 0 {
+		return nil
+	}
 
 	// Prepare the upsert statement once and reuse it for all rows.
 	upsertStmt, err := tx.Prepare(`
@@ -1283,7 +1343,7 @@ func BulkUpsertSyncStates(db *sql.DB, upserts []*SyncState, deletes []struct{ Sy
 		}
 	}
 
-	return tx.Commit()
+	return nil
 }
 
 // UpdateSyncJobThreads updates the thread count for a sync job.

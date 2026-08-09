@@ -252,11 +252,9 @@ func TestListFilesTraversesTreeWiderThanLegacyQueue(t *testing.T) {
 	}
 }
 
-func TestUpdateSyncStatesPrevKeys(t *testing.T) {
-	// Verify that allKeys in updateSyncStates captures keys from prevSource and prevTarget
+func TestSyncStateChangesIncludesPreviousPaths(t *testing.T) {
+	// Verify that allPaths in syncStateChanges captures paths from prevSource and prevTarget
 	// even when sourceMap and targetMap are empty (e.g. all files deleted on source and target).
-	engine := NewEngine(nil, nil, "secret")
-
 	prevSource := map[string]db.SyncState{
 		"/deleted_file.txt": {RelPath: "/deleted_file.txt", Side: "source"},
 	}
@@ -267,10 +265,12 @@ func TestUpdateSyncStatesPrevKeys(t *testing.T) {
 	sourceMap := make(map[string]fileState)
 	targetMap := make(map[string]fileState)
 
-	// Since engine.db is nil, updateSyncStates will attempt BulkUpsertSyncStates with nil db,
-	// which won't panic if upserts and deletes are collected and passed (BulkUpsertSyncStates will fail on tx.Begin).
-	// We call updateSyncStates to verify it executes without unexpected runtime errors before DB call.
-	engine.updateSyncStates("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil)
+	// State generation must retain keys found only in the previous baseline so
+	// deletions are persisted on the next successful pass.
+	upserts, deletes := syncStateChanges("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil)
+	if len(upserts) != 0 || len(deletes) != 2 {
+		t.Fatalf("state changes = %d upserts, %d deletes; want 0, 2", len(upserts), len(deletes))
+	}
 }
 
 func TestWaitForNoRunningTasksChecksImmediately(t *testing.T) {
@@ -358,4 +358,3 @@ func TestListFilesMissingStartPath(t *testing.T) {
 		t.Fatalf("expected /missing not to be in dirMap")
 	}
 }
-

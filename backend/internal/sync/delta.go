@@ -28,10 +28,10 @@ func cleanRelPath(p string) string {
 	return cleaned
 }
 
-// updateSyncStates aligns sync_state entries with current listings, preserving the old states of failed files.
-// Uses BulkUpsertSyncStates to batch all upserts and deletes into a single transaction instead of N individual
-// round-trips (one per file), which is dramatically faster for large directory trees.
-func (e *Engine) updateSyncStates(
+// syncStateChanges aligns sync_state entries with current listings, preserving
+// the old states of failed files. The caller persists the returned changes with
+// lifecycle finalization in one transaction.
+func syncStateChanges(
 	jobID string,
 	sourceMap, targetMap map[string]fileState,
 	prevSource, prevTarget map[string]db.SyncState,
@@ -39,66 +39,67 @@ func (e *Engine) updateSyncStates(
 	sourceDirMap, targetDirMap map[string]bool,
 	prevSourceDirETags, prevTargetDirETags map[string]string,
 	taskOutcomes map[string]string,
-) {
-	allKeys := make(map[string]bool)
+) ([]*db.SyncState, []db.SyncStateDelete) {
+	allPaths := make(map[string]bool)
 	for k := range sourceMap {
-		allKeys[cleanRelPath(k)] = true
+		allPaths[cleanRelPath(k)] = true
 	}
 	for k := range targetMap {
-		allKeys[cleanRelPath(k)] = true
+		allPaths[cleanRelPath(k)] = true
 	}
 	for k := range prevSource {
-		allKeys[cleanRelPath(k)] = true
+		allPaths[cleanRelPath(k)] = true
 	}
 	for k := range prevTarget {
-		allKeys[cleanRelPath(k)] = true
+		allPaths[cleanRelPath(k)] = true
 	}
 
 	var upserts []*db.SyncState
-	var deletes []struct{ SyncJobID, Side, RelPath string }
+	var deletes []db.SyncStateDelete
 
-	for S := range allKeys {
-		srcFile, hasSrc := sourceMap[S]
-		tgtFile, hasTgt := targetMap[S]
-		outcome, hasTask := taskOutcomes[S]
+	for relPath := range allPaths {
+		sourceFile, hasSource := sourceMap[relPath]
+		targetFile, hasTarget := targetMap[relPath]
+		outcome, hasTask := taskOutcomes[relPath]
 
-		// If a task ran for this file, and it FAILED, do NOT update states (so it gets retried)
+		// Keep the old baseline for any task that did not finish successfully so
+		// the next pass retries it.
 		if hasTask && outcome != "COMPLETED" && outcome != "SKIPPED" {
 			continue
 		}
 
-		cleanKey := cleanRelPath(S)
+		cleanPath := cleanRelPath(relPath)
 
 		// Source side
-		if hasSrc {
+		if hasSource {
 			upserts = append(upserts, &db.SyncState{
 				SyncJobID:  jobID,
 				Side:       "source",
-				RelPath:    cleanKey,
-				Size:       srcFile.Size,
-				Mtime:      sql.NullTime{Time: srcFile.LastModified, Valid: !srcFile.LastModified.IsZero()},
-				SourceHash: srcFile.Hash,
-				TargetHash: srcFile.Hash,
-				ETag:       srcFile.ETag,
+				RelPath:    cleanPath,
+				Size:       sourceFile.Size,
+				Mtime:      sql.NullTime{Time: sourceFile.LastModified, Valid: !sourceFile.LastModified.IsZero()},
+				SourceHash: sourceFile.Hash,
+				TargetHash: sourceFile.Hash,
+				ETag:       sourceFile.ETag,
 			})
 		} else {
-			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "source", cleanKey})
+			deletes = append(deletes, db.SyncStateDelete{SyncJobID: jobID, Side: "source", RelPath: cleanPath})
 		}
 
 		// Target side
-		if hasTgt {
+		if hasTarget {
 			upserts = append(upserts, &db.SyncState{
 				SyncJobID:  jobID,
 				Side:       "target",
-				RelPath:    cleanKey,
-				Size:       tgtFile.Size,
-				Mtime:      sql.NullTime{Time: tgtFile.LastModified, Valid: !tgtFile.LastModified.IsZero()},
-				SourceHash: tgtFile.Hash,
-				TargetHash: tgtFile.Hash,
-				ETag:       tgtFile.ETag,
+				RelPath:    cleanPath,
+				Size:       targetFile.Size,
+				Mtime:      sql.NullTime{Time: targetFile.LastModified, Valid: !targetFile.LastModified.IsZero()},
+				SourceHash: targetFile.Hash,
+				TargetHash: targetFile.Hash,
+				ETag:       targetFile.ETag,
 			})
 		} else {
-			deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "target", cleanKey})
+			deletes = append(deletes, db.SyncStateDelete{SyncJobID: jobID, Side: "target", RelPath: cleanPath})
 		}
 	}
 
@@ -159,7 +160,7 @@ func (e *Engine) updateSyncStates(
 		cdir := cleanRelPath(dirPath)
 		if !sourceDirMap[cdir] {
 			if _, hasETag := sourceDirETags[cdir]; !hasETag {
-				deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "source", cdir})
+				deletes = append(deletes, db.SyncStateDelete{SyncJobID: jobID, Side: "source", RelPath: cdir})
 			}
 		}
 	}
@@ -167,18 +168,12 @@ func (e *Engine) updateSyncStates(
 		cdir := cleanRelPath(dirPath)
 		if !targetDirMap[cdir] {
 			if _, hasETag := targetDirETags[cdir]; !hasETag {
-				deletes = append(deletes, struct{ SyncJobID, Side, RelPath string }{jobID, "target", cdir})
+				deletes = append(deletes, db.SyncStateDelete{SyncJobID: jobID, Side: "target", RelPath: cdir})
 			}
 		}
 	}
 
-	if e.db == nil {
-		return
-	}
-
-	if err := db.BulkUpsertSyncStates(e.db, upserts, deletes); err != nil {
-		log.Printf("[SyncEngine] Warning: BulkUpsertSyncStates for job %s failed: %v\n", jobID, err)
-	}
+	return upserts, deletes
 }
 
 // listFiles traverses paths recursively using a parallel worker pool and hierarchical ETag folder skipping.

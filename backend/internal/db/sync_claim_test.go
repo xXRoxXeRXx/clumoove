@@ -63,8 +63,47 @@ func setupSyncClaimTestDB(t *testing.T) *sql.DB {
 		database.Close()
 		t.Fatalf("create temp schedules: %v", err)
 	}
+	if _, err := database.Exec(`
+		CREATE TEMP TABLE sync_state (
+			sync_job_id TEXT NOT NULL,
+			side TEXT NOT NULL,
+			rel_path TEXT NOT NULL,
+			size BIGINT NOT NULL CHECK (size >= 0),
+			mtime TIMESTAMP WITH TIME ZONE,
+			source_hash TEXT NOT NULL DEFAULT '',
+			target_hash TEXT NOT NULL DEFAULT '',
+			etag TEXT,
+			PRIMARY KEY (sync_job_id, side, rel_path)
+		)
+	`); err != nil {
+		database.Close()
+		t.Fatalf("create temp sync_state: %v", err)
+	}
 	t.Cleanup(func() { _ = database.Close() })
 	return database
+}
+
+func TestFinalizeSyncJobPassWithStatesRollsBackLifecycleOnStateFailure(t *testing.T) {
+	database := setupSyncClaimTestDB(t)
+	insertSyncClaimJob(t, database, "atomic-state-failure", "RUNNING")
+
+	// The test table rejects this state row. The lifecycle update must roll back
+	// too, leaving the pass recoverable instead of falsely exposing SUCCESS.
+	finalized, err := FinalizeSyncJobPassWithStates(database, "atomic-state-failure", 0, "SUCCESS", nil, 1, 1, 1, 0, 0,
+		[]*SyncState{{SyncJobID: "atomic-state-failure", Side: "source", RelPath: "/dir", Size: -1}}, nil)
+	if err == nil || finalized {
+		t.Fatalf("atomic finalization = finalized=%v, err=%v; want false, error", finalized, err)
+	}
+	if got := syncClaimStatus(t, database, "atomic-state-failure"); got != "RUNNING" {
+		t.Fatalf("status after state failure = %q, want RUNNING", got)
+	}
+	var lastRunStatus sql.NullString
+	if err := database.QueryRow(`SELECT last_run_status FROM sync_jobs WHERE id = $1`, "atomic-state-failure").Scan(&lastRunStatus); err != nil {
+		t.Fatal(err)
+	}
+	if lastRunStatus.Valid {
+		t.Fatalf("last_run_status = %q; lifecycle update should have rolled back", lastRunStatus.String)
+	}
 }
 
 func TestFinalizeSyncJobPass(t *testing.T) {

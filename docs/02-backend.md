@@ -132,7 +132,10 @@ advisory pass lock while its generation's running workers drain cancellation,
 with a bounded 30-second grace period. Engine
 lifecycle updates and the running-only progress reconciler compare that token,
 so a stale coordinator/reconciliation read cannot finalize a successor pass without
-waiting for a fallback poll.
+waiting for a fallback poll. The coordinator commits final task statistics, the
+reconciled `sync_state` baseline, and the transition back to `IDLE` in one
+PostgreSQL transaction; a baseline-write failure rolls back the success result
+and the pass is marked failed for a recoverable retry.
 
 This guarantees at-least-once delivery and per-job thread caps.
 

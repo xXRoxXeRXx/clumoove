@@ -666,17 +666,19 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	log.Printf("[SyncEngine] Job %s: calculated %d tasks to run\n", syncJobID, totalCreatedTasks)
 
 	if totalCreatedTasks == 0 {
-		// No transfers needed: update stats immediately and complete run
-		finalized, err := db.FinalizeEmptySyncJobPass(e.db, job.ID, generation, "SUCCESS", nil, 0, 0, 0, 0, 0)
+		// The baseline and lifecycle result must commit together. Otherwise a
+		// successful empty pass can lose deletion/conflict history.
+		upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, nil)
+		finalized, err := db.FinalizeEmptySyncJobPassWithStates(e.db, job.ID, generation, "SUCCESS", nil, 0, 0, 0, 0, 0, upserts, deletes)
 		if err != nil {
-			log.Printf("[SyncEngine] Failed to finalize empty sync pass for job %s: %v\n", syncJobID, err)
+			log.Printf("[SyncEngine] Failed to persist and finalize empty sync pass for job %s: %v\n", syncJobID, err)
+			e.failSync(syncJobID, generation, "Failed to persist sync state")
 			return
 		}
 		if !finalized {
 			log.Printf("[SyncEngine] Not finalizing empty sync pass for job %s; status changed during execution\n", syncJobID)
 			return
 		}
-		e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, nil)
 		return
 	}
 
@@ -906,23 +908,20 @@ SyncTasksDone:
 		}
 	}
 
-	// Persist the run outcome and return to IDLE only if this engine still owns
-	// an active pass. In particular, do not overwrite a FAILED/PAUSED_* state
-	// written by a task worker after an auth or connection failure.
-	finalized, err := db.FinalizeSyncJobPass(e.db, job.ID, generation, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed)
+	// Persist the durable delta baseline and return to IDLE in one transaction.
+	// The predicate excludes FAILED/PAUSED_*, so a concurrent task-worker
+	// failure is not overwritten.
+	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, taskOutcomes)
+	finalized, err := db.FinalizeSyncJobPassWithStates(e.db, job.ID, generation, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed, upserts, deletes)
 	if err != nil {
-		log.Printf("[SyncEngine] Failed to finalize job %s: %v\n", syncJobID, err)
+		log.Printf("[SyncEngine] Failed to persist and finalize job %s (outcome=%s total=%d processed=%d changed=%d deleted=%d failed=%d): %v\n", syncJobID, finalRunStatus, total, completed+skipped, changedCount, deletedCount, failed, err)
+		e.failSync(syncJobID, generation, "Failed to persist sync state")
 		return
 	}
 	if !finalized {
 		log.Printf("[SyncEngine] Not finalizing job %s; status changed during execution\n", syncJobID)
 		return
 	}
-
-	// Apply durable sync state only after the lifecycle CAS succeeds. A late
-	// task-worker failure must leave both the job status and its delta state
-	// untouched so the next pass can retry correctly.
-	e.updateSyncStates(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, taskOutcomes)
 
 	auditAction := db.AuditSyncCompleted
 	if finalRunStatus == "FAILED" {
