@@ -3,15 +3,24 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../i18n';
 import type { SyncJob } from '../types';
-import { apiFetch } from '../utils/apiClient';
+import { apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop, type SseHandlers } from '../utils/sse';
 import { SyncDashboard } from './SyncDashboard';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('../contexts/useToast', () => ({ useToast: () => vi.fn() }));
+const toast = vi.fn();
+
+vi.mock('../contexts/useToast', () => ({ useToast: () => toast }));
 vi.mock('../utils/sse', () => ({ connectSseLoop: vi.fn(() => new Promise<void>(() => {})) }));
-vi.mock('../utils/apiClient', () => ({ apiFetch: vi.fn() }));
+vi.mock('../utils/apiClient', () => ({
+  ApiDisplayError: class ApiDisplayError extends Error {},
+  apiFetch: vi.fn(),
+  apiJson: vi.fn(),
+  apiErrorMessage: (result: { errorCode?: string; networkError: boolean }, translate: (code?: string) => string, fallback: string) =>
+    result.networkError ? fallback : translate(result.errorCode),
+  apiResponseError: vi.fn(() => Promise.resolve(null)),
+}));
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -28,6 +37,10 @@ function deferred<T>(): Deferred<T> {
 
 function jsonResponse(data: unknown): Response {
   return { ok: true, json: () => Promise.resolve(data) } as Response;
+}
+
+function jsonResult<T>(data: T): { ok: true; status: number; data: T } {
+  return { ok: true as const, status: 200, data };
 }
 
 function createSyncJob(sourceUrl: string): SyncJob {
@@ -47,7 +60,10 @@ describe('SyncDashboard initial snapshot ordering', () => {
 
   beforeEach(async () => {
     await i18n.changeLanguage('en');
+    toast.mockReset();
     vi.mocked(apiFetch).mockReset();
+    vi.mocked(apiFetch).mockResolvedValue(jsonResponse({ errors: [], total: 0 }));
+    vi.mocked(apiJson).mockReset();
     vi.mocked(connectSseLoop).mockReset();
   });
 
@@ -57,13 +73,10 @@ describe('SyncDashboard initial snapshot ordering', () => {
   });
 
   it('keeps newer stream data when the initial sync detail snapshot resolves late', async () => {
-    const snapshot = deferred<Response>();
+    const snapshot = deferred<ReturnType<typeof jsonResult<SyncJob>>>();
     const streams = new Map<string, SseHandlers>();
     let snapshotSignal: AbortSignal | undefined;
-    vi.mocked(apiFetch).mockImplementation((url, options) => {
-      if (String(url).includes('/errors?')) {
-        return Promise.resolve(jsonResponse({ errors: [], total: 0 }));
-      }
+    vi.mocked(apiJson).mockImplementation((_url, options) => {
       snapshotSignal = options?.signal;
       return snapshot.promise;
     });
@@ -81,7 +94,7 @@ describe('SyncDashboard initial snapshot ordering', () => {
 
     await act(async () => {
       streams.get('https://api.example.test/api/sync/stream')?.onEvent('sync_jobs', JSON.stringify([createSyncJob('https://live-detail.example.test')]));
-      snapshot.resolve(jsonResponse(createSyncJob('https://stale-detail.example.test')));
+      snapshot.resolve(jsonResult(createSyncJob('https://stale-detail.example.test')));
       await Promise.resolve();
     });
 
@@ -91,11 +104,9 @@ describe('SyncDashboard initial snapshot ordering', () => {
   });
 
   it('treats a stream frame without the selected job as a deletion', async () => {
-    const snapshot = deferred<Response>();
+    const snapshot = deferred<ReturnType<typeof jsonResult<SyncJob>>>();
     const streams = new Map<string, SseHandlers>();
-    vi.mocked(apiFetch).mockImplementation((url) => String(url).includes('/errors?')
-      ? Promise.resolve(jsonResponse({ errors: [], total: 0 }))
-      : snapshot.promise);
+    vi.mocked(apiJson).mockImplementation(() => snapshot.promise);
     vi.mocked(connectSseLoop).mockImplementation((options) => {
       streams.set(options.url, options.handlers);
       return new Promise<void>(() => {});
@@ -110,11 +121,59 @@ describe('SyncDashboard initial snapshot ordering', () => {
 
     await act(async () => {
       streams.get('https://api.example.test/api/sync/stream')?.onEvent('sync_jobs', '[]');
-      snapshot.resolve(jsonResponse(createSyncJob('https://stale-detail.example.test')));
+      snapshot.resolve(jsonResult(createSyncJob('https://stale-detail.example.test')));
       await Promise.resolve();
     });
 
     expect(container.textContent).toContain(i18n.t('sync.notFound'));
     expect(container.textContent).not.toContain('https://stale-detail.example.test');
+  });
+
+  it.each([
+    [{ ok: false as const, status: 403, errorCode: 'FORBIDDEN', networkError: false }, 'Access forbidden.'],
+    [{ ok: false as const, status: 403, errorCode: 'UNKNOWN', networkError: false }, 'An unexpected error occurred.'],
+    [{ ok: false as const, status: 0, networkError: true }, 'Failed to load sync job details.'],
+  ])('displays the mapped error or network fallback for a failed detail snapshot', async (result, expectedMessage) => {
+    vi.mocked(apiJson).mockResolvedValue(result);
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={vi.fn()} />);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain(expectedMessage);
+  });
+
+  it('keeps the localized download fallback for network failures', async () => {
+    const job = { ...createSyncJob('https://source.example.test'), failed_files: 1 };
+    vi.mocked(apiJson).mockResolvedValue(jsonResult(job));
+    vi.mocked(apiFetch).mockImplementation((url) => String(url).includes('/errors?')
+      ? Promise.resolve(jsonResponse({
+        errors: [{ id: 'error-1', kind: 'transfer', resource_type: 'files', path: '/file', status: 'FAILED', attempts: 0, error_message: 'failed', occurred_at: '2026-01-01T00:00:00Z' }],
+        total: 1,
+      }))
+      : Promise.reject(new TypeError('Failed to fetch')));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={vi.fn()} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const downloadButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === i18n.t('sync.downloadReport'));
+    expect(downloadButton).toBeDefined();
+    await act(async () => {
+      downloadButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(toast).toHaveBeenCalledWith(i18n.t('dashboard.downloadFailed'));
   });
 });

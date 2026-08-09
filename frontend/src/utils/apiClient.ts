@@ -145,22 +145,111 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
   }
 }
 
-export type ApiJsonResult<T> = {
-  ok: boolean;
+export type ApiJsonSuccess<T> = {
+  ok: true;
   status: number;
   data: T;
-  errorCode?: string;
 };
+
+export type ApiJsonFailure<T> = {
+  ok: false;
+  status: number;
+  data?: T;
+  errorCode?: string;
+  networkError: boolean;
+};
+
+export type ApiJsonResult<T> = ApiJsonSuccess<T> | ApiJsonFailure<T>;
+
+type ApiErrorTranslator = (code?: string | null) => string;
+
+/** An error whose message is safe to display because it was locally translated. */
+export class ApiDisplayError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ApiDisplayError';
+  }
+}
+
+/**
+ * Converts a failed JSON request to display text without exposing response
+ * bodies. Network failures keep the caller's contextual fallback; API error
+ * codes are always translated through the central error-code catalog.
+ */
+export function apiErrorMessage<T>(
+  result: ApiJsonFailure<T>,
+  translateApiError: ApiErrorTranslator,
+  fallback: string,
+): string {
+  if (result.networkError) return fallback;
+  return translateApiError(result.errorCode);
+}
+
+function unknownApiJsonFailure<T>(status: number): ApiJsonFailure<T> {
+  return { ok: false, status, errorCode: 'UNKNOWN', networkError: false };
+}
+
+function errorCodeFromData(data: unknown): string {
+  if (typeof data !== 'object' || data === null || !('error_code' in data)) {
+    return 'UNKNOWN';
+  }
+
+  return typeof data.error_code === 'string' ? data.error_code : 'UNKNOWN';
+}
+
+/**
+ * Reads a failed response once and normalizes its machine-readable error code.
+ * Use this for non-JSON success endpoints such as downloads.
+ */
+export async function apiResponseError<T = Record<string, unknown>>(
+  response: Response,
+): Promise<ApiJsonFailure<T> | null> {
+  if (response.ok) return null;
+
+  const responseBody = await response.text().catch(() => null);
+  if (responseBody === null || responseBody === '') {
+    return unknownApiJsonFailure<T>(response.status);
+  }
+
+  let data: T;
+  try {
+    data = JSON.parse(responseBody) as T;
+  } catch {
+    return unknownApiJsonFailure<T>(response.status);
+  }
+
+  const errorCode = errorCodeFromData(data);
+  return { ok: false, status: response.status, data, errorCode, networkError: false };
+}
 
 export async function apiJson<T = Record<string, unknown>>(
   input: string,
   init?: RequestInit,
 ): Promise<ApiJsonResult<T>> {
-  const res = await apiFetch(input, init);
-  const data = (await res.json().catch(() => ({}))) as T & { error_code?: unknown };
-  if (!res.ok) {
-    const errorCode = typeof data.error_code === 'string' ? data.error_code : 'UNKNOWN';
-    return { ok: false, status: res.status, data, errorCode };
+  let res: Response;
+  try {
+    res = await apiFetch(input, init);
+  } catch {
+    return { ok: false, status: 0, networkError: true };
   }
+
+  const responseError = await apiResponseError<T>(res);
+  if (responseError) return responseError;
+
+  const body = await res.text().catch(() => null);
+  if (body === null) {
+    return unknownApiJsonFailure<T>(res.status);
+  }
+  if (body === '') {
+    return { ok: true, status: res.status, data: undefined as unknown as T };
+  }
+
+  let data: T;
+  try {
+    data = JSON.parse(body) as T;
+  } catch {
+    return unknownApiJsonFailure<T>(res.status);
+  }
+
   return { ok: true, status: res.status, data };
 }

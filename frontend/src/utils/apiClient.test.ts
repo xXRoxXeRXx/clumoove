@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { configureApiClient, apiFetch } from './apiClient';
+import { ApiDisplayError, apiErrorMessage, apiFetch, apiJson, apiResponseError, configureApiClient } from './apiClient';
 
 describe('apiFetch', () => {
   const apiUrl = 'https://api.example.com';
@@ -88,5 +88,58 @@ describe('apiFetch', () => {
     const res = await request;
     expect(res.status).toBe(401);
     expect(onAuthFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('apiJson', () => {
+  beforeEach(() => {
+    configureApiClient({
+      apiUrl: 'https://api.example.com',
+      getAccessToken: () => 'token',
+      setAccessToken: vi.fn(),
+      onAuthFailure: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['a JSON error code', new Response(JSON.stringify({ error_code: 'FORBIDDEN' }), { status: 403 }), 'FORBIDDEN'],
+    ['a malformed error body', new Response('not json', { status: 403 }), 'UNKNOWN'],
+  ])('preserves %s on a non-2xx response', async (_name, response, errorCode) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+
+    const result = await apiJson('/api/sync');
+
+    expect(result).toMatchObject({ ok: false, status: 403, errorCode, networkError: false });
+    if (result.ok === false) {
+      expect(apiErrorMessage(result, (code) => `translated:${code}`, 'network fallback')).toBe(`translated:${errorCode}`);
+    }
+  });
+
+  it('returns a contextual fallback for network failures', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const result = await apiJson('/api/sync');
+
+    expect(result).toMatchObject({ ok: false, status: 0, networkError: true });
+    if (result.ok === false) {
+      expect(apiErrorMessage(result, (code) => `translated:${code}`, 'network fallback')).toBe('network fallback');
+    }
+  });
+
+  it('normalizes failed binary-endpoint responses without reading a success body', async () => {
+    const result = await apiResponseError(new Response(JSON.stringify({ error_code: 'FORBIDDEN' }), { status: 403 }));
+
+    expect(result).toMatchObject({ ok: false, status: 403, errorCode: 'FORBIDDEN', networkError: false });
+  });
+
+  it('marks locally translated API messages as safe for display', () => {
+    const error = new ApiDisplayError('Access forbidden.');
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe('ApiDisplayError');
   });
 });

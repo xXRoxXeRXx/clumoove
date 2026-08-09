@@ -7,7 +7,7 @@ import { useConfirm } from '../contexts/useConfirm';
 import { useToast } from '../contexts/useToast';
 import { StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
-import { apiFetch } from '../utils/apiClient';
+import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import { ArrowPathIcon, CalendarDaysIcon, PauseIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { ProgressBar } from './ProgressBar';
@@ -71,14 +71,13 @@ export function MigrationsDashboard({
     }
 
     try {
-      const res = await apiFetch(`${apiUrl}/api/sync`, {
+      const result = await apiJson<SyncJob[]>(`${apiUrl}/api/sync`, {
         headers: { Authorization: `Bearer ${token}` },
         signal,
       });
-      if (!res.ok) throw new Error(t('sync.loadFailed'));
-      const data = await res.json();
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('sync.loadFailed')));
       if (acceptsSnapshot()) {
-        setSyncJobs(data || []);
+        setSyncJobs(result.data || []);
       }
     } catch (err: unknown) {
       if (acceptsSnapshot()) {
@@ -89,7 +88,7 @@ export function MigrationsDashboard({
         setSyncLoading(false);
       }
     }
-  }, [apiUrl, token, t]);
+  }, [apiUrl, token, t, translateApiError]);
 
   const fetchMigrations = useCallback(async function fetchMigrations(signal: AbortSignal, snapshotGeneration: number): Promise<void> {
     function acceptsSnapshot(): boolean {
@@ -99,27 +98,15 @@ export function MigrationsDashboard({
     }
 
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration`, {
+      const result = await apiJson<Migration[]>(`${apiUrl}/api/migration`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
         signal,
       });
-      if (!response.ok) {
-        let message = t('migrations.loadFailed');
-        try {
-          const body = await response.json();
-          if (body?.error_code) {
-            message = translateApiError(body.error_code);
-          }
-        } catch {
-          /* ignore non-JSON bodies */
-        }
-        throw new Error(message);
-      }
-      const data = await response.json();
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('migrations.loadFailed')));
       if (acceptsSnapshot()) {
-        setMigrations(data || []);
+        setMigrations(result.data || []);
       }
     } catch (err: unknown) {
       if (acceptsSnapshot()) {
@@ -247,24 +234,13 @@ export function MigrationsDashboard({
 
     setDeleteLoading(id);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/${id}`, {
+      const result = await apiJson(`${apiUrl}/api/migration/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
-      if (!response.ok) {
-        let message = t('migrations.deleteFailed');
-        try {
-          const body = await response.json();
-          if (body?.error_code) {
-            message = translateApiError(body.error_code);
-          }
-        } catch {
-          /* ignore non-JSON bodies */
-        }
-        throw new Error(message);
-      }
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('migrations.deleteFailed')));
       setMigrations((prev) => prev.filter((m) => m.id !== id));
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : t('migrations.deleteError'));
@@ -307,25 +283,23 @@ export function MigrationsDashboard({
 
     for (const id of ids) {
       try {
-        const res = await apiFetch(`${apiUrl}/api/migration/${id}`, {
+        const result = await apiJson(`${apiUrl}/api/migration/${id}`, {
           method: 'DELETE',
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
-        if (res.ok) {
+        if (result.ok === true) {
           successIds.add(id);
         } else {
           failCount++;
-          if (!firstErrorCode) {
-            try {
-              const body = await res.json();
-              if (body?.error_code) {
-                firstErrorCode = body.error_code;
-              }
-            } catch {
-              /* ignore non-JSON bodies */
-            }
+          if (
+            !firstErrorCode
+            && !result.networkError
+            && result.errorCode
+            && result.errorCode !== 'UNKNOWN'
+          ) {
+            firstErrorCode = result.errorCode;
           }
         }
       } catch {
@@ -349,14 +323,11 @@ export function MigrationsDashboard({
     const action = ['PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(migration.status) ? 'resume' : 'pause';
     setControlLoading(migration.id);
     try {
-      const response = await apiFetch(`${apiUrl}/api/migration/${migration.id}/${action}`, {
+      const result = await apiJson(`${apiUrl}/api/migration/${migration.id}/${action}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.error_code ? translateApiError(body.error_code) : t('dashboard.actionFailedMsg', { action }));
-      }
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailedMsg', { action })));
       setMigrations((current) => current.map((item) => item.id === migration.id
         ? { ...item, status: action === 'pause' ? 'PAUSED' : 'RUNNING' }
         : item));
@@ -836,15 +807,11 @@ function SyncList({
 
     setDeleteLoading(id);
     try {
-      const res = await apiFetch(`${apiUrl}/api/sync/${id}`, {
+      const result = await apiJson(`${apiUrl}/api/sync/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        const msg = body?.error_code ? translateApiError(body.error_code) : t('sync.deleteFailed');
-        throw new Error(msg);
-      }
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('sync.deleteFailed')));
       setSyncJobs((prev) => prev.filter((j) => j.id !== id));
     } catch (err: unknown) {
       toast(err instanceof Error ? err.message : t('sync.deleteFailed'));
@@ -888,23 +855,21 @@ function SyncList({
 
     for (const id of ids) {
       try {
-        const res = await apiFetch(`${apiUrl}/api/sync/${id}`, {
+        const result = await apiJson(`${apiUrl}/api/sync/${id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (res.ok) {
+        if (result.ok === true) {
           successIds.add(id);
         } else {
           failCount++;
-          if (!firstErrorCode) {
-            try {
-              const body = await res.json();
-              if (body?.error_code) {
-                firstErrorCode = body.error_code;
-              }
-            } catch {
-              /* ignore non-JSON bodies */
-            }
+          if (
+            !firstErrorCode
+            && !result.networkError
+            && result.errorCode
+            && result.errorCode !== 'UNKNOWN'
+          ) {
+            firstErrorCode = result.errorCode;
           }
         }
       } catch {
@@ -928,14 +893,11 @@ function SyncList({
     const action = job.status === 'PAUSED' ? 'resume' : 'pause';
     setControlLoading(job.id);
     try {
-      const response = await apiFetch(`${apiUrl}/api/sync/${job.id}/${action}`, {
+      const result = await apiJson(`${apiUrl}/api/sync/${job.id}/${action}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body?.error_code ? translateApiError(body.error_code) : t('dashboard.actionFailedMsg', { action }));
-      }
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('dashboard.actionFailedMsg', { action })));
       if (action === 'pause') {
         setSyncJobs((current) => current.map((item) => item.id === job.id
           ? { ...item, status: 'PAUSED' }

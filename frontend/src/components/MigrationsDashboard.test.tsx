@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../i18n';
 import type { Migration, SyncJob } from '../types';
 import { MigrationsDashboard } from './MigrationsDashboard';
-import { apiFetch } from '../utils/apiClient';
+import { apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop, type SseHandlers } from '../utils/sse';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -23,6 +23,9 @@ vi.mock('../contexts/useToast', () => ({ useToast: () => vi.fn() }));
 vi.mock('../utils/sse', () => ({ connectSseLoop: vi.fn(() => new Promise<void>(() => {})) }));
 vi.mock('../utils/apiClient', () => ({
   apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve([]) })),
+  apiJson: vi.fn(() => Promise.resolve({ ok: true, status: 200, data: [] })),
+  apiErrorMessage: (result: { errorCode?: string; networkError: boolean }, translate: (code?: string) => string, fallback: string) =>
+    result.networkError ? fallback : translate(result.errorCode),
 }));
 
 type Deferred<T> = {
@@ -38,8 +41,8 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
-function jsonResponse(data: unknown): Response {
-  return { ok: true, json: () => Promise.resolve(data) } as Response;
+function jsonResponse<T>(data: T): { ok: true; status: number; data: T } {
+  return { ok: true as const, status: 200, data };
 }
 
 function createMigration(sourceUrl: string): Migration {
@@ -84,7 +87,9 @@ describe('MigrationsDashboard tabs', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en');
     vi.mocked(apiFetch).mockReset();
-    vi.mocked(apiFetch).mockResolvedValue(jsonResponse([]));
+    vi.mocked(apiFetch).mockResolvedValue(new Response(JSON.stringify([])));
+    vi.mocked(apiJson).mockReset();
+    vi.mocked(apiJson).mockResolvedValue(jsonResponse([]));
     vi.mocked(connectSseLoop).mockReset();
     vi.mocked(connectSseLoop).mockImplementation(() => new Promise<void>(() => {}));
   });
@@ -135,11 +140,11 @@ describe('MigrationsDashboard tabs', () => {
   });
 
   it('keeps newer migration stream data when the initial migration snapshot resolves late', async () => {
-    const migrationSnapshot = deferred<Response>();
-    const syncSnapshot = deferred<Response>();
+    const migrationSnapshot = deferred<ReturnType<typeof jsonResponse<Migration[]>>>();
+    const syncSnapshot = deferred<ReturnType<typeof jsonResponse<SyncJob[]>>>();
     const streams = new Map<string, SseHandlers>();
     let migrationSignal: AbortSignal | undefined;
-    vi.mocked(apiFetch).mockImplementation((url, options) => {
+    vi.mocked(apiJson).mockImplementation((url, options) => {
       if (String(url).endsWith('/api/migration')) {
         migrationSignal = options?.signal;
         return migrationSnapshot.promise;
@@ -172,11 +177,11 @@ describe('MigrationsDashboard tabs', () => {
   });
 
   it('keeps newer sync stream data when the initial sync snapshot resolves late', async () => {
-    const migrationSnapshot = deferred<Response>();
-    const syncSnapshot = deferred<Response>();
+    const migrationSnapshot = deferred<ReturnType<typeof jsonResponse<Migration[]>>>();
+    const syncSnapshot = deferred<ReturnType<typeof jsonResponse<SyncJob[]>>>();
     const streams = new Map<string, SseHandlers>();
     let syncSignal: AbortSignal | undefined;
-    vi.mocked(apiFetch).mockImplementation((url, options) => {
+    vi.mocked(apiJson).mockImplementation((url, options) => {
       if (String(url).endsWith('/api/migration')) return migrationSnapshot.promise;
       syncSignal = options?.signal;
       return syncSnapshot.promise;
@@ -207,5 +212,31 @@ describe('MigrationsDashboard tabs', () => {
     expect(container.textContent).toContain('https://live-sync.example.test');
     expect(container.textContent).not.toContain('https://stale-sync.example.test');
     expect(syncSignal?.aborted).toBe(true);
+  });
+
+  it.each([
+    [{ ok: false as const, status: 403, errorCode: 'FORBIDDEN', networkError: false }, 'Access forbidden.'],
+    [{ ok: false as const, status: 403, errorCode: 'UNKNOWN', networkError: false }, 'An unexpected error occurred.'],
+    [{ ok: false as const, status: 0, networkError: true }, 'Failed to load sync job details.'],
+  ])('displays the mapped error or network fallback when loading sync jobs', async (syncResult, expectedMessage) => {
+    vi.mocked(apiJson).mockImplementation((url) => Promise.resolve(
+      String(url).endsWith('/api/migration') ? jsonResponse([]) : syncResult,
+    ));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MigrationsDashboard apiUrl="https://api.example.test" token="token" user={null} onStartNewMigration={vi.fn()} onSelectActiveMigration={vi.fn()} />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      getTab('sync')?.click();
+    });
+
+    expect(container.textContent).toContain(expectedMessage);
   });
 });
