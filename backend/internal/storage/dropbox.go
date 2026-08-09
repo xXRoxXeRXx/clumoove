@@ -868,13 +868,28 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 		return nil
 	}
 
-	globalDirKey := p.AccessToken + "|" + cleanDir
-	if globalDropboxCreatedDirs.Contains(globalDirKey) {
-		return nil
-	}
+	currentDir := ""
+	for _, component := range strings.Split(strings.Trim(cleanDir, "/"), "/") {
+		if component == "" {
+			continue
+		}
+		currentDir += "/" + component
+		globalDirKey := p.AccessToken + "|" + currentDir
+		if globalDropboxCreatedDirs.Contains(globalDirKey) {
+			continue
+		}
 
+		if err := p.createFolder(ctx, currentDir); err != nil {
+			return err
+		}
+		globalDropboxCreatedDirs.Add(globalDirKey)
+	}
+	return nil
+}
+
+func (p *DropboxProvider) createFolder(ctx context.Context, dir string) error {
 	reqBody, err := json.Marshal(map[string]interface{}{
-		"path":       cleanDir,
+		"path":       dir,
 		"autorename": false,
 	})
 	if err != nil {
@@ -895,34 +910,26 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		globalDropboxCreatedDirs.Add(globalDirKey)
 		return nil
 	}
-
 	if resp.StatusCode == http.StatusConflict {
 		var errResp struct {
 			ErrorSummary string `json:"error_summary"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&errResp); err == nil {
-			if strings.Contains(errResp.ErrorSummary, "path/conflict") {
-				globalDropboxCreatedDirs.Add(globalDirKey)
-				return nil
-			}
+		if err := json.NewDecoder(resp.Body).Decode(&errResp); err == nil && strings.Contains(errResp.ErrorSummary, "path/conflict") {
+			return nil
 		}
 	}
-
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("dropbox mkdir: %w", ErrAuth)
 	}
-	return fmt.Errorf("failed to create directory, status: %d", resp.StatusCode)
+	return fmt.Errorf("dropbox mkdir %q: status %d", dir, resp.StatusCode)
 }
 
-// CreateDirectory creates the given directory path in Dropbox (including all intermediate
-// parents). Dropbox's create_folder_v2 endpoint handles nested paths natively.
+// CreateDirectory creates the given directory path in Dropbox, including intermediate parents.
 func (p *DropboxProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	// CreateParentDirectories already calls create_folder_v2 with the full dir path.
 	// Pass a synthetic child so the parent-extraction yields dirPath itself.
 	return p.CreateParentDirectories(ctx, resourceType, path.Join(dirPath, "_placeholder"))
 }

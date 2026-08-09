@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -161,3 +162,98 @@ func TestDropboxStreamUploadIncludesClientModified(t *testing.T) {
 	}
 }
 
+func TestDropboxCreateParentDirectoriesCreatesEachPathComponent(t *testing.T) {
+	var createdPaths []string
+	client := &http.Client{
+		Transport: mockRoundTripper{
+			fn: func(req *http.Request) (*http.Response, error) {
+				var arg struct {
+					Path string `json:"path"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&arg); err != nil {
+					t.Fatalf("decode create_folder_v2 request: %v", err)
+				}
+				createdPaths = append(createdPaths, arg.Path)
+				if arg.Path == "/first/second" {
+					return &http.Response{
+						StatusCode: http.StatusConflict,
+						Body:       io.NopCloser(strings.NewReader(`{"error_summary":"path/conflict/folder/..."}`)),
+						Header:     make(http.Header),
+					}, nil
+				}
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{}`)),
+					Header:     make(http.Header),
+				}, nil
+			},
+		},
+	}
+	p := &DropboxProvider{AccessToken: t.Name(), HTTPClient: client}
+
+	if err := p.CreateParentDirectories(context.Background(), "files", "/first/second/third/file.txt"); err != nil {
+		t.Fatalf("CreateParentDirectories() error = %v", err)
+	}
+
+	want := []string{"/first", "/first/second", "/first/second/third"}
+	if len(createdPaths) != len(want) {
+		t.Fatalf("create_folder_v2 calls = %v, want %v", createdPaths, want)
+	}
+	for i := range want {
+		if createdPaths[i] != want[i] {
+			t.Errorf("create_folder_v2 call %d path = %q, want %q", i, createdPaths[i], want[i])
+		}
+	}
+
+	if err := p.CreateParentDirectories(context.Background(), "files", "/first/second/third/another.txt"); err != nil {
+		t.Fatalf("CreateParentDirectories() cached call error = %v", err)
+	}
+	if len(createdPaths) != len(want) {
+		t.Errorf("cached parent directories made additional requests: %v", createdPaths)
+	}
+}
+
+func TestDropboxCreateParentDirectoriesErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		wantAuth   bool
+		wantError  string
+	}{
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, wantAuth: true},
+		{name: "server error", statusCode: http.StatusInternalServerError, wantError: `dropbox mkdir "/first": status 500`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			client := &http.Client{
+				Transport: mockRoundTripper{
+					fn: func(req *http.Request) (*http.Response, error) {
+						calls++
+						return &http.Response{
+							StatusCode: tt.statusCode,
+							Body:       io.NopCloser(strings.NewReader(`{}`)),
+							Header:     make(http.Header),
+						}, nil
+					},
+				},
+			}
+			p := &DropboxProvider{AccessToken: t.Name(), HTTPClient: client}
+
+			err := p.CreateParentDirectories(context.Background(), "files", "/first/second/file.txt")
+			if err == nil {
+				t.Fatal("CreateParentDirectories() error = nil")
+			}
+			if got := errors.Is(err, ErrAuth); got != tt.wantAuth {
+				t.Errorf("errors.Is(err, ErrAuth) = %t, want %t (err = %v)", got, tt.wantAuth, err)
+			}
+			if tt.wantError != "" && err.Error() != tt.wantError {
+				t.Errorf("CreateParentDirectories() error = %q, want %q", err, tt.wantError)
+			}
+			if calls != 1 {
+				t.Errorf("create_folder_v2 calls = %d, want 1", calls)
+			}
+		})
+	}
+}
