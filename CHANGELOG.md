@@ -5,6 +5,29 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-09
+
+### Added
+- **Mega Storage Provider**: Integrated personal Cloud Drive support (`mega`) for zero-disk streaming file migrations, including root directory uploads, parent path creation, and serialized target operations.
+- **Seafile Storage Provider**: Added Seafile provider (`seafile`) supporting personal and library file transfers, shared authentication token caching across tasks, nested directory creation, resumable streaming uploads, and unicode symbol sanitization.
+- **OpenCloud Storage Provider**: Added OpenCloud storage provider support (`opencloud`) with seamless WebUI connection form integration.
+- **Renewable Session Management**: Implemented renewable login sessions (`/auth/sessions`) with atomic single-transaction token refresh, active session listing, and granular session revocation.
+- **Unified Structured `slog` Logging**: Introduced centralized JSON `slog` logging package (`backend/internal/observability`) with request correlation (`X-Request-ID`), level-aware redaction for sensitive fields/URLs, expanded error classification, and frontend dev logger with error boundaries.
+
+### Improved & Security Hardened
+- **Redesigned Provider Selection UI**: Upgraded provider selector to a responsive 2-column layout with authentic brand and protocol icons (`react-icons`), 50/50 split width, clean host cards, and refined button actions.
+- **Enforced Secure Provider Endpoints**: Required HTTPS for user-configured storage providers (`nextcloud`, `opencloud`, `webdav`, `immich`, `seafile`, custom `s3`) and blocked plaintext HTTP endpoints.
+- **SMB Connection Hardening**: Enforced SMB message signing across SMB connections to protect data in transit.
+- **Account Enumeration Protection**: Masked login lockout responses with generic authentication failure codes to prevent user enumeration.
+- **TOTP Recovery Hardening**: Enforced single-use atomic consumption of TOTP recovery codes before session authorization proceeds.
+- **Notification Secret Protection**: Zeroed decrypted notification credentials immediately after delivery attempts.
+- **Generation-Fenced Sync Verification**: Implemented database generation fencing for continuous sync checksum passes to enforce single-writer guarantees across worker processes.
+
+### Fixed
+- **Seafile & Mega Transfer Reliability**: Fixed root library uploads, parent folder creation race conditions, and long-running streaming upload timeouts for Seafile and Mega providers.
+- **Worker & Storage Resilience**: Resolved S3 idle connection leaks, bounded SFTP session setup and operation cancellation, and ensured task-scoped provider connections in worker routines.
+- **Atomic Outbox Notifications**: Hardened notification outbox state transitions to ensure atomic completion and delivery reporting.
+
 ## [0.12.0] - 2026-08-07
 
 ### Added
