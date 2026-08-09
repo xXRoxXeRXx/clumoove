@@ -1,0 +1,73 @@
+version: "3.7"
+
+services:
+  app_proxy:
+    image: getumbrel/app-proxy:v1.3.0
+    environment:
+      APP_HOST: clumoove-frontend
+      APP_PORT: 3000
+    ports:
+      - "8380:8380"
+    restart: on-failure
+
+  postgres-db:
+    container_name: clumoove-postgres
+    image: postgres:15-alpine
+    restart: on-failure
+    command: ["postgres", "-c", "max_connections=300"]
+    environment:
+      POSTGRES_USER: clumoove
+      POSTGRES_PASSWORD: ${APP_PASSWORD}
+      POSTGRES_DB: cloud_migration_db
+    volumes:
+      - ${APP_DATA_DIR}/data/postgres:/var/lib/postgresql/data
+
+  redis-queue:
+    container_name: clumoove-redis
+    image: redis:7-alpine
+    restart: on-failure
+    command: redis-server --appendonly yes --requirepass "${APP_PASSWORD}" --bind 0.0.0.0
+    volumes:
+      - ${APP_DATA_DIR}/data/redis:/data
+
+  api-backend:
+    container_name: clumoove-api
+    image: ghcr.io/xxroxxerxx/clumoove-api:v0.13.0
+    restart: on-failure
+    environment:
+      - DATABASE_URL=postgres://clumoove:${APP_PASSWORD}@postgres-db:5432/cloud_migration_db?sslmode=disable
+      - REDIS_URL=redis://:${APP_PASSWORD}@redis-queue:6379
+      - PORT=8000
+      - ENCRYPTION_SECRET_KEY=${APP_PASSWORD}
+      - JWT_SECRET_KEY=${APP_PASSWORD}
+      - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      - ${APP_DATA_DIR}/data/storage:/clumoove
+    depends_on:
+      - postgres-db
+      - redis-queue
+
+  migration-worker:
+    container_name: clumoove-worker
+    image: ghcr.io/xxroxxerxx/clumoove-worker:v0.13.0
+    restart: on-failure
+    command: ["/app/worker"]
+    environment:
+      - DATABASE_URL=postgres://clumoove:${APP_PASSWORD}@postgres-db:5432/cloud_migration_db?sslmode=disable
+      - REDIS_URL=redis://:${APP_PASSWORD}@redis-queue:6379
+      - ENCRYPTION_SECRET_KEY=${APP_PASSWORD}
+      - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      - ${APP_DATA_DIR}/data/storage:/clumoove
+    depends_on:
+      - postgres-db
+      - redis-queue
+
+  frontend:
+    container_name: clumoove-frontend
+    image: ghcr.io/xxroxxerxx/clumoove-frontend:v0.13.0
+    restart: on-failure
+    environment:
+      - CLUMOOVE_API_URL=
+    depends_on:
+      - api-backend

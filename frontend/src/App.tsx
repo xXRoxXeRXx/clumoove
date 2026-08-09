@@ -29,15 +29,18 @@ function getApiUrl(): string {
   const configuredOrigin = configuredApiOrigin();
   if (configuredOrigin) return configuredOrigin;
   // Fallback: Dynamically determine the backend API URL.
-  // If we are running on standard ports (no port, 80, or 443) on a custom domain,
-  // use the same host without a port to route through the reverse proxy.
+  // If running behind Nginx or on a non-dev port, use same-origin so requests route through the reverse proxy.
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
   const port = window.location.port;
-  if (hostname !== 'localhost' && hostname !== '127.0.0.1' && (!port || port === '80' || port === '443')) {
-    return `${protocol}//${hostname}`;
+
+  // In standalone local development (e.g. running Vite dev on port 3000 directly without reverse proxy),
+  // connect directly to backend API on port 8001.
+  if ((hostname === 'localhost' || hostname === '127.0.0.1') && port === '3000') {
+    return `${protocol}//${hostname}:8001`;
   }
-  return `${protocol}//${hostname}:8001`;
+  // Otherwise, use same origin (e.g. production Nginx, Umbrel app_proxy, custom domain).
+  return window.location.origin;
 }
 
 const API_URL = getApiUrl();
