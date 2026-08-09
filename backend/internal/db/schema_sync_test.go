@@ -46,6 +46,31 @@ func TestCanonicalSchemaColumnsAppearInInitDB(t *testing.T) {
 	}
 }
 
+// TestInitDBTaskCreateIncludesHashColumns protects fresh databases: ALTER TABLE
+// migrations repair existing installations, but an omitted column here breaks
+// indexing before any runtime task query can succeed.
+func TestInitDBTaskCreateIncludesHashColumns(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate schema sync test")
+	}
+	initSource, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "db.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	createRE := regexp.MustCompile("(?is)CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+tasks\\s*\\((.*?)\\)`")
+	matches := createRE.FindStringSubmatch(string(initSource))
+	if len(matches) != 2 {
+		t.Fatal("tasks CREATE TABLE statement is absent from InitDB")
+	}
+	for _, column := range []string{"source_hash", "target_hash"} {
+		if !regexp.MustCompile(`(?i)\b` + column + `\s+TEXT\b`).MatchString(matches[1]) {
+			t.Errorf("fresh InitDB tasks table is missing %s", column)
+		}
+	}
+}
+
 func initDBDDLForTable(source, tableName string) string {
 	name := regexp.QuoteMeta(tableName)
 	createRE := regexp.MustCompile(`(?is)CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+` + name + `\s*\((.*?)\);`)

@@ -641,6 +641,8 @@ func InitDB(connStr string) (*sql.DB, error) {
 				migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE,
 				file_path TEXT NOT NULL,
 				file_size BIGINT NOT NULL DEFAULT 0,
+				source_hash TEXT,
+				target_hash TEXT,
 				status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
 				attempts INT NOT NULL DEFAULT 0,
 				error_message TEXT,
