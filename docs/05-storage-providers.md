@@ -1,4 +1,4 @@
-# 05 – Storage Providers
+# 05 â€“ Storage Providers
 
 All source/target storage is abstracted behind the `StorageProvider` interface
 (`backend/internal/storage/provider.go`). New providers must implement that interface and be registered
@@ -28,7 +28,7 @@ type StorageProvider interface {
 }
 ```
 
-> **Interface contract — required method.** `SupportsAtomicRename()` is a **mandatory** part of the
+> **Interface contract â€” required method.** `SupportsAtomicRename()` is a **mandatory** part of the
 > interface. Every concrete provider **must** implement it, or the package will fail to compile with
 > `does not implement storage.StorageProvider (missing method SupportsAtomicRename)`. There is no
 > default; the compiler enforces it for *all* implementers, including test mocks. When adding a new
@@ -66,8 +66,8 @@ time, description, tags, etc.) after a successful upload.
 
 ### Supporting types
 
-- `CloudResource` — `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
-- `FileMetadata` — `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
+- `CloudResource` â€” `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
+- `FileMetadata` â€” `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
 
 Optional capability interface:
 
@@ -82,11 +82,11 @@ time, description, tags, etc.) after a successful upload.
 
 ### Supporting types
 
-- `CloudResource` — `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
-- `FileMetadata` — `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
-- `ErrAuth` — sentinel returned (wrapped) on HTTP 401 so the processor can detect auth failures via
+- `CloudResource` â€” `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
+- `FileMetadata` â€” `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
+- `ErrAuth` â€” sentinel returned (wrapped) on HTTP 401 so the processor can detect auth failures via
   `errors.Is`.
-- `ErrDuplicateUID` — SabreDAV duplicate UID (calendars); treated as `SKIP`.
+- `ErrDuplicateUID` â€” SabreDAV duplicate UID (calendars); treated as `SKIP`.
 
 ---
 
@@ -102,7 +102,7 @@ time, description, tags, etc.) after a successful upload.
 | `google` | `google.go` | Drive API v3 / Calendar / People | OAuth2 | files, calendars, contacts |
 | `onedrive` | `onedrive.go` | Microsoft Graph personal OneDrive | OAuth2 (access token in `password` field) | files only |
 | `hidrive` | `hidrive.go` | Strato HiDrive REST API v2.1 | OAuth2 | files only |
-| `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, …) | access key / secret key | files |
+| `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, â€¦) | access key / secret key | files |
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
 | `sftp` | `sftp.go` | SSH SFTP (`pkg/sftp`) | user/pass (or key), trusted SHA-256 host-key fingerprint | files |
 | `ftp` | `ftp.go` | FTPS: explicit or implicit TLS | user/pass | files |
@@ -280,22 +280,17 @@ the API against Server-Side Request Forgery through the connect/browse endpoints
 - **FTPS data channels:** `ftp` validates the configured control host for every control and passive data
   connection. EPSV is preferred; PASV never supplies a new host, only the passive data port.
 
-### S3-specific SSRF
+### HTTPS requirement
 
-`insecure=true` S3 endpoints permit only loopback, `*.local`/`localhost`, and RFC1918/ULA
-(private) hosts, evaluated **directly without DNS resolution** to prevent DNS-rebinding SSRF
-(see `allowInsecureEgress` in `ssrf.go`, the single source of truth also used by the S3
-provider). Link-local addresses — notably the cloud metadata endpoint `169.254.169.254` — are
-always rejected, and RFC1918/ULA ranges are additionally rejected when `MIGRATION_BLOCK_PRIVATE=1`.
-The actual TCP dial re-resolves and re-validates the address via `egressDialer`, so the
-construction-time check and the per-connection check agree.
+Nextcloud, OpenCloud, generic WebDAV, Immich, Seafile, and custom S3 endpoints require HTTPS.
+Plaintext HTTP endpoints and the former S3 `insecure=true` option are rejected.
 
 ---
 
 ## 5. Hash Parsing
 
 `ParseHashString` in `backend/internal/storage/hash.go` extracts the algorithm + clean hash from provider hash strings (e.g.
-`SHA1:abc123`, `MD5:…`, `SHA256:…`, `HIDRIVE:…`). The processor selects the per-provider hasher accordingly and only
+`SHA1:abc123`, `MD5:â€¦`, `SHA256:â€¦`, `HIDRIVE:â€¦`). The processor selects the per-provider hasher accordingly and only
 computes a second (target) hasher when algorithms differ (CPU optimization).
 
 ---
@@ -306,7 +301,7 @@ computes a second (target) hasher when algorithms differ (CPU optimization).
    applicable).
 2. **Implement `SupportsAtomicRename() bool` and `VerificationMode() VerificationMode`.** These are required interface methods (no default). Forgetting
    it produces a compile error `does not implement storage.StorageProvider (missing method
-   SupportsAtomicRename)` for *every* implementer, including test mocks — so add it together with the other
+   SupportsAtomicRename)` for *every* implementer, including test mocks â€” so add it together with the other
    methods. Return `true` when the provider supports an atomic "upload to `<path>.tmp` then rename"
    overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Immich).
    Return `cryptographic_hash` only for a comparable target hash; ETag-only and hashless targets must

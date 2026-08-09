@@ -33,22 +33,28 @@ func IsValidProvider(p string) bool {
 
 // ProviderMetadata defines static capabilities and connection requirements for a storage provider.
 type ProviderMetadata struct {
-	Type                   string
-	RequiresHost           bool
-	IsVirtual              bool
-	SupportedResourceTypes map[string]bool
+	Type                     string
+	RequiresHost             bool
+	RequiresHTTPS            bool
+	RequiresEgressValidation bool
+	IsVirtual                bool
+	SupportedResourceTypes   map[string]bool
 }
 
 var providerRegistry = map[string]ProviderMetadata{
 	"nextcloud": {
-		Type:                   "nextcloud",
-		RequiresHost:           true,
-		SupportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
+		Type:                     "nextcloud",
+		RequiresHost:             true,
+		RequiresHTTPS:            true,
+		RequiresEgressValidation: true,
+		SupportedResourceTypes:   map[string]bool{"files": true, "calendars": true, "contacts": true},
 	},
 	"opencloud": {
-		Type:                   "opencloud",
-		RequiresHost:           true,
-		SupportedResourceTypes: map[string]bool{"files": true},
+		Type:                     "opencloud",
+		RequiresHost:             true,
+		RequiresHTTPS:            true,
+		RequiresEgressValidation: true,
+		SupportedResourceTypes:   map[string]bool{"files": true},
 	},
 	"google": {
 		Type:                   "google",
@@ -61,9 +67,11 @@ var providerRegistry = map[string]ProviderMetadata{
 		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 	"webdav": {
-		Type:                   "webdav",
-		RequiresHost:           true,
-		SupportedResourceTypes: map[string]bool{"files": true},
+		Type:                     "webdav",
+		RequiresHost:             true,
+		RequiresHTTPS:            true,
+		RequiresEgressValidation: true,
+		SupportedResourceTypes:   map[string]bool{"files": true},
 	},
 	"dropbox": {
 		Type:                   "dropbox",
@@ -76,9 +84,10 @@ var providerRegistry = map[string]ProviderMetadata{
 		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 	"smb": {
-		Type:                   "smb",
-		RequiresHost:           true,
-		SupportedResourceTypes: map[string]bool{"files": true},
+		Type:                     "smb",
+		RequiresHost:             true,
+		RequiresEgressValidation: true,
+		SupportedResourceTypes:   map[string]bool{"files": true},
 	},
 	"s3": {
 		Type:                   "s3",
@@ -86,14 +95,16 @@ var providerRegistry = map[string]ProviderMetadata{
 		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 	"sftp": {
-		Type:                   "sftp",
-		RequiresHost:           true,
-		SupportedResourceTypes: map[string]bool{"files": true},
+		Type:                     "sftp",
+		RequiresHost:             true,
+		RequiresEgressValidation: true,
+		SupportedResourceTypes:   map[string]bool{"files": true},
 	},
 	"ftp": {
-		Type:                   "ftp",
-		RequiresHost:           true,
-		SupportedResourceTypes: map[string]bool{"files": true},
+		Type:                     "ftp",
+		RequiresHost:             true,
+		RequiresEgressValidation: true,
+		SupportedResourceTypes:   map[string]bool{"files": true},
 	},
 	"magentacloud": {
 		Type:                   "magentacloud",
@@ -106,15 +117,19 @@ var providerRegistry = map[string]ProviderMetadata{
 		SupportedResourceTypes: map[string]bool{"files": true},
 	},
 	"immich": {
-		Type:                   "immich",
-		RequiresHost:           true,
-		IsVirtual:              true,
-		SupportedResourceTypes: map[string]bool{"files": true},
+		Type:                     "immich",
+		RequiresHost:             true,
+		RequiresHTTPS:            true,
+		RequiresEgressValidation: true,
+		IsVirtual:                true,
+		SupportedResourceTypes:   map[string]bool{"files": true},
 	},
 	"seafile": {
-		Type:                   "seafile",
-		RequiresHost:           true,
-		SupportedResourceTypes: map[string]bool{"files": true},
+		Type:                     "seafile",
+		RequiresHost:             true,
+		RequiresHTTPS:            true,
+		RequiresEgressValidation: true,
+		SupportedResourceTypes:   map[string]bool{"files": true},
 	},
 	"mega": {
 		Type:                   "mega",
@@ -153,6 +168,9 @@ func ValidateProviderURL(providerType, urlStr string) error {
 	if err != nil || parsed.Hostname() == "" {
 		return fmt.Errorf("provider %q requires a valid URL with a host", providerType)
 	}
+	if meta.RequiresHTTPS && parsed.Scheme != "https" {
+		return fmt.Errorf("provider %q requires an HTTPS URL", providerType)
+	}
 	return nil
 }
 
@@ -176,8 +194,7 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	// SSRF guard: reject egress to loopback / link-local (and private ranges
 	// when MIGRATION_BLOCK_PRIVATE is set) for providers that connect to a
 	// user-supplied host.
-	if providerType == "nextcloud" || providerType == "webdav" || providerType == "opencloud" ||
-		providerType == "smb" || providerType == "sftp" || providerType == "ftp" || providerType == "immich" || providerType == "seafile" {
+	if meta, exists := providerRegistry[providerType]; exists && meta.RequiresEgressValidation {
 		if err := validateEgressURLContext(ctx, urlStr); err != nil {
 			return nil, err
 		}

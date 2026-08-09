@@ -51,7 +51,9 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 	if region == "" {
 		region = "us-east-1"
 	}
-	insecure := u.Query().Get("insecure") == "true"
+	if u.Query().Has("insecure") {
+		return nil, fmt.Errorf("S3 insecure endpoint option is no longer supported; configure an HTTPS endpoint")
+	}
 
 	if endpoint != "" {
 		epURL, err := url.Parse(endpoint)
@@ -59,18 +61,8 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 			return nil, fmt.Errorf("invalid endpoint URL: %w", err)
 		}
 
-		if epURL.Scheme != "http" && epURL.Scheme != "https" {
-			return nil, fmt.Errorf("endpoint URL must specify an explicit http or https scheme")
-		}
-
-		if epURL.Scheme == "http" {
-			if !insecure {
-				return nil, fmt.Errorf("insecure connection (HTTP) is not allowed for public endpoints")
-			}
-			host := epURL.Hostname()
-			if !allowInsecureEgress(host) {
-				return nil, fmt.Errorf("insecure connection (HTTP) is only allowed for local or private endpoints")
-			}
+		if epURL.Scheme != "https" || epURL.Hostname() == "" {
+			return nil, fmt.Errorf("endpoint URL must be an absolute HTTPS URL with a host")
 		}
 
 		// SSRF guard: never allow egress to internal addresses, even over HTTPS

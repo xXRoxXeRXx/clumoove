@@ -340,7 +340,6 @@ interface FormState {
   s3Bucket: string;
   s3Region: string;
   s3Endpoint: string;
-  s3Insecure: boolean;
   sftpHost: string;
   sftpPort: string;
   sftpHostKey: string;
@@ -373,7 +372,6 @@ function initFormState(editing: ProfilePublic | null): FormState {
     s3Bucket: s3.bucket,
     s3Region: s3.region || 'us-east-1',
     s3Endpoint: s3.endpoint,
-    s3Insecure: s3.insecure,
     sftpHost: sftp.host,
     sftpPort: sftp.port || '22',
     sftpHostKey: sftp.hostKey,
@@ -404,7 +402,6 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
     s3BucketId: 'profile-editor-s3-bucket',
     s3RegionId: 'profile-editor-s3-region',
     s3EndpointId: 'profile-editor-s3-endpoint',
-    s3InsecureId: 'profile-editor-s3-insecure',
     sftpHostId: 'profile-editor-sftp-host',
     sftpPortId: 'profile-editor-sftp-port',
     sftpHostKeyId: 'profile-editor-sftp-hostkey',
@@ -436,7 +433,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
           next.smbHost = smb.host; next.smbPort = smb.port || '445'; next.smbShare = smb.share; next.smbDomain = smb.domain;
         } else if (newProvider === 's3') {
           const s3 = parseS3Url(editing.url);
-          next.s3Bucket = s3.bucket; next.s3Region = s3.region || 'us-east-1'; next.s3Endpoint = s3.endpoint; next.s3Insecure = s3.insecure;
+          next.s3Bucket = s3.bucket; next.s3Region = s3.region || 'us-east-1'; next.s3Endpoint = s3.endpoint;
         } else if (newProvider === 'sftp') {
           const sftp = parseSftpUrl(editing.url);
           next.sftpHost = sftp.host; next.sftpPort = sftp.port || '22'; next.sftpHostKey = sftp.hostKey;
@@ -490,7 +487,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         onError(t('common.required'));
         return;
       }
-      finalUrl = buildS3Url(form.s3Bucket, form.s3Region, form.s3Endpoint, form.s3Insecure);
+      finalUrl = buildS3Url(form.s3Bucket, form.s3Region, form.s3Endpoint);
     } else if (form.provider === 'sftp') {
       if (!form.sftpHost.trim() || !form.sftpHostKey.trim()) {
         onError(t('common.required'));
@@ -637,8 +634,6 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
                 onS3RegionChange={(v) => updateField('s3Region', v)}
                 s3Endpoint={form.s3Endpoint}
                 onS3EndpointChange={(v) => updateField('s3Endpoint', v)}
-                s3Insecure={form.s3Insecure}
-                onS3InsecureChange={(v) => updateField('s3Insecure', v)}
                 sftpHost={form.sftpHost}
                 onSftpHostChange={(v) => updateField('sftpHost', v)}
                 sftpPort={form.sftpPort}

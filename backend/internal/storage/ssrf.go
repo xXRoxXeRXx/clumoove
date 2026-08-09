@@ -224,30 +224,9 @@ func resolveEgressIPs(ctx context.Context, host string) ([]net.IP, error) {
 	return ips, nil
 }
 
-// allowInsecureEgress reports whether an insecure (plaintext HTTP) S3 endpoint
-// host is permitted. This is the single source of truth for the S3 insecure-HTTP
-// guard (P1-7): it mirrors the old per-provider loopback/RFC1918 check but
-// additionally rejects link-local addresses — notably the cloud metadata
-// endpoint 169.254.169.254 — and, when blockPrivateEgress is enabled, RFC1918/ULA
-// ranges. Loopback and *.local hosts remain permitted so self-hosted MinIO/Garage
-// over HTTP on localhost/private IPs keeps working (as documented in AGENTS.md).
-func allowInsecureEgress(host string) bool {
-	if host == "localhost" || strings.HasSuffix(host, ".local") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	if ip.IsLoopback() {
-		return true
-	}
-	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return false
-	}
-	return ip.IsPrivate() && !blockPrivateEgress
-}
-
+// checkHostEgress rejects hosts that resolve to blocked addresses. Loopback and
+// link-local addresses are always blocked; RFC1918/ULA ranges are blocked when
+// MIGRATION_BLOCK_PRIVATE is enabled.
 func checkHostEgress(ctx context.Context, host string) error {
 	if ip := net.ParseIP(host); ip != nil {
 		if blocked, reason := isBlockedIP(ip); blocked {

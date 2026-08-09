@@ -99,10 +99,12 @@ func TestNextcloudFileExistsFallsBackToPropfindForUnknownHEADLength(t *testing.T
 	}))
 	defer server.Close()
 
-	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
 	if err != nil {
 		t.Fatalf("NewNextcloudProvider: %v", err)
 	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
 	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
 	if err != nil || !exists || size != 0 {
 		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)
@@ -120,10 +122,12 @@ func TestNextcloudFileExistsUsesHEADForExplicitZeroLength(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
 	if err != nil {
 		t.Fatalf("NewNextcloudProvider: %v", err)
 	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
 	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
 	if err != nil || !exists || size != 0 {
 		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)
@@ -191,10 +195,12 @@ func TestNextcloudCalendarListingFiltering(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewNextcloudProvider(server.URL, "testuser", "password")
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "testuser", "password")
 	if err != nil {
 		t.Fatalf("Failed to create provider: %v", err)
 	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
 
 	items, err := p.GetDirectoryListing(context.Background(), "calendars", "/")
 	if err != nil {
@@ -280,10 +286,12 @@ func TestNextcloudFileExistsHEADFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
 	if err != nil {
 		t.Fatalf("Failed to create provider: %v", err)
 	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
 
 	exists, size, err := p.FileExists(context.Background(), "contacts", "/contacts/c123.vcf")
 	if err != nil {
@@ -303,13 +311,14 @@ func TestNextcloudInspectResourceNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewNextcloudProvider(server.URL, "user", "pass")
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
 	if err != nil {
 		t.Fatalf("NewNextcloudProvider: %v", err)
 	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
 	_, err = p.InspectResource(context.Background(), "files", "/missing.txt")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
 	}
 }
-

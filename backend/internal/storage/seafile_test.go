@@ -28,14 +28,14 @@ func (t *testTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestNewSeafileProviderValid(t *testing.T) {
-	p, err := NewSeafileProvider("http://1.1.1.1", "user@example.com", "pass123")
+	p, err := NewSeafileProvider("https://1.1.1.1", "user@example.com", "pass123")
 	if err != nil {
 		t.Fatalf("unexpected error creating Seafile provider: %v", err)
 	}
 	defer p.Close()
 
-	if p.BaseURL != "http://1.1.1.1" {
-		t.Errorf("expected BaseURL http://1.1.1.1, got %s", p.BaseURL)
+	if p.BaseURL != "https://1.1.1.1" {
+		t.Errorf("expected BaseURL https://1.1.1.1, got %s", p.BaseURL)
 	}
 	if p.HTTPClient.Timeout != 0 {
 		t.Errorf("expected streaming HTTP client without total request timeout, got %s", p.HTTPClient.Timeout)
@@ -253,7 +253,7 @@ func TestSeafileProviderAuthAndOperations(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	p, err := NewSeafileProvider("http://1.1.1.1", "user@example.com", "pass123")
+	p, err := NewSeafileProvider("https://1.1.1.1", "user@example.com", "pass123")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}

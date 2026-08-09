@@ -115,6 +115,10 @@ func newDAVTransport(host string) *http.Transport {
 }
 
 func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("invalid Nextcloud URL: must be an absolute HTTPS URL with host")
+	}
 	baseURL := strings.TrimSuffix(rawURL, "/")
 	if idx := strings.Index(baseURL, "/remote.php/dav"); idx != -1 {
 		baseURL = baseURL[:idx+len("/remote.php/dav")]
@@ -125,10 +129,7 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 	}
 	// Preserve the configured host so the dialer revalidates DNS on every
 	// connection and recognizes redirect destinations as distinct egress.
-	host := rawURL
-	if parsed, err := url.Parse(rawURL); err == nil && parsed.Hostname() != "" {
-		host = parsed.Hostname()
-	}
+	host := parsed.Hostname()
 
 	return &NextcloudProvider{
 		davProvider: &davProvider{

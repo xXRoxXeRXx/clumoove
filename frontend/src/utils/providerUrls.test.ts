@@ -53,13 +53,12 @@ describe('providerUrls', () => {
   describe('S3 URL handling', () => {
     it('parses valid S3 URLs correctly', () => {
       const parsed = parseS3Url(
-        's3://mybucket?region=us-west-2&endpoint=https%3A%2F%2Fminio.local%3A9000&insecure=true'
+        's3://mybucket?region=us-west-2&endpoint=https%3A%2F%2Fminio.local%3A9000'
       );
       expect(parsed).toEqual({
         bucket: 'mybucket',
         region: 'us-west-2',
         endpoint: 'https://minio.local:9000',
-        insecure: true,
       });
     });
 
@@ -69,21 +68,20 @@ describe('providerUrls', () => {
         bucket: 'mybucket',
         region: 'us-east-1',
         endpoint: '',
-        insecure: false,
       });
     });
 
     it('returns default values on malformed S3 URLs', () => {
-      expect(parseS3Url('')).toEqual({ bucket: '', region: 'us-east-1', endpoint: '', insecure: false });
-      expect(parseS3Url('not-a-url')).toEqual({ bucket: '', region: 'us-east-1', endpoint: '', insecure: false });
+      expect(parseS3Url('')).toEqual({ bucket: '', region: 'us-east-1', endpoint: '' });
+      expect(parseS3Url('not-a-url')).toEqual({ bucket: '', region: 'us-east-1', endpoint: '' });
     });
 
     it('builds S3 URLs correctly', () => {
-      expect(buildS3Url('mybucket', 'eu-central-1', 'https://s3.example.com', true)).toBe(
-        's3://mybucket?region=eu-central-1&endpoint=https%3A%2F%2Fs3.example.com&insecure=true'
+      expect(buildS3Url('mybucket', 'eu-central-1', 'https://s3.example.com')).toBe(
+        's3://mybucket?region=eu-central-1&endpoint=https%3A%2F%2Fs3.example.com'
       );
-      expect(buildS3Url('mybucket', '', '', false)).toBe('s3://mybucket?region=us-east-1');
-      expect(buildS3Url('', 'us-east-1', '', false)).toBe('');
+      expect(buildS3Url('mybucket', '', '')).toBe('s3://mybucket?region=us-east-1');
+      expect(buildS3Url('', 'us-east-1', '')).toBe('');
     });
   });
 

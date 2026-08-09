@@ -143,7 +143,10 @@ User-supplied provider URLs are validated before any egress (`storage/ssrf.go`):
   dial target.
 - User-configured provider, S3, and notification clients do not follow redirects. Configure canonical
   HTTPS and S3 regional endpoints directly.
-- S3 `insecure=true` endpoints check literal IPs / `*.local`/`localhost` directly without DNS resolution.
+- User-configured HTTP providers and custom S3 endpoints require HTTPS; plaintext HTTP and the former S3 `insecure=true` exception are rejected.
+- `providerRegistry` is the source of truth for user-configured provider URL requirements: it marks the
+  HTTPS-only providers and the providers that require SSRF egress validation. Custom S3 endpoint
+  validation remains in the S3 provider because its endpoint is encoded in the `s3://` URL query.
 
 ---
 

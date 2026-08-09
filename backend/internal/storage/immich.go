@@ -29,8 +29,8 @@ func NewImmichProvider(baseURL, apiKey string) (*ImmichProvider, error) {
 		return nil, fmt.Errorf("immich API key required: %w", ErrAuth)
 	}
 	u, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil || u.Scheme == "" || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return nil, fmt.Errorf("invalid Immich URL")
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return nil, fmt.Errorf("invalid Immich URL: must be an absolute HTTPS URL with a host")
 	}
 	u.Path = strings.TrimSuffix(strings.TrimSuffix(u.Path, "/"), "/api") + "/api"
 	u.RawQuery, u.Fragment = "", ""
@@ -416,6 +416,7 @@ func (p *ImmichProvider) GetFileHash(ctx context.Context, typ, _ string) (string
 	return "", ErrChecksumNotAvailable
 }
 func (p *ImmichProvider) CreateParentDirectories(context.Context, string, string) error { return nil }
+
 // CreateDirectory is a no-op: Immich has no folder/album hierarchy and all assets
 // land directly in the library root. The indexer/processor may still emit mkdir
 // tasks for source subfolders, but the target never depends on such a path

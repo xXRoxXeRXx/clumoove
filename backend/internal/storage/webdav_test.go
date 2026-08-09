@@ -129,10 +129,12 @@ func TestWebDAVFileExistsFallsBackToPropfindForUnknownHEADLength(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewWebDAVProvider(server.URL, "user", "pass")
+	p, err := NewWebDAVProvider("https://webdav.example.test", "user", "pass")
 	if err != nil {
 		t.Fatalf("NewWebDAVProvider: %v", err)
 	}
+	p.BaseURL = server.URL
+	p.HTTPClient = server.Client()
 	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
 	if err != nil || !exists || size != 0 {
 		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)
@@ -150,10 +152,12 @@ func TestWebDAVFileExistsUsesHEADForExplicitZeroLength(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewWebDAVProvider(server.URL, "user", "pass")
+	p, err := NewWebDAVProvider("https://webdav.example.test", "user", "pass")
 	if err != nil {
 		t.Fatalf("NewWebDAVProvider: %v", err)
 	}
+	p.BaseURL = server.URL
+	p.HTTPClient = server.Client()
 	exists, size, err := p.FileExists(context.Background(), "files", "/empty.txt")
 	if err != nil || !exists || size != 0 {
 		t.Fatalf("FileExists() = (%v, %d, %v), want (true, 0, nil)", exists, size, err)

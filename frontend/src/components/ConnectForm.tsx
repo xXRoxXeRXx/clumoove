@@ -67,12 +67,10 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const [sourceS3Endpoint, setSourceS3Endpoint] = useState('');
   const [sourceS3Region, setSourceS3Region] = useState('us-east-1');
   const [sourceS3Bucket, setSourceS3Bucket] = useState('');
-  const [sourceS3Insecure, setSourceS3Insecure] = useState(false);
 
   const [targetS3Endpoint, setTargetS3Endpoint] = useState('');
   const [targetS3Region, setTargetS3Region] = useState('us-east-1');
   const [targetS3Bucket, setTargetS3Bucket] = useState('');
-  const [targetS3Insecure, setTargetS3Insecure] = useState(false);
 
   const [sourceSftpHost, setSourceSftpHost] = useState('');
   const [sourceSftpPort, setSourceSftpPort] = useState('22');
@@ -161,7 +159,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const finalSourceUrlValue = (): string => sourceProfileId !== '' ? '' : (sourceProvider === 'smb'
     ? `smb://${sourceSmbHost}:${sourceSmbPort}/${sourceSmbShare.replace(/^\//, '')}${sourceSmbDomain ? '?domain=' + encodeURIComponent(sourceSmbDomain) : ''}`
     : sourceProvider === 's3'
-    ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}${sourceS3Insecure ? '&insecure=true' : ''}`
+    ? `s3://${sourceS3Bucket}?region=${encodeURIComponent(sourceS3Region)}${sourceS3Endpoint ? '&endpoint=' + encodeURIComponent(sourceS3Endpoint) : ''}`
     : sourceProvider === 'sftp'
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}?host_key=${encodeURIComponent(sourceSftpHostKey.trim())}`
     : sourceProvider === 'ftp'
@@ -174,7 +172,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
   const finalTargetUrlValue = (): string => targetProfileId !== '' ? '' : (targetProvider === 'smb'
     ? `smb://${targetSmbHost}:${targetSmbPort}/${targetSmbShare.replace(/^\//, '')}${targetSmbDomain ? '?domain=' + encodeURIComponent(targetSmbDomain) : ''}`
     : targetProvider === 's3'
-    ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}${targetS3Insecure ? '&insecure=true' : ''}`
+    ? `s3://${targetS3Bucket}?region=${encodeURIComponent(targetS3Region)}${targetS3Endpoint ? '&endpoint=' + encodeURIComponent(targetS3Endpoint) : ''}`
     : targetProvider === 'sftp'
     ? `sftp://${targetSftpHost}:${targetSftpPort}?host_key=${encodeURIComponent(targetSftpHostKey.trim())}`
     : targetProvider === 'ftp'
@@ -559,7 +557,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setSourceS3Endpoint('');
       setSourceS3Region('us-east-1');
       setSourceS3Bucket('');
-      setSourceS3Insecure(false);
     } else if (val === 'sftp') {
       setSourceUrl('');
       setSourceUser('');
@@ -609,7 +606,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       setTargetS3Endpoint('');
       setTargetS3Region('us-east-1');
       setTargetS3Bucket('');
-      setTargetS3Insecure(false);
     } else if (val === 'sftp') {
       setTargetUrl('');
       setTargetUser('');
@@ -1036,18 +1032,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
 
-                  <div className="flex items-center gap-2 pt-1">
-                    <input
-                      type="checkbox"
-                      id="sourceS3Insecure"
-                      checked={sourceS3Insecure}
-                      onChange={(e) => setSourceS3Insecure(e.target.checked)}
-                      className="ui-checkbox"
-                    />
-                    <label htmlFor="sourceS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
-                       {t('connect.s3AllowHttp')}
-                     </label>
-                  </div>
                 </>
               ) : sourceProvider === 'immich' ? (
                 <>
@@ -1575,18 +1559,6 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
 
-                  <div className="flex items-center gap-2 pt-1">
-                    <input
-                      type="checkbox"
-                      id="targetS3Insecure"
-                      checked={targetS3Insecure}
-                      onChange={(e) => setTargetS3Insecure(e.target.checked)}
-                      className="ui-checkbox"
-                    />
-                    <label htmlFor="targetS3Insecure" className="text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
-                       {t('connect.s3AllowHttp')}
-                     </label>
-                  </div>
                 </>
               ) : targetProvider === 'immich' ? (
                 <>

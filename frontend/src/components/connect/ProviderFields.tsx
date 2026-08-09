@@ -29,7 +29,6 @@ export interface ProviderFieldsProps {
   s3Bucket: string; onS3BucketChange: (v: string) => void;
   s3Region: string; onS3RegionChange: (v: string) => void;
   s3Endpoint: string; onS3EndpointChange: (v: string) => void;
-  s3Insecure: boolean; onS3InsecureChange: (v: boolean) => void;
   // SFTP
   sftpHost: string; onSftpHostChange: (v: string) => void;
   sftpPort: string; onSftpPortChange: (v: string) => void;
@@ -46,7 +45,7 @@ export interface ProviderFieldsProps {
     usernameId: string;
     passwordId: string;
     smbHostId: string; smbPortId: string; smbShareId: string; smbDomainId: string;
-    s3BucketId: string; s3RegionId: string; s3EndpointId: string; s3InsecureId: string;
+    s3BucketId: string; s3RegionId: string; s3EndpointId: string;
     sftpHostId: string; sftpPortId: string; sftpHostKeyId: string; sftpPrivateKeyId: string;
     ftpHostId: string; ftpPortId: string; ftpTlsModeId: string;
   };
@@ -202,7 +201,6 @@ export function S3Fields({
   s3Bucket, onS3BucketChange,
   s3Region, onS3RegionChange,
   s3Endpoint, onS3EndpointChange,
-  s3Insecure, onS3InsecureChange,
   ids,
 }: ProviderFieldsProps) {
   const { t } = useTranslation();
@@ -243,18 +241,6 @@ export function S3Fields({
         {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
       </div>
 
-      <div className="flex items-center gap-2 pt-1">
-        <input
-          type="checkbox"
-          id={ids.s3InsecureId}
-          checked={s3Insecure}
-          onChange={(e) => onS3InsecureChange(e.target.checked)}
-          className="ui-checkbox"
-        />
-        <label htmlFor={ids.s3InsecureId} className="text-xs text-[var(--color-text-secondary)] cursor-pointer font-sans select-none">
-          {t('connect.s3AllowHttp')}
-        </label>
-      </div>
     </>
   );
 }

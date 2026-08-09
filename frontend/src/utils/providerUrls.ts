@@ -33,30 +33,27 @@ export interface S3UrlParams {
   bucket: string;
   region: string;
   endpoint: string;
-  insecure: boolean;
 }
 
 export function parseS3Url(urlStr: string): S3UrlParams {
-  let bucket = '', region = 'us-east-1', endpoint = '', insecure = false;
-  if (!urlStr) return { bucket, region, endpoint, insecure };
+  let bucket = '', region = 'us-east-1', endpoint = '';
+  if (!urlStr) return { bucket, region, endpoint };
   try {
     const u = new URL(urlStr);
     bucket = u.hostname || '';
     region = u.searchParams.get('region') || 'us-east-1';
     endpoint = u.searchParams.get('endpoint') || '';
-    insecure = u.searchParams.get('insecure') === 'true';
   } catch {
     /* ignore malformed URLs */
   }
-  return { bucket, region, endpoint, insecure };
+  return { bucket, region, endpoint };
 }
 
-export function buildS3Url(bucket: string, region: string, endpoint: string, insecure: boolean): string {
+export function buildS3Url(bucket: string, region: string, endpoint: string): string {
   if (!bucket) return '';
   const reg = region || 'us-east-1';
   const epPart = endpoint ? `&endpoint=${encodeURIComponent(endpoint)}` : '';
-  const insecPart = insecure ? '&insecure=true' : '';
-  return `s3://${bucket}?region=${encodeURIComponent(reg)}${epPart}${insecPart}`;
+  return `s3://${bucket}?region=${encodeURIComponent(reg)}${epPart}`;
 }
 
 export interface SftpUrlParams {

@@ -106,7 +106,7 @@ File-scoped commands referenced in `AGENTS.md`:
 - `mega` is a files-only personal Cloud Drive provider. It authenticates with email/password over forced HTTPS;
   reusable session ID and master-key material are stored encrypted, MFA is unsupported, same-name siblings
   are rejected as ambiguous, and verification is `size_only`.
-- S3 `insecure=true` endpoints must check literal IPs / `*.local`/`localhost` without DNS resolution.
+- Nextcloud, OpenCloud, WebDAV, Immich, Seafile, and custom S3 endpoints must reject plaintext HTTP and require HTTPS.
 
 ### Transfer and recovery tests
 - `processor/runTransferCore` owns the provider-facing download, stream hash, upload, promotion, and

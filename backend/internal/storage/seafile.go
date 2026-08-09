@@ -69,8 +69,9 @@ const seafileResumableChunkSize int64 = 64 * 1024 * 1024
 // NewSeafileProvider creates a new Seafile storage provider instance.
 func NewSeafileProvider(urlStr, username, password string) (*SeafileProvider, error) {
 	urlStr = strings.TrimRight(urlStr, "/")
-	if urlStr == "" {
-		return nil, fmt.Errorf("seafile provider requires a valid URL")
+	u, err := url.Parse(urlStr)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return nil, fmt.Errorf("seafile provider requires an absolute HTTPS URL")
 	}
 
 	if err := validateEgressURL(urlStr); err != nil {

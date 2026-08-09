@@ -67,8 +67,8 @@ func (p *OpenCloudProvider) newRequest(method, urlStr string, body io.Reader) (*
 func NewOpenCloudProvider(rawURL, username, password string) (*OpenCloudProvider, error) {
 	baseURL := strings.TrimSuffix(rawURL, "/")
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
-		return nil, fmt.Errorf("invalid URL format: must be an absolute URL with scheme and host")
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("invalid URL format: must be an absolute HTTPS URL with host")
 	}
 
 	// Default base path to /dav/spaces if no specific DAV path provided

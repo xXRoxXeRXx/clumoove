@@ -35,8 +35,8 @@ func (p *WebDAVProvider) assertFilesOnly(resourceType string) error {
 func NewWebDAVProvider(rawURL, username, password string) (*WebDAVProvider, error) {
 	baseURL := strings.TrimSuffix(rawURL, "/")
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("invalid URL format: must be an absolute URL with scheme and host")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid URL format: must be an absolute HTTPS URL with host")
 	}
 
 	tr := &http.Transport{

@@ -112,10 +112,12 @@ func TestOpenCloudConnectFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewOpenCloudProvider(server.URL+"/dav/spaces", "user", "pass")
+	p, err := NewOpenCloudProvider("https://opencloud.example.test/dav/spaces", "user", "pass")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
+	p.BaseURL = server.URL + "/dav/spaces"
+	p.HTTPClient = server.Client()
 
 	ctx := context.Background()
 	connected, err := p.Connect(ctx)
@@ -151,10 +153,12 @@ func TestOpenCloudTUSChunkedUpload(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p, err := NewOpenCloudProvider(server.URL+"/dav/spaces", "user", "pass")
+	p, err := NewOpenCloudProvider("https://opencloud.example.test/dav/spaces", "user", "pass")
 	if err != nil {
 		t.Fatalf("failed to create provider: %v", err)
 	}
+	p.BaseURL = server.URL + "/dav/spaces"
+	p.HTTPClient = server.Client()
 
 	content := []byte("Hello OpenCloud")
 	progressChan := make(chan int64, 10)
