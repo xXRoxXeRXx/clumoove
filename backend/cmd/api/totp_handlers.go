@@ -413,7 +413,7 @@ func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.Us
 	expiresAt := time.Now().Add(7 * 24 * time.Hour)
 	tokenHash := hashToken(refreshToken)
 
-	if err := db.StoreRefreshToken(s.db, tokenHash, u.ID, expiresAt); err != nil {
+	if err := db.StoreRefreshToken(r.Context(), s.db, tokenHash, u.ID, expiresAt, sessionUserAgent(r)); err != nil {
 		log.Printf("issueTokens: failed to store refresh token for user %s: %v\n", u.ID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return

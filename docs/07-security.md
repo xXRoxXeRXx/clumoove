@@ -44,6 +44,17 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 ---
 
+## 3.5 Refresh-Token Sessions
+
+- Refresh tokens are stored only as hashes and rotate on each refresh; their seven-day expiry bounds a
+  renewable login session.
+- Each row has a random public session ID plus a capped User-Agent label. `GET /api/auth/sessions` exposes
+  only the caller's active session metadata, never token hashes or token values.
+- `DELETE /api/auth/sessions/{id}` scopes deletion to the caller's user ID and returns no cross-account
+  existence information, allowing a user to revoke a lost-device session.
+
+---
+
 ## 4. OAuth2 & Token Rotation
 
 - OAuth2 access/refresh tokens are stored AES-GCM encrypted in `migrations`
@@ -103,6 +114,7 @@ endpoint group from consuming another group's request budget. Limits:
 | Login | 10 / 1 min |
 | Register | 5 / 5 min |
 | Connect/browse/mkdir | 30 / 1 min |
+| Session list/revoke | 30 / 1 min |
 | Migration/sync create or start | 10 / 1 min |
 | TOTP | 10 / 1 min |
 | Migration stream (SSE) | 60 / 1 min, max 10 concurrent streams per user |

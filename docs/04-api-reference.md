@@ -31,6 +31,8 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | `POST` | `/auth/refresh` | refresh | Rotate access token from refresh cookie. |
 | `POST` | `/auth/logout` | refresh | Invalidate refresh token. |
 | `GET` | `/auth/me` | JWT | Current user profile. |
+| `GET` | `/auth/sessions` | JWT | List the caller's active renewable sessions (ID, device user-agent, created and expiry timestamps). |
+| `DELETE` | `/auth/sessions/{id}` | JWT | Revoke one of the caller's renewable sessions; a session owned by another user is not disclosed. |
 | `PUT` | `/auth/me` | JWT | Update display name. |
 | `POST` | `/auth/change-password` | JWT (allow must-change) | Change password. |
 | `GET` | `/auth/2fa/setup` | JWT | Begin TOTP setup (returns secret/QR). |

@@ -10,9 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"backend/internal/auth"
 	"backend/internal/db"
+
+	"github.com/google/uuid"
 )
 
 type RegisterRequest struct {
@@ -216,12 +219,12 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Consume the presented token before issuing a replacement. DELETE ...
 	// RETURNING locks the token row, so concurrent uses of the same token leave
 	// exactly one request able to continue.
-	var userID string
+	var userID, userAgent string
 	if err := tx.QueryRowContext(r.Context(), `
 		DELETE FROM refresh_tokens
 		WHERE token_hash = $1 AND expires_at > NOW()
-		RETURNING user_id
-	`, oldTokenHash).Scan(&userID); err != nil {
+		RETURNING user_id, user_agent
+	`, oldTokenHash).Scan(&userID, &userAgent); err != nil {
 		if err == sql.ErrNoRows {
 			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
 			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
@@ -287,10 +290,10 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	newHashedToken := hashToken(newRefreshToken)
 
 	insertQuery := `
-		INSERT INTO refresh_tokens (token_hash, user_id, expires_at)
-		VALUES ($1, $2, $3)
+		INSERT INTO refresh_tokens (token_hash, user_id, user_agent, expires_at)
+		VALUES ($1, $2, $3, $4)
 	`
-	if _, err := tx.ExecContext(r.Context(), insertQuery, newHashedToken, u.ID, newExpiresAt); err != nil {
+	if _, err := tx.ExecContext(r.Context(), insertQuery, newHashedToken, u.ID, userAgent, newExpiresAt); err != nil {
 		log.Printf("Error storing new refresh token in tx: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -327,6 +330,68 @@ func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func (s *APIServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "sessions", s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+	sessions, err := db.ListRefreshSessions(r.Context(), s.db, userID)
+	if err != nil {
+		log.Printf("handleListSessions: failed to list sessions for user %s: %v", userID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"sessions": sessions})
+}
+
+func (s *APIServer) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "sessions", s.clientIP(r), connectRateLimit, connectRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
+	sessionID := r.PathValue("id")
+	if _, err := uuid.Parse(sessionID); err != nil {
+		writeError(w, http.StatusNotFound, ErrSessionNotFound)
+		return
+	}
+	deleted, err := db.DeleteRefreshSessionForUser(r.Context(), s.db, sessionID, userID)
+	if err != nil {
+		log.Printf("handleDeleteSession: failed to revoke session for user %s: %v", userID, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !deleted {
+		writeError(w, http.StatusNotFound, ErrSessionNotFound)
+		return
+	}
+	s.writeAudit(r, db.AuditSessionRevoked, sessionID, userID, nil)
+	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
+}
+
+func sessionUserAgent(r *http.Request) string {
+	const maxUserAgentLength = 512
+	userAgent := strings.TrimSpace(r.UserAgent())
+	if len(userAgent) > maxUserAgentLength {
+		// Keep the storage cap in bytes without leaving an incomplete UTF-8 rune.
+		end := maxUserAgentLength
+		for end > 0 && !utf8.RuneStart(userAgent[end]) {
+			end--
+		}
+		return userAgent[:end]
+	}
+	return userAgent
 }
 
 func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {

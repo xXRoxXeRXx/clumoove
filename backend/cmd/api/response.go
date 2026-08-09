@@ -73,6 +73,7 @@ const (
 	ErrCredentialsInvalid           APIErrorCode = "CREDENTIALS_INVALID"
 	ErrRefreshTokenMissing          APIErrorCode = "REFRESH_TOKEN_MISSING"
 	ErrRefreshTokenInvalid          APIErrorCode = "REFRESH_TOKEN_INVALID"
+	ErrSessionNotFound              APIErrorCode = "SESSION_NOT_FOUND"
 	ErrRegistrationDisabled         APIErrorCode = "REGISTRATION_DISABLED"
 	ErrMissingRequiredFields        APIErrorCode = "MISSING_REQUIRED_FIELDS"
 	ErrEmailAlreadyExists           APIErrorCode = "EMAIL_ALREADY_EXISTS"

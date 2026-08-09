@@ -592,6 +592,7 @@
     "CREDENTIALS_INVALID": "Die Zugangsdaten sind ungültig. Bitte überprüfe deine Eingabe.",
     "REFRESH_TOKEN_MISSING": "Sitzung abgelaufen. Bitte melde dich erneut an.",
     "REFRESH_TOKEN_INVALID": "Sitzung abgelaufen. Bitte melde dich erneut an.",
+    "SESSION_NOT_FOUND": "Diese Sitzung ist nicht mehr verfügbar.",
     "REGISTRATION_DISABLED": "Registrierungen sind derzeit deaktiviert.",
     "MISSING_REQUIRED_FIELDS": "Bitte fülle alle Pflichtfelder aus.",
     "EMAIL_ALREADY_EXISTS": "Ein Konto mit dieser E-Mail-Adresse existiert bereits.",

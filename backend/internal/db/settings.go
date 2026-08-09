@@ -66,13 +66,57 @@ func SetSetting(db *sql.DB, key, value string) error {
 	return err
 }
 
-func StoreRefreshToken(db *sql.DB, tokenHash string, userID string, expiresAt time.Time) error {
+// StoreRefreshToken persists a renewable login session. The token itself is
+// represented only by its hash; userAgent is display metadata.
+func StoreRefreshToken(ctx context.Context, db *sql.DB, tokenHash string, userID string, expiresAt time.Time, userAgent string) error {
 	query := `
-		INSERT INTO refresh_tokens (token_hash, user_id, expires_at)
-		VALUES ($1, $2, $3)
+		INSERT INTO refresh_tokens (token_hash, user_id, user_agent, expires_at)
+		VALUES ($1, $2, $3, $4)
 	`
-	_, err := db.Exec(query, tokenHash, userID, expiresAt)
+	_, err := db.ExecContext(ctx, query, tokenHash, userID, userAgent, expiresAt)
 	return err
+}
+
+// RefreshSession is safe to return to its owning user and never includes a token hash.
+type RefreshSession struct {
+	ID        string    `json:"id"`
+	UserAgent string    `json:"user_agent"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func ListRefreshSessions(ctx context.Context, db *sql.DB, userID string) ([]RefreshSession, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, user_agent, created_at, expires_at
+		FROM refresh_tokens
+		WHERE user_id = $1 AND expires_at > NOW()
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	sessions := make([]RefreshSession, 0)
+	for rows.Next() {
+		var session RefreshSession
+		if err := rows.Scan(&session.ID, &session.UserAgent, &session.CreatedAt, &session.ExpiresAt); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	return sessions, rows.Err()
+}
+
+// DeleteRefreshSessionForUser revokes one session without revealing whether a
+// non-matching ID belongs to another account.
+func DeleteRefreshSessionForUser(ctx context.Context, db *sql.DB, sessionID, userID string) (bool, error) {
+	result, err := db.ExecContext(ctx, `DELETE FROM refresh_tokens WHERE id = $1 AND user_id = $2`, sessionID, userID)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count > 0, err
 }
 
 func DeleteRefreshToken(db *sql.DB, tokenHash string) error {

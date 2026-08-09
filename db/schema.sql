@@ -31,10 +31,14 @@ CREATE INDEX IF NOT EXISTS idx_users_last_login_at ON users(last_login_at);
 -- Table for Refresh Tokens (Session Extension)
 CREATE TABLE IF NOT EXISTS refresh_tokens (
     token_hash TEXT PRIMARY KEY,
+    id UUID NOT NULL DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_agent TEXT NOT NULL DEFAULT '',
     expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_expires_at ON refresh_tokens(user_id, expires_at DESC);
 
 -- Table for Application Settings (Key-Value Store)
 CREATE TABLE IF NOT EXISTS settings (

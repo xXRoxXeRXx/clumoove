@@ -63,9 +63,11 @@ func setupChangePassword2FATestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE IF NOT EXISTS refresh_tokens (
 			token_hash TEXT PRIMARY KEY,
 			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			user_agent TEXT NOT NULL DEFAULT '',
 			expires_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT NOW()
 		)`,
+		`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS user_agent TEXT NOT NULL DEFAULT ''`,
 		`CREATE TABLE IF NOT EXISTS audit_log (
 			id BIGSERIAL PRIMARY KEY,
 			user_id UUID,
@@ -214,7 +216,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 	s := &APIServer{db: database, jwtSecret: "test-jwt-secret-at-least-32-bytes-long!!"}
 	user := createChangePasswordTestUser(t, database, false)
 	refreshToken := "refresh-token-that-must-be-revoked"
-	if err := db.StoreRefreshToken(database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour)); err != nil {
+	if err := db.StoreRefreshToken(context.Background(), database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour), "test-agent"); err != nil {
 		t.Fatalf("store refresh token: %v", err)
 	}
 
@@ -232,7 +234,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 
 	// Simulate a stale token that was read before the suspension transaction
 	// committed. Refresh must still refuse it after checking users.active.
-	if err := db.StoreRefreshToken(database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour)); err != nil {
+	if err := db.StoreRefreshToken(context.Background(), database, hashToken(refreshToken), user.ID, time.Now().Add(time.Hour), "test-agent"); err != nil {
 		t.Fatalf("store stale refresh token: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/refresh", nil)

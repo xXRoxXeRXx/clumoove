@@ -51,7 +51,9 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | Column | Type | Notes |
 | :----- | :--- | :---- |
 | `token_hash` | TEXT PK | SHA of refresh token |
+| `id` | UUID UNIQUE NOT NULL | Public session identifier; never a token value |
 | `user_id` | UUID FK → `users` ON DELETE CASCADE | |
+| `user_agent` | TEXT NOT NULL | Device display metadata, capped at 512 bytes when issued |
 | `expires_at` | TIMESTAMPTZ NOT NULL | |
 | `created_at` | TIMESTAMPTZ | |
 

@@ -592,6 +592,7 @@
     "CREDENTIALS_INVALID": "Invalid login details. Please check your entry.",
     "REFRESH_TOKEN_MISSING": "Session expired. Please log in again.",
     "REFRESH_TOKEN_INVALID": "Session expired. Please log in again.",
+    "SESSION_NOT_FOUND": "This session is no longer available.",
     "REGISTRATION_DISABLED": "Registrations are currently disabled.",
     "MISSING_REQUIRED_FIELDS": "Please fill in all required fields.",
     "EMAIL_ALREADY_EXISTS": "An account with this email address already exists.",

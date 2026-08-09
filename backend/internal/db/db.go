@@ -293,12 +293,23 @@ func InitDB(connStr string) (*sql.DB, error) {
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS refresh_tokens (
 				token_hash VARCHAR(64) PRIMARY KEY,
+				id UUID NOT NULL DEFAULT gen_random_uuid(),
 				user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				user_agent TEXT NOT NULL DEFAULT '',
 				expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
 				created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 			)`)
 			if err != nil {
 				log.Printf("Failed schema migration (refresh_tokens): %v\n", err)
+			}
+			_, err = db.Exec(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS id UUID DEFAULT gen_random_uuid();
+				ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS user_agent TEXT NOT NULL DEFAULT '';
+				UPDATE refresh_tokens SET id = gen_random_uuid() WHERE id IS NULL;
+				ALTER TABLE refresh_tokens ALTER COLUMN id SET NOT NULL;
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_id ON refresh_tokens(id);
+				CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_expires_at ON refresh_tokens(user_id, expires_at DESC)`)
+			if err != nil {
+				log.Printf("Failed schema migration (refresh_tokens session metadata): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS password_reset_tokens (

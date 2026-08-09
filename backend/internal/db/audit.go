@@ -13,6 +13,7 @@ type AuditAction string
 const (
 	AuditLoginSuccess       AuditAction = "LOGIN_SUCCESS"
 	AuditLoginFailed        AuditAction = "LOGIN_FAILED"
+	AuditSessionRevoked     AuditAction = "SESSION_REVOKED"
 	AuditRegistration       AuditAction = "REGISTRATION"
 	AuditUserCreated        AuditAction = "USER_CREATED"
 	AuditMigrationCreated   AuditAction = "MIGRATION_CREATED"
