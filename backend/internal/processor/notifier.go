@@ -120,36 +120,74 @@ func (p *Processor) sendPendingNotifications(ctx context.Context) {
 				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_NOT_CONFIGURED")
 				continue
 			}
-			password, err := crypto.Decrypt(settings.SMTPPasswordEnc, p.secretKey)
-			if err != nil {
-				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_DECRYPT_FAILED")
-				continue
-			}
-			cfg := notify.Config{"smtp_host": settings.SMTPHost, "smtp_port": settings.SMTPPort, "smtp_username": settings.SMTPUsername, "smtp_password": password, "smtp_from_email": settings.SMTPFromEmail, "smtp_from_name": settings.SMTPFromName, "smtp_encryption": settings.SMTPEncryption}
-			if err := notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language); err != nil {
-				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
+			if err := withDecryptedNotificationSecret(settings.SMTPPasswordEnc, p.secretKey, func(password *string) error {
+				cfg := notify.Config{
+					"smtp_host":       settings.SMTPHost,
+					"smtp_port":       settings.SMTPPort,
+					"smtp_username":   settings.SMTPUsername,
+					"smtp_password":   *password,
+					"smtp_from_email": settings.SMTPFromEmail,
+					"smtp_from_name":  settings.SMTPFromName,
+					"smtp_encryption": settings.SMTPEncryption,
+				}
+				return notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
+			}); err != nil {
+				if errors.Is(err, errNotificationDecryptFailed) {
+					_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_DECRYPT_FAILED")
+				} else {
+					_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
+				}
 				continue
 			}
 			_ = db.CompleteNotificationDelivery(p.db, d.ID, true, "")
 			continue
 		}
-		plain, err := crypto.Decrypt(d.ConfigEncrypted, p.secretKey)
-		if err != nil {
-			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
-			log.Printf("[Notifier] channel=%s delivery=%s failed", d.ChannelType, d.ID)
-			continue
-		}
-		var cfg notify.Config
-		if json.Unmarshal([]byte(plain), &cfg) != nil {
-			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
-			continue
-		}
-		err = notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
-		if err != nil {
+		if err := withDecryptedNotificationSecret(d.ConfigEncrypted, p.secretKey, func(plain *string) error {
+			cfg, err := decodeNotificationConfig(*plain)
+			if err != nil {
+				return err
+			}
+			return notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
+		}); err != nil {
+			if errors.Is(err, errNotificationDecryptFailed) {
+				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
+				// A decryptable but malformed configuration is security-relevant: it
+				// cannot be delivered and may indicate corrupted persisted state.
+				log.Printf("[Notifier] channel=%s delivery=%s failed", d.ChannelType, d.ID)
+				continue
+			}
 			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
 			log.Printf("[Notifier] channel=%s delivery=%s send failed", d.ChannelType, d.ID)
 			continue
 		}
 		_ = db.CompleteNotificationDelivery(p.db, d.ID, true, "")
 	}
+}
+
+var errNotificationDecryptFailed = errors.New("notification secret decryption failed")
+
+// withDecryptedNotificationSecret limits a notification secret to the callback's
+// lifetime. The pointer gives the callback temporary access to the decrypted
+// plaintext; the backing memory is zeroed (via crypto.ZeroString) immediately
+// after the callback returns. The callback must consume the secret
+// synchronously: do not let *secret, nor any string derived by dereferencing
+// the pointer (they share backing memory), escape the callback; for example,
+// by storing it in a struct that outlives the call or by passing it to a
+// background goroutine. Derive independent copies (fmt.Sprint, []byte,
+// json.Unmarshal) before any such retention.
+func withDecryptedNotificationSecret(encrypted, secretKey string, use func(*string) error) error {
+	secret, err := crypto.Decrypt(encrypted, secretKey)
+	if err != nil {
+		return errNotificationDecryptFailed
+	}
+	defer crypto.ZeroString(&secret)
+	return use(&secret)
+}
+
+func decodeNotificationConfig(plain string) (notify.Config, error) {
+	var cfg notify.Config
+	if err := json.Unmarshal([]byte(plain), &cfg); err != nil {
+		return nil, errNotificationDecryptFailed
+	}
+	return cfg, nil
 }
