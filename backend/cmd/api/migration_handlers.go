@@ -416,7 +416,7 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.indexer.Start(s.ctx, id)
+	go s.indexer.Start(s.backgroundCtx, id)
 
 	log.Printf("Migration %s re-index triggered.\n", id)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"success": true, "migration_id": id})
@@ -1089,7 +1089,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.indexer.Start(s.ctx, migrationID)
+	go s.indexer.Start(s.backgroundCtx, migrationID)
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"success":      true,

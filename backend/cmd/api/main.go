@@ -25,13 +25,15 @@ import (
 )
 
 type APIServer struct {
-	db                *sql.DB
-	queue             *queue.Queue
-	indexer           *indexer.Indexer
-	syncEngine        *appSync.Engine
-	encryptionKey     string // AES key for credential encryption
-	jwtSecret         string // HMAC key for JWT signing (separate from encryptionKey)
-	ctx               context.Context
+	db            *sql.DB
+	queue         *queue.Queue
+	indexer       *indexer.Indexer
+	syncEngine    *appSync.Engine
+	encryptionKey string // AES key for credential encryption
+	jwtSecret     string // HMAC key for JWT signing (separate from encryptionKey)
+	// backgroundCtx owns long-running work started after a request returns.
+	// Request handlers use r.Context() for request-scoped operations.
+	backgroundCtx     context.Context
 	rateLimiter       *distributedRateLimiter
 	dummyPasswordHash string
 	// activeStreams tracks the number of open SSE migration-stream connections
@@ -165,7 +167,7 @@ func main() {
 		syncEngine:        syncEng,
 		encryptionKey:     encryptionKey,
 		jwtSecret:         jwtSecret,
-		ctx:               ctx,
+		backgroundCtx:     ctx,
 		rateLimiter:       &distributedRateLimiter{client: q.RedisClient()},
 		dummyPasswordHash: dummyPasswordHash,
 		activeStreams:     make(map[string]int),

@@ -18,12 +18,12 @@ import (
 // A provider is task-scoped: its in-memory tree and cleartext session material
 // are never shared across accounts or operations.
 type MegaProvider struct {
-	email    string
-	password string
-	session  MegaSession
-	client   *mega.Mega
-	http     *http.Client
-	mu       sync.Mutex
+	email      string
+	password   string
+	session    MegaSession
+	client     *mega.Mega
+	httpClient *http.Client
+	mu         sync.Mutex
 }
 
 func NewMegaProvider(email, password string, session MegaSession) *MegaProvider {
@@ -33,8 +33,8 @@ func NewMegaProvider(email, password string, session MegaSession) *MegaProvider 
 func (p *MegaProvider) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.http != nil {
-		p.http.CloseIdleConnections()
+	if p.httpClient != nil {
+		p.httpClient.CloseIdleConnections()
 	}
 	for i := range p.session.MasterKey {
 		p.session.MasterKey[i] = 0
@@ -67,7 +67,7 @@ func (p *MegaProvider) Connect(ctx context.Context) (bool, error) {
 
 	if p.session.ID != "" && len(p.session.MasterKey) > 0 {
 		if err := client.LoginWithKeys(p.session.ID, p.session.MasterKey); err == nil {
-			p.client, p.http = client, httpClient
+			p.client, p.httpClient = client, httpClient
 			return true, nil
 		}
 	}
@@ -79,7 +79,7 @@ func (p *MegaProvider) Connect(ctx context.Context) (bool, error) {
 		p.session.MasterKey[i] = 0
 	}
 	p.session = MegaSession{ID: client.GetSessionID(), MasterKey: key}
-	p.client, p.http = client, httpClient
+	p.client, p.httpClient = client, httpClient
 	return true, nil
 }
 

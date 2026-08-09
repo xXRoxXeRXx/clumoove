@@ -365,7 +365,7 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claimed, err := s.syncEngine.StartSyncPass(s.ctx, id)
+	claimed, err := s.syncEngine.StartSyncPass(s.backgroundCtx, id)
 	if err != nil {
 		log.Printf("[Sync] Failed to claim sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -477,7 +477,7 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, ErrSyncInvalidState)
 		return
 	}
-	claimed, startErr := s.syncEngine.StartSyncPass(s.ctx, id)
+	claimed, startErr := s.syncEngine.StartSyncPass(s.backgroundCtx, id)
 	// Always reactivate the schedule. If the immediate claim was lost to an
 	// instance race or a transient DB error, the next scheduler tick safely
 	// starts the already-resumed IDLE job instead of reporting a false failure.

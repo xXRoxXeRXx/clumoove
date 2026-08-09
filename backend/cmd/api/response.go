@@ -36,7 +36,8 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any, limit int64
 }
 
 // decodeJSONBodySilent applies the same bounded decoding without exposing a
-// parse failure. It is used only for anti-enumeration responses.
+// parse failure. It is used only for anti-enumeration responses. The nil
+// ResponseWriter intentionally suppresses MaxBytesReader's usual 413 write.
 func decodeJSONBodySilent(r *http.Request, dst any, limit int64) bool {
 	r.Body = http.MaxBytesReader(nil, r.Body, limit)
 	return decodeJSON(r, dst)
@@ -291,15 +292,15 @@ func (s *APIServer) requestScheme(r *http.Request) string {
 	if r.TLS != nil {
 		return "https"
 	}
-	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
-		if strings.EqualFold(proto, "https") {
-			return "https"
-		}
-		if strings.EqualFold(proto, "http") {
-			return "http"
-		}
-	}
 	if s.trustedProxy {
+		if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
+			if strings.EqualFold(proto, "http") {
+				return "http"
+			}
+			if strings.EqualFold(proto, "https") {
+				return "https"
+			}
+		}
 		return "https"
 	}
 	return "http"
@@ -358,10 +359,4 @@ func csvCell(s string) string {
 func hashToken(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
-}
-
-func stripScriptTerminator(s string) string {
-	s = strings.ReplaceAll(s, "</script>", "")
-	s = strings.ReplaceAll(s, "</SCRIPT>", "")
-	return s
 }

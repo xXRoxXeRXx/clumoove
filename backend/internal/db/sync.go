@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// SyncJob represents a fortlaufende Synchronisation job
+// SyncJob represents a continuous synchronization job.
 type SyncJob struct {
 	ID                           string         `json:"id"`
 	UserID                       string         `json:"user_id"`

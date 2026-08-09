@@ -12,12 +12,12 @@ func newTestServer(trustedProxy bool) *APIServer {
 
 func TestPublicHost(t *testing.T) {
 	cases := []struct {
-		name     string
-		trusted  bool
-		xfh      string
-		host     string
-		proto    string
-		want     string
+		name    string
+		trusted bool
+		xfh     string
+		host    string
+		proto   string
+		want    string
 	}{
 		{name: "untrusted uses request host with port", trusted: false, host: "example.com:8000", want: "example.com:8000"},
 		{name: "untrusted uses request host without port", trusted: false, host: "example.com", want: "example.com"},
@@ -50,6 +50,11 @@ func TestGetRedirectURIScheme(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/x", nil)
 	if got := s.getRedirectURI(req); got != "http://example.com/api/oauth/callback" {
 		t.Fatalf("getRedirectURI = %q, want http://example.com/api/oauth/callback", got)
+	}
+	// A direct client cannot spoof the externally visible scheme.
+	req.Header.Set("X-Forwarded-Proto", "https")
+	if got := s.getRedirectURI(req); got != "http://example.com/api/oauth/callback" {
+		t.Fatalf("untrusted forwarded proto produced %q, want HTTP callback", got)
 	}
 
 	// Secure behind a trusted proxy: X-Forwarded-Proto https + forwarded host.

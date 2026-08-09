@@ -47,7 +47,11 @@ func TestCORSMiddlewareHidesHeadersForUntrustedOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://evil.example.test")
 	rec := httptest.NewRecorder()
 
-	corsMiddleware(http.NotFoundHandler()).ServeHTTP(rec, req)
+	called := false
+	corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(rec, req)
 
 	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "" {
 		t.Fatalf("Access-Control-Expose-Headers = %q, want empty for untrusted origin", got)
@@ -55,6 +59,31 @@ func TestCORSMiddlewareHidesHeadersForUntrustedOrigin(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want empty for untrusted origin", got)
 	}
+	if !called || rec.Code != http.StatusNoContent {
+		t.Fatalf("untrusted origin should reach the underlying handler, called=%v status=%d", called, rec.Code)
+	}
+}
+
+func TestRequireTrustedCookieOrigin(t *testing.T) {
+	t.Run("allows trusted origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+		req.Header.Set("Origin", "http://localhost:5173")
+		if !requireTrustedCookieOrigin(httptest.NewRecorder(), req) {
+			t.Fatal("trusted origin was rejected")
+		}
+	})
+
+	t.Run("rejects untrusted origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+		req.Header.Set("Origin", "https://evil.example.test")
+		rec := httptest.NewRecorder()
+		if requireTrustedCookieOrigin(rec, req) {
+			t.Fatal("untrusted origin was allowed")
+		}
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+		}
+	})
 }
 
 // captureHandler records every log record emitted through the default logger so
@@ -63,9 +92,11 @@ type captureHandler struct {
 	records []slog.Record
 }
 
-func (h *captureHandler) Enabled(_ context.Context, level slog.Level) bool { return level >= slog.LevelDebug }
-func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler             { return h }
-func (h *captureHandler) WithGroup(_ string) slog.Handler                  { return h }
+func (h *captureHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelDebug
+}
+func (h *captureHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(_ string) slog.Handler      { return h }
 func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
 	h.records = append(h.records, r)
 	return nil

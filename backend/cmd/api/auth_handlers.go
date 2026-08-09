@@ -79,6 +79,8 @@ func (s *APIServer) handleOAuthAuth(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
+		// SameSite=None is required because the OAuth provider redirects here
+		// from a cross-site origin; Strict/Lax would suppress this CSRF cookie.
 		SameSite: http.SameSiteNoneMode,
 		MaxAge:   300,
 	}
@@ -145,6 +147,7 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
+		// Must match the attributes used when setting oauth_state above.
 		SameSite: http.SameSiteNoneMode,
 		MaxAge:   -1,
 	}
@@ -172,11 +175,6 @@ func (s *APIServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token, refreshToken string, expiresIn int, username, purpose, targetOrigin string, errorCode ...APIErrorCode) {
-	provider = stripScriptTerminator(provider)
-	token = stripScriptTerminator(token)
-	refreshToken = stripScriptTerminator(refreshToken)
-	username = stripScriptTerminator(username)
-
 	// targetOrigin is embedded in the callback's inline script. Keep this
 	// sink-level guard even though callback callers validate the state origin,
 	// so future call paths cannot reflect an untrusted value into JavaScript.
@@ -296,6 +294,7 @@ func (s *APIServer) renderOAuthResultHTML(w http.ResponseWriter, provider, token
 
 	// Keep request-influenced data out of executable JavaScript. The browser
 	// reads this inert JSON element from a fixed script template below.
+	// json.Marshal escapes '<', so data cannot terminate the script element.
 	oauthResultData := struct {
 		ErrorCode    string `json:"errorCode"`
 		TargetOrigin string `json:"targetOrigin"`
@@ -573,6 +572,9 @@ func (s *APIServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	if !requireTrustedCookieOrigin(w, r) {
+		return
+	}
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, ErrRefreshTokenMissing)
@@ -690,6 +692,9 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if !requireTrustedCookieOrigin(w, r) {
+		return
+	}
 	cookie, err := r.Cookie("refresh_token")
 	if err == nil {
 		tokenHash := hashToken(cookie.Value)

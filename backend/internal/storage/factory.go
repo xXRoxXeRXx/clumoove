@@ -19,22 +19,16 @@ func localUserID(ctx context.Context) string {
 	return userID
 }
 
-// ValidProviders is the canonical list of supported storage providers. It is
-// the single source of truth shared by the NewProvider switch below and any
-// request-time whitelist checks (e.g. main.go handleConnect), so adding a
-// provider only requires updating the switch — not every call site.
+// ValidProviders is the ordered list used by API/UI consumers. Keep it in
+// parity with providerRegistry, which is the source used for validation.
 var ValidProviders = []string{
 	"nextcloud", "opencloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "ftp", "magentacloud", "local", "immich", "seafile", "mega",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
 func IsValidProvider(p string) bool {
-	for _, v := range ValidProviders {
-		if v == p {
-			return true
-		}
-	}
-	return false
+	_, ok := providerRegistry[p]
+	return ok
 }
 
 // ProviderMetadata defines static capabilities and connection requirements for a storage provider.
@@ -184,7 +178,7 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	// user-supplied host.
 	if providerType == "nextcloud" || providerType == "webdav" || providerType == "opencloud" ||
 		providerType == "smb" || providerType == "sftp" || providerType == "ftp" || providerType == "immich" || providerType == "seafile" {
-		if err := validateEgressURL(urlStr); err != nil {
+		if err := validateEgressURLContext(ctx, urlStr); err != nil {
 			return nil, err
 		}
 	}

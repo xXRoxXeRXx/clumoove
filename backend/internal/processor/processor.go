@@ -13,7 +13,6 @@ import (
 	"hash"
 	"io"
 	"log"
-	"math"
 	"net"
 	"os"
 	"path"
@@ -387,11 +386,14 @@ func transferTimeout(fileSize int64) time.Duration {
 // Centralising the schedule keeps the connection-loss and normal-failure retry
 // paths consistent (both previously inlined the same [10,30,90] table + clamp).
 func retryBackoff(attempt int) time.Duration {
-	sec := 10 * int(math.Pow(3, float64(attempt-1)))
-	if sec > 90 {
-		sec = 90
+	switch attempt {
+	case 1:
+		return 10 * time.Second
+	case 2:
+		return 30 * time.Second
+	default:
+		return 90 * time.Second
 	}
-	return time.Duration(sec) * time.Second
 }
 
 // retryDelay respects a provider's explicit rate-limit window while retaining

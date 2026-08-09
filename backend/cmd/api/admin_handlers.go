@@ -30,11 +30,12 @@ func (s *APIServer) handleUpdateLanguage(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	if err := db.UpdateUserLanguage(s.db, userID, strings.ToLower(strings.TrimSpace(req.Language))); err != nil {
+	language := strings.ToLower(strings.TrimSpace(req.Language))
+	if err := db.UpdateUserLanguage(s.db, userID, language); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"language": strings.ToLower(strings.TrimSpace(req.Language))})
+	writeJSON(w, http.StatusOK, map[string]string{"language": language})
 }
 
 func (s *APIServer) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {

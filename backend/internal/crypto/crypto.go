@@ -8,7 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
-	"reflect"
+	"runtime"
 	"unsafe"
 )
 
@@ -94,22 +94,16 @@ func Decrypt(cipherTextHex string, secretKey string) (string, error) {
 // decrypted plaintext credentials do not linger after they are no longer
 // needed (zero-plaintext-in-memory goal). It mutates the caller's string via
 // a pointer. The string must not be referenced elsewhere (e.g. a constant).
-// Best-effort: it does nothing if the string is empty or unexported internals
-// change across Go versions.
+// Best-effort: callers must only pass an unaliased, mutable string allocated
+// from decrypted data; string literals and shared strings must never be passed.
 func ZeroString(s *string) {
 	if s == nil || *s == "" {
 		return
 	}
-	// Convert the string header to a byte slice header and zero the bytes.
-	// This is safe because *s is an unaliased decrypted value owned by the
-	// caller, never a string literal from read-only memory.
-	sh := (*reflect.StringHeader)(unsafe.Pointer(s))
-	if sh.Len == 0 {
-		return
-	}
-	b := unsafe.Slice((*byte)(unsafe.Pointer(sh.Data)), sh.Len)
-	for i := range b {
-		b[i] = 0
-	}
+	// unsafe.StringData avoids the deprecated reflect.StringHeader layout.
+	// The backing storage is owned by the caller (see the contract above).
+	b := unsafe.Slice(unsafe.StringData(*s), len(*s))
+	clear(b)
+	runtime.KeepAlive(b)
 	*s = ""
 }

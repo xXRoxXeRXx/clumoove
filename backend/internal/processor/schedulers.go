@@ -17,7 +17,7 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	cleanupTicker := time.NewTicker(30 * time.Second)
+	cleanupTicker := time.NewTicker(60 * time.Second)
 	defer cleanupTicker.Stop()
 
 	for {
@@ -69,49 +69,33 @@ func (p *Processor) RunRetryScheduler(ctx context.Context) {
 }
 
 func (p *Processor) requeueFailedTasks(ctx context.Context) {
-	query := `
-		SELECT t.id, COALESCE(t.migration_id::text, t.sync_job_id::text, '')
-		FROM tasks t
-		LEFT JOIN migrations m ON t.migration_id = m.id
-		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
-		WHERE t.status = 'FAILED' 
-		  AND t.next_retry_at <= $1
-		  AND (
-		    (t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING', 'VERIFYING'))
-		    OR
-		    (t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING', 'VERIFYING'))
-		  )
-	`
-	rows, err := p.db.QueryContext(ctx, query, time.Now())
+	// Use two set-based updates in one transaction instead of one UPDATE per task.
+	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
+		log.Printf("[RetryScheduler] begin transaction: %v\n", err)
 		return
 	}
-	defer rows.Close()
-
-	var requeued int
-	for rows.Next() {
-		var taskID, parentID string
-		if err := rows.Scan(&taskID, &parentID); err != nil {
-			continue
-		}
-
-		updateQuery := `
-			UPDATE tasks
-			SET status = 'PENDING', next_retry_at = NULL, checksum_verified = FALSE
-			WHERE id = $1
-		`
-		_, err := p.db.ExecContext(ctx, updateQuery, taskID)
+	defer tx.Rollback()
+	now := time.Now()
+	var requeued int64
+	for _, updateQuery := range []string{
+		`UPDATE tasks AS t SET status = 'PENDING', next_retry_at = NULL, checksum_verified = FALSE FROM migrations m WHERE t.migration_id = m.id AND t.status = 'FAILED' AND t.next_retry_at <= $1 AND m.status IN ('RUNNING', 'INDEXING', 'VERIFYING')`,
+		`UPDATE tasks AS t SET status = 'PENDING', next_retry_at = NULL, checksum_verified = FALSE FROM sync_jobs sj WHERE t.sync_job_id = sj.id AND t.status = 'FAILED' AND t.next_retry_at <= $1 AND sj.status IN ('RUNNING', 'INDEXING', 'VERIFYING')`,
+	} {
+		result, err := tx.ExecContext(ctx, updateQuery, now)
 		if err != nil {
-			continue
+			log.Printf("[RetryScheduler] re-enqueue tasks: %v\n", err)
+			return
 		}
-
-		log.Printf("[RetryScheduler] Re-enqueued task %s for migration/sync %s\n", taskID, parentID)
-		requeued++
+		count, _ := result.RowsAffected()
+		requeued += count
 	}
-	if err := rows.Err(); err != nil {
-		log.Printf("[RetryScheduler] rows error: %v\n", err)
+	if err := tx.Commit(); err != nil {
+		log.Printf("[RetryScheduler] commit re-enqueue: %v\n", err)
+		return
 	}
 	if requeued > 0 {
+		log.Printf("[RetryScheduler] Re-enqueued %d task(s)\n", requeued)
 		p.queue.NotifyTaskAvailable(ctx, p.db)
 	}
 }

@@ -59,7 +59,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 		origin := r.Header.Get("Origin")
 		if origin != "" {
 			if !allowedOrigins[origin] {
-				writeError(w, http.StatusForbidden, ErrCorsOriginUntrusted)
+				// CORS controls response visibility, not request execution. Cookie-
+				// authenticated endpoints must enforce their own CSRF/origin policy.
+				next.ServeHTTP(w, r)
 				return
 			}
 			// Credentialed requests are only allowed from the whitelisted origins.
@@ -69,9 +71,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
 		}
-		// Requests from unknown or empty origins receive no Allow-Origin header (blocked by browser if necessary)
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Cookie")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Cookie")
+		}
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -80,6 +83,18 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requireTrustedCookieOrigin protects endpoints authenticated by the refresh
+// cookie. CORS does not prevent a browser from sending a cross-site request;
+// reject an untrusted browser Origin before it can rotate or revoke a session.
+func requireTrustedCookieOrigin(w http.ResponseWriter, r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin != "" && !allowedOrigins[origin] {
+		writeError(w, http.StatusForbidden, ErrCorsOriginUntrusted)
+		return false
+	}
+	return true
 }
 
 type loggingResponseWriter struct {

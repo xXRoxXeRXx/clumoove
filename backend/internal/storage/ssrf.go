@@ -30,6 +30,10 @@ var blockPrivateEgress = os.Getenv("MIGRATION_BLOCK_PRIVATE") == "1" ||
 // re-validates the address immediately before each dial — closing the
 // DNS-rebinding (TOCTOU) window that construction-time-only validation leaves open.
 func validateEgressURL(rawURL string) error {
+	return validateEgressURLContext(context.Background(), rawURL)
+}
+
+func validateEgressURLContext(ctx context.Context, rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("invalid provider URL: %w", err)
@@ -38,7 +42,7 @@ func validateEgressURL(rawURL string) error {
 	if host == "" {
 		return fmt.Errorf("provider URL has no host")
 	}
-	return checkHostEgress(host)
+	return checkHostEgress(ctx, host)
 }
 
 // validateEgressHost is like validateEgressURL but takes a host/endpoint
@@ -46,10 +50,14 @@ func validateEgressURL(rawURL string) error {
 // other packages (e.g. the email package) can reuse the identical egress
 // policy for their own user-supplied hosts.
 func validateEgressHost(host string) error {
+	return validateEgressHostContext(context.Background(), host)
+}
+
+func validateEgressHostContext(ctx context.Context, host string) error {
 	if host == "" {
 		return fmt.Errorf("empty host")
 	}
-	return checkHostEgress(host)
+	return checkHostEgress(ctx, host)
 }
 
 // ValidateEgressHost is the exported entry point for the egress policy. See
@@ -240,7 +248,7 @@ func allowInsecureEgress(host string) bool {
 	return ip.IsPrivate() && !blockPrivateEgress
 }
 
-func checkHostEgress(host string) error {
+func checkHostEgress(ctx context.Context, host string) error {
 	if ip := net.ParseIP(host); ip != nil {
 		if blocked, reason := isBlockedIP(ip); blocked {
 			return fmt.Errorf("egress to %s is not allowed (%s)", host, reason)
@@ -250,7 +258,7 @@ func checkHostEgress(host string) error {
 
 	// Hostname: resolve and inspect every address. This is defense in
 	// depth alongside the per-connection re-validation in egressDialer.
-	ips, err := resolveEgressIPs(context.Background(), host)
+	ips, err := resolveEgressIPs(ctx, host)
 	if err != nil {
 		return fmt.Errorf("failed to resolve host %q: %w", host, err)
 	}
