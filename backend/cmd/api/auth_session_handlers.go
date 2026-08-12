@@ -335,9 +335,8 @@ func (s *APIServer) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 	sessions, err := db.ListRefreshSessions(r.Context(), s.db, userID)
@@ -354,9 +353,8 @@ func (s *APIServer) handleDeleteSession(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 	sessionID := r.PathValue("id")
@@ -393,9 +391,8 @@ func sessionUserAgent(r *http.Request) string {
 }
 
 func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 	u, err := db.GetUserByID(s.db, userID)

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/notify"
@@ -71,9 +70,8 @@ func toString(v any) string {
 }
 
 func (s *APIServer) handleGetNotificationSettings(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 	channels, err := db.GetNotificationChannels(s.db, userID)
@@ -110,9 +108,8 @@ func (s *APIServer) handleGetNotificationSettings(w http.ResponseWriter, r *http
 }
 
 func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 	var req notificationRequest
@@ -193,9 +190,8 @@ func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *h
 }
 
 func (s *APIServer) handleTestNotification(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 	var req notificationRequest

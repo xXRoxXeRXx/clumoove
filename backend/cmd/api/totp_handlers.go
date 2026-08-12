@@ -149,9 +149,8 @@ type TOTPSetupResponse struct {
 // handle2FASetup generates a new TOTP secret + QR, stores the encrypted secret
 // (still disabled — acceptance criterion 1), and returns the provisioning data.
 func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -206,9 +205,8 @@ type TOTPEnableRequest struct {
 // handle2FAEnable verifies the first code, enables 2FA, generates backup codes,
 // and returns the plaintext codes exactly once.
 func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -277,9 +275,8 @@ type TOTPDisableRequest struct {
 
 // handle2FADisable disables 2FA, requiring a valid 2FA TOTP code or backup code.
 func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -371,9 +368,8 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 
 // handle2FAStatus reports whether 2FA is currently enabled.
 func (s *APIServer) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 

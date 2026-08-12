@@ -25,9 +25,10 @@ type Claims struct {
 }
 
 const (
-	tokenIssuer       = "clumoove-api"
-	accessTokenTTL    = 15 * time.Minute
-	temporaryTokenTTL = 5 * time.Minute
+	tokenIssuer    = "clumoove-api"
+	accessTokenTTL = 15 * time.Minute
+	tempTokenTTL   = 5 * time.Minute
+	bcryptCost     = 12
 
 	// MaxPasswordBytes is bcrypt's maximum accepted password size. Password
 	// validation rejects larger values before they reach bcrypt, so distinct
@@ -42,7 +43,7 @@ func HashPassword(password string) (string, error) {
 	if len(password) > MaxPasswordBytes {
 		return "", fmt.Errorf("password exceeds bcrypt's %d-byte limit", MaxPasswordBytes)
 	}
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 12)
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	return string(bytes), err
 }
 
@@ -93,7 +94,7 @@ func ValidateToken(tokenStr, secretKey string) (*Claims, error) {
 	}
 
 	claims := &Claims{}
-	token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+	_, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -104,10 +105,6 @@ func ValidateToken(tokenStr, secretKey string) (*Claims, error) {
 		return nil, err
 	}
 
-	if !token.Valid {
-		return nil, errors.New("invalid token")
-	}
-
 	return claims, nil
 }
 
@@ -115,7 +112,7 @@ func ValidateToken(tokenStr, secretKey string) (*Claims, error) {
 // TwoFAPending marker. It is returned by the login endpoint when 2FA is enabled
 // and must be presented to /api/auth/totp to complete authentication.
 func Generate2FATempToken(user *db.User, secretKey string) (string, error) {
-	return generateToken(user, secretKey, temporaryTokenTTL, true, false)
+	return generateToken(user, secretKey, tempTokenTTL, true, false)
 }
 
 // Validate2FATempToken parses and validates a 2FA temp token, ensuring it
@@ -138,7 +135,7 @@ func Validate2FATempToken(tokenStr, secretKey string) (*Claims, error) {
 // a dedicated middleware allowing must-change tokens is used for the password
 // rotation route.
 func GenerateMustChangePasswordToken(user *db.User, secretKey string) (string, error) {
-	return generateToken(user, secretKey, temporaryTokenTTL, false, true)
+	return generateToken(user, secretKey, tempTokenTTL, false, true)
 }
 
 // RequireAuthenticated returns an error if the claims represent a token that is

@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
@@ -123,9 +122,8 @@ type createSyncRequest struct {
 }
 
 func (s *APIServer) handleListSyncs(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -148,9 +146,8 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -378,9 +375,8 @@ func validSyncDirection(direction string) bool {
 }
 
 func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -415,9 +411,8 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -457,9 +452,8 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -502,9 +496,8 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -556,9 +549,8 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -588,9 +580,8 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -638,7 +629,10 @@ func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 }
 
 func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
@@ -659,9 +653,8 @@ func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -782,7 +775,10 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
@@ -819,7 +815,10 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
@@ -881,9 +880,8 @@ func (s *APIServer) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -919,9 +917,8 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -1028,9 +1025,8 @@ func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"time"
 
-	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
@@ -286,7 +285,10 @@ func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -320,7 +322,10 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -354,7 +359,10 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -388,7 +396,10 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -428,7 +439,10 @@ func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -469,7 +483,10 @@ func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -503,7 +520,10 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
@@ -979,7 +999,10 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		targetTokenExpiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 
 	active, err := db.CountActiveMigrationsForUser(s.db, userID)
 	if err != nil {
@@ -1097,7 +1120,10 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	list, err := db.GetMigrationsForUser(s.db, userID)
 	if err != nil {
 		s.logf(r, "Error listing migrations for user %s: %v\n", userID, err)
@@ -1108,7 +1134,10 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	if !s.acquireMigrationStream(w, r, userID) {
 		return
 	}
@@ -1205,7 +1234,10 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 
 	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil {
@@ -1265,7 +1297,10 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
@@ -1294,7 +1329,10 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 
 	mig, err := db.GetMigration(s.db, id)
 	if err != nil {
@@ -1380,7 +1418,10 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil {
 		s.logf(r, "Error checking migration %s error-list ownership: %v", id, err)
@@ -1512,7 +1553,10 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, ErrMigrationIdMissing)
 		return
 	}
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	if !s.acquireMigrationStream(w, r, userID) {
 		return
 	}

@@ -22,9 +22,8 @@ type UpdateLanguageRequest struct {
 }
 
 func (s *APIServer) handleUpdateLanguage(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 	var req UpdateLanguageRequest
@@ -44,9 +43,8 @@ func (s *APIServer) handleUpdateLanguage(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *APIServer) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -167,9 +165,8 @@ type SetAvatarRequest struct {
 }
 
 func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -233,9 +230,8 @@ func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleDeleteAvatar(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 

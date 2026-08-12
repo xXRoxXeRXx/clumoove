@@ -1,12 +1,39 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"backend/internal/auth"
 )
+
+func TestRequireUserID(t *testing.T) {
+	server := &APIServer{}
+	t.Run("missing claims returns unauthorized", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		if _, ok := server.requireUserID(rec, req); ok {
+			t.Fatal("expected missing claims to be rejected")
+		}
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("claims return user ID", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-1"}))
+		userID, ok := server.requireUserID(rec, req)
+		if !ok || userID != "user-1" {
+			t.Fatalf("requireUserID() = (%q, %v), want (user-1, true)", userID, ok)
+		}
+	})
+}
 
 func TestDecodeJSONBodyRejectsOversizedValidPrefix(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"value":"ok"}`+strings.Repeat(" ", normalJSONBodyLimit)))

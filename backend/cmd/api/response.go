@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 
+	"backend/internal/auth"
 	"backend/internal/db"
 	"backend/internal/httpresp"
 )
@@ -34,6 +35,18 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst any, limit int64
 		return false
 	}
 	return true
+}
+
+// requireUserID turns a missing claims context into a 401. Protected handlers
+// call it defensively so an accidentally unprotected route cannot be mistaken
+// for an ownership failure.
+func (s *APIServer) requireUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return "", false
+	}
+	return userID, true
 }
 
 // decodeJSONBodySilent applies the same bounded decoding without exposing a

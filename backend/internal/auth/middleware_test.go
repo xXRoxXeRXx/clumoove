@@ -55,7 +55,7 @@ func TestAuthMiddlewareNoHeader(t *testing.T) {
 }
 
 func TestAuthMiddlewareMalformedHeader(t *testing.T) {
-	cases := []string{"", "Token abc", "bearer", "Basic abcdef"}
+	cases := []string{"", "Token abc", "bearer", "Basic abcdef", "Bearer", "Bearer    "}
 	for _, h := range cases {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
@@ -65,6 +65,23 @@ func TestAuthMiddlewareMalformedHeader(t *testing.T) {
 		AuthMiddlewareWithAuthStateLookup("secret-key-32-bytes-long-abcdefghij!!", authStateLookup(testUser()))(okHandler()).ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("header %q: expected 401, got %d", h, rec.Code)
+		}
+	}
+}
+
+func TestAuthMiddlewareAcceptsWhitespaceAroundBearerToken(t *testing.T) {
+	secret := "secret-key-32-bytes-long-abcdefghij!!"
+	token, err := GenerateAccessToken(testUser(), secret)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken failed: %v", err)
+	}
+	for _, header := range []string{"Bearer  " + token, "Bearer\t" + token, "  Bearer " + token + "  ", "bearer " + token} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/protected", nil)
+		req.Header.Set("Authorization", header)
+		AuthMiddlewareWithAuthStateLookup(secret, authStateLookup(testUser()))(okHandler()).ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("header %q: expected 200, got %d", header, rec.Code)
 		}
 	}
 }

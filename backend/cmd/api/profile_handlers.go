@@ -59,6 +59,9 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		return base, errors.New("missing authenticated user")
+	}
 	owned, err := db.VerifyProfileOwnership(s.db, profileID, userID)
 	if err != nil {
 		return base, err
@@ -163,9 +166,8 @@ type ConnectionProfileRequest struct {
 }
 
 func (s *APIServer) handleListProfiles(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -191,9 +193,8 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -277,7 +278,10 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
@@ -306,7 +310,10 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
@@ -410,7 +417,10 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 }
 
 func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
@@ -442,7 +452,10 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)

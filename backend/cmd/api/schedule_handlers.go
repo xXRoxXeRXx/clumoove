@@ -3,15 +3,13 @@ package main
 import (
 	"net/http"
 
-	"backend/internal/auth"
 	"backend/internal/db"
 )
 
 // handleListSchedules returns all schedules for the authenticated user
 func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -37,9 +35,8 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 
@@ -72,9 +69,8 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	userID := auth.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
 		return
 	}
 

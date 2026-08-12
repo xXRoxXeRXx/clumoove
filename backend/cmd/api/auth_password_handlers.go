@@ -171,7 +171,10 @@ func (s *APIServer) handleEmailChangeAvailable(w http.ResponseWriter, r *http.Re
 }
 
 func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
-	userID := auth.GetUserIDFromContext(r.Context())
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 
 	ip := s.clientIP(r)
 	if !s.rateLimiter.Allow(r.Context(), "change-email", ip, 3, 1*time.Minute) {

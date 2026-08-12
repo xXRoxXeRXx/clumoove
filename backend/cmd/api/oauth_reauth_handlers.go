@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/oauth"
@@ -26,7 +25,11 @@ func oauthExpiry(seconds int) time.Time {
 }
 
 func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request) {
-	id, userID := r.PathValue("id"), auth.GetUserIDFromContext(r.Context())
+	id := r.PathValue("id")
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -90,7 +93,11 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 }
 
 func (s *APIServer) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
-	id, userID := r.PathValue("id"), auth.GetUserIDFromContext(r.Context())
+	id := r.PathValue("id")
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
 	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}

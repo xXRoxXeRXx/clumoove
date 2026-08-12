@@ -36,7 +36,9 @@ func databaseAuthStateLookup(database *sql.DB) AuthStateLookup {
 }
 
 // RefreshClaimsFromAuthState fails closed when an account is missing or
-// suspended, and copies mutable authorization claims from the database.
+// suspended, and copies mutable authorization claims from the database. The
+// nil-state check is defense-in-depth: db.GetUserAuthState reports a missing
+// user as sql.ErrNoRows, while tests and alternative lookups may return nil.
 func RefreshClaimsFromAuthState(claims *Claims, state *db.UserAuthState) error {
 	if claims == nil || state == nil || !state.Active {
 		return errors.New("inactive or missing user")
@@ -73,13 +75,12 @@ func AuthMiddlewareWithAuthStateLookup(secretKey string, lookup AuthStateLookup)
 				return
 			}
 
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			tokenStr, ok := bearerToken(authHeader)
+			if !ok {
 				writeUnauthorized(w)
 				return
 			}
 
-			tokenStr := parts[1]
 			claims, err := ValidateToken(tokenStr, secretKey)
 			if err != nil {
 				writeUnauthorized(w)
@@ -123,13 +124,13 @@ func AuthMiddlewareAllowMustChangeWithAuthStateLookup(secretKey string, lookup A
 				return
 			}
 
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			tokenStr, ok := bearerToken(authHeader)
+			if !ok {
 				writeUnauthorized(w)
 				return
 			}
 
-			claims, err := ValidateToken(parts[1], secretKey)
+			claims, err := ValidateToken(tokenStr, secretKey)
 			if err != nil {
 				writeUnauthorized(w)
 				return
@@ -150,6 +151,22 @@ func AuthMiddlewareAllowMustChangeWithAuthStateLookup(secretKey string, lookup A
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// bearerToken extracts a non-empty Bearer token while allowing surrounding
+// whitespace between the auth scheme and credentials.
+func bearerToken(authHeader string) (string, bool) {
+	authHeader = strings.TrimSpace(authHeader)
+	const bearerScheme = "Bearer"
+	if len(authHeader) <= len(bearerScheme) || !strings.EqualFold(authHeader[:len(bearerScheme)], bearerScheme) {
+		return "", false
+	}
+	remainder := authHeader[len(bearerScheme):]
+	if remainder[0] != ' ' && remainder[0] != '\t' {
+		return "", false
+	}
+	token := strings.TrimSpace(remainder)
+	return token, token != ""
 }
 
 // GetUserIDFromContext retrieves the authenticated user's ID from the context

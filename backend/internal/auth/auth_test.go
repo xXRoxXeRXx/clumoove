@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +112,38 @@ func TestGeneratedTokenStates(t *testing.T) {
 	}
 }
 
+func TestValidate2FATempTokenRejectsAccessToken(t *testing.T) {
+	secret := "test-secret-key-12345-67890-abcdef"
+	token, err := GenerateAccessToken(&db.User{ID: "user-uuid-1"}, secret)
+	if err != nil {
+		t.Fatalf("generate access token: %v", err)
+	}
+	if _, err := Validate2FATempToken(token, secret); err == nil {
+		t.Fatal("expected access token to be rejected as a 2FA temp token")
+	}
+}
+
+func TestRequireAuthenticated(t *testing.T) {
+	tests := []struct {
+		name    string
+		claims  *Claims
+		wantErr bool
+	}{
+		{"nil claims", nil, true},
+		{"two-factor pending", &Claims{TwoFAPending: true}, true},
+		{"must change password", &Claims{MustChangePassword: true}, true},
+		{"fully authenticated", &Claims{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := RequireAuthenticated(tt.claims)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("RequireAuthenticated() error = %v, want error %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateTokenRejectsUnexpectedIssuer(t *testing.T) {
 	secret := "test-secret-key-12345-67890-abcdef"
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{
@@ -135,5 +169,30 @@ func TestRefreshToken(t *testing.T) {
 
 	if len(token) != 64 { // hex of 32 bytes is 64 characters
 		t.Errorf("expected hex-encoded refresh token of length 64, got length %d", len(token))
+	}
+}
+
+func TestRefreshTokenCookieAttributes(t *testing.T) {
+	expiresAt := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	rec := httptest.NewRecorder()
+	SetRefreshTokenCookie(rec, "refresh-value", expiresAt)
+	cookies := rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one cookie, got %d", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != "refresh_token" || cookie.Value != "refresh-value" || cookie.Path != "/api/auth" || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteNoneMode || !cookie.Expires.Equal(expiresAt) {
+		t.Fatalf("unexpected refresh cookie: %+v", cookie)
+	}
+
+	rec = httptest.NewRecorder()
+	ClearRefreshTokenCookie(rec)
+	cookies = rec.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("expected one cleared cookie, got %d", len(cookies))
+	}
+	cookie = cookies[0]
+	if cookie.Name != "refresh_token" || cookie.Path != "/api/auth" || cookie.MaxAge >= 0 || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteNoneMode {
+		t.Fatalf("unexpected cleared refresh cookie: %+v", cookie)
 	}
 }
