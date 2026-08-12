@@ -1,3 +1,4 @@
+import { type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ExclamationCircleIcon as AlertCircle, ArrowPathIcon as RefreshCw } from '@heroicons/react/24/outline';
 import { isOAuthProvider, type ProviderId } from '../../types';
@@ -5,6 +6,7 @@ import type { FtpTlsMode } from '../../utils/providerUrls';
 
 const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
+const passwordAutoComplete = (editing: boolean) => (editing ? 'current-password' : 'new-password');
 
 export interface ProviderFieldsProps {
   provider: ProviderId;
@@ -79,12 +81,9 @@ export function ProviderFields(props: ProviderFieldsProps) {
   if (provider === 'magentacloud') {
     return <MagentaCloudFields {...props} />;
   }
-  if (provider === 'seafile') {
-	return <SeafileFields {...props} />;
+  if (provider === 'mega') {
+    return <MegaFields {...props} />;
   }
-	if (provider === 'mega') {
-		return <MegaFields {...props} />;
-	}
   return <NextcloudWebdavFields {...props} />;
 }
 
@@ -127,7 +126,7 @@ export function OAuthFields({
           className="ui-button-primary w-full py-3 px-4 font-mono font-bold text-[11px] uppercase tracking-wider flex items-center justify-center gap-2"
         >
           <RefreshCw className="w-4 h-4" />
-          {t('connect.oauthConnect', { provider: provider === 'google' ? 'Google' : provider === 'onedrive' ? 'OneDrive' : provider === 'hidrive' ? 'HiDrive' : 'Dropbox' })}
+          {t('connect.oauthConnect', { provider: t(`connect.providerName.${provider}`) })}
         </button>
       )}
       {editing && !oauthRefreshToken && (
@@ -157,7 +156,7 @@ export function SmbFields({
         </div>
         <div className="space-y-1.5">
           <label htmlFor={ids.smbPortId} className={labelCls}>{t('connect.port')}</label>
-          <input id={ids.smbPortId} type="text" required value={smbPort} onChange={(e) => onSmbPortChange(e.target.value)} className={inputCls} placeholder="445" />
+          <input id={ids.smbPortId} type="number" min="1" max="65535" step="1" inputMode="numeric" required value={smbPort} onChange={(e) => onSmbPortChange(e.target.value)} className={inputCls} placeholder="445" />
         </div>
       </div>
 
@@ -174,7 +173,7 @@ export function SmbFields({
 
       <div className="space-y-1.5">
         <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
-        <input id={ids.usernameId} type="text" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
+        <input id={ids.usernameId} type="text" autoComplete="username" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
       </div>
 
       <div className="space-y-1.5">
@@ -185,6 +184,7 @@ export function SmbFields({
           value={password}
           onChange={(e) => onPasswordChange(e.target.value)}
           className={inputCls}
+          autoComplete={passwordAutoComplete(editing)}
           placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')}
           required={!editing}
         />
@@ -224,7 +224,7 @@ export function S3Fields({
 
       <div className="space-y-1.5">
         <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.accessKey')}</label>
-        <input id={ids.usernameId} type="text" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder="AKIAIOSFODNN7EXAMPLE" />
+        <input id={ids.usernameId} type="text" autoComplete="off" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder="AKIAIOSFODNN7EXAMPLE" />
       </div>
 
       <div className="space-y-1.5">
@@ -235,6 +235,7 @@ export function S3Fields({
           value={password}
           onChange={(e) => onPasswordChange(e.target.value)}
           className={`${inputCls} font-mono`}
+          autoComplete="off"
           placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'}
           required={!editing}
         />
@@ -257,6 +258,17 @@ export function SftpFields({
   ids,
 }: ProviderFieldsProps) {
   const { t } = useTranslation();
+  const handleAuthModeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+
+    event.preventDefault();
+    const nextMode = event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
+      ? 'password'
+      : 'key';
+    onSftpAuthModeChange(nextMode);
+    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+    buttons?.[nextMode === 'password' ? 0 : 1]?.focus();
+  };
   return (
     <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -266,28 +278,31 @@ export function SftpFields({
         </div>
         <div className="space-y-1.5">
           <label htmlFor={ids.sftpPortId} className={labelCls}>{t('connect.port')}</label>
-          <input id={ids.sftpPortId} type="text" required value={sftpPort} onChange={(e) => onSftpPortChange(e.target.value)} className={inputCls} placeholder="22" />
+          <input id={ids.sftpPortId} type="number" min="1" max="65535" step="1" inputMode="numeric" required value={sftpPort} onChange={(e) => onSftpPortChange(e.target.value)} className={inputCls} placeholder="22" />
         </div>
       </div>
 
       <div className="space-y-1.5">
         <label htmlFor={ids.sftpHostKeyId} className={labelCls}>{t('connect.sftpHostKey')}</label>
-        <input id={ids.sftpHostKeyId} type="text" required value={sftpHostKey} onChange={(e) => onSftpHostKeyChange(e.target.value)} className={`${inputCls} font-mono`} placeholder="SHA256:..." />
+        <input id={ids.sftpHostKeyId} type="text" autoComplete="off" required value={sftpHostKey} onChange={(e) => onSftpHostKeyChange(e.target.value)} className={`${inputCls} font-mono`} placeholder="SHA256:..." />
         <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('connect.sftpHostKeyHint')}</p>
       </div>
 
       <div className="space-y-1.5">
         <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
-        <input id={ids.usernameId} type="text" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder="root" />
+        <input id={ids.usernameId} type="text" autoComplete="username" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder="root" />
       </div>
 
-      <div className="space-y-1.5">
-        <label className={labelCls}>{t('connect.auth')}</label>
+      <fieldset className="space-y-1.5">
+        <legend className={labelCls}>{t('connect.auth')}</legend>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => onSftpAuthModeChange('password')}
-            aria-pressed={sftpAuthMode === 'password'}
+            onKeyDown={handleAuthModeKeyDown}
+            role="radio"
+            aria-checked={sftpAuthMode === 'password'}
+            tabIndex={sftpAuthMode === 'password' ? 0 : -1}
             className={`flex-1 py-1.5 px-3 text-[11px] font-bold font-mono cursor-pointer ${
               sftpAuthMode === 'password'
                 ? 'ui-button-primary text-[var(--color-text-inverse)]'
@@ -299,7 +314,10 @@ export function SftpFields({
           <button
             type="button"
             onClick={() => onSftpAuthModeChange('key')}
-            aria-pressed={sftpAuthMode === 'key'}
+            onKeyDown={handleAuthModeKeyDown}
+            role="radio"
+            aria-checked={sftpAuthMode === 'key'}
+            tabIndex={sftpAuthMode === 'key' ? 0 : -1}
             className={`flex-1 py-1.5 px-3 text-[11px] font-bold font-mono cursor-pointer ${
               sftpAuthMode === 'key'
                 ? 'ui-button-primary text-[var(--color-text-inverse)]'
@@ -309,7 +327,7 @@ export function SftpFields({
             {t('connect.sshKey')}
           </button>
         </div>
-      </div>
+      </fieldset>
 
       {sftpAuthMode === 'password' ? (
         <div className="space-y-1.5">
@@ -320,6 +338,7 @@ export function SftpFields({
             value={password}
             onChange={(e) => onPasswordChange(e.target.value)}
             className={`${inputCls} font-mono`}
+            autoComplete={passwordAutoComplete(editing)}
             placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')}
             required={!editing}
           />
@@ -334,6 +353,7 @@ export function SftpFields({
             onChange={(e) => onSftpPrivateKeyChange(e.target.value)}
             rows={4}
             className={`${inputCls} font-mono resize-none`}
+            autoComplete="off"
             placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
             required={!editing}
           />
@@ -368,7 +388,7 @@ export function FtpFields({
         </div>
         <div className="space-y-1.5">
           <label htmlFor={ids.ftpPortId} className={labelCls}>{t('connect.port')}</label>
-          <input id={ids.ftpPortId} type="text" required value={ftpPort} onChange={(e) => onFtpPortChange(e.target.value)} className={inputCls} placeholder={ftpTlsMode === 'explicit' ? '21' : '990'} />
+          <input id={ids.ftpPortId} type="number" min="1" max="65535" step="1" inputMode="numeric" required value={ftpPort} onChange={(e) => onFtpPortChange(e.target.value)} className={inputCls} placeholder={ftpTlsMode === 'explicit' ? '21' : '990'} />
         </div>
       </div>
       <div className="space-y-1.5">
@@ -381,11 +401,11 @@ export function FtpFields({
       </div>
       <div className="space-y-1.5">
         <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
-        <input id={ids.usernameId} type="text" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
+        <input id={ids.usernameId} type="text" autoComplete="username" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
       </div>
       <div className="space-y-1.5">
         <label htmlFor={ids.passwordId} className={labelCls}>{t('connect.password')}</label>
-        <input id={ids.passwordId} type="password" value={password} onChange={(e) => onPasswordChange(e.target.value)} className={`${inputCls} font-mono`} placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')} required={!editing} />
+        <input id={ids.passwordId} type="password" autoComplete={passwordAutoComplete(editing)} value={password} onChange={(e) => onPasswordChange(e.target.value)} className={`${inputCls} font-mono`} placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')} required={!editing} />
         {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
       </div>
     </>
@@ -417,6 +437,7 @@ export function ImmichFields({
           value={password}
           onChange={(e) => onPasswordChange(e.target.value)}
           className={`${inputCls} font-mono`}
+          autoComplete="off"
           placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.immichApiKeyPlaceholder')}
           required={!editing}
         />
@@ -441,7 +462,7 @@ export function MagentaCloudFields({
       </div>
       <div className="space-y-1.5">
         <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
-        <input id={ids.usernameId} type="text" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
+        <input id={ids.usernameId} type="text" autoComplete="username" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
       </div>
       <div className="space-y-1.5">
         <label htmlFor={ids.passwordId} className={labelCls}>{t('connect.appPasswordLabel')}</label>
@@ -451,6 +472,7 @@ export function MagentaCloudFields({
           value={password}
           onChange={(e) => onPasswordChange(e.target.value)}
           className={inputCls}
+          autoComplete={passwordAutoComplete(editing)}
           placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : '•••• •••• •••• ••••'}
           required={!editing}
         />
@@ -461,12 +483,33 @@ export function MagentaCloudFields({
 }
 
 export function MegaFields({ editing, username, onUsernameChange, password, onPasswordChange, ids }: ProviderFieldsProps) {
-	const { t } = useTranslation();
-	return <>
-		<div className="ui-alert ui-alert-info p-4 flex items-start gap-2"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><p className="text-xs font-sans leading-relaxed">{t('connect.megaInfo')}</p></div>
-		<div className="space-y-1.5"><label htmlFor={ids.usernameId} className={labelCls}>{t('connect.megaEmail')}</label><input id={ids.usernameId} type="email" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder="name@example.com" /></div>
-		<div className="space-y-1.5"><label htmlFor={ids.passwordId} className={labelCls}>{t('connect.password')}</label><input id={ids.passwordId} type="password" required={!editing} value={password} onChange={(e) => onPasswordChange(e.target.value)} className={inputCls} placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')} />{editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}</div>
-	</>;
+  const { t } = useTranslation();
+  return (
+    <>
+      <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
+        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+        <p className="text-xs font-sans leading-relaxed">{t('connect.megaInfo')}</p>
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.megaEmail')}</label>
+        <input id={ids.usernameId} type="email" autoComplete="username" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder="name@example.com" />
+      </div>
+      <div className="space-y-1.5">
+        <label htmlFor={ids.passwordId} className={labelCls}>{t('connect.password')}</label>
+        <input
+          id={ids.passwordId}
+          type="password"
+          autoComplete={passwordAutoComplete(editing)}
+          required={!editing}
+          value={password}
+          onChange={(e) => onPasswordChange(e.target.value)}
+          className={inputCls}
+          placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')}
+        />
+        {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
+      </div>
+    </>
+  );
 }
 
 const urlLabelKeys: Record<string, string> = {
@@ -508,7 +551,7 @@ export function NextcloudWebdavFields({
       </div>
       <div className="space-y-1.5">
         <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
-        <input id={ids.usernameId} type="text" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
+        <input id={ids.usernameId} type="text" autoComplete="username" required={provider !== 'seafile'} value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
       </div>
       <div className="space-y-1.5">
         <label htmlFor={ids.passwordId} className={labelCls}>
@@ -520,52 +563,8 @@ export function NextcloudWebdavFields({
           value={password}
           onChange={(e) => onPasswordChange(e.target.value)}
           className={inputCls}
+          autoComplete={passwordAutoComplete(editing)}
           placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : (provider === 'nextcloud' ? '•••• •••• •••• ••••' : t('connect.password'))}
-          required={!editing}
-        />
-        {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
-      </div>
-    </>
-  );
-}
-
-export function SeafileFields({
-  editing,
-  url, onUrlChange,
-  username, onUsernameChange,
-  password, onPasswordChange,
-  ids,
-}: ProviderFieldsProps) {
-  const { t } = useTranslation();
-  return (
-    <>
-      <div className="space-y-1.5">
-        <label htmlFor={ids.urlId} className={labelCls}>
-          {t('connect.seafileUrl')}
-        </label>
-        <input
-          id={ids.urlId}
-          type="url"
-          required
-          value={url}
-          onChange={(e) => onUrlChange(e.target.value)}
-          className={inputCls}
-          placeholder={t('connect.seafileUrlPlaceholder')}
-        />
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
-        <input id={ids.usernameId} type="text" value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor={ids.passwordId} className={labelCls}>{t('connect.password')}</label>
-        <input
-          id={ids.passwordId}
-          type="password"
-          value={password}
-          onChange={(e) => onPasswordChange(e.target.value)}
-          className={inputCls}
-          placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : t('connect.password')}
           required={!editing}
         />
         {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}

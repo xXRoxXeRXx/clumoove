@@ -21,12 +21,14 @@ interface TabNavigationCase {
 vi.mock('../contexts/useConfirm', () => ({ useConfirm: () => vi.fn() }));
 vi.mock('../contexts/useToast', () => ({ useToast: () => vi.fn() }));
 vi.mock('../utils/sse', () => ({ connectSseLoop: vi.fn(() => new Promise<void>(() => {})) }));
-vi.mock('../utils/apiClient', () => ({
-  apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve([]) })),
-  apiJson: vi.fn(() => Promise.resolve({ ok: true, status: 200, data: [] })),
-  apiErrorMessage: (result: { errorCode?: string; networkError: boolean }, translate: (code?: string) => string, fallback: string) =>
-    result.networkError ? fallback : translate(result.errorCode),
-}));
+vi.mock('../utils/apiClient', async () => {
+  const actual = await vi.importActual<typeof import('../utils/apiClient')>('../utils/apiClient');
+  return {
+    ...actual,
+    apiFetch: vi.fn(() => Promise.resolve({ ok: true, json: () => Promise.resolve([]) })),
+    apiJson: vi.fn(() => Promise.resolve({ ok: true, status: 200, data: [] })),
+  };
+});
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -45,9 +47,9 @@ function jsonResponse<T>(data: T): { ok: true; status: number; data: T } {
   return { ok: true as const, status: 200, data };
 }
 
-function createMigration(sourceUrl: string): Migration {
+function createMigration(sourceUrl: string, status: Migration['status'] = 'RUNNING'): Migration {
   return {
-    id: 'migration-1', status: 'RUNNING', source_provider: 'nextcloud', source_url: sourceUrl,
+    id: sourceUrl, status, source_provider: 'nextcloud', source_url: sourceUrl,
     target_provider: 'nextcloud', target_url: 'https://target.example.test', processed_files: 2,
     total_files: 10, processed_bytes: 2, total_bytes: 10, created_at: '2026-01-01T00:00:00Z',
   };
@@ -82,6 +84,13 @@ describe('MigrationsDashboard tabs', () => {
     expect(unselected.tabIndex).toBe(-1);
     expect(document.activeElement).toBe(selected);
     expect(panel.getAttribute('aria-labelledby')).toBe(selected.id);
+  }
+
+  function setInputValue(input: HTMLInputElement | HTMLSelectElement, value: string): void {
+    const prototype = Object.getPrototypeOf(input);
+    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   beforeEach(async () => {
@@ -135,8 +144,82 @@ describe('MigrationsDashboard tabs', () => {
       expectSelection(testCase.selected, testCase.unselected);
     }
 
-    expect(container.querySelector('input[aria-label="Search transfers"]')).not.toBeNull();
-    expect(container.querySelector('select[aria-label="Filter transfers by status"]')).not.toBeNull();
+    expect(container.querySelector(`input[aria-label="${i18n.t('migrations.searchLabel')}"]`)).not.toBeNull();
+    expect(container.querySelector(`select[aria-label="${i18n.t('migrations.statusFilterLabel')}"]`)).not.toBeNull();
+  });
+
+  it('shows a loading state before the initial migration snapshot resolves', async () => {
+    const migrationSnapshot = deferred<ReturnType<typeof jsonResponse<Migration[]>>>();
+    const syncSnapshot = deferred<ReturnType<typeof jsonResponse<SyncJob[]>>>();
+    vi.mocked(apiJson).mockImplementation((url) => (
+      String(url).endsWith('/api/migration') ? migrationSnapshot.promise : syncSnapshot.promise
+    ));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MigrationsDashboard apiUrl="https://api.example.test" token="token" user={null} onStartNewMigration={vi.fn()} onSelectActiveMigration={vi.fn()} />);
+    });
+
+    expect(container.textContent).toContain(i18n.t('migrations.loadingData'));
+  });
+
+  it('renders the empty state and lets the user start their first migration', async () => {
+    const onStartNewMigration = vi.fn();
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MigrationsDashboard apiUrl="https://api.example.test" token="token" user={null} onStartNewMigration={onStartNewMigration} onSelectActiveMigration={vi.fn()} />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await Promise.resolve();
+    });
+
+    const startButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === i18n.t('migrations.startFirst'))!;
+    expect(container.textContent).toContain(i18n.t('migrations.noMigrations'));
+    await act(async () => startButton.click());
+    expect(onStartNewMigration).toHaveBeenCalledTimes(1);
+  });
+
+  it('filters migrations by search term and status', async () => {
+    const running = createMigration('https://running.example.test', 'RUNNING');
+    const completed = createMigration('https://completed.example.test', 'COMPLETED');
+    const onSelectActiveMigration = vi.fn();
+    vi.mocked(apiJson).mockImplementation((url) => Promise.resolve(
+      String(url).endsWith('/api/migration') ? jsonResponse([running, completed]) : jsonResponse([]),
+    ));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<MigrationsDashboard apiUrl="https://api.example.test" token="token" user={null} onStartNewMigration={vi.fn()} onSelectActiveMigration={onSelectActiveMigration} />);
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await Promise.resolve();
+    });
+
+    const search = container.querySelector<HTMLInputElement>(`input[aria-label="${i18n.t('migrations.searchLabel')}"]`)!;
+    const statusFilter = container.querySelector<HTMLSelectElement>(`select[aria-label="${i18n.t('migrations.statusFilterLabel')}"]`)!;
+    await act(async () => setInputValue(search, 'completed.example'));
+    expect(container.textContent).toContain(completed.source_url);
+    expect(container.textContent).not.toContain(running.source_url);
+
+    await act(async () => {
+      setInputValue(search, '');
+      setInputValue(statusFilter, 'active');
+    });
+    expect(container.textContent).toContain(running.source_url);
+    expect(container.textContent).not.toContain(completed.source_url);
+
+    const detailButton = container.querySelector<HTMLButtonElement>(`button[aria-label="${i18n.t('migrations.sourceTarget')}"]`)!;
+    await act(async () => detailButton.click());
+    expect(onSelectActiveMigration).toHaveBeenCalledWith(running.id);
   });
 
   it('keeps newer migration stream data when the initial migration snapshot resolves late', async () => {
@@ -215,10 +298,10 @@ describe('MigrationsDashboard tabs', () => {
   });
 
   it.each([
-    [{ ok: false as const, status: 403, errorCode: 'FORBIDDEN', networkError: false }, 'Access forbidden.'],
-    [{ ok: false as const, status: 403, errorCode: 'UNKNOWN', networkError: false }, 'An unexpected error occurred.'],
-    [{ ok: false as const, status: 0, networkError: true }, 'Failed to load sync job details.'],
-  ])('displays the mapped error or network fallback when loading sync jobs', async (syncResult, expectedMessage) => {
+    [{ ok: false as const, status: 403, errorCode: 'FORBIDDEN', networkError: false }, () => i18n.t('errors.FORBIDDEN')],
+    [{ ok: false as const, status: 403, errorCode: 'UNKNOWN', networkError: false }, () => i18n.t('errors.UNKNOWN')],
+    [{ ok: false as const, status: 0, networkError: true }, () => i18n.t('sync.loadFailed')],
+  ])('displays the mapped error or network fallback when loading sync jobs', async (syncResult, expectedMessageForLocale) => {
     vi.mocked(apiJson).mockImplementation((url) => Promise.resolve(
       String(url).endsWith('/api/migration') ? jsonResponse([]) : syncResult,
     ));
@@ -237,6 +320,6 @@ describe('MigrationsDashboard tabs', () => {
       getTab('sync')?.click();
     });
 
-    expect(container.textContent).toContain(expectedMessage);
+    expect(container.textContent).toContain(expectedMessageForLocale());
   });
 });

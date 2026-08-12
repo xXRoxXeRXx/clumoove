@@ -161,7 +161,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       fetchImpl: apiFetch,
       handlers: {
         onEvent: (event, data) => {
-          if (event !== 'sync_jobs' || !data || cancelled) return;
+          if (cancelled) return;
+          if (event === 'error') {
+            setError(tRef.current('sync.loadFailed'));
+            setLoading(false);
+            return;
+          }
+          if (event !== 'sync_jobs' || !data) return;
           try {
             const jobs: SyncJob[] = JSON.parse(data);
             const updatedJob = jobs.find((job) => job.id === syncId);
@@ -178,6 +184,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               setJob(null);
             }
           } catch { /* ignore */ }
+        },
+        onError: () => {
+          // Transport failures are retried by connectSseLoop. Keep any loaded
+          // snapshot visible while a reconnect is in progress.
         },
       },
     });

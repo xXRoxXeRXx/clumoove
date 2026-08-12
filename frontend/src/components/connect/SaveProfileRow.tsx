@@ -33,9 +33,13 @@ export const SaveProfileRow: React.FC<SaveProfileRowProps> = ({
       </label>
       {checked && (
         <div className="mt-2 pl-6">
+          <label htmlFor={`profileName-${idPrefix}`} className="sr-only">
+            {t('settings.connections.profileNamePlaceholder')}
+          </label>
           <input
             type="text"
             id={`profileName-${idPrefix}`}
+            maxLength={255}
             placeholder={t('settings.connections.profileNamePlaceholder')}
             value={saveName}
             onChange={(e) => onNameChange(e.target.value)}

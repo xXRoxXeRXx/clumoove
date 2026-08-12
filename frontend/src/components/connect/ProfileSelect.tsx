@@ -29,9 +29,7 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
           id={`connection-profile-${idPrefix}`}
           value={selectedId}
           onChange={(e) => {
-            const val = e.target.value;
-            e.target.blur();
-            onSelect(val);
+            onSelect(e.target.value);
           }}
           className="ui-input flex-1 px-3 py-2 text-xs font-sans"
         >
@@ -48,7 +46,7 @@ export const ProfileSelect: React.FC<ProfileSelectProps> = ({
             onClick={onClear}
             className="ui-button-secondary px-3 py-2 text-[10px] font-mono hover:bg-[var(--color-bg-tertiary)]"
           >
-            {t('common.cancel')}
+            {t('common.clear')}
           </button>
         )}
       </div>

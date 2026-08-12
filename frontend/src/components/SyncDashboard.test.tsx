@@ -13,14 +13,15 @@ const toast = vi.fn();
 
 vi.mock('../contexts/useToast', () => ({ useToast: () => toast }));
 vi.mock('../utils/sse', () => ({ connectSseLoop: vi.fn(() => new Promise<void>(() => {})) }));
-vi.mock('../utils/apiClient', () => ({
-  ApiDisplayError: class ApiDisplayError extends Error {},
-  apiFetch: vi.fn(),
-  apiJson: vi.fn(),
-  apiErrorMessage: (result: { errorCode?: string; networkError: boolean }, translate: (code?: string) => string, fallback: string) =>
-    result.networkError ? fallback : translate(result.errorCode),
-  apiResponseError: vi.fn(() => Promise.resolve(null)),
-}));
+vi.mock('../utils/apiClient', async () => {
+  const actual = await vi.importActual<typeof import('../utils/apiClient')>('../utils/apiClient');
+  return {
+    ...actual,
+    apiFetch: vi.fn(),
+    apiJson: vi.fn(),
+    apiResponseError: vi.fn(() => Promise.resolve(null)),
+  };
+});
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -129,11 +130,33 @@ describe('SyncDashboard initial snapshot ordering', () => {
     expect(container.textContent).not.toContain('https://stale-detail.example.test');
   });
 
+  it('shows the localized error when the server reports an SSE error frame', async () => {
+    const streams = new Map<string, SseHandlers>();
+    vi.mocked(apiJson).mockResolvedValue(jsonResult(createSyncJob('https://source.example.test')));
+    vi.mocked(connectSseLoop).mockImplementation((options) => {
+      streams.set(options.url, options.handlers);
+      return new Promise<void>(() => {});
+    });
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={vi.fn()} />);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      streams.get('https://api.example.test/api/sync/stream')?.onEvent('error', '');
+    });
+    expect(container.textContent).toContain(i18n.t('sync.loadFailed'));
+  });
+
   it.each([
-    [{ ok: false as const, status: 403, errorCode: 'FORBIDDEN', networkError: false }, 'Access forbidden.'],
-    [{ ok: false as const, status: 403, errorCode: 'UNKNOWN', networkError: false }, 'An unexpected error occurred.'],
-    [{ ok: false as const, status: 0, networkError: true }, 'Failed to load sync job details.'],
-  ])('displays the mapped error or network fallback for a failed detail snapshot', async (result, expectedMessage) => {
+    [{ ok: false as const, status: 403, errorCode: 'FORBIDDEN', networkError: false }, () => i18n.t('errors.FORBIDDEN')],
+    [{ ok: false as const, status: 403, errorCode: 'UNKNOWN', networkError: false }, () => i18n.t('errors.UNKNOWN')],
+    [{ ok: false as const, status: 0, networkError: true }, () => i18n.t('sync.loadFailed')],
+  ])('displays the mapped error or network fallback for a failed detail snapshot', async (result, expectedMessageForLocale) => {
     vi.mocked(apiJson).mockResolvedValue(result);
 
     container = document.createElement('div');
@@ -144,7 +167,52 @@ describe('SyncDashboard initial snapshot ordering', () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain(expectedMessage);
+    expect(container.textContent).toContain(expectedMessageForLocale());
+  });
+
+  it('calls onBack from the sync detail header', async () => {
+    const onBack = vi.fn();
+    vi.mocked(apiJson).mockResolvedValue(jsonResult(createSyncJob('https://source.example.test')));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={onBack} />);
+      await Promise.resolve();
+    });
+
+    const backButton = Array.from(container.querySelectorAll('button'))
+      .find((button) => button.textContent === i18n.t('common.back'))!;
+    await act(async () => backButton.click());
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a live bandwidth limit change', async () => {
+    vi.mocked(apiJson).mockResolvedValue(jsonResult(createSyncJob('https://source.example.test')));
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<SyncDashboard syncId="sync-1" apiUrl="https://api.example.test" token="token" onBack={vi.fn()} />);
+      await Promise.resolve();
+    });
+
+    const bandwidthInput = container.querySelector<HTMLInputElement>('#sync-bandwidth-limit')!;
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      valueSetter?.call(bandwidthInput, '1');
+      bandwidthInput.dispatchEvent(new Event('input', { bubbles: true }));
+      // SyncDashboard persists keyboard slider adjustments from its onKeyUp handler.
+      bandwidthInput.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/sync/sync-1/bandwidth',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ limit_mbps: 8 }) }),
+    );
   });
 
   it('keeps the localized download fallback for network failures', async () => {

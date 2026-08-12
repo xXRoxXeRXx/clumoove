@@ -6,6 +6,7 @@
     "back": "Back",
     "save": "Save",
     "cancel": "Cancel",
+    "clear": "Clear",
     "close": "Close",
     "confirm": "Confirm",
     "confirmTitle": "Confirm action",
@@ -136,6 +137,12 @@
     "wizardStepTarget": "Step 2 of 3: Set target",
     "connectionsBadge": "Connections",
     "oauthConnect": "Connect with {{provider}}",
+    "providerName": {
+      "google": "Google",
+      "onedrive": "OneDrive",
+      "dropbox": "Dropbox",
+      "hidrive": "HiDrive"
+    },
     "connectedAs": "Connected as",
     "disconnect": "Disconnect",
     "s3Bucket": "Name of Bucket",
