@@ -120,7 +120,7 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 
 	var downloadReader io.Reader = stream
 	if req.Throttler != nil {
-		downloadReader = throttle.NewThrottledReader(downloadReader, req.Throttler, downloadCtx)
+		downloadReader = throttle.NewThrottledReader(downloadCtx, downloadReader, req.Throttler)
 	}
 	reader := newExpectedSizeReader(downloadReader, req.FileSize)
 	hashingReader := io.TeeReader(reader, hashWriter)
@@ -132,14 +132,14 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 	if req.FileSize > chunkedUploadThreshold {
 		uploadReader := io.Reader(hashingReader)
 		if req.Throttler != nil {
-			uploadReader = throttle.NewUploadThrottledReader(uploadReader, req.Throttler, uploadCtx)
+			uploadReader = throttle.NewUploadThrottledReader(uploadCtx, uploadReader, req.Throttler)
 		}
 		err = req.Target.StreamUploadChunked(uploadCtx, req.ResourceType, req.TargetPath, uploadReader, req.FileSize, req.Progress)
 	} else {
 		progress := &ProgressReader{Reader: hashingReader, ProgressChan: req.Progress}
 		uploadReader := io.Reader(progress)
 		if req.Throttler != nil {
-			uploadReader = throttle.NewUploadThrottledReader(uploadReader, req.Throttler, uploadCtx)
+			uploadReader = throttle.NewUploadThrottledReader(uploadCtx, uploadReader, req.Throttler)
 		}
 		err = req.Target.StreamUpload(uploadCtx, req.ResourceType, req.TargetPath, uploadReader, req.FileSize)
 	}

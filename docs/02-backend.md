@@ -327,6 +327,10 @@ JWT validation also requires issuer `clumoove-api` and allows 30 seconds of cloc
 
 ## 12. Throttle (`internal/throttle`)
 
+The configured limit applies independently and in full to download and upload traffic; `0` is
+unlimited in both directions. Throttled readers wait before consuming source bytes and bound each
+read to the limiter burst size.
+
 - `MigrationThrottler` — token-bucket style limiter for a migration's bandwidth (`SetLimit` updates live).
 - `NewThrottledReader` / `NewUploadThrottledReader` — wrap `io.Reader` to cap bytes/sec; used on both
   download and upload streams (throttling is applied before the `TeeReader` so it limits real network

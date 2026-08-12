@@ -339,7 +339,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	throttler, _ := p.throttlers.LoadOrStore(job.ID, throttle.NewMigrationThrottler(job.BandwidthLimitMbps))
 	jobThrottler := throttler.(*throttle.MigrationThrottler)
 	jobThrottler.SetLimit(job.BandwidthLimitMbps)
-	throttledDownloadStream := throttle.NewThrottledReader(downloadStream, jobThrottler, downloadCtx)
+	throttledDownloadStream := throttle.NewThrottledReader(downloadCtx, downloadStream, jobThrottler)
 
 	var sourceHasher hash.Hash
 	sourceAlgo := "SHA1"
@@ -485,14 +485,14 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	defer uploadCancel()
 
 	if task.FileSize > chunkedUploadThreshold {
-		throttledHashingReader := throttle.NewUploadThrottledReader(hashingReader, jobThrottler, uploadCtx)
+		throttledHashingReader := throttle.NewUploadThrottledReader(uploadCtx, hashingReader, jobThrottler)
 		err = tgtClient.StreamUploadChunked(uploadCtx, task.ResourceType, uploadPath, throttledHashingReader, task.FileSize, progressChan)
 	} else {
 		progressReader := &ProgressReader{
 			Reader:       hashingReader,
 			ProgressChan: progressChan,
 		}
-		throttledProgressReader := throttle.NewUploadThrottledReader(progressReader, jobThrottler, uploadCtx)
+		throttledProgressReader := throttle.NewUploadThrottledReader(uploadCtx, progressReader, jobThrottler)
 		err = tgtClient.StreamUpload(uploadCtx, task.ResourceType, uploadPath, throttledProgressReader, task.FileSize)
 	}
 
