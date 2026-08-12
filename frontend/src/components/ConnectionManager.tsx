@@ -49,19 +49,41 @@ export interface ProfilePublic {
 const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50';
 const secondaryBtnCls = 'ui-button-secondary px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]';
 
-function formatExpiry(expiresAt?: string | null): string | null {
+const isAbortError = (error: unknown) => error instanceof DOMException && error.name === 'AbortError';
+
+function useRequestAbortController() {
+  const controllersRef = useRef(new Set<AbortController>());
+
+  useEffect(() => () => {
+    controllersRef.current.forEach((controller) => controller.abort());
+    controllersRef.current.clear();
+  }, []);
+
+  const create = useCallback(() => {
+    const controller = new AbortController();
+    controllersRef.current.add(controller);
+    return controller;
+  }, []);
+  const release = useCallback((controller: AbortController) => {
+    controllersRef.current.delete(controller);
+  }, []);
+
+  return { create, release };
+}
+
+function formatExpiry(expiresAt?: string | null): number | null {
   if (!expiresAt) return null;
   const t = new Date(expiresAt).getTime();
   if (isNaN(t)) return null;
   const days = Math.round((t - Date.now()) / (1000 * 60 * 60 * 24));
-  if (days < 0) return 'expired';
-  return String(days);
+  return days < 0 ? -1 : days;
 }
 
 export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, oauthProviders = {} }: ConnectionManagerProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
   const confirm = useConfirm();
+  const { create: createRequestController, release: releaseRequestController } = useRequestAbortController();
 
   const [profiles, setProfiles] = useState<ProfilePublic[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -70,19 +92,27 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   const [creating, setCreating] = useState<boolean>(false);
 
   const loadProfiles = useCallback(() => {
-    apiFetch(`${apiUrl}/api/profiles`, {
+    const controller = createRequestController();
+    void apiFetch(`${apiUrl}/api/profiles`, {
       headers: { 'Authorization': `Bearer ${token}` },
+      signal: controller.signal,
     })
-      .then((res) => (res.ok ? res.json() : Promise.reject()))
-      .then((data: { profiles?: ProfilePublic[] }) => {
-        setProfiles(data.profiles ?? []);
-        setLoading(false);
+      .then(async (response) => {
+        if (!response.ok) throw new Error('profiles request failed');
+        const data = await response.json() as { profiles?: ProfilePublic[] };
+        if (!controller.signal.aborted) {
+          setProfiles(data.profiles ?? []);
+          setLoading(false);
+        }
       })
-      .catch(() => {
-        setProfiles([]);
-        setLoading(false);
-      });
-  }, [apiUrl, token]);
+      .catch((error) => {
+        if (!controller.signal.aborted && !isAbortError(error)) {
+          setProfiles([]);
+          setLoading(false);
+        }
+      })
+      .finally(() => releaseRequestController(controller));
+  }, [apiUrl, createRequestController, releaseRequestController, token]);
 
   useEffect(() => {
     loadProfiles();
@@ -92,36 +122,52 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     const ok = await confirm({ message: t('settings.connections.deleteConfirm') });
     if (!ok) return;
     setMessage(null);
+    const controller = createRequestController();
     try {
       const res = await apiFetch(`${apiUrl}/api/profiles/${p.id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` },
+        signal: controller.signal,
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as ApiErrBody);
         throw new Error(translateApiError(data.error_code));
       }
-      setMessage({ text: t('settings.connections.deleted'), type: 'success' });
-      loadProfiles();
+      if (!controller.signal.aborted) {
+        setMessage({ text: t('settings.connections.deleted'), type: 'success' });
+        void loadProfiles();
+      }
     } catch (err) {
-      setMessage({ text: (err as Error).message, type: 'error' });
+      if (!controller.signal.aborted && !isAbortError(err)) {
+        setMessage({ text: (err as Error).message, type: 'error' });
+      }
+    } finally {
+      releaseRequestController(controller);
     }
   };
 
   const handleTest = async (p: ProfilePublic) => {
     setMessage(null);
+    const controller = createRequestController();
     try {
       const res = await apiFetch(`${apiUrl}/api/profiles/${p.id}/test`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
+        signal: controller.signal,
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(translateApiError(data.error_code));
       }
-      setMessage({ text: t('settings.connections.testSuccess'), type: 'success' });
+      if (!controller.signal.aborted) {
+        setMessage({ text: t('settings.connections.testSuccess'), type: 'success' });
+      }
     } catch (err) {
-      setMessage({ text: (err as Error).message, type: 'error' });
+      if (!controller.signal.aborted && !isAbortError(err)) {
+        setMessage({ text: (err as Error).message, type: 'error' });
+      }
+    } finally {
+      releaseRequestController(controller);
     }
   };
 
@@ -147,8 +193,6 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 	[localStorageEnabled, oauthProviders.dropbox, oauthProviders.google, oauthProviders.onedrive, oauthProviders.hidrive]
   );
 
-  const isOAuth = isOAuthProvider;
-
   return (
     <div className="space-y-6">
       <div className="ui-card p-6 space-y-5">
@@ -163,6 +207,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
         {message && <MessageBanner message={message} />}
 
         <button
+          type="button"
           onClick={() => { setEditing(null); setCreating(true); }}
           className={`w-full inline-flex items-center justify-center gap-2 ${primaryBtnCls}`}
         >
@@ -196,8 +241,11 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
                     {p.oauth_user && (
                       <p className="text-[10px] font-mono text-[var(--color-text-secondary)] mt-1 truncate">
                         {t('settings.connections.oauthConnectedAs', { user: p.oauth_user })}
-                        {exp && (
-                          <span className="text-[var(--color-text-muted)]"> · {t('settings.connections.tokenExpiresIn', { days: exp })}</span>
+                        {exp !== null && (
+                          <span className="text-[var(--color-text-muted)]">
+                            {' · '}
+                            {exp < 0 ? t('settings.connections.tokenExpired') : t('settings.connections.tokenExpiresIn', { days: exp })}
+                          </span>
                         )}
                       </p>
                     )}
@@ -209,18 +257,20 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 
                 <div className="flex flex-wrap gap-2">
                   <button
+                    type="button"
                     onClick={() => { setCreating(false); setEditing(p); }}
                     className={secondaryBtnCls}
                   >
                     {t('settings.connections.edit')}
                   </button>
                   <button
+                    type="button"
                     onClick={() => handleTest(p)}
                     className={secondaryBtnCls}
                   >
                     {t('settings.connections.test')}
                   </button>
-                  {isOAuth(p.provider) && (
+                  {isOAuthProvider(p.provider) && (
                     <ReauthorizeButton
                       apiUrl={apiUrl}
                       token={token}
@@ -230,6 +280,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
                     />
                   )}
                   <button
+                    type="button"
                     onClick={() => handleDelete(p)}
                     className="ui-button-secondary px-3 py-2 text-sm border-[var(--color-error-border)] text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"
                   >
@@ -267,6 +318,7 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
   const translateApiError = useApiError();
   const [busy, setBusy] = useState(false);
   const { openOAuthPopup } = useOAuthPopup(apiUrl);
+  const { create: createRequestController, release: releaseRequestController } = useRequestAbortController();
 
   const openReauth = () => {
     const provider = profile.provider;
@@ -279,23 +331,31 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
           onError(t('settings.connections.testFailed'));
           return;
         }
+        const controller = createRequestController();
         apiFetch(`${apiUrl}/api/profiles/${profile.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          signal: controller.signal,
           body: JSON.stringify({
             refresh_token: refreshToken,
             oauth_user: msg.username || provider,
           }),
         })
           .then(async (res) => {
+            if (controller.signal.aborted) return;
             if (!res.ok) {
               const data = await res.json().catch(() => ({}) as ApiErrBody);
               throw new Error(translateApiError(data.error_code));
             }
             onReauthorized();
           })
-          .catch((err) => onError(err instanceof Error ? err.message : t('settings.connections.testFailed')))
-          .finally(() => setBusy(false));
+          .catch((err) => {
+            if (!isAbortError(err)) onError(err instanceof Error ? err.message : t('settings.connections.testFailed'));
+          })
+          .finally(() => {
+            releaseRequestController(controller);
+            if (!controller.signal.aborted) setBusy(false);
+          });
       },
       onError: (code) => {
         setBusy(false);
@@ -305,7 +365,7 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
   };
 
   return (
-    <button onClick={openReauth} disabled={busy} className={secondaryBtnCls}>
+    <button type="button" onClick={openReauth} disabled={busy} className={secondaryBtnCls}>
       {t('settings.connections.reauthorize')}
     </button>
   );
@@ -415,6 +475,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
   const [form, setForm] = useState<FormState>(() => initFormState(editing));
   const [saving, setSaving] = useState<boolean>(false);
+  const { create: createRequestController, release: releaseRequestController } = useRequestAbortController();
   useFocusTrap(dialogRef, closeRef, onClose);
 
   const isOAuth = isOAuthProvider(form.provider);
@@ -468,7 +529,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) {
-      onError(t('settings.connections.nameLabel') + ' ' + t('common.required').toLowerCase());
+      onError(t('settings.connections.nameRequired'));
       return;
     }
 
@@ -563,6 +624,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
       payload.password = finalPassword;
     }
 
+    const controller = createRequestController();
     try {
       const method = editing ? 'PUT' : 'POST';
       const urlStr = editing ? `${apiUrl}/api/profiles/${editing.id}?url=1&username=1` : `${apiUrl}/api/profiles`;
@@ -570,16 +632,19 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         method,
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
       if (!res.ok) {
         const data = await res.json().catch(() => ({}) as ApiErrBody);
         throw new Error(translateApiError(data.error_code));
       }
       onSaved();
     } catch (err) {
-      onError((err as Error).message);
+      if (!isAbortError(err)) onError((err as Error).message);
     } finally {
-      setSaving(false);
+      releaseRequestController(controller);
+      if (!controller.signal.aborted) setSaving(false);
     }
   };
 
@@ -587,13 +652,16 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
   const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
 
   return (
-    <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+    <div
+      className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4"
+      onClick={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}
+    >
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
           <h3 id={titleId} className="font-display font-semibold text-sm text-[var(--color-text-primary)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}
           </h3>
-          <button ref={closeRef} type="button" onClick={onClose} disabled={saving} aria-label={t('common.cancel')} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-55">
+          <button ref={closeRef} type="button" onClick={onClose} disabled={saving} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-55">
             {t('common.cancel')}
           </button>
         </div>

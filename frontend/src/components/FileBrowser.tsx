@@ -73,6 +73,9 @@ const sortEntries = (entries: CloudFile[]): CloudFile[] => {
 const isOneDrivePersonalVault = (file: CloudFile) =>
   file.metadata?.custom_props?.onedrive_special_folder === "vault";
 
+const isAbortError = (error: unknown) =>
+  error instanceof DOMException && error.name === "AbortError";
+
 const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
   if (!fileName) return <File className={`${className} ui-file-default`} />;
   if (fileName.endsWith("/"))
@@ -180,6 +183,102 @@ const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
   return <File className={`${className} ui-file-default`} />;
 };
 
+interface SourceTreeRowProps {
+  file: CloudFile;
+  depth: number;
+  isExpanded: boolean;
+  isSelected: boolean;
+  isLoading: boolean;
+  isPersonalVault: boolean;
+  isFocused: boolean;
+  formattedSize: string;
+  expandLabel: string;
+  collapseLabel: string;
+  selectLabel: string;
+  unavailableLabel: string;
+  treeItemRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+  onExpand: (path: string) => void;
+  onSelect: (path: string) => void;
+  onFocus: (path: string) => void;
+}
+
+const SourceTreeRow = React.memo(function SourceTreeRow({
+  file,
+  depth,
+  isExpanded,
+  isSelected,
+  isLoading,
+  isPersonalVault,
+  isFocused,
+  formattedSize,
+  expandLabel,
+  collapseLabel,
+  selectLabel,
+  unavailableLabel,
+  treeItemRefs,
+  onExpand,
+  onSelect,
+  onFocus,
+}: SourceTreeRowProps) {
+  return (
+    <div
+      ref={(element) => {
+        if (element) treeItemRefs.current.set(file.path, element);
+        else treeItemRefs.current.delete(file.path);
+      }}
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={file.is_dir ? isExpanded : undefined}
+      aria-selected={isSelected}
+      tabIndex={isFocused ? 0 : -1}
+      onFocus={() => onFocus(file.path)}
+      className={`flex items-center gap-3 py-3.5 px-4 border-b border-[var(--color-border-light)] hover:bg-[var(--color-bg-tertiary)] transition-colors duration-150 ${
+        isSelected ? "bg-[var(--color-bg-tertiary)] font-semibold" : ""
+      }`}
+      style={{ paddingLeft: `${depth * 20 + 16}px` }}
+    >
+      {file.is_dir ? (
+        <button
+          type="button"
+          tabIndex={-1}
+          className="w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
+          onClick={() => !isPersonalVault && onExpand(file.path)}
+          disabled={isPersonalVault}
+          aria-label={isExpanded ? collapseLabel : expandLabel}
+        >
+          {isLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[var(--color-text-primary)]" /> : isExpanded ? <ChevronDown className="w-4 h-4 stroke-[2]" /> : <ChevronRight className="w-4 h-4 stroke-[2]" />}
+        </button>
+      ) : <span className="w-5" />}
+
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (!isPersonalVault) onSelect(file.path);
+        }}
+        disabled={isPersonalVault}
+        className="flex items-center justify-center"
+        aria-label={isPersonalVault ? unavailableLabel : selectLabel}
+        title={isPersonalVault ? unavailableLabel : undefined}
+      >
+        <span className={`w-4 h-4 border rounded flex items-center justify-center transition-all duration-200 ${isSelected ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent" : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]"}`}>
+          {isSelected && <Check className="w-3 h-3 text-[var(--color-text-inverse)] stroke-[3.5]" />}
+        </span>
+      </button>
+
+      <span className="shrink-0">
+        {file.is_dir ? (isExpanded ? <FolderOpen className="w-5 h-5 text-[var(--color-text-secondary)]" /> : <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />) : getFileIcon(file.name, "w-5 h-5")}
+      </span>
+      <span className={`text-[12px] truncate flex-grow leading-normal py-0.5 ${isPersonalVault ? "text-[var(--color-text-muted)]" : isSelected ? "text-[var(--color-text-primary)] font-bold" : "text-[var(--color-text-primary)]"}`}>
+        {file.name}
+        {isPersonalVault && <span className="ml-2 text-[10px]">{unavailableLabel}</span>}
+      </span>
+      {!file.is_dir && <span className="ui-badge ui-badge-muted text-[10px] font-bold px-2 py-0.5 rounded">{formattedSize}</span>}
+    </div>
+  );
+});
+
 export const FileBrowser: React.FC<FileBrowserProps> = ({
   initialFiles,
   credentials,
@@ -270,23 +369,50 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const targetDialogRef = useRef<HTMLDivElement>(null);
   const targetCloseButtonRef = useRef<HTMLButtonElement>(null);
   const targetDialogTitleId = useId();
+  const sourcePanelId = useId();
+  const calendarsPanelId = useId();
+  const contactsPanelId = useId();
   const loadingPathsRef = useRef(loadingPaths);
   const directoryContentsRef = useRef(directoryContents);
+  const targetLoadingPathsRef = useRef(targetLoadingPaths);
+  const targetDirectoryContentsRef = useRef(targetDirectoryContents);
   const loadingCalendarsRef = useRef(loadingCalendars);
   const calendarsRef = useRef(calendars);
   const loadingContactsRef = useRef(loadingContacts);
   const contactsRef = useRef(contacts);
   const hasFetchedCalendarsRef = useRef(false);
   const hasFetchedContactsRef = useRef(false);
+  const sourceTreeItemRefs = useRef(new Map<string, HTMLDivElement>());
+  const targetTreeItemRefs = useRef(new Map<string, HTMLDivElement>());
+  const requestControllersRef = useRef(new Set<AbortController>());
+  const [focusedSourcePath, setFocusedSourcePath] = useState<string | null>(null);
+  const [focusedTargetPath, setFocusedTargetPath] = useState<string | null>(null);
 
   useEffect(() => {
     loadingPathsRef.current = loadingPaths;
     directoryContentsRef.current = directoryContents;
+    targetLoadingPathsRef.current = targetLoadingPaths;
+    targetDirectoryContentsRef.current = targetDirectoryContents;
     loadingCalendarsRef.current = loadingCalendars;
     calendarsRef.current = calendars;
     loadingContactsRef.current = loadingContacts;
     contactsRef.current = contacts;
-  }, [loadingPaths, directoryContents, loadingCalendars, calendars, loadingContacts, contacts]);
+  }, [loadingPaths, directoryContents, targetLoadingPaths, targetDirectoryContents, loadingCalendars, calendars, loadingContacts, contacts]);
+
+  const createRequestController = useCallback(() => {
+    const controller = new AbortController();
+    requestControllersRef.current.add(controller);
+    return controller;
+  }, []);
+
+  const releaseRequestController = useCallback((controller: AbortController) => {
+    requestControllersRef.current.delete(controller);
+  }, []);
+
+  useEffect(() => () => {
+    requestControllersRef.current.forEach((controller) => controller.abort());
+    requestControllersRef.current.clear();
+  }, []);
 
   // Job type
   const [jobType, setJobType] = useState<"migration" | "sync">("migration");
@@ -340,10 +466,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     toLocalInputValue(new Date(Date.now() + 60000)),
   );
 
-  const fetchTargetChildren = async (folderPath: string, depth: number = 0) => {
-    if (targetDirectoryContents[folderPath] || targetLoadingPaths[folderPath])
-      return;
+  const fetchTargetChildren = useCallback(async (folderPath: string, depth = 0, force = false) => {
+    if (!force && targetLoadingPathsRef.current[folderPath]) return;
+    if (!force && targetDirectoryContentsRef.current[folderPath]) return;
 
+    const controller = createRequestController();
     setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
     setTargetError(null);
     try {
@@ -361,6 +488,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           target_profile_id: credentials.target_profile_id,
           path: folderPath,
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -375,14 +503,16 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
 
       const data = await response.json();
+      if (controller.signal.aborted) return;
       if (data.success) {
         const foldersOnly = sortEntries(
           (data.files || data.items || []).filter((f: CloudFile) => f.is_dir),
         );
-        setTargetDirectoryContents((prev) => ({
-          ...prev,
-          [folderPath]: foldersOnly,
-        }));
+        setTargetDirectoryContents((prev) => {
+          const next = { ...prev, [folderPath]: foldersOnly };
+          targetDirectoryContentsRef.current = next;
+          return next;
+        });
         // Only the first folder level is loaded directly. Deeper levels are
         // loaded on demand when the user expands a folder.
         if (depth < 1) {
@@ -396,14 +526,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         );
       }
     } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
       logger.error("Failed to load target directory", err);
       setTargetError(
         err instanceof Error ? err.message : t("fileBrowser.errors.loadTarget"),
       );
     } finally {
-      setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
+      releaseRequestController(controller);
+      if (!controller.signal.aborted) {
+        setTargetLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
+      }
     }
-  };
+  }, [apiUrl, createRequestController, credentials, releaseRequestController, t, token, translateApiError]);
 
   const handleCreateTargetFolder = async (parentPath: string) => {
     const trimmedName = newFolderName.trim();
@@ -427,6 +561,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const fullNewPath =
       parentPath === "/" ? `/${safeName}` : `${parentPath}/${safeName}`;
 
+    const controller = createRequestController();
     setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: true }));
     setTargetError(null);
     try {
@@ -444,6 +579,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           target_profile_id: credentials.target_profile_id,
           path: fullNewPath,
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -458,6 +594,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
 
       const data = await response.json();
+      if (controller.signal.aborted) return;
       if (data.success) {
         setNewFolderName("");
         setIsCreatingFolder(false);
@@ -468,9 +605,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         setTargetDirectoryContents((prev) => {
           const next = { ...prev };
           delete next[parentPath];
+          targetDirectoryContentsRef.current = next;
           return next;
         });
-        await fetchTargetChildren(parentPath);
+        await fetchTargetChildren(parentPath, 0, true);
       } else {
         setTargetError(
           data.error_code
@@ -479,6 +617,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         );
       }
     } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
       logger.error("Failed to create target directory", err);
       setTargetError(
         err instanceof Error
@@ -486,19 +625,23 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           : t("fileBrowser.errors.createFolder"),
       );
     } finally {
-      setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: false }));
+      releaseRequestController(controller);
+      if (!controller.signal.aborted) {
+        setTargetLoadingPaths((prev) => ({ ...prev, [parentPath]: false }));
+      }
     }
   };
 
-  const openTargetBrowser = () => {
+  const openTargetBrowser = useCallback(() => {
     setIsTargetBrowserOpen(true);
     setTargetExpandedPaths((prev) => ({ ...prev, "/": true }));
-    fetchTargetChildren("/");
-  };
+    void fetchTargetChildren("/", 0, true);
+  }, [fetchTargetChildren]);
 
   const fetchCalendars = useCallback(
     async (force?: boolean) => {
       if (!force && (calendarsRef.current.length > 0 || loadingCalendarsRef.current)) return;
+      const controller = createRequestController();
       setLoadingCalendars(true);
       try {
         const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
@@ -515,6 +658,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             source_profile_id: credentials.source_profile_id,
             resource_type: "calendars",
           }),
+          signal: controller.signal,
         });
         if (!response.ok) {
           const b = await response
@@ -527,6 +671,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           );
         }
         const data = await response.json();
+        if (controller.signal.aborted) return;
         if (data.success) {
           const items = sortEntries(data.items || []);
           setCalendars(items);
@@ -539,14 +684,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           });
         }
       } catch (err) {
+        if (controller.signal.aborted || isAbortError(err)) return;
         logger.error("Failed to load calendars", err);
       } finally {
-        setLoadingCalendars(false);
+        releaseRequestController(controller);
+        if (!controller.signal.aborted) setLoadingCalendars(false);
       }
     },
     [
       apiUrl,
+      createRequestController,
       credentials,
+      releaseRequestController,
       t,
       token,
       translateApiError,
@@ -556,6 +705,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const fetchContacts = useCallback(
     async (force?: boolean) => {
       if (!force && (contactsRef.current.length > 0 || loadingContactsRef.current)) return;
+      const controller = createRequestController();
       setLoadingContacts(true);
       try {
         const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
@@ -572,6 +722,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             source_profile_id: credentials.source_profile_id,
             resource_type: "contacts",
           }),
+          signal: controller.signal,
         });
         if (!response.ok) {
           const b = await response
@@ -584,6 +735,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           );
         }
         const data = await response.json();
+        if (controller.signal.aborted) return;
         if (data.success) {
           const items = sortEntries(data.items || []);
           setContacts(items);
@@ -596,14 +748,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           });
         }
       } catch (err) {
+        if (controller.signal.aborted || isAbortError(err)) return;
         logger.error("Failed to load contacts", err);
       } finally {
-        setLoadingContacts(false);
+        releaseRequestController(controller);
+        if (!controller.signal.aborted) setLoadingContacts(false);
       }
     },
     [
       apiUrl,
+      createRequestController,
       credentials,
+      releaseRequestController,
       t,
       token,
       translateApiError,
@@ -640,11 +796,26 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     if (tab === "contacts") fetchContacts();
   };
 
+  const handleTabListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const tabs: Array<"files" | "calendars" | "contacts"> = ["files"];
+    if (supportsCalendars) tabs.push("calendars");
+    if (supportsContacts) tabs.push("contacts");
+    const currentIndex = tabs.indexOf(effectiveActiveTab);
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      const nextTab = tabs[(currentIndex + direction + tabs.length) % tabs.length];
+      handleTabChange(nextTab);
+      requestAnimationFrame(() => document.getElementById(`${nextTab}-tab`)?.focus());
+    }
+  };
+
   const fetchChildren = useCallback(
     async (folderPath: string, force?: boolean) => {
       if (loadingPathsRef.current[folderPath]) return;
       if (!force && directoryContentsRef.current[folderPath]) return;
 
+      const controller = createRequestController();
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       try {
         const response = await apiFetch(`${apiUrl}/api/migration/browse`, {
@@ -662,6 +833,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             resource_type: "files",
             path: folderPath,
           }),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -676,6 +848,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }
 
         const data = await response.json();
+        if (controller.signal.aborted) return;
         if (data.success) {
           const items = sortEntries(data.items || data.files || []);
           setDirectoryContents((prev) => ({ ...prev, [folderPath]: items }));
@@ -696,18 +869,24 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           );
         }
       } catch (err) {
+        if (controller.signal.aborted || isAbortError(err)) return;
         logger.error("Failed to load source directory", err);
         setError(
           err instanceof Error ? err.message : t("fileBrowser.errors.loadDir"),
         );
       } finally {
-        setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
+        releaseRequestController(controller);
+        if (!controller.signal.aborted) {
+          setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
+        }
       }
     },
     [
       apiUrl,
+      createRequestController,
       token,
       credentials,
+      releaseRequestController,
       translateApiError,
       t,
     ],
@@ -719,17 +898,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     await fetchChildren("/", true);
   };
 
-  const toggleExpand = (folderPath: string) => {
-    const isExpanded = !!expandedPaths[folderPath];
-    setExpandedPaths((prev) => ({ ...prev, [folderPath]: !isExpanded }));
-    if (!isExpanded) {
-      fetchChildren(folderPath);
-    }
-  };
+  const toggleExpand = useCallback((folderPath: string) => {
+    setExpandedPaths((prev) => ({ ...prev, [folderPath]: !prev[folderPath] }));
+    void fetchChildren(folderPath);
+  }, [fetchChildren]);
 
-  const toggleSelect = (filePath: string) => {
+  const toggleSelect = useCallback((filePath: string) => {
     setSelectedPaths((prev) => ({ ...prev, [filePath]: !prev[filePath] }));
-  };
+  }, []);
 
   const deselectAll = () => {
     setSelectedPaths({});
@@ -737,11 +913,165 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     setSelectedContacts({});
   };
 
-  const handleStartMigration = async () => {
+  const sourceVisibleNodes = useMemo(() => {
+    const nodes: Array<{ file: CloudFile; depth: number }> = [];
+    const addChildren = (entries: CloudFile[], depth: number) => {
+      entries.forEach((file) => {
+        nodes.push({ file, depth });
+        if (file.is_dir && expandedPaths[file.path]) {
+          addChildren(directoryContents[file.path] || [], depth + 1);
+        }
+      });
+    };
+    addChildren(directoryContents["/"] || [], 0);
+    return nodes;
+  }, [directoryContents, expandedPaths]);
 
-    const pathsToMigrate = Object.keys(selectedPaths).filter(
-      (p) => selectedPaths[p],
-    );
+  const resolvedFocusedSourcePath = focusedSourcePath && sourceVisibleNodes.some(({ file }) => file.path === focusedSourcePath)
+    ? focusedSourcePath
+    : sourceVisibleNodes[0]?.file.path ?? null;
+
+  const focusSourceTreeItem = (path: string) => {
+    setFocusedSourcePath(path);
+    requestAnimationFrame(() => sourceTreeItemRefs.current.get(path)?.focus());
+  };
+
+  const handleSourceTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = sourceVisibleNodes.findIndex(({ file }) => file.path === resolvedFocusedSourcePath);
+    if (currentIndex < 0) return;
+    const current = sourceVisibleNodes[currentIndex];
+    const move = (index: number) => focusSourceTreeItem(sourceVisibleNodes[index].file.path);
+
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        if (currentIndex < sourceVisibleNodes.length - 1) move(currentIndex + 1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        if (currentIndex > 0) move(currentIndex - 1);
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        if (current.file.is_dir && !expandedPaths[current.file.path] && !isOneDrivePersonalVault(current.file)) {
+          toggleExpand(current.file.path);
+        } else if (current.file.is_dir && sourceVisibleNodes[currentIndex + 1]?.depth === current.depth + 1) {
+          move(currentIndex + 1);
+        }
+        break;
+      case "ArrowLeft": {
+        event.preventDefault();
+        if (current.file.is_dir && expandedPaths[current.file.path]) {
+          toggleExpand(current.file.path);
+          break;
+        }
+        for (let index = currentIndex - 1; index >= 0; index -= 1) {
+          if (sourceVisibleNodes[index].depth < current.depth) {
+            move(index);
+            break;
+          }
+        }
+        break;
+      }
+      case "Home":
+        event.preventDefault();
+        move(0);
+        break;
+      case "End":
+        event.preventDefault();
+        move(sourceVisibleNodes.length - 1);
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        if (!isOneDrivePersonalVault(current.file)) toggleSelect(current.file.path);
+        break;
+    }
+  };
+
+  const toggleTargetExpand = (folderPath: string) => {
+    const nextExpanded = !targetExpandedPaths[folderPath];
+    setTargetExpandedPaths((prev) => ({ ...prev, [folderPath]: nextExpanded }));
+    if (nextExpanded) void fetchTargetChildren(folderPath);
+  };
+
+  const targetVisibleNodes = useMemo(() => {
+    const nodes: Array<{ path: string; name: string; depth: number }> = [{
+      path: "/",
+      name: t("fileBrowser.mainDir"),
+      depth: 0,
+    }];
+    const addChildren = (entries: CloudFile[], depth: number) => {
+      entries.forEach((file) => {
+        nodes.push({ path: file.path, name: file.name, depth });
+        if (targetExpandedPaths[file.path]) addChildren(targetDirectoryContents[file.path] || [], depth + 1);
+      });
+    };
+    if (targetExpandedPaths["/"]) addChildren(targetDirectoryContents["/"] || [], 1);
+    return nodes;
+  }, [t, targetDirectoryContents, targetExpandedPaths]);
+
+  const resolvedFocusedTargetPath = isTargetBrowserOpen && focusedTargetPath && targetVisibleNodes.some((node) => node.path === focusedTargetPath)
+    ? focusedTargetPath
+    : "/";
+
+  const focusTargetTreeItem = (path: string) => {
+    setFocusedTargetPath(path);
+    requestAnimationFrame(() => targetTreeItemRefs.current.get(path)?.focus());
+  };
+
+  const handleTargetTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = targetVisibleNodes.findIndex((node) => node.path === resolvedFocusedTargetPath);
+    if (currentIndex < 0) return;
+    const current = targetVisibleNodes[currentIndex];
+    const move = (index: number) => focusTargetTreeItem(targetVisibleNodes[index].path);
+    const isExpanded = !!targetExpandedPaths[current.path];
+
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        if (currentIndex < targetVisibleNodes.length - 1) move(currentIndex + 1);
+        break;
+      case "ArrowUp":
+        event.preventDefault();
+        if (currentIndex > 0) move(currentIndex - 1);
+        break;
+      case "ArrowRight":
+        event.preventDefault();
+        if (!isExpanded) toggleTargetExpand(current.path);
+        else if (targetVisibleNodes[currentIndex + 1]?.depth === current.depth + 1) move(currentIndex + 1);
+        break;
+      case "ArrowLeft": {
+        event.preventDefault();
+        if (isExpanded) {
+          toggleTargetExpand(current.path);
+          break;
+        }
+        for (let index = currentIndex - 1; index >= 0; index -= 1) {
+          if (targetVisibleNodes[index].depth < current.depth) {
+            move(index);
+            break;
+          }
+        }
+        break;
+      }
+      case "Home":
+        event.preventDefault();
+        move(0);
+        break;
+      case "End":
+        event.preventDefault();
+        move(targetVisibleNodes.length - 1);
+        break;
+      case "Enter":
+      case " ":
+        event.preventDefault();
+        setTargetDir(current.path);
+        break;
+    }
+  };
+
+  const handleStartMigration = async () => {
     const calendarsToMigrate = supportsCalendars
       ? Object.keys(selectedCalendars).filter((p) => selectedCalendars[p])
       : [];
@@ -776,6 +1106,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
     setStarting(true);
     setError(null);
+    const controller = createRequestController();
 
     try {
       if (effectiveJobType === "sync") {
@@ -807,6 +1138,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             target_dir: targetDir,
             selected_paths: syncSelectedPaths,
           }),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -820,7 +1152,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           );
         }
 
-        const data = (await response.json()) as { id?: string };
+        const data = (await response.json()) as { id?: string; success?: boolean; error_code?: string };
+        if (controller.signal.aborted) return;
+        if (data.success === false) {
+          setError(data.error_code ? translateApiError(data.error_code) : t("sync.createFailed"));
+          return;
+        }
         if (data.id) {
           // Trigger first pass immediately
           const startResponse = await apiFetch(
@@ -828,6 +1165,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             {
               method: "POST",
               headers: { Authorization: `Bearer ${token}` },
+              signal: controller.signal,
             },
           );
           if (!startResponse.ok) {
@@ -868,6 +1206,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(requestBody),
+          signal: controller.signal,
         });
 
         if (!response.ok) {
@@ -882,6 +1221,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }
 
         const data = await response.json();
+        if (controller.signal.aborted) return;
         if (data.success && data.migration_id) {
           onStartSuccess(data.migration_id, false);
         } else {
@@ -893,13 +1233,15 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         }
       }
     } catch (err) {
+      if (controller.signal.aborted || isAbortError(err)) return;
       setError(
         err instanceof Error
           ? err.message
           : t("fileBrowser.errors.networkError"),
       );
     } finally {
-      setStarting(false);
+      releaseRequestController(controller);
+      if (!controller.signal.aborted) setStarting(false);
     }
   };
 
@@ -912,112 +1254,28 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
     return (
       <div key={file.path} className="select-none font-sans text-xs">
-        {/* Row */}
-        <div
-          className={`flex items-center gap-3 py-3.5 px-4 border-b border-[var(--color-border-light)] hover:bg-[var(--color-bg-tertiary)] transition-colors duration-150 ${
-            isSelected ? "bg-[var(--color-bg-tertiary)] font-semibold" : ""
-          }`}
-          style={{ paddingLeft: `${depth * 20 + 16}px` }}
-        >
-          {/* Collapse/Expand Arrow */}
-          {file.is_dir ? (
-            <button
-              type="button"
-              className="w-5 h-5 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
-              onClick={() => !isPersonalVault && toggleExpand(file.path)}
-              disabled={isPersonalVault}
-              aria-label={
-                isExpanded
-                  ? t("common.collapse", { name: file.name })
-                  : t("common.expand", { name: file.name })
-              }
-            >
-              {isLoading ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-[var(--color-text-primary)]" />
-              ) : isExpanded ? (
-                <ChevronDown className="w-4.5 h-4.5 stroke-[2]" />
-              ) : (
-                <ChevronRight className="w-4.5 h-4.5 stroke-[2]" />
-              )}
-            </button>
-          ) : (
-            <span className="w-5" />
-          )}
-
-          {/* Rounded-md Checkbox */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!isPersonalVault) toggleSelect(file.path);
-            }}
-            disabled={isPersonalVault}
-            className="flex items-center justify-center"
-            aria-label={
-              isPersonalVault
-                ? t("fileBrowser.personalVaultUnavailable")
-                : `${t("common.select")} ${file.name}`
-            }
-            title={
-              isPersonalVault
-                ? t("fileBrowser.personalVaultUnavailable")
-                : undefined
-            }
-          >
-            <div
-              className={`w-4.5 h-4.5 border rounded flex items-center justify-center transition-all duration-200 ${
-                isSelected
-                  ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent shadow-xs"
-                  : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]"
-              }`}
-            >
-              {isSelected && (
-                <Check className="w-3 h-3 text-[var(--color-text-inverse)] stroke-[3.5]" />
-              )}
-            </div>
-          </button>
-
-          {/* Outline-style Icon */}
-          <span className="shrink-0">
-            {file.is_dir ? (
-              isExpanded ? (
-                <FolderOpen className="w-5 h-5 text-[var(--color-text-secondary)]" />
-              ) : (
-                <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />
-              )
-            ) : (
-              getFileIcon(file.name, "w-5 h-5")
-            )}
-          </span>
-
-          {/* Name & Size */}
-          <span
-            className={`text-[12px] truncate flex-grow leading-normal py-0.5 ${
-              isPersonalVault
-                ? "text-[var(--color-text-muted)]"
-                : isSelected
-                  ? "text-[var(--color-text-primary)] font-bold"
-                  : "text-[var(--color-text-primary)]"
-            }`}
-          >
-            {file.name}
-            {isPersonalVault && (
-              <span className="ml-2 text-[10px]">
-                {t("fileBrowser.personalVaultUnavailable")}
-              </span>
-            )}
-          </span>
-
-          {!file.is_dir && (
-            <span className="ui-badge ui-badge-muted text-[10px] font-bold px-2 py-0.5 rounded">
-              {formatBytes(file.size)}
-            </span>
-          )}
-        </div>
+        <SourceTreeRow
+          file={file}
+          depth={depth}
+          isExpanded={isExpanded}
+          isSelected={isSelected}
+          isLoading={isLoading}
+          isPersonalVault={isPersonalVault}
+          isFocused={resolvedFocusedSourcePath === file.path}
+          formattedSize={formatBytes(file.size)}
+          expandLabel={t("common.expand", { name: file.name })}
+          collapseLabel={t("common.collapse", { name: file.name })}
+          selectLabel={`${t("common.select")} ${file.name}`}
+          unavailableLabel={t("fileBrowser.personalVaultUnavailable")}
+          treeItemRefs={sourceTreeItemRefs}
+          onExpand={toggleExpand}
+          onSelect={toggleSelect}
+          onFocus={setFocusedSourcePath}
+        />
 
         {/* Children (Recursion) */}
         {file.is_dir && isExpanded && children.length > 0 && (
-          <div className="relative">
+          <div role="group" className="relative">
             {/* Visual connector left track */}
             <div className="absolute left-6.5 top-0 bottom-4.5 border-l border-[var(--color-border)]"></div>
             {children.map((child) => renderNode(child, depth + 1))}
@@ -1040,24 +1298,23 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const isLoading = !!targetLoadingPaths[file.path];
     const children = targetDirectoryContents[file.path] || [];
 
-    const toggleTargetExpand = (folderPath: string) => {
-      const nextExpanded = !targetExpandedPaths[folderPath];
-      setTargetExpandedPaths((prev) => ({
-        ...prev,
-        [folderPath]: nextExpanded,
-      }));
-      if (nextExpanded) {
-        fetchTargetChildren(folderPath);
-      }
-    };
-
     return (
       <div key={file.path} className="select-none font-sans text-xs">
         {/* Row */}
         <div
+          ref={(element) => {
+            if (element) targetTreeItemRefs.current.set(file.path, element);
+            else targetTreeItemRefs.current.delete(file.path);
+          }}
+          role="treeitem"
+          aria-level={depth + 1}
+          aria-expanded={isExpanded}
+          aria-selected={isSelected}
+          tabIndex={resolvedFocusedTargetPath === file.path ? 0 : -1}
+          onFocus={() => setFocusedTargetPath(file.path)}
           className={`flex items-center gap-2.5 py-2 px-3 border-b border-[var(--color-border-light)] hover:bg-[var(--color-bg-tertiary)] transition-colors duration-150 rounded-md ${
             isSelected
-              ? "bg-[var(--color-bg-secondary)] font-bold border border-[var(--color-border)] text-[var(--color-text-primary)] shadow-sm"
+              ? "bg-[var(--color-bg-secondary)] font-bold border border-[var(--color-border)] text-[var(--color-text-primary)]"
               : ""
           }`}
           style={{ paddingLeft: `${depth * 16 + 12}px` }}
@@ -1065,6 +1322,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           {/* Collapse/Expand Arrow */}
           <button
             type="button"
+            tabIndex={-1}
             className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
             onClick={(e) => {
               e.stopPropagation();
@@ -1097,6 +1355,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           {/* Name */}
           <button
             type="button"
+            tabIndex={-1}
             className={`text-[11.5px] truncate flex-grow leading-normal py-0.5 text-left ${
               isSelected
                 ? "text-[var(--color-text-primary)]"
@@ -1116,7 +1375,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
         {/* Children (Recursion) */}
         {isExpanded && (
-          <div className="relative">
+          <div role="group" className="relative">
             <div className="absolute left-[20px] top-0 bottom-3 border-l border-[var(--color-border)]"></div>
             {children.length > 0 ? (
               children.map((child) => renderTargetNode(child, depth + 1))
@@ -1165,7 +1424,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
           <div className="space-y-2">
             <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize flex items-center gap-2">
-              <span>{credentials.source_provider || "nextcloud"}</span>
+              <span>{credentials.source_provider || t("common.unspecified")}</span>
             </div>
             <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
               {credentials.source_url || t("migrations.oauth")}
@@ -1197,13 +1456,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
           <div className="space-y-2">
             <div className="font-extrabold text-sm text-[var(--color-text-primary)] capitalize">
-              {credentials.target_provider || "nextcloud"}
+              {credentials.target_provider || t("common.unspecified")}
             </div>
             <div className="text-xs text-[var(--color-text-muted)] font-mono break-all leading-normal">
               {credentials.target_url || t("migrations.oauth")}
             </div>
             <div className="flex flex-wrap gap-1.5 pt-1">
-              <span className="ui-card inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono text-[var(--color-text-primary)] shadow-2xs font-bold">
+              <span className="ui-card inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono text-[var(--color-text-primary)] font-bold">
                 <Folder className="w-3.5 h-3.5 text-[var(--color-text-secondary)] shrink-0" />
                 <span>{targetDir || "/"}</span>
               </span>
@@ -1248,6 +1507,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
           {/* Sticky start button */}
           <button
+            type="button"
             onClick={handleStartMigration}
             disabled={starting}
             className="ui-button-primary inline-flex w-full shrink-0 items-center justify-center gap-2 whitespace-nowrap px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50 sm:w-auto"
@@ -1299,8 +1559,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       <div className="ui-card flex flex-col p-5">
         {/* Tab Switcher */}
         <div className="flex items-center justify-between border-b border-[var(--color-border-light)] pb-4 mb-4 gap-4">
-          <div className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-lg flex-grow max-w-md">
+          <div role="tablist" aria-label={t("fileBrowser.title")} onKeyDown={handleTabListKeyDown} className="flex bg-[var(--color-bg-tertiary)]/80 border border-[var(--color-border)]/20 p-1 rounded-lg flex-grow max-w-md">
             <button
+              id="files-tab"
+              type="button"
+              role="tab"
+              aria-selected={effectiveActiveTab === "files"}
+              aria-controls={sourcePanelId}
+              tabIndex={effectiveActiveTab === "files" ? 0 : -1}
               onClick={() => handleTabChange("files")}
               className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                 effectiveActiveTab === "files"
@@ -1312,6 +1578,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             </button>
             {supportsCalendars && (
               <button
+                id="calendars-tab"
+                type="button"
+                role="tab"
+                aria-selected={effectiveActiveTab === "calendars"}
+                aria-controls={calendarsPanelId}
+                tabIndex={effectiveActiveTab === "calendars" ? 0 : -1}
                 onClick={() => handleTabChange("calendars")}
                 className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                   effectiveActiveTab === "calendars"
@@ -1325,6 +1597,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             )}
             {supportsContacts && (
               <button
+                id="contacts-tab"
+                type="button"
+                role="tab"
+                aria-selected={effectiveActiveTab === "contacts"}
+                aria-controls={contactsPanelId}
+                tabIndex={effectiveActiveTab === "contacts" ? 0 : -1}
                 onClick={() => handleTabChange("contacts")}
                 className={`flex-1 py-2 px-3 rounded-xl text-center font-mono text-[11px] font-bold uppercase tracking-wider transition-all duration-300 cursor-pointer focus:outline-none ${
                   effectiveActiveTab === "contacts"
@@ -1340,6 +1618,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
           <div className="flex items-center gap-2 shrink-0">
             <button
+              type="button"
               onClick={deselectAll}
               className="ui-button-secondary p-2.5 hover:bg-[var(--color-bg-tertiary)] transition-all cursor-pointer flex items-center gap-1.5"
               title={t("common.deselectAll")}
@@ -1370,6 +1649,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
               return (
                 <button
+                  type="button"
                   onClick={handleRefresh}
                   disabled={isRefreshing}
                   className="ui-button-secondary p-2.5 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-50"
@@ -1385,10 +1665,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
           </div>
         </div>
 
-        <div className="flex-grow overflow-y-auto rounded-lg">
+        <div
+          id={effectiveActiveTab === "files" ? sourcePanelId : effectiveActiveTab === "calendars" ? calendarsPanelId : contactsPanelId}
+          role="tabpanel"
+          aria-labelledby={`${effectiveActiveTab}-tab`}
+          tabIndex={0}
+          className="flex-grow overflow-y-auto rounded-lg"
+        >
           {effectiveActiveTab === "files" &&
             (directoryContents["/"]?.length > 0 ? (
-              directoryContents["/"].map((file) => renderNode(file, 0))
+              <div role="tree" aria-label={t("fileBrowser.files")} onKeyDown={handleSourceTreeKeyDown}>
+                {directoryContents["/"].map((file) => renderNode(file, 0))}
+              </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-24 text-[var(--color-text-muted)] gap-2">
                 <Folder className="w-10 h-10 text-[var(--color-text-muted)]" />
@@ -1409,11 +1697,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : calendars.length > 0 ? (
               <div className="space-y-2">
                 {calendars.map((cal) => (
-                  <div
+                  <button
+                    type="button"
                     key={cal.path}
-                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-lg cursor-pointer transition-all duration-250 ${
+                    aria-pressed={!!selectedCalendars[cal.path]}
+                    aria-label={`${t("common.select")} ${cal.name}`}
+                    className={`flex w-full items-center gap-3.5 py-3 px-4 border rounded-lg cursor-pointer transition-colors duration-200 text-left ${
                       selectedCalendars[cal.path]
-                        ? "bg-[var(--color-bg-tertiary)] border-[var(--color-text-primary)] shadow-xs font-semibold"
+                        ? "bg-[var(--color-bg-tertiary)] border-[var(--color-text-primary)] font-semibold"
                         : "bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]"
                     }`}
                     onClick={() =>
@@ -1423,10 +1714,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       }))
                     }
                   >
-                    <button
-                      type="button"
-                      className="focus:outline-none flex items-center justify-center cursor-pointer"
-                    >
+                    <span className="flex items-center justify-center" aria-hidden="true">
                       <div
                         className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
                           selectedCalendars[cal.path]
@@ -1438,12 +1726,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                           <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />
                         )}
                       </div>
-                    </button>
+                    </span>
                     <Calendar className="w-5 h-5 text-[var(--color-text-primary)]" />
                     <span className="text-[12px] text-[var(--color-text-secondary)] flex-grow text-left">
                       {cal.name}
                     </span>
-                  </div>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -1466,11 +1754,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : contacts.length > 0 ? (
               <div className="space-y-2">
                 {contacts.map((addr) => (
-                  <div
+                  <button
+                    type="button"
                     key={addr.path}
-                    className={`flex items-center gap-3.5 py-3 px-4 border rounded-lg cursor-pointer transition-all duration-250 ${
+                    aria-pressed={!!selectedContacts[addr.path]}
+                    aria-label={`${t("common.select")} ${addr.name}`}
+                    className={`flex w-full items-center gap-3.5 py-3 px-4 border rounded-lg cursor-pointer transition-colors duration-200 text-left ${
                       selectedContacts[addr.path]
-                        ? "bg-[var(--color-bg-tertiary)] border-[var(--color-text-primary)] shadow-xs font-semibold"
+                        ? "bg-[var(--color-bg-tertiary)] border-[var(--color-text-primary)] font-semibold"
                         : "bg-[var(--color-bg-secondary)]/50 border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]/50 hover:border-[var(--color-border)]"
                     }`}
                     onClick={() =>
@@ -1480,10 +1771,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                       }))
                     }
                   >
-                    <button
-                      type="button"
-                      className="focus:outline-none flex items-center justify-center cursor-pointer"
-                    >
+                    <span className="flex items-center justify-center" aria-hidden="true">
                       <div
                         className={`w-5 h-5 border rounded-lg flex items-center justify-center transition-all duration-200 ${
                           selectedContacts[addr.path]
@@ -1495,12 +1783,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                           <Check className="w-3.5 h-3.5 text-[var(--color-text-inverse)] stroke-[3.5]" />
                         )}
                       </div>
-                    </button>
+                    </span>
                     <BookOpen className="w-5 h-5 text-[var(--color-text-primary)]" />
                     <span className="text-[12px] text-[var(--color-text-secondary)] flex-grow text-left">
                       {addr.name}
                     </span>
-                  </div>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -1542,15 +1830,26 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   {t("fileBrowser.targetSelectSubtitle")}
                 </p>
               </div>
-              <button
-                type="button"
-                ref={targetCloseButtonRef}
-                onClick={closeTargetBrowser}
-                className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
-                aria-label={t("paths.close")}
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void fetchTargetChildren("/", 0, true)}
+                  className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
+                  aria-label={t("common.refresh")}
+                  title={t("common.refresh")}
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  ref={targetCloseButtonRef}
+                  onClick={closeTargetBrowser}
+                  className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
+                  aria-label={t("paths.close")}
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Content - Directory Tree */}
@@ -1562,18 +1861,29 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 </div>
               )}
 
-              <div className="border border-[var(--color-border)]/60 rounded-lg bg-[var(--color-bg-tertiary)]/30 p-2 overflow-x-auto max-h-[350px]">
+              <div role="tree" aria-label={t("fileBrowser.targetSelectTitle")} onKeyDown={handleTargetTreeKeyDown} className="border border-[var(--color-border)]/60 rounded-lg bg-[var(--color-bg-tertiary)]/30 p-2 overflow-x-auto max-h-[350px]">
                 {/* Root Directory Node */}
                 <div className="select-none font-sans text-xs">
                   <div
+                    ref={(element) => {
+                      if (element) targetTreeItemRefs.current.set("/", element);
+                      else targetTreeItemRefs.current.delete("/");
+                    }}
+                    role="treeitem"
+                    aria-level={1}
+                    aria-expanded={!!targetExpandedPaths["/"]}
+                    aria-selected={targetDir === "/"}
+                    tabIndex={resolvedFocusedTargetPath === "/" ? 0 : -1}
+                    onFocus={() => setFocusedTargetPath("/")}
                     className={`flex items-center gap-2.5 py-2 px-3 border border-transparent hover:bg-[var(--color-bg-tertiary)]/50 transition-colors duration-150 rounded-xl ${
                       targetDir === "/"
-                        ? "bg-[var(--color-bg-secondary)] font-bold border-[var(--color-border)] text-[var(--color-text-primary)] shadow-xs"
+                        ? "bg-[var(--color-bg-secondary)] font-bold border-[var(--color-border)] text-[var(--color-text-primary)]"
                         : ""
                     }`}
                   >
                     <button
                       type="button"
+                      tabIndex={-1}
                       className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
                       onClick={() => {
                         const isExpanded = !!targetExpandedPaths["/"];
@@ -1613,6 +1923,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                     </span>
                     <button
                       type="button"
+                      tabIndex={-1}
                       className={`text-[11.5px] truncate flex-grow text-left leading-normal py-0.5 ${
                         targetDir === "/"
                           ? "text-[var(--color-text-primary)]"
@@ -1630,7 +1941,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
                   {/* Root Children */}
                   {targetExpandedPaths["/"] && (
-                    <div className="relative">
+                    <div role="group" className="relative">
                       {/* Tree visual line */}
                       <div className="absolute left-[20px] top-0 bottom-3 border-l border-[var(--color-border)]"></div>
 

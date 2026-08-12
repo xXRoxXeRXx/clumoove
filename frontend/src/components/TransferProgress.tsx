@@ -1,3 +1,5 @@
+import { ProgressBar } from './ProgressBar';
+
 interface TransferProgressProps {
   progress: number;
   rate: string;
@@ -14,7 +16,7 @@ interface TransferProgressProps {
 export function TransferProgress({ progress, rate, transferred, remaining, labels }: TransferProgressProps) {
   return (
     <section className="ui-card flex flex-col p-6" aria-label={labels.progress}>
-      <div className="mb-6 flex items-end justify-between border-b border-[var(--color-border-light)] pb-4">
+      <div className="mb-6 flex items-end justify-between border-b border-[var(--color-border-light)] pb-4" aria-live="polite" aria-atomic="true">
         <div>
           <span className="ui-label">{labels.progress}</span>
           <h3 className="mt-1.5 font-display text-5xl font-extrabold leading-none text-[var(--color-text-primary)]">{progress}%</h3>
@@ -32,4 +34,3 @@ export function TransferProgress({ progress, rate, transferred, remaining, label
     </section>
   );
 }
-import { ProgressBar } from './ProgressBar';

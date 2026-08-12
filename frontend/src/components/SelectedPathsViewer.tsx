@@ -89,7 +89,7 @@ const getPathIcon = (type: PathType, className = "w-3.5 h-3.5 shrink-0") => {
   }
 };
 
-const buildTreeFromPaths = (paths: string[]): TreeNode[] => {
+const buildTreeFromPaths = (paths: string[], lng: string): TreeNode[] => {
   const rootNodes: TreeNode[] = [];
   const nodeMap = new Map<string, TreeNode>();
 
@@ -127,7 +127,7 @@ const buildTreeFromPaths = (paths: string[]): TreeNode[] => {
   const sortNodes = (nodes: TreeNode[]) => {
     nodes.sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name, 'de', { sensitivity: 'base' });
+      return a.name.localeCompare(b.name, lng, { sensitivity: 'base' });
     });
     nodes.forEach((n) => {
       if (n.children.length > 0) sortNodes(n.children);
@@ -138,73 +138,34 @@ const buildTreeFromPaths = (paths: string[]): TreeNode[] => {
   return rootNodes;
 };
 
-const TreeItem: React.FC<{ node: TreeNode; depth: number }> = ({ node, depth }) => {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const type = getPathType(node.path);
+interface VisibleTreeNode {
+  node: TreeNode;
+  depth: number;
+}
 
-  return (
-    <div className="select-none font-sans text-xs">
-      <div
-        role={node.isDir ? 'button' : undefined}
-        tabIndex={node.isDir ? 0 : undefined}
-        className="flex items-center gap-2.5 py-1.5 px-2 hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors duration-150 rounded-lg group"
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
-        onClick={() => {
-          if (node.isDir) setIsExpanded(!isExpanded);
-        }}
-        onKeyDown={(event) => {
-          if (node.isDir && (event.key === 'Enter' || event.key === ' ')) {
-            event.preventDefault();
-            setIsExpanded(!isExpanded);
-          }
-        }}
-      >
-        {node.isDir ? (
-          <span className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-[var(--color-text-primary)] transition-colors">
-            {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-          </span>
-        ) : (
-          <span className="w-4 h-4" />
-        )}
-
-        <span className="shrink-0">
-          {node.isDir ? (
-            isExpanded ? <FolderOpen className="w-4 h-4 text-[var(--color-text-secondary)]" /> : <Folder className="w-4 h-4 text-[var(--color-text-secondary)]" />
-          ) : (
-            getPathIcon(type, "w-4 h-4")
-          )}
-        </span>
-
-        <span className="text-[11.5px] font-mono text-[var(--color-text-primary)] truncate flex-grow leading-normal py-0.5">
-          {node.name}
-        </span>
-      </div>
-
-      {node.isDir && isExpanded && node.children.length > 0 && (
-        <div className="relative">
-          <div className="absolute left-[15px] top-0 bottom-2.5 border-l border-[var(--color-border)]/60" />
-          {node.children.map((child) => (
-            <TreeItem key={child.path} node={child} depth={depth + 1} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-};
+const flattenTree = (nodes: TreeNode[], expanded: Record<string, boolean>, depth = 0): VisibleTreeNode[] =>
+  nodes.flatMap((node) => [
+    { node, depth },
+    ...(node.isDir && expanded[node.path] !== false ? flattenTree(node.children, expanded, depth + 1) : []),
+  ]);
 
 export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
   paths,
   maxVisible = 3,
 }) => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'folders' | 'files'>('all');
   const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
   const [copied, setCopied] = useState(false);
+  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
+  const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const copyTimeoutRef = useRef<number | null>(null);
+  const treeItemRefs = useRef(new Map<string, HTMLDivElement>());
   const titleId = useId();
 
   useEffect(() => {
@@ -244,7 +205,15 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
   const pathList = useMemo(() => paths || [], [paths]);
   const hasPaths = pathList.length > 0;
 
-  const treeNodes = useMemo(() => buildTreeFromPaths(pathList), [pathList]);
+  const treeNodes = useMemo(() => buildTreeFromPaths(pathList, i18n.language), [pathList, i18n.language]);
+  const visibleTreeNodes = useMemo(() => flattenTree(treeNodes, expandedPaths), [treeNodes, expandedPaths]);
+  const resolvedFocusedPath = focusedPath && visibleTreeNodes.some(({ node }) => node.path === focusedPath)
+    ? focusedPath
+    : visibleTreeNodes[0]?.node.path ?? null;
+
+  useEffect(() => () => {
+    if (copyTimeoutRef.current !== null) window.clearTimeout(copyTimeoutRef.current);
+  }, []);
 
   const visiblePaths = useMemo(() => {
     return hasPaths ? pathList.slice(0, maxVisible) : [];
@@ -280,10 +249,115 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
     try {
       await navigator.clipboard.writeText(pathList.join('\n'));
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimeoutRef.current !== null) window.clearTimeout(copyTimeoutRef.current);
+      copyTimeoutRef.current = window.setTimeout(() => setCopied(false), 2000);
     } catch {
       // Fallback if clipboard API fails
     }
+  };
+
+  const toggleTreeNode = (path: string) => {
+    setExpandedPaths((previous) => ({ ...previous, [path]: previous[path] === false }));
+  };
+
+  const focusTreeItem = (path: string) => {
+    setFocusedPath(path);
+    requestAnimationFrame(() => treeItemRefs.current.get(path)?.focus());
+  };
+
+  const handleTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = visibleTreeNodes.findIndex(({ node }) => node.path === resolvedFocusedPath);
+    if (currentIndex < 0) return;
+    const current = visibleTreeNodes[currentIndex];
+    const move = (index: number) => focusTreeItem(visibleTreeNodes[index].node.path);
+
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault();
+        if (currentIndex < visibleTreeNodes.length - 1) move(currentIndex + 1);
+        break;
+      case 'ArrowUp':
+        event.preventDefault();
+        if (currentIndex > 0) move(currentIndex - 1);
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        if (current.node.isDir && expandedPaths[current.node.path] === false) {
+          toggleTreeNode(current.node.path);
+        } else if (current.node.isDir && visibleTreeNodes[currentIndex + 1]?.depth === current.depth + 1) {
+          move(currentIndex + 1);
+        }
+        break;
+      case 'ArrowLeft': {
+        event.preventDefault();
+        if (current.node.isDir && expandedPaths[current.node.path] !== false) {
+          toggleTreeNode(current.node.path);
+          break;
+        }
+        for (let index = currentIndex - 1; index >= 0; index -= 1) {
+          if (visibleTreeNodes[index].depth < current.depth) {
+            move(index);
+            break;
+          }
+        }
+        break;
+      }
+      case 'Home':
+        event.preventDefault();
+        move(0);
+        break;
+      case 'End':
+        event.preventDefault();
+        move(visibleTreeNodes.length - 1);
+        break;
+      case 'Enter':
+      case ' ':
+        if (current.node.isDir) {
+          event.preventDefault();
+          toggleTreeNode(current.node.path);
+        }
+        break;
+    }
+  };
+
+  const renderTreeNode = (node: TreeNode, depth: number): React.ReactNode => {
+    const isExpanded = expandedPaths[node.path] !== false;
+    const type = getPathType(node.path);
+
+    return (
+      <div key={node.path} className="select-none font-sans text-xs">
+        <div
+          ref={(element) => {
+            if (element) treeItemRefs.current.set(node.path, element);
+            else treeItemRefs.current.delete(node.path);
+          }}
+          role="treeitem"
+          aria-level={depth + 1}
+          aria-expanded={node.isDir ? isExpanded : undefined}
+          tabIndex={resolvedFocusedPath === node.path ? 0 : -1}
+          className="flex items-center gap-2.5 py-1.5 px-2 hover:bg-[var(--color-bg-tertiary)] cursor-pointer transition-colors duration-150 rounded-lg group"
+          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          onFocus={() => setFocusedPath(node.path)}
+          onClick={() => { if (node.isDir) toggleTreeNode(node.path); }}
+        >
+          {node.isDir ? (
+            <span className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] group-hover:text-[var(--color-text-primary)] transition-colors" aria-hidden="true">
+              {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            </span>
+          ) : <span className="w-4 h-4" aria-hidden="true" />}
+          <span className="shrink-0" aria-hidden="true">
+            {node.isDir ? (isExpanded ? <FolderOpen className="w-4 h-4 text-[var(--color-text-secondary)]" /> : <Folder className="w-4 h-4 text-[var(--color-text-secondary)]" />) : getPathIcon(type, 'w-4 h-4')}
+          </span>
+          <span className="text-[11.5px] font-mono text-[var(--color-text-primary)] truncate flex-grow leading-normal py-0.5">{node.name}</span>
+        </div>
+        {node.isDir && isExpanded && node.children.length > 0 && (
+          <div role="group" className="relative">
+            <div className="absolute left-[15px] top-0 bottom-2.5 border-l border-[var(--color-border)]/60" />
+            {node.children.map((child) => renderTreeNode(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -291,11 +365,11 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
       <div className="flex flex-wrap items-center gap-1.5 pt-1">
         {hasPaths ? (
           <>
-            {visiblePaths.map((p, idx) => {
+            {visiblePaths.map((p) => {
               const type = getPathType(p);
               return (
                 <span
-                  key={idx}
+                  key={p}
                   className="ui-card inline-flex max-w-[200px] items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-primary)] truncate"
                   title={p}
                 >
@@ -345,9 +419,9 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                     {t('paths.modalTitle', { count: stats.total })}
                   </h3>
                   <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] mt-0.5 font-mono">
-                    <span>{stats.folders} {t('paths.filterFolders', { count: stats.folders }).split(' ')[0]}</span>
+                    <span>{stats.folders} {t('paths.foldersNoun')}</span>
                     <span>•</span>
-                    <span>{stats.files} {t('paths.filterFiles', { count: stats.files }).split(' ')[0]}</span>
+                    <span>{stats.files} {t('paths.filesNoun')}</span>
                   </div>
                 </div>
               </div>
@@ -469,9 +543,9 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
             <div className="flex-1 overflow-y-auto p-4 space-y-1.5 max-h-[50vh]">
               {viewMode === 'tree' && !searchQuery.trim() ? (
                 treeNodes.length > 0 ? (
-                  treeNodes.map((node) => (
-                    <TreeItem key={node.path} node={node} depth={0} />
-                  ))
+                  <div role="tree" aria-label={t('paths.modalTitle', { count: stats.total })} onKeyDown={handleTreeKeyDown}>
+                    {treeNodes.map((node) => renderTreeNode(node, 0))}
+                  </div>
                 ) : (
                   <div className="py-12 text-center text-xs text-[var(--color-text-muted)] space-y-2">
                     <Folder className="w-8 h-8 mx-auto opacity-30 text-[var(--color-text-muted)]" />
@@ -479,14 +553,14 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                   </div>
                 )
               ) : filteredPaths.length > 0 ? (
-                filteredPaths.map((p, idx) => {
+                filteredPaths.map((p) => {
                   const type = getPathType(p);
                   const isFold = type === 'folder';
                   const ext = p.includes('.') ? p.split('.').pop()?.toUpperCase() : null;
 
                   return (
                     <div
-                      key={idx}
+                      key={p}
                       className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/50 hover:bg-[var(--color-bg-secondary)] transition-colors group"
                     >
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
