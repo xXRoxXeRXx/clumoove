@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"backend/internal/db"
+	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
 
@@ -39,16 +40,16 @@ func TestSanitizeErrorRedactsCredentials(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		got := sanitizeError(c.in)
+		got := sanitize.SanitizeError(c.in)
 		if got != c.want {
-			t.Errorf("sanitizeError(%q) = %q, want %q", c.in, got, c.want)
+			t.Errorf("SanitizeError(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
 
 func TestSanitizeErrorLeavesSchemeAndHost(t *testing.T) {
 	in := "error contacting https://user:pass@db.internal:8080/dav/files"
-	got := sanitizeError(in)
+	got := sanitize.SanitizeError(in)
 	if got == in {
 		t.Errorf("expected credentials to be redacted, got %q", got)
 	}
@@ -88,11 +89,32 @@ func TestIndexingTimeoutInvalidEnv(t *testing.T) {
 	}
 }
 
-func TestMarshalString(t *testing.T) {
-	got := marshalString("hello \"world\"")
-	want := `"hello \"world\""`
+func TestDeduplicateSelectedPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{name: "keeps separate paths", in: []string{"/photos", "/documents"}, want: []string{"/photos", "/documents"}},
+		{name: "removes child after parent", in: []string{"/photos", "/photos/2026", "/photos/2026"}, want: []string{"/photos"}},
+		{name: "replaces earlier child with parent", in: []string{"/photos/2026", "/photos"}, want: []string{"/photos"}},
+		{name: "root covers every path", in: []string{"/photos", "/"}, want: []string{"/"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deduplicateSelectedPaths(tt.in)
+			if strings.Join(got, "|") != strings.Join(tt.want, "|") {
+				t.Fatalf("deduplicateSelectedPaths(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIndexingAuditDetails(t *testing.T) {
+	got := string(indexingAuditDetails("hello \"world\""))
+	want := `{"phase":"indexing","error":"hello \"world\""}`
 	if got != want {
-		t.Errorf("marshalString = %q, want %q", got, want)
+		t.Errorf("indexingAuditDetails = %q, want %q", got, want)
 	}
 }
 
@@ -149,6 +171,33 @@ func TestIndexFolderStopsWhenMigrationIndexingClaimIsLost(t *testing.T) {
 	}
 }
 
+func TestIndexFolderFlushesPartialBatchAfterCancellation(t *testing.T) {
+	database, state := newBatchTestDB(t, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	files, dirs, bytes := 0, 0, int64(0)
+	var indexErrors []db.IndexingErrorInput
+	err := indexFolder(ctx, database, indexFolderTestProvider{
+		listing: []storage.CloudResource{
+			{Path: "/report.txt", Name: "report.txt", Size: 42},
+			{Path: "/later", Name: "later", IsDir: true},
+		},
+		onListing: cancel,
+	}, "files", "/", "migration-1", "local", &files, &dirs, &bytes, map[string]bool{}, &indexErrors)
+	if err != nil {
+		t.Fatalf("indexFolder() error = %v", err)
+	}
+	if files != 1 || dirs != 1 || bytes != 42 {
+		t.Fatalf("counters = files:%d dirs:%d bytes:%d, want files:1 dirs:1 bytes:42", files, dirs, bytes)
+	}
+	if state.execs != 1 || state.commits != 1 {
+		t.Fatalf("database calls = execs:%d commits:%d, want one committed partial batch", state.execs, state.commits)
+	}
+	if len(indexErrors) != 1 || indexErrors[0].ErrorMessage != "Indexing interrupted before the folder could be listed." {
+		t.Fatalf("indexErrors = %#v, want one cancellation entry", indexErrors)
+	}
+}
+
 func TestIndexFolderSkipsNonMediaForImmichWithoutError(t *testing.T) {
 	database, _ := newBatchTestDB(t, false)
 	files, dirs, bytes := 0, 0, int64(0)
@@ -191,11 +240,17 @@ func TestIsImmichMedia(t *testing.T) {
 	}
 }
 
-type indexFolderTestProvider struct{ listing []storage.CloudResource }
+type indexFolderTestProvider struct {
+	listing   []storage.CloudResource
+	onListing func()
+}
 
 func (p indexFolderTestProvider) Close() error                          { return nil }
 func (p indexFolderTestProvider) Connect(context.Context) (bool, error) { return true, nil }
 func (p indexFolderTestProvider) GetDirectoryListing(context.Context, string, string) ([]storage.CloudResource, error) {
+	if p.onListing != nil {
+		p.onListing()
+	}
 	return p.listing, nil
 }
 func (p indexFolderTestProvider) InspectResource(context.Context, string, string) (storage.CloudResource, error) {
@@ -236,7 +291,8 @@ func (p indexFolderTestProvider) VerificationMode() storage.VerificationMode {
 
 var (
 	batchTestDriverOnce sync.Once
-	batchTestState      *batchDBState
+	batchTestStatesMu   sync.Mutex
+	batchTestStates     = make(map[string]*batchDBState)
 )
 
 type batchDBState struct {
@@ -248,43 +304,66 @@ type batchDBState struct {
 func newBatchTestDB(t *testing.T, failInsert bool) (*sql.DB, *batchDBState) {
 	t.Helper()
 	batchTestDriverOnce.Do(func() { sql.Register("indexer-batch-test", batchTestDriver{}) })
-	batchTestState = &batchDBState{failInsert: failInsert}
-	database, err := sql.Open("indexer-batch-test", "")
+	state := &batchDBState{failInsert: failInsert}
+	dsn := t.Name()
+	batchTestStatesMu.Lock()
+	batchTestStates[dsn] = state
+	batchTestStatesMu.Unlock()
+	database, err := sql.Open("indexer-batch-test", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { database.Close() })
-	return database, batchTestState
+	t.Cleanup(func() {
+		database.Close()
+		batchTestStatesMu.Lock()
+		delete(batchTestStates, dsn)
+		batchTestStatesMu.Unlock()
+	})
+	return database, state
 }
 
 type batchTestDriver struct{}
 
-func (batchTestDriver) Open(string) (driver.Conn, error) { return batchTestConn{}, nil }
+func (batchTestDriver) Open(dsn string) (driver.Conn, error) {
+	batchTestStatesMu.Lock()
+	state := batchTestStates[dsn]
+	batchTestStatesMu.Unlock()
+	if state == nil {
+		return nil, errors.New("missing batch test state")
+	}
+	return batchTestConn{state: state}, nil
+}
 
-type batchTestConn struct{}
+type batchTestConn struct{ state *batchDBState }
 
 func (batchTestConn) Prepare(string) (driver.Stmt, error) { return nil, errors.New("not implemented") }
 func (batchTestConn) Close() error                        { return nil }
-func (batchTestConn) Begin() (driver.Tx, error)           { return batchTestTx{}, nil }
-func (batchTestConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
-	return batchTestTx{}, nil
+func (c batchTestConn) Begin() (driver.Tx, error)         { return batchTestTx{state: c.state}, nil }
+func (c batchTestConn) BeginTx(ctx context.Context, _ driver.TxOptions) (driver.Tx, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return batchTestTx{state: c.state}, nil
 }
-func (batchTestConn) ExecContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
-	batchTestState.execs++
-	if batchTestState.failInsert {
+func (c batchTestConn) ExecContext(ctx context.Context, query string, _ []driver.NamedValue) (driver.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	c.state.execs++
+	if c.state.failInsert {
 		return nil, errors.New("injected insert failure")
 	}
-	if batchTestState.claimLost {
+	if c.state.claimLost {
 		return driver.RowsAffected(0), nil
 	}
 	// Each VALUES row ends with "),(" except for the final row.
 	return driver.RowsAffected(int64(strings.Count(query, "),(") + 1)), nil
 }
 
-type batchTestTx struct{}
+type batchTestTx struct{ state *batchDBState }
 
-func (batchTestTx) Commit() error   { batchTestState.commits++; return nil }
-func (batchTestTx) Rollback() error { return nil }
+func (tx batchTestTx) Commit() error { tx.state.commits++; return nil }
+func (batchTestTx) Rollback() error  { return nil }
 
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {

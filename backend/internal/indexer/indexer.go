@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path"
 	"strconv"
@@ -17,6 +17,7 @@ import (
 	"backend/internal/db"
 	"backend/internal/megasecret"
 	"backend/internal/oauth"
+	"backend/internal/observability"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
@@ -47,6 +48,11 @@ func NewIndexer(database *sql.DB, encryptionKey string, q *queue.Queue) *Indexer
 func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	ctx, cancel := context.WithTimeout(serverCtx, indexingTimeout())
 	defer cancel()
+	logger := observability.Logger(ctx).With(
+		slog.String("component", "indexer"),
+		slog.String("migration_id", migID),
+	)
+	ctx = observability.WithLogger(ctx, logger)
 	claimLost := func(err error) bool {
 		if !errors.Is(err, db.ErrMigrationIndexingClaimLost) {
 			return false
@@ -56,9 +62,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cleanupCancel()
 		if cancelErr := db.CancelPendingTasksCtx(cleanupCtx, idx.db, migID); cancelErr != nil {
-			log.Printf("Warning: failed to cancel tasks after indexing claim loss for %s: %v", migID, cancelErr)
+			logger.Warn("indexing_claim_loss_cleanup_failed", observability.Error(cancelErr), slog.String("error_kind", observability.ErrorKind(cancelErr)))
 		}
-		log.Printf("Stopped indexing migration %s because its INDEXING claim was lost", migID)
+		logger.Info("indexing_claim_lost")
 		return true
 	}
 
@@ -70,44 +76,51 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// Load migration from DB (includes persisted selected paths).
 	mig, err := db.GetMigration(idx.db, migID)
 	if err != nil {
-		failMigration(idx.db, migID, fmt.Sprintf("Failed to fetch migration: %v", err))
+		logger.Error("indexing_migration_load_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		failMigration(ctx, idx.db, migID, "Unable to load migration details.")
 		return
 	}
 	ctx = storage.WithLocalUserScope(ctx, mig.UserID.String)
 
 	// Decrypt source credentials at the last moment. The temporary GCM plaintext
-	// buffer is cleared before DecryptWithDomain returns; keep the resulting
-	// string scoped to this block during the potentially long BFS traversal.
+	// buffer is cleared before DecryptWithDomain returns. Release this caller's
+	// string reference immediately after provider construction; providers retain
+	// only what they require for their own authenticated session.
 	sourcePass, err := crypto.DecryptWithDomain(mig.SourcePasswordEncrypted, idx.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(mig.SourceProvider)))
 	if err != nil {
-		failMigration(idx.db, migID, fmt.Sprintf("Failed to decrypt source password: %v", err))
+		logger.Error("indexing_source_credential_decrypt_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		failMigration(ctx, idx.db, migID, "Unable to decrypt source credentials.")
 		return
 	}
+	defer crypto.ZeroString(&sourcePass)
 
 	// For OAuth providers (e.g. googlephotos) the access token may have expired
 	// by the time indexing runs (especially for scheduled migrations). Refresh it
 	// now so the provider can authenticate at index time. The refreshed token is
 	// persisted so the worker does not need to refresh again.
 	if mig.SourceRefreshTokenEncrypted.Valid && mig.SourceRefreshTokenEncrypted.String != "" {
-		sourcePass, err = idx.ensureFreshSourceToken(migID, mig, sourcePass)
+		sourcePass, err = idx.ensureFreshSourceToken(ctx, migID, mig, sourcePass)
 		if err != nil {
-			failMigration(idx.db, migID, fmt.Sprintf("Failed to refresh source OAuth token: %v", err))
+			logger.Error("indexing_source_token_refresh_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			failMigration(ctx, idx.db, migID, "Unable to refresh source credentials.")
 			return
 		}
 	}
 
 	sourceCtx, err := megasecret.WithSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, idx.encryptionKey)
 	if err != nil {
-		failMigration(idx.db, migID, "Failed to decrypt source connection session.")
+		logger.Error("indexing_source_session_decrypt_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		failMigration(ctx, idx.db, migID, "Failed to decrypt source connection session.")
 		return
 	}
 	sourceClient, err := storage.NewProvider(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
+	crypto.ZeroString(&sourcePass)
 	if err != nil {
 		// Log the detailed (sanitized) error server-side for diagnostics, but do
 		// not persist/leak the raw Go error string to the client (Security ->
 		// Error messages). Surface a neutral, user-safe message instead.
-		log.Printf("Migration %s: failed to create source storage provider: %s", migID, sanitizeError(err.Error()))
-		failMigration(idx.db, migID, "Failed to connect to the source. Please verify the source connection settings.")
+		logger.Error("indexing_source_provider_create_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		failMigration(ctx, idx.db, migID, "Failed to connect to the source. Please verify the source connection settings.")
 		return
 	}
 	defer sourceClient.Close()
@@ -118,11 +131,11 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	connected, err := sourceClient.Connect(ctx)
 	if err != nil || !connected {
 		if err != nil {
-			log.Printf("Migration %s: failed to connect source storage provider: %s", migID, sanitizeError(err.Error()))
+			logger.Error("indexing_source_connect_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		} else {
-			log.Printf("Migration %s: source storage provider reported an unsuccessful connection", migID)
+			logger.Warn("indexing_source_connect_unsuccessful")
 		}
-		failMigration(idx.db, migID, "Failed to connect to the source. Please verify the source connection settings.")
+		failMigration(ctx, idx.db, migID, "Failed to connect to the source. Please verify the source connection settings.")
 		return
 	}
 	var totalFiles int
@@ -131,7 +144,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	indexErrors := make([]db.IndexingErrorInput, 0)
 	indexedPaths := make(map[string]bool)
 
-	paths := mig.SelectedPaths
+	paths := deduplicateSelectedPaths(mig.SelectedPaths)
+	if len(paths) != len(mig.SelectedPaths) {
+		logger.Debug("indexing_overlapping_paths_deduplicated", slog.Int("selected_paths", len(mig.SelectedPaths)), slog.Int("paths_to_index", len(paths)))
+	}
 	calendars := mig.SelectedCalendars
 	contacts := mig.SelectedContacts
 
@@ -145,9 +161,9 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			indexErrors = append(indexErrors, db.IndexingErrorInput{
 				Path:         p,
 				ResourceType: "files",
-				ErrorMessage: "failed to inspect path: " + sanitizeError(err.Error()),
+				ErrorMessage: "Unable to inspect selected path.",
 			})
-			log.Printf("Indexing: skipping path %s (failed to inspect): %v", p, err)
+			logger.Debug("indexing_path_inspection_skipped", slog.String("path", p), observability.ErrorAttr(err, true), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
 		if res.IsPersonalVault() {
@@ -163,7 +179,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				dirKey := fmt.Sprintf("dir:files:%s", p)
 				if !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
-					mkdirMeta, _ := json.Marshal(directoryTaskMetadata(res.Metadata))
+					mkdirMeta, _ := json.Marshal(directoryTaskMetadata())
 					mkdirTask := &db.Task{
 						MigrationID:  migID,
 						ResourceType: "files",
@@ -176,7 +192,8 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 						if claimLost(err) {
 							return
 						}
-						failMigration(idx.db, migID, fmt.Sprintf("Failed to create mkdir task for %s: %v", p, err))
+						logger.Error("indexing_directory_task_create_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+						failMigration(ctx, idx.db, migID, "Unable to create indexing tasks.")
 						return
 					}
 					totalDirs++
@@ -187,7 +204,8 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				if claimLost(err) {
 					return
 				}
-				failMigration(idx.db, migID, fmt.Sprintf("Indexing folder %s failed: %v", p, err))
+				logger.Error("indexing_folder_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+				failMigration(ctx, idx.db, migID, "Unable to index selected resources.")
 				return
 			}
 		} else {
@@ -195,7 +213,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			if mig.TargetProvider == "immich" && !isImmichMedia(res.Name) {
 				continue
 			}
-			key := resourceIndexKey("files", p, res.Metadata)
+			key := resourceIndexKey("files", p)
 			if indexedPaths[key] {
 				continue
 			}
@@ -222,7 +240,8 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				if claimLost(err) {
 					return
 				}
-				failMigration(idx.db, migID, fmt.Sprintf("Failed to create task in DB: %v", err))
+				logger.Error("indexing_task_create_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+				failMigration(ctx, idx.db, migID, "Unable to create indexing tasks.")
 				return
 			}
 			totalFiles++
@@ -238,12 +257,13 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				if claimLost(err) {
 					return
 				}
-				failMigration(idx.db, migID, fmt.Sprintf("Indexing calendar %s failed: %v", p, err))
+				logger.Error("indexing_calendar_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+				failMigration(ctx, idx.db, migID, "Unable to index selected resources.")
 				return
 			}
 		}
 	} else if len(calendars) > 0 {
-		log.Printf("Indexing: skipping calendars for migration %s (not supported by source %s or target %s)", migID, mig.SourceProvider, mig.TargetProvider)
+		logger.Info("indexing_calendars_skipped_unsupported", slog.String("source_provider", mig.SourceProvider), slog.String("target_provider", mig.TargetProvider))
 		for _, p := range calendars {
 			indexErrors = append(indexErrors, db.IndexingErrorInput{
 				Path:         p,
@@ -261,12 +281,13 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				if claimLost(err) {
 					return
 				}
-				failMigration(idx.db, migID, fmt.Sprintf("Indexing contacts %s failed: %v", p, err))
+				logger.Error("indexing_contacts_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+				failMigration(ctx, idx.db, migID, "Unable to index selected resources.")
 				return
 			}
 		}
 	} else if len(contacts) > 0 {
-		log.Printf("Indexing: skipping contacts for migration %s (not supported by source %s or target %s)", migID, mig.SourceProvider, mig.TargetProvider)
+		logger.Info("indexing_contacts_skipped_unsupported", slog.String("source_provider", mig.SourceProvider), slog.String("target_provider", mig.TargetProvider))
 		for _, p := range contacts {
 			indexErrors = append(indexErrors, db.IndexingErrorInput{
 				Path:         p,
@@ -281,7 +302,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// failing the whole migration on a single bad folder.
 	if len(indexErrors) > 0 {
 		if err := db.RecordIndexingErrors(ctx, idx.db, migID, indexErrors); err != nil {
-			log.Printf("Warning: failed to record indexing errors for %s: %v\n", migID, err)
+			logger.Warn("indexing_errors_record_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		}
 	}
 
@@ -290,7 +311,8 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	// correctly counts directory creation as work items.
 	totalItems := totalFiles + totalDirs
 	if err := db.UpdateMigrationTotals(idx.db, migID, totalItems, totalBytes); err != nil {
-		failMigration(idx.db, migID, fmt.Sprintf("Failed to update migration totals: %v", err))
+		logger.Error("indexing_totals_update_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		failMigration(ctx, idx.db, migID, "Unable to finalize indexing totals.")
 		return
 	}
 
@@ -299,7 +321,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		// Nothing was indexed but some folders/paths failed: mark FAILED so the
 		// user can re-index (orphaned PENDING tasks are not possible here since
 		// none were created; the worker dequeue also filters on migration status).
-		failMigration(idx.db, migID, fmt.Sprintf("Indexing failed: %d path(s) could not be read. First error: %s", len(indexErrors), indexErrors[0].ErrorMessage))
+		failMigration(ctx, idx.db, migID, "No selected resources could be indexed.")
 		return
 	case totalItems == 0:
 		// Every selected path was an empty folder / empty calendar / skipped file
@@ -308,7 +330,8 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			if claimLost(err) {
 				return
 			}
-			failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration completed: %v", err))
+			logger.Error("indexing_completion_transition_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			failMigration(ctx, idx.db, migID, "Unable to finalize migration.")
 			return
 		}
 		if owner, oerr := db.GetMigrationOwnerID(idx.db, migID); oerr == nil {
@@ -318,8 +341,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				Target:  migID,
 				Details: json.RawMessage(`{"phase":"indexing","files":0}`),
 			})
+		} else {
+			logger.Warn("indexing_completion_audit_owner_load_failed", observability.Error(oerr), slog.String("error_kind", observability.ErrorKind(oerr)))
 		}
-		log.Printf("Finished indexing migration %s. 0 files to migrate. Marked COMPLETED.\n", migID)
+		logger.Info("indexing_completed_empty")
 		return
 	}
 
@@ -328,14 +353,15 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		if claimLost(err) {
 			return
 		}
-		failMigration(idx.db, migID, fmt.Sprintf("Failed to set migration running: %v", err))
+		logger.Error("indexing_running_transition_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		failMigration(ctx, idx.db, migID, "Unable to finalize migration.")
 		return
 	}
 	// Workers may have completed every task while indexing was still producing
 	// the migration's task list. Reconcile only after the guarded transition so
 	// that this final check may safely advance RUNNING to a terminal state.
 	if err := db.ReconcileMigrationProgress(idx.db, migID); err != nil {
-		log.Printf("Warning: final progress reconciliation after indexing failed for %s: %v\n", migID, err)
+		logger.Warn("indexing_progress_reconcile_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 	}
 
 	// Wake idle worker threads immediately so they start picking up the freshly
@@ -344,27 +370,28 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		idx.queue.NotifyTaskAvailable(ctx, idx.db)
 	}
 
-	log.Printf("Finished indexing migration %s. Total files: %d, Total dirs: %d, Total size: %d bytes.\n", migID, totalFiles, totalDirs, totalBytes)
+	logger.Info("indexing_completed", slog.Int("total_files", totalFiles), slog.Int("total_directories", totalDirs), slog.Int64("total_bytes", totalBytes))
 	if len(indexErrors) > 0 {
-		log.Printf("Indexing migration %s completed with %d skipped folder error(s) (see report).\n", migID, len(indexErrors))
+		logger.Info("indexing_completed_with_skips", slog.Int("skipped_resources", len(indexErrors)))
 	}
 }
 
-func directoryTaskMetadata(metadata storage.FileMetadata) map[string]interface{} {
-	result := map[string]interface{}{"action": "mkdir"}
-	return result
+func directoryTaskMetadata() map[string]interface{} {
+	return map[string]interface{}{"action": "mkdir"}
 }
 
 // ensureFreshSourceToken refreshes an OAuth source access token if it is expired
 // or near expiry (mirroring the worker's inline refresh). It returns the freshly
 // decrypted access token and persists the new token pair atomically under a
 // per-migration distributed lock with CAS update validation.
-func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, accessToken string) (string, error) {
+func (idx *Indexer) ensureFreshSourceToken(parentCtx context.Context, migID string, mig *db.Migration, accessToken string) (string, error) {
 	if !mig.SourceTokenExpiresAt.Valid || time.Now().Before(mig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
 		return accessToken, nil
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+	logger := observability.Logger(ctx)
 	var lockToken string
 	if idx.queue != nil {
 		var claimed bool
@@ -374,7 +401,11 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 			if err == nil && claimed {
 				break
 			}
-			time.Sleep(200 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
 			if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
 				if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
 					if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
@@ -386,7 +417,13 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 		if lockToken == "" || !claimed {
 			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for migration %s (source)", migID)
 		}
-		defer idx.queue.ReleaseOAuthLock(ctx, "migration", migID, "source", lockToken)
+		defer func() {
+			releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer releaseCancel()
+			if err := idx.queue.ReleaseOAuthLock(releaseCtx, "migration", migID, "source", lockToken); err != nil {
+				logger.Warn("indexing_source_token_lock_release_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			}
+		}()
 	}
 
 	// Re-fetch latest migration details inside lock
@@ -435,7 +472,7 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 	}, expectedRefreshEnc)
 
 	if errors.Is(err, db.ErrOAuthTokenConflict) {
-		log.Printf("[Indexer] Token update conflict for migration %s (source) — adopting winner token from DB\n", migID)
+		logger.Info("indexing_source_token_update_conflict")
 		if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
 			if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 				return latestAccess, nil
@@ -458,6 +495,7 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 // totals for tasks that were never committed.
 func indexFolder(ctx context.Context, database *sql.DB, client storage.StorageProvider, resourceType string, startPath string, migID, targetProvider string, totalFiles *int, totalDirs *int, totalBytes *int64, indexedPaths map[string]bool, indexErrors *[]db.IndexingErrorInput) error {
 	queue := []string{startPath}
+	head := 0
 	visited := make(map[string]bool)
 	visited[startPath] = true
 
@@ -478,6 +516,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 		*totalFiles += batchFiles
 		*totalDirs += batchDirs
 		*totalBytes += batchBytes
+		clear(taskBatch)
 		taskBatch = taskBatch[:0]
 		batchFiles = 0
 		batchDirs = 0
@@ -485,9 +524,10 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 		return nil
 	}
 
-	for len(queue) > 0 {
-		currentPath := queue[0]
-		queue = queue[1:]
+	for head < len(queue) {
+		currentPath := queue[head]
+		queue[head] = ""
+		head++
 
 		// Stop gracefully if the overall indexing deadline/context was cancelled.
 		// Keep whatever was already indexed (partial success) rather than failing.
@@ -496,7 +536,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 			*indexErrors = append(*indexErrors, db.IndexingErrorInput{
 				Path:         currentPath,
 				ResourceType: resourceType,
-				ErrorMessage: "indexing interrupted: " + sanitizeError(ctx.Err().Error()),
+				ErrorMessage: "Indexing interrupted before the folder could be listed.",
 			})
 			break
 		}
@@ -504,14 +544,14 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 		files, err := client.GetDirectoryListing(ctx, resourceType, currentPath)
 		if err != nil {
 			// Skip this folder (and its subtree) but keep indexing siblings.
-			// Sanitize the error so connection failures cannot leak URLs with
-			// embedded credentials into the DB / report (AGENTS.md).
+			// Persist a neutral, user-safe message. Provider errors can contain
+			// credentials or implementation details, so they stay in logs only.
 			*indexErrors = append(*indexErrors, db.IndexingErrorInput{
 				Path:         currentPath,
 				ResourceType: resourceType,
-				ErrorMessage: sanitizeError(err.Error()),
+				ErrorMessage: "Unable to list folder.",
 			})
-			log.Printf("Indexing: skipping folder %s (resource=%s): %v", currentPath, resourceType, err)
+			observability.Logger(ctx).Debug("indexing_folder_skipped", slog.String("component", "indexer"), slog.String("migration_id", migID), slog.String("path", currentPath), slog.String("resource_type", resourceType), observability.ErrorAttr(err, true), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
 
@@ -528,7 +568,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 				dirKey := fmt.Sprintf("dir:%s:%s", resourceType, file.Path)
 				if targetProvider != "immich" && !indexedPaths[dirKey] {
 					indexedPaths[dirKey] = true
-					mkdirMeta, _ := json.Marshal(directoryTaskMetadata(file.Metadata))
+					mkdirMeta, _ := json.Marshal(directoryTaskMetadata())
 					taskBatch = append(taskBatch, &db.Task{
 						MigrationID:  migID,
 						ResourceType: resourceType,
@@ -552,7 +592,7 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 				if targetProvider == "immich" && resourceType == "files" && !isImmichMedia(file.Name) {
 					continue
 				}
-				key := resourceIndexKey(resourceType, file.Path, file.Metadata)
+				key := resourceIndexKey(resourceType, file.Path)
 				if indexedPaths[key] {
 					continue
 				}
@@ -585,13 +625,58 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 			}
 		}
 	}
+	// BulkCreateMigrationTasksWhileIndexing deliberately detaches cancellation
+	// while applying this final batch, preserving the partial work accumulated
+	// before the traversal deadline was reached.
 	return flushBatch()
 }
 
 // resourceIndexKey returns a unique key for deduplicating resources during indexing.
 // Keying by resourceType and filePath ensures each selected virtual folder/album gets its files.
-func resourceIndexKey(resourceType, filePath string, meta storage.FileMetadata) string {
+func resourceIndexKey(resourceType, filePath string) string {
 	return fmt.Sprintf("%s:%s", resourceType, filePath)
+}
+
+// deduplicateSelectedPaths removes repeated and nested file selections before
+// traversal. It applies only to files: calendar and contact selections are
+// provider-specific collections rather than hierarchical filesystem paths. A
+// parent walk already indexes every descendant, so retaining both causes
+// avoidable provider listing calls without adding work items.
+func deduplicateSelectedPaths(paths []string) []string {
+	selected := make([]string, 0, len(paths))
+	for _, candidate := range paths {
+		candidate = path.Clean(candidate)
+		if candidate == "." {
+			candidate = "/"
+		}
+
+		covered := false
+		filtered := selected[:0]
+		for _, existing := range selected {
+			switch {
+			case isSameOrDescendantPath(candidate, existing):
+				covered = true
+				filtered = append(filtered, existing)
+			case isSameOrDescendantPath(existing, candidate):
+				// The new parent selection subsumes an earlier child selection.
+			default:
+				filtered = append(filtered, existing)
+			}
+		}
+		if covered {
+			selected = filtered
+			continue
+		}
+		selected = append(filtered, candidate)
+	}
+	return selected
+}
+
+func isSameOrDescendantPath(candidate, parent string) bool {
+	if candidate == parent || parent == "/" {
+		return true
+	}
+	return strings.HasPrefix(candidate, strings.TrimSuffix(parent, "/")+"/")
 }
 
 // Immich accepts media formats supported by its current MIME registry, including
@@ -621,16 +706,17 @@ func indexingTimeout() time.Duration {
 // The message is sanitized so connection failures cannot leak URLs with embedded
 // credentials into the persisted migration state (AGENTS.md: never forward raw
 // err.Error() strings for connection failures to API responses).
-func failMigration(database *sql.DB, migID string, errMsg string) {
-	safe := sanitizeError(errMsg)
-	log.Printf("Migration %s failed during indexing: %s\n", migID, safe)
+func failMigration(ctx context.Context, database *sql.DB, migID string, errMsg string) {
+	safe := sanitize.SanitizeError(errMsg)
+	logger := observability.Logger(ctx)
+	logger.Error("indexing_failed", slog.String("reason", safe))
 	failed, err := db.FailMigrationWhileIndexing(database, migID, &safe)
 	if err != nil {
-		log.Printf("Migration %s: failed to persist indexing failure: %v", migID, err)
+		logger.Error("indexing_failure_persist_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return
 	}
 	if !failed {
-		log.Printf("Migration %s: did not persist indexing failure because its lifecycle claim was lost", migID)
+		logger.Info("indexing_failure_claim_lost")
 		return
 	}
 	if owner, oerr := db.GetMigrationOwnerID(database, migID); oerr == nil {
@@ -638,21 +724,23 @@ func failMigration(database *sql.DB, migID string, errMsg string) {
 			UserID:  sql.NullString{String: owner, Valid: true},
 			Action:  db.AuditMigrationFailed,
 			Target:  migID,
-			Details: json.RawMessage(fmt.Sprintf(`{"phase":"indexing","error":%s}`, marshalString(safe))),
+			Details: indexingAuditDetails(safe),
 		})
+	} else {
+		logger.Warn("indexing_failure_audit_owner_load_failed", observability.Error(oerr), slog.String("error_kind", observability.ErrorKind(oerr)))
 	}
 }
 
-// marshalString returns a JSON-encoded string literal (with quotes) so it can be
-// inlined into a hand-built JSON detail object.
-func marshalString(s string) string {
-	b, _ := json.Marshal(s)
-	return string(b)
-}
-
-// credURLRe matches the userinfo portion of a URL (scheme://user:pass@host) so it
-// can be redacted. Embedded credentials in connection-error strings are stripped
-// sanitizeError redacts credentials from any URLs embedded in an error message.
-func sanitizeError(msg string) string {
-	return sanitize.SanitizeError(msg)
+func indexingAuditDetails(errMsg string) json.RawMessage {
+	details, err := json.Marshal(struct {
+		Phase string `json:"phase"`
+		Error string `json:"error"`
+	}{
+		Phase: "indexing",
+		Error: errMsg,
+	})
+	if err != nil {
+		return json.RawMessage(`{"phase":"indexing"}`)
+	}
+	return details
 }

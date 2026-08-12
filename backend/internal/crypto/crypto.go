@@ -106,6 +106,16 @@ func DecryptWithDomain(cipherText string, secretKey, domain string) (string, err
 	return string(plainText), nil
 }
 
+// ZeroString releases the caller's reference to a sensitive string as soon as
+// it is no longer needed. Go strings are immutable, so their backing storage
+// cannot be reliably overwritten; callers that can avoid a string entirely
+// should use DecryptBytesWithDomain and clear the returned buffer instead.
+func ZeroString(value *string) {
+	if value != nil {
+		*value = ""
+	}
+}
+
 // DecryptBytesWithDomain decrypts a field-specific ciphertext. It accepts the
 // pre-versioned, unauthenticated-domain envelope for existing database rows;
 // callers should re-encrypt legacy values during their normal next write.
