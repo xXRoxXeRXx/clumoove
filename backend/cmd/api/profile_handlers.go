@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
-	"log"
 	"net/http"
 	"time"
 
@@ -172,7 +171,7 @@ func (s *APIServer) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 
 	profiles, err := db.GetConnectionProfiles(r.Context(), s.db, userID, "")
 	if err != nil {
-		log.Printf("handleListProfiles: query failed for user %s: %v", userID, err)
+		s.logf(r, "handleListProfiles: query failed for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -266,7 +265,7 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusConflict, ErrProfileNameExists)
 			return
 		}
-		log.Printf("handleCreateProfile: insert failed for user %s: %v", userID, err)
+		s.logf(r, "handleCreateProfile: insert failed for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -286,7 +285,7 @@ func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
 	if err != nil {
-		log.Printf("handleGetProfile: ownership check failed: %v", err)
+		s.logf(r, "handleGetProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -315,7 +314,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 	}
 	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
 	if err != nil {
-		log.Printf("handleUpdateProfile: ownership check failed: %v", err)
+		s.logf(r, "handleUpdateProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -403,7 +402,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 			writeError(w, http.StatusConflict, ErrProfileNameExists)
 			return
 		}
-		log.Printf("handleUpdateProfile: update failed for profile %s: %v", id, err)
+		s.logf(r, "handleUpdateProfile: update failed for profile %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -419,7 +418,7 @@ func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) 
 	}
 	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
 	if err != nil {
-		log.Printf("handleDeleteProfile: ownership check failed: %v", err)
+		s.logf(r, "handleDeleteProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -428,7 +427,7 @@ func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := db.DeleteConnectionProfile(s.db, id); err != nil {
-		log.Printf("handleDeleteProfile: delete failed for profile %s: %v", id, err)
+		s.logf(r, "handleDeleteProfile: delete failed for profile %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -451,7 +450,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
 	if err != nil {
-		log.Printf("handleTestProfile: ownership check failed: %v", err)
+		s.logf(r, "handleTestProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -514,7 +513,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	ok, cerr := client.Connect(ctx)
 	if !ok {
-		log.Printf("handleTestProfile: connection failed for profile %s (provider %s): %v", id, p.Provider, cerr)
+		s.logf(r, "handleTestProfile: connection failed for profile %s (provider %s): %v", id, p.Provider, cerr)
 		if errors.Is(cerr, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return

@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -34,7 +33,7 @@ func (s *APIServer) handleAdminGetOAuth(w http.ResponseWriter, r *http.Request) 
 	}
 	rows, err := db.ListInstanceOAuthProviders(s.db)
 	if err != nil {
-		log.Printf("instance OAuth settings lookup failed: %v", err)
+		s.logf(r, "instance OAuth settings lookup failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -89,7 +88,7 @@ func (s *APIServer) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) 
 
 	existing, err := db.GetInstanceOAuthProvider(s.db, provider)
 	if err != nil && err != sql.ErrNoRows {
-		log.Printf("instance OAuth lookup failed for %s: %v", provider, err)
+		s.logf(r, "instance OAuth lookup failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -105,7 +104,7 @@ func (s *APIServer) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) 
 	} else {
 		encrypted, err = crypto.Encrypt(req.ClientSecret, s.encryptionKey)
 		if err != nil {
-			log.Printf("instance OAuth secret encryption failed for %s: %v", provider, err)
+			s.logf(r, "instance OAuth secret encryption failed for %s: %v", provider, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -116,7 +115,7 @@ func (s *APIServer) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) 
 		ClientID:        req.ClientID,
 		ClientSecretEnc: encrypted,
 	}); err != nil {
-		log.Printf("instance OAuth upsert failed for %s: %v", provider, err)
+		s.logf(r, "instance OAuth upsert failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -138,7 +137,7 @@ func (s *APIServer) handleAdminDeleteOAuth(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := db.DeleteInstanceOAuthProvider(s.db, provider); err != nil {
-		log.Printf("instance OAuth delete failed for %s: %v", provider, err)
+		s.logf(r, "instance OAuth delete failed for %s: %v", provider, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

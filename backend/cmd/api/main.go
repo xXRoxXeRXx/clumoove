@@ -317,6 +317,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go server.RunOAuthRotationDaemon(ctx)
+	go server.runGarbageCollector(ctx)
 
 	sched := scheduler.NewScheduler(database, q, server.indexer)
 	sched.SetSyncEngine(syncEng)

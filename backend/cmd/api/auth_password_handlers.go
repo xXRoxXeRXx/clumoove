@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -62,7 +62,7 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 
 	smtpCfg, smtpErr := s.instanceSMTPConfig()
 	if smtpErr != nil {
-		log.Printf("handleForgotPassword: SMTP not configured, skipping\n")
+		s.logf(r, "handleForgotPassword: SMTP not configured, skipping\n")
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
@@ -73,14 +73,14 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 			return
 		}
-		log.Printf("handleForgotPassword: error fetching user: %v\n", err)
+		s.logf(r, "handleForgotPassword: error fetching user: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
 
 	rawToken := generateRandomString(32)
 	if rawToken == "" {
-		log.Printf("handleForgotPassword: failed to generate token\n")
+		s.logf(r, "handleForgotPassword: failed to generate token\n")
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
@@ -88,7 +88,7 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 	expiresAt := time.Now().Add(4 * time.Hour)
 
 	if err := db.CreatePasswordResetToken(s.db, tokenHash, u.ID, expiresAt); err != nil {
-		log.Printf("handleForgotPassword: error storing token: %v\n", err)
+		s.logf(r, "handleForgotPassword: error storing token: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
@@ -101,13 +101,13 @@ func (s *APIServer) handleForgotPassword(w http.ResponseWriter, r *http.Request)
 
 	htmlBody := email.BuildPasswordResetEmailLocalized(resetURL, u.Language)
 	if err := email.SendMail(smtpCfg, u.Email, email.PasswordResetSubject(u.Language), htmlBody); err != nil {
-		log.Printf("handleForgotPassword: error sending email: %v\n", err)
+		s.logf(r, "handleForgotPassword: error sending email: %v\n", err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 		return
 	}
 
 	emailHash := sha256.Sum256([]byte(req.Email))
-	log.Printf("handleForgotPassword: reset email sent (hash: %x)\n", emailHash[:8])
+	s.infof(r, "handleForgotPassword: reset email sent (hash: %x)", emailHash[:8])
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -137,7 +137,7 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 
 	newHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		log.Printf("handleResetPassword: error hashing password: %v\n", err)
+		s.logf(r, "handleResetPassword: error hashing password: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -149,13 +149,13 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusBadRequest, ErrResetTokenInvalid)
 			return
 		}
-		log.Printf("handleResetPassword: error claiming token: %v\n", err)
+		s.logf(r, "handleResetPassword: error claiming token: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := db.ResetLoginFailed(s.db, userID); err != nil {
-		log.Printf("handleResetPassword: failed to clear login lockout for user %s: %v\n", userID, err)
+		s.logf(r, "handleResetPassword: failed to clear login lockout for user %s: %v\n", userID, err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -187,14 +187,16 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.NewEmail = strings.TrimSpace(strings.ToLower(req.NewEmail))
-	if req.NewEmail == "" || !strings.Contains(req.NewEmail, "@") || !strings.Contains(req.NewEmail, ".") {
+	addr, err := mail.ParseAddress(req.NewEmail)
+	if err != nil || addr.Address != req.NewEmail {
 		writeError(w, http.StatusBadRequest, ErrEmailInvalid)
 		return
 	}
+	req.NewEmail = addr.Address
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
-		log.Printf("handleChangeEmail: error fetching user: %v\n", err)
+		s.logf(r, "handleChangeEmail: error fetching user: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -206,7 +208,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 
 	existing, err := db.GetUserByEmail(r.Context(), s.db, req.NewEmail)
 	if err != nil && err != sql.ErrNoRows {
-		log.Printf("handleChangeEmail: error checking email: %v\n", err)
+		s.logf(r, "handleChangeEmail: error checking email: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -223,7 +225,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 
 	rawToken := generateRandomString(32)
 	if rawToken == "" {
-		log.Printf("handleChangeEmail: failed to generate token\n")
+		s.logf(r, "handleChangeEmail: failed to generate token\n")
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -231,7 +233,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(4 * time.Hour)
 
 	if err := db.CreateEmailChangeToken(s.db, tokenHash, userID, req.NewEmail, expiresAt); err != nil {
-		log.Printf("handleChangeEmail: error storing token: %v\n", err)
+		s.logf(r, "handleChangeEmail: error storing token: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -244,13 +246,13 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 
 	htmlBody := email.BuildEmailChangeEmailLocalized(confirmURL, req.NewEmail, u.Language)
 	if err := email.SendMail(smtpCfg, u.Email, email.EmailChangeSubject(u.Language), htmlBody); err != nil {
-		log.Printf("handleChangeEmail: error sending email: %v\n", err)
+		s.logf(r, "handleChangeEmail: error sending email: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	emailHash := sha256.Sum256([]byte(u.Email))
-	log.Printf("handleChangeEmail: confirmation email sent to %x\n", emailHash[:8])
+	s.infof(r, "handleChangeEmail: confirmation email sent to %x", emailHash[:8])
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -284,13 +286,13 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, ErrEmailChangeTokenInvalid)
 			return
 		}
-		log.Printf("handleConfirmEmailChange: error claiming token: %v\n", err)
+		s.logf(r, "handleConfirmEmailChange: error claiming token: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := db.DeleteAllRefreshTokensForUser(s.db, userID); err != nil {
-		log.Printf("handleConfirmEmailChange: failed to revoke refresh tokens for user %s: %v\n", userID, err)
+		s.logf(r, "handleConfirmEmailChange: failed to revoke refresh tokens for user %s: %v\n", userID, err)
 	}
 
 	if smtpCfg, smtpErr := s.instanceSMTPConfig(); smtpErr == nil {
@@ -301,7 +303,7 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 		}
 		htmlBody := email.BuildEmailChangedNotificationEmailLocalized(newEmail, language)
 		if err := email.SendMail(smtpCfg, newEmail, email.EmailChangedSubject(language), htmlBody); err != nil {
-			log.Printf("handleConfirmEmailChange: error sending notification to new email (user %s): %v\n", userID, err)
+			s.logf(r, "handleConfirmEmailChange: error sending notification to new email (user %s): %v\n", userID, err)
 		}
 	}
 

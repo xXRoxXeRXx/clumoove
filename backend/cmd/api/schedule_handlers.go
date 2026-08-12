@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net/http"
 
 	"backend/internal/auth"
@@ -18,7 +17,7 @@ func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) 
 
 	schedules, err := db.GetSchedulesForUser(s.db, userID)
 	if err != nil {
-		log.Printf("handleListSchedules: failed to get schedules for user %s: %v\n", userID, err)
+		s.logf(r, "handleListSchedules: failed to get schedules for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -46,7 +45,7 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 
 	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
 	if err != nil {
-		log.Printf("handleGetSchedule: error verifying ownership: %v\n", err)
+		s.logf(r, "handleGetSchedule: error verifying ownership: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -57,7 +56,7 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 
 	schedule, err := db.GetSchedule(s.db, id)
 	if err != nil {
-		log.Printf("handleGetSchedule: failed to get schedule %s: %v\n", id, err)
+		s.logf(r, "handleGetSchedule: failed to get schedule %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -81,7 +80,7 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 
 	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
 	if err != nil {
-		log.Printf("handleDeleteSchedule: error verifying ownership: %v\n", err)
+		s.logf(r, "handleDeleteSchedule: error verifying ownership: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -92,7 +91,7 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 
 	err = db.DeleteSchedule(s.db, id)
 	if err != nil {
-		log.Printf("handleDeleteSchedule: failed to delete schedule %s: %v\n", id, err)
+		s.logf(r, "handleDeleteSchedule: failed to delete schedule %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

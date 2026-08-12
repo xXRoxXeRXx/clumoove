@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"log"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -26,7 +25,7 @@ func (s *APIServer) handleGetSetupStatus(w http.ResponseWriter, r *http.Request)
 
 	needsSetup, err := db.IsSetupRequired(s.db)
 	if err != nil {
-		log.Printf("handleGetSetupStatus: failed to check setup status: %v\n", err)
+		s.logf(r, "handleGetSetupStatus: failed to check setup status: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -43,7 +42,7 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 	// CreateInitialAdmin repeats this check while holding its transaction lock.
 	needsSetup, err := db.IsSetupRequired(s.db)
 	if err != nil {
-		log.Printf("handleSetupAdmin: failed to check setup status: %v\n", err)
+		s.logf(r, "handleSetupAdmin: failed to check setup status: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -76,14 +75,14 @@ func (s *APIServer) handleSetupAdmin(w http.ResponseWriter, r *http.Request) {
 
 	passHash, err := auth.HashPassword(req.Password)
 	if err != nil {
-		log.Printf("handleSetupAdmin: password hashing error: %v\n", err)
+		s.logf(r, "handleSetupAdmin: password hashing error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	u, err := db.CreateInitialAdmin(r.Context(), s.db, req.Email, passHash, req.DisplayName, req.Language)
 	if err != nil {
-		log.Printf("handleSetupAdmin: failed to create admin user: %v\n", err)
+		s.logf(r, "handleSetupAdmin: failed to create admin user: %v\n", err)
 		if errors.Is(err, db.ErrSetupAlreadyCompleted) {
 			writeError(w, http.StatusForbidden, ErrSetupAlreadyCompleted)
 			return

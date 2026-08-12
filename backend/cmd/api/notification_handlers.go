@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"strings"
 
@@ -144,7 +143,7 @@ func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *h
 			return
 		}
 		if err := db.UpsertNotificationChannel(s.db, userID, "email", req.Enabled, enc); err != nil {
-			log.Printf("handleUpdateNotificationSettings: upsert email channel failed: %v", err)
+			s.logf(r, "handleUpdateNotificationSettings: upsert email channel failed: %v", err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}

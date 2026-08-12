@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"log"
 	"net/http"
 	"net/mail"
 	"strconv"
@@ -112,7 +111,7 @@ func (s *APIServer) handleAdminTestSMTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		log.Printf("instance SMTP test configuration lookup failed")
+		s.logf(r, "instance SMTP test configuration lookup failed")
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrInternalError})
 		return
 	}
@@ -121,13 +120,14 @@ func (s *APIServer) handleAdminTestSMTP(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpDecryptFailed})
 		return
 	}
+	defer crypto.ZeroString(&password)
 	user, err := db.GetUserByID(s.db, actor)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrInternalError})
 		return
 	}
 	if err := email.SendMail(email.SMTPConfig{Host: cfg.SMTPHost, Port: strconv.Itoa(cfg.SMTPPort), Username: cfg.SMTPUsername, Password: password, FromEmail: cfg.SMTPFromEmail, FromName: cfg.SMTPFromName, Encryption: cfg.SMTPEncryption}, user.Email, email.SMTPTestSubject(user.Language), email.BuildTestEmailLocalized(user.Language)); err != nil {
-		log.Printf("instance SMTP test failed")
+		s.logf(r, "instance SMTP test failed")
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpTestFailed})
 		return
 	}

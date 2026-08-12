@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -84,7 +83,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := sourceClient.Connect(ctx)
 	if !ok {
-		log.Printf("handleBrowse: source connection failed for provider %s: %v", req.SourceProvider, err)
+		s.logf(r, "handleBrowse: source connection failed for provider %s: %v", req.SourceProvider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -100,7 +99,7 @@ func (s *APIServer) handleBrowse(w http.ResponseWriter, r *http.Request) {
 
 	items, err := sourceClient.GetDirectoryListing(ctx, req.ResourceType, reqPath)
 	if err != nil {
-		log.Printf("handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, req.SourceProvider, err)
+		s.logf(r, "handleBrowse: failed to list %s for path %s (provider %s): %v", req.ResourceType, reqPath, req.SourceProvider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"success":    false,
 			"error_code": ErrListFailed,
@@ -150,7 +149,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 	if req.TargetProfileID != "" {
 		tgt, err := s.loadProfile(r, req.TargetProfileID, targetCreds)
 		if err != nil {
-			log.Printf("handleTargetBrowse: failed to load target profile: %v", err)
+			s.logf(r, "handleTargetBrowse: failed to load target profile: %v", err)
 			writeError(w, http.StatusNotFound, ErrProfileNotFound)
 			return
 		}
@@ -175,7 +174,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
-		log.Printf("handleTargetBrowse: connection failed for provider %s: %v", req.TargetProvider, err)
+		s.logf(r, "handleTargetBrowse: connection failed for provider %s: %v", req.TargetProvider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -191,7 +190,7 @@ func (s *APIServer) handleTargetBrowse(w http.ResponseWriter, r *http.Request) {
 
 	files, err := targetClient.GetDirectoryListing(ctx, "files", reqPath)
 	if err != nil {
-		log.Printf("handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, req.TargetProvider, err)
+		s.logf(r, "handleTargetBrowse: failed to list target files for path %s (provider %s): %v", reqPath, req.TargetProvider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
@@ -234,7 +233,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 	if req.TargetProfileID != "" {
 		tgt, err := s.loadProfile(r, req.TargetProfileID, targetCreds)
 		if err != nil {
-			log.Printf("handleTargetMkdir: failed to load target profile: %v", err)
+			s.logf(r, "handleTargetMkdir: failed to load target profile: %v", err)
 			writeError(w, http.StatusNotFound, ErrProfileNotFound)
 			return
 		}
@@ -259,7 +258,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := targetClient.Connect(ctx)
 	if !ok {
-		log.Printf("handleTargetMkdir: connection failed for provider %s: %v", req.TargetProvider, err)
+		s.logf(r, "handleTargetMkdir: connection failed for provider %s: %v", req.TargetProvider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -270,7 +269,7 @@ func (s *APIServer) handleTargetMkdir(w http.ResponseWriter, r *http.Request) {
 
 	err = targetClient.CreateDirectory(ctx, "files", req.Path)
 	if err != nil {
-		log.Printf("handleTargetMkdir: CreateDirectory(%s) failed: %v", req.Path, err)
+		s.logf(r, "handleTargetMkdir: CreateDirectory(%s) failed: %v", req.Path, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrFolderCreateFailed})
 		return
 	}
@@ -374,7 +373,7 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 
 	count, err := db.ResetFailedTasksForRetry(s.db, r.Context(), id)
 	if err != nil {
-		log.Printf("Error resetting failed tasks for retry: %v", err)
+		s.logf(r, "Error resetting failed tasks for retry: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -411,14 +410,14 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, ErrMigrationReindexConflict)
 			return
 		}
-		log.Printf("Reindex error for migration %s: %v", id, err)
+		s.logf(r, "Reindex error for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	go s.indexer.Start(s.backgroundCtx, id)
 
-	log.Printf("Migration %s re-index triggered.\n", id)
+	s.infof(r, "Migration %s re-index triggered", id)
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{"success": true, "migration_id": id})
 }
 
@@ -444,11 +443,11 @@ func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 
 	err = db.CancelPendingTasks(s.db, id)
 	if err != nil {
-		log.Printf("Warning: failed to cancel pending tasks for migration %s: %v", id, err)
+		s.logf(r, "Warning: failed to cancel pending tasks for migration %s: %v", id, err)
 	}
 
 	if err := s.queue.PublishCancelEvent(r.Context(), id); err != nil {
-		log.Printf("Warning: failed to publish cancel event for migration %s: %v — in-flight tasks will be aborted via DB status check", id, err)
+		s.logf(r, "Warning: failed to publish cancel event for migration %s: %v — in-flight tasks will be aborted via DB status check", id, err)
 	}
 
 	s.writeAudit(r, db.AuditMigrationCancelled, id, userID, nil)
@@ -489,7 +488,7 @@ func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.UpdateMigrationThreads(s.db, id, threads); err != nil {
-		log.Printf("Error updating threads for migration %s: %v", id, err)
+		s.logf(r, "Error updating threads for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -522,7 +521,7 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.UpdateMigrationBandwidthLimit(s.db, id, req.LimitMbps); err != nil {
-		log.Printf("Error updating bandwidth limit for migration %s: %v", id, err)
+		s.logf(r, "Error updating bandwidth limit for migration %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -540,7 +539,7 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 		MigrationID:        id,
 		BandwidthLimitMbps: req.LimitMbps,
 	}); err != nil {
-		log.Printf("Warning: failed to publish bandwidth change for migration %s: %v", id, err)
+		s.logf(r, "Warning: failed to publish bandwidth change for migration %s: %v", id, err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -613,7 +612,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: refreshToken,
 	})
 	if err != nil {
-		log.Printf("handleConnectTest: failed to load %s profile: %v", role, err)
+		s.logf(r, "handleConnectTest: failed to load %s profile: %v", role, err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -649,7 +648,7 @@ func (s *APIServer) handleConnectTest(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	ok, err := client.Connect(ctx)
 	if !ok {
-		log.Printf("handleConnectTest: %s connection failed for provider %s: %v", role, provider, err)
+		s.logf(r, "handleConnectTest: %s connection failed for provider %s: %v", role, provider, err)
 		code := ErrSourceConnectionFailed
 		if role == "target" {
 			code = ErrTargetConnectionFailed
@@ -684,7 +683,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: req.SourceRefreshToken,
 	})
 	if err != nil {
-		log.Printf("handleConnect: failed to load source profile: %v", err)
+		s.logf(r, "handleConnect: failed to load source profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -706,7 +705,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: req.TargetRefreshToken,
 	})
 	if err != nil {
-		log.Printf("handleConnect: failed to load target profile: %v", err)
+		s.logf(r, "handleConnect: failed to load target profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -733,7 +732,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !storage.IsValidProvider(req.SourceProvider) || !storage.IsValidProvider(req.TargetProvider) {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrProviderUnsupported})
 		return
 	}
 
@@ -747,7 +746,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	sourceOK, err := sourceClient.Connect(srcCtx)
 	srcCancel()
 	if !sourceOK {
-		log.Printf("handleConnect: source connection failed for provider %s: %v", req.SourceProvider, err)
+		s.logf(r, "handleConnect: source connection failed for provider %s: %v", req.SourceProvider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -766,7 +765,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	targetOK, err := targetClient.Connect(tgtCtx)
 	tgtCancel()
 	if !targetOK {
-		log.Printf("handleConnect: target connection failed for provider %s: %v", req.TargetProvider, err)
+		s.logf(r, "handleConnect: target connection failed for provider %s: %v", req.TargetProvider, err)
 		if errors.Is(err, storage.ErrMegaMFARequired) {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrMegaMFAUnsupported})
 			return
@@ -783,7 +782,7 @@ func (s *APIServer) handleConnect(w http.ResponseWriter, r *http.Request) {
 	defer listCancel()
 	files, err := sourceClient.GetDirectoryListing(listCtx, req.ResourceType, reqPath)
 	if err != nil {
-		log.Printf("handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
+		s.logf(r, "handleConnect: failed to list source files for path %s (provider %s): %v", reqPath, req.SourceProvider, err)
 		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrListFailed})
 		return
 	}
@@ -825,7 +824,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: req.SourceRefreshToken,
 	})
 	if err != nil {
-		log.Printf("handleStart: failed to load source profile: %v", err)
+		s.logf(r, "handleStart: failed to load source profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -847,7 +846,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: req.TargetRefreshToken,
 	})
 	if err != nil {
-		log.Printf("handleStart: failed to load target profile: %v", err)
+		s.logf(r, "handleStart: failed to load target profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -984,7 +983,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	active, err := db.CountActiveMigrationsForUser(s.db, userID)
 	if err != nil {
-		log.Printf("handleStart: failed to count active migrations for user %s: %v\n", userID, err)
+		s.logf(r, "handleStart: failed to count active migrations for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1066,7 +1065,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		migrationID, err = db.CreateMigration(s.db, m)
 	}
 	if err != nil {
-		log.Printf("Start migration error: failed to create migration or schedule: %v\n", err)
+		s.logf(r, "Start migration error: failed to create migration or schedule: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1078,7 +1077,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if req.ScheduledTime != "" {
-		log.Printf("Migration %s scheduled for %s\n", migrationID, scheduledAt.Format(time.RFC3339))
+		s.infof(r, "Migration %s scheduled for %s", migrationID, scheduledAt.Format(time.RFC3339))
 
 		writeJSON(w, http.StatusAccepted, map[string]interface{}{
 			"success":        true,
@@ -1101,7 +1100,7 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 	userID := auth.GetUserIDFromContext(r.Context())
 	list, err := db.GetMigrationsForUser(s.db, userID)
 	if err != nil {
-		log.Printf("Error listing migrations for user %s: %v\n", userID, err)
+		s.logf(r, "Error listing migrations for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1147,18 +1146,18 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 
 	initial, err := db.GetMigrationsForUser(s.db, userID)
 	if err != nil {
-		log.Printf("Migration stream initial load error for user %s: %v\n", userID, err)
+		s.logf(r, "Migration stream initial load error for user %s: %v\n", userID, err)
 		writeErrorEvent(ErrInternalError)
 		return
 	}
 	prev, err := json.Marshal(initial)
 	if err != nil {
-		log.Printf("Migration stream initial marshal error for user %s: %v\n", userID, err)
+		s.logf(r, "Migration stream initial marshal error for user %s: %v\n", userID, err)
 		writeErrorEvent(ErrInternalError)
 		return
 	}
 	if err := writeEvent(prev); err != nil {
-		log.Printf("Migration stream initial write error for user %s: %v\n", userID, err)
+		s.logf(r, "Migration stream initial write error for user %s: %v\n", userID, err)
 		return
 	}
 
@@ -1180,17 +1179,17 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 		case <-ticker.C:
 			list, err := db.GetMigrationsForUser(s.db, userID)
 			if err != nil {
-				log.Printf("Migration stream reload error for user %s: %v\n", userID, err)
+				s.logf(r, "Migration stream reload error for user %s: %v\n", userID, err)
 				return
 			}
 			cur, err := json.Marshal(list)
 			if err != nil {
-				log.Printf("Migration stream marshal error for user %s: %v\n", userID, err)
+				s.logf(r, "Migration stream marshal error for user %s: %v\n", userID, err)
 				return
 			}
 			if !bytes.Equal(cur, prev) {
 				if err := writeEvent(cur); err != nil {
-					log.Printf("Migration stream write error for user %s: %v\n", userID, err)
+					s.logf(r, "Migration stream write error for user %s: %v\n", userID, err)
 					return
 				}
 				prev = cur
@@ -1223,14 +1222,14 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 	// Mark it cancelled and broadcast before deleting its rows so active workers
 	// cancel their request contexts instead of continuing against deleted tasks.
 	if err = db.UpdateMigrationStatus(s.db, id, "CANCELLED", nil); err != nil {
-		log.Printf("Error cancelling migration %s before deletion: %v\n", id, err)
+		s.logf(r, "Error cancelling migration %s before deletion: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	if err = db.CancelPendingTasks(s.db, id); err != nil {
 		// Once the migration row is removed, workers cannot observe its CANCELLED
 		// status. Do not delete until all not-yet-running tasks are cancelled.
-		log.Printf("Failed to cancel pending tasks for migration %s before deletion: %v", id, err)
+		s.logf(r, "Failed to cancel pending tasks for migration %s before deletion: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1238,21 +1237,21 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 	if err = s.queue.PublishCancelEvent(r.Context(), id); err != nil {
 		// Do not remove the cancellation state while a worker may still be
 		// streaming. Retrying the delete will publish a fresh cancellation event.
-		log.Printf("Failed to publish cancel event for migration %s before deletion: %v", id, err)
+		s.logf(r, "Failed to publish cancel event for migration %s before deletion: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	err = db.DeleteMigrationCascade(s.db, id)
 	if err != nil {
-		log.Printf("Error deleting migration %s: %v\n", id, err)
+		s.logf(r, "Error deleting migration %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	err = db.DeleteSchedulesForTask(s.db, "migration", id)
 	if err != nil {
-		log.Printf("Warning: failed to delete schedules for migration %s: %v\n", id, err)
+		s.logf(r, "Warning: failed to delete schedules for migration %s: %v\n", id, err)
 	}
 
 	s.writeAudit(r, db.AuditMigrationDeleted, id, userID, nil)
@@ -1273,7 +1272,7 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		} else {
-			log.Printf("Error fetching migration %s: %v\n", id, err)
+			s.logf(r, "Error fetching migration %s: %v\n", id, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
 		return
@@ -1302,7 +1301,7 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		} else {
-			log.Printf("Error fetching migration %s for report: %v\n", id, err)
+			s.logf(r, "Error fetching migration %s for report: %v\n", id, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 		}
 		return
@@ -1315,7 +1314,7 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 
 	tasks, err := db.GetFailedTasksForReport(s.db, id)
 	if err != nil {
-		log.Printf("Download report error: failed to get report: %v\n", err)
+		s.logf(r, "Download report error: failed to get report: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1344,7 +1343,7 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 
 	indexErrs, err := db.GetIndexingErrorsForReport(s.db, id)
 	if err != nil {
-		log.Printf("Download report error: failed to get indexing errors: %v\n", err)
+		s.logf(r, "Download report error: failed to get indexing errors: %v\n", err)
 	} else {
 		for _, ie := range indexErrs {
 			_ = writer.Write([]string{
@@ -1384,7 +1383,7 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 	userID := auth.GetUserIDFromContext(r.Context())
 	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
 	if err != nil {
-		log.Printf("Error checking migration %s error-list ownership: %v", id, err)
+		s.logf(r, "Error checking migration %s error-list ownership: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1395,7 +1394,7 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 	limit, offset := parseErrorListPagination(r)
 	items, total, err := db.GetMigrationErrors(s.db, id, limit, offset)
 	if err != nil {
-		log.Printf("Error fetching migration %s errors: %v", id, err)
+		s.logf(r, "Error fetching migration %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -1415,7 +1414,7 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 func (s *APIServer) migrationDetailPayload(ctx context.Context, mig *db.Migration) map[string]interface{} {
 	activeFiles, err := db.GetActiveTaskPaths(s.db, ctx, mig.ID)
 	if err != nil {
-		log.Printf("Migration detail active paths error for %s: %v", mig.ID, err)
+		s.logfContext(ctx, "Migration detail active paths error for %s: %v", mig.ID, err)
 		activeFiles = nil
 	}
 	activeFile := ""
@@ -1454,17 +1453,17 @@ func (s *APIServer) migrationDetailPayload(ctx context.Context, mig *db.Migratio
 
 	stats, err := db.GetMigrationResourceStats(s.db, mig.ID)
 	if err != nil {
-		log.Printf("Migration detail resource stats error for %s: %v", mig.ID, err)
+		s.logfContext(ctx, "Migration detail resource stats error for %s: %v", mig.ID, err)
 		return payload
 	}
 	payload["resource_stats"] = stats
 	return payload
 }
 
-// acquireMigrationStream applies the shared SSE request and concurrent-stream
-// limits. List and detail streams deliberately consume the same per-user pool.
-func (s *APIServer) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
-	if !s.rateLimiter.Allow(r.Context(), "migration-stream", s.clientIP(r), streamRateLimit, streamRateWindow) {
+// acquireStream applies the shared SSE request and concurrent-stream limits.
+// All stream types intentionally consume the same per-user pool.
+func (s *APIServer) acquireStream(w http.ResponseWriter, r *http.Request, userID, rateLimitScope string) bool {
+	if !s.rateLimiter.Allow(r.Context(), rateLimitScope, s.clientIP(r), streamRateLimit, streamRateWindow) {
 		w.Header().Set("Retry-After", "15")
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return false
@@ -1480,6 +1479,14 @@ func (s *APIServer) acquireMigrationStream(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+func (s *APIServer) acquireMigrationStream(w http.ResponseWriter, r *http.Request, userID string) bool {
+	return s.acquireStream(w, r, userID, "migration-stream")
+}
+
+func (s *APIServer) acquireSyncStream(w http.ResponseWriter, r *http.Request, userID string) bool {
+	return s.acquireStream(w, r, userID, "sync-stream")
+}
+
 func (s *APIServer) releaseMigrationStream(userID string) {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
@@ -1487,6 +1494,12 @@ func (s *APIServer) releaseMigrationStream(userID string) {
 	if s.activeStreams[userID] <= 0 {
 		delete(s.activeStreams, userID)
 	}
+}
+
+// releaseSyncStream mirrors acquireSyncStream. Both stream types use the same
+// per-user pool, which is released by releaseMigrationStream.
+func (s *APIServer) releaseSyncStream(userID string) {
+	s.releaseMigrationStream(userID)
 }
 
 func isTerminalMigrationStatus(status string) bool {
@@ -1547,7 +1560,7 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 
 	previous, err := writePayload(mig)
 	if err != nil {
-		log.Printf("Migration detail stream initial payload error for %s: %v", id, err)
+		s.logf(r, "Migration detail stream initial payload error for %s: %v", id, err)
 		return
 	}
 	if err := writeEvent(previous); err != nil {
@@ -1578,7 +1591,7 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 			}
 			current, err := writePayload(mig)
 			if err != nil {
-				log.Printf("Migration detail stream payload error for %s: %v", id, err)
+				s.logf(r, "Migration detail stream payload error for %s: %v", id, err)
 				return
 			}
 			if !bytes.Equal(current, previous) {
@@ -1603,12 +1616,12 @@ func (s *APIServer) runGarbageCollector(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			log.Println("Running Garbage Collector for old migrations...")
+			s.loglnContext(ctx, "Running Garbage Collector for old migrations...")
 			count, err := db.DeleteOldMigrations(s.db)
 			if err != nil {
-				log.Printf("Garbage Collector error: %v\n", err)
+				s.logfContext(ctx, "Garbage Collector error: %v\n", err)
 			} else if count > 0 {
-				log.Printf("Garbage Collector cleaned up %d old migrations & task histories.\n", count)
+				s.logfContext(ctx, "Garbage Collector cleaned up %d old migrations & task histories.\n", count)
 			}
 		}
 	}

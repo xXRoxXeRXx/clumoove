@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/base64"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
@@ -24,14 +23,19 @@ type UpdateLanguageRequest struct {
 
 func (s *APIServer) handleUpdateLanguage(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, ErrUnauthorized)
+		return
+	}
 	var req UpdateLanguageRequest
-	if userID == "" || !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
-		if userID == "" {
-			writeError(w, http.StatusUnauthorized, ErrUnauthorized)
-		}
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
 		return
 	}
 	language := strings.ToLower(strings.TrimSpace(req.Language))
+	if language != "de" && language != "en" {
+		writeError(w, http.StatusBadRequest, ErrSettingInvalid)
+		return
+	}
 	if err := db.UpdateUserLanguage(s.db, userID, language); err != nil {
 		writeError(w, http.StatusBadRequest, ErrInvalidBody)
 		return
@@ -58,7 +62,7 @@ func (s *APIServer) handleUpdateProfile(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := db.UpdateUserDisplayName(s.db, userID, req.DisplayName); err != nil {
-		log.Printf("handleUpdateProfile: failed to update display name: %v\n", err)
+		s.logf(r, "handleUpdateProfile: failed to update display name: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -97,7 +101,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 
 	u, err := db.GetUserByID(s.db, userID)
 	if err != nil {
-		log.Printf("handleChangePassword: user not found: %v\n", err)
+		s.logf(r, "handleChangePassword: user not found: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -111,19 +115,19 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 
 	newHash, err := auth.HashPassword(req.NewPassword)
 	if err != nil {
-		log.Printf("handleChangePassword: hash error: %v\n", err)
+		s.logf(r, "handleChangePassword: hash error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if _, err := s.db.Exec(`UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, newHash, userID); err != nil {
-		log.Printf("handleChangePassword: update error: %v\n", err)
+		s.logf(r, "handleChangePassword: update error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	if err := db.DeleteAllRefreshTokensForUser(s.db, userID); err != nil {
-		log.Printf("handleChangePassword: failed to revoke refresh tokens for user %s: %v\n", userID, err)
+		s.logf(r, "handleChangePassword: failed to revoke refresh tokens for user %s: %v\n", userID, err)
 	}
 
 	s.writeAudit(r, db.AuditSettingUpdated, "password", userID, map[string]interface{}{"type": "password_change", "forced": mustChange})
@@ -131,7 +135,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 	if mustChange {
 		rotated, lerr := db.GetUserByID(s.db, userID)
 		if lerr != nil {
-			log.Printf("handleChangePassword: failed to load user for token rotation: %v\n", lerr)
+			s.logf(r, "handleChangePassword: failed to load user for token rotation: %v\n", lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
@@ -140,7 +144,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		if rotated.TotpEnabled {
 			tempToken, terr := auth.Generate2FATempToken(rotated, s.jwtSecret)
 			if terr != nil {
-				log.Printf("handleChangePassword: failed to issue 2FA temp token: %v\n", terr)
+				s.logf(r, "handleChangePassword: failed to issue 2FA temp token: %v\n", terr)
 				writeError(w, http.StatusInternalServerError, ErrInternalError)
 				return
 			}
@@ -217,7 +221,7 @@ func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.UpdateUserAvatar(s.db, userID, data, mime); err != nil {
-		log.Printf("handleSetAvatar: failed to update avatar: %v\n", err)
+		s.logf(r, "handleSetAvatar: failed to update avatar: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -236,7 +240,7 @@ func (s *APIServer) handleDeleteAvatar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.DeleteUserAvatar(s.db, userID); err != nil {
-		log.Printf("handleDeleteAvatar: failed to delete avatar: %v\n", err)
+		s.logf(r, "handleDeleteAvatar: failed to delete avatar: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -247,7 +251,7 @@ func (s *APIServer) handleDeleteAvatar(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	val, err := db.GetSetting(s.db, "registrations_enabled")
 	if err != nil {
-		log.Printf("handleGetSettings: failed to fetch registrations_enabled: %v\n", err)
+		s.logf(r, "handleGetSettings: failed to fetch registrations_enabled: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -257,7 +261,7 @@ func (s *APIServer) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 
 	needsSetup, err := db.IsSetupRequired(s.db)
 	if err != nil {
-		log.Printf("handleGetSettings: failed to check setup status: %v\n", err)
+		s.logf(r, "handleGetSettings: failed to check setup status: %v\n", err)
 		needsSetup = false
 	}
 
@@ -296,7 +300,7 @@ func (s *APIServer) handleUpdateSetting(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := db.SetSetting(s.db, req.Key, req.Value); err != nil {
-		log.Printf("handleUpdateSetting: failed to set setting: %v\n", err)
+		s.logf(r, "handleUpdateSetting: failed to set setting: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -371,7 +375,7 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusConflict, ErrEmailAlreadyExists)
 			return
 		}
-		log.Printf("Admin create user error: %v\n", err)
+		s.logf(r, "Admin create user error: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -407,7 +411,7 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
 		}
-		log.Printf("Admin suspend %s error: %v\n", id, err)
+		s.logf(r, "Admin suspend %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -415,7 +419,7 @@ func (s *APIServer) handleAdminSuspendUser(w http.ResponseWriter, r *http.Reques
 	for _, syncJobID := range syncJobIDs {
 		s.syncEngine.CancelPass(syncJobID)
 		if err := s.queue.PublishSyncCancelEvent(r.Context(), syncJobID); err != nil {
-			log.Printf("Warning: failed to publish cancel event for suspended user's sync job %s: %v", syncJobID, err)
+			s.logf(r, "Warning: failed to publish cancel event for suspended user's sync job %s: %v", syncJobID, err)
 			failedSyncCancelEvents = append(failedSyncCancelEvents, syncJobID)
 		}
 	}
@@ -447,7 +451,7 @@ func (s *APIServer) handleAdminReactivateUser(w http.ResponseWriter, r *http.Req
 	}
 
 	if err := db.UpdateUserActive(s.db, id, true); err != nil {
-		log.Printf("Admin reactivate %s error: %v\n", id, err)
+		s.logf(r, "Admin reactivate %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -478,7 +482,7 @@ func (s *APIServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
 		}
-		log.Printf("Admin delete %s error: %v\n", id, err)
+		s.logf(r, "Admin delete %s error: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -536,7 +540,7 @@ func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusConflict, ErrLastAdmin)
 			return
 		}
-		log.Printf("Admin role change %s: %v\n", id, err)
+		s.logf(r, "Admin role change %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -578,7 +582,7 @@ func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request)
 		Query:  search,
 	})
 	if err != nil {
-		log.Printf("Admin list users: %v\n", err)
+		s.logf(r, "Admin list users: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -598,7 +602,7 @@ func (s *APIServer) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 
 	stats, err := db.GetGlobalStats(s.db)
 	if err != nil {
-		log.Printf("Admin stats: %v\n", err)
+		s.logf(r, "Admin stats: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -622,7 +626,7 @@ func (s *APIServer) handleAdminListMigrations(w http.ResponseWriter, r *http.Req
 
 	migrations, total, err := db.ListAllMigrations(s.db, db.MigrationListParams{Page: page, Limit: limit})
 	if err != nil {
-		log.Printf("Admin list migrations: %v\n", err)
+		s.logf(r, "Admin list migrations: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -652,7 +656,7 @@ func (s *APIServer) handleAdminListSyncs(w http.ResponseWriter, r *http.Request)
 
 	syncs, total, err := db.ListAllSyncJobs(s.db, db.SyncListParams{Page: page, Limit: limit})
 	if err != nil {
-		log.Printf("Admin list syncs: %v\n", err)
+		s.logf(r, "Admin list syncs: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -690,7 +694,7 @@ func (s *APIServer) handleAdminAuditLog(w http.ResponseWriter, r *http.Request) 
 		To:     q.Get("to"),
 	})
 	if err != nil {
-		log.Printf("Admin audit log: %v\n", err)
+		s.logf(r, "Admin audit log: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

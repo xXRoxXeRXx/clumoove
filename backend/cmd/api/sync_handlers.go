@@ -1,13 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
@@ -18,6 +18,84 @@ import (
 	"backend/internal/queue"
 	"backend/internal/storage"
 )
+
+// requireSyncOwnership deliberately maps a missing job and a job belonging to
+// another account to the same response. This prevents sync IDs being used for
+// account enumeration while keeping database failures distinguishable.
+func (s *APIServer) requireSyncOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
+	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return false
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+		return false
+	}
+	return true
+}
+
+type syncBrowseCredentials struct {
+	provider string
+	url      string
+	username string
+	password string
+}
+
+// syncJobBrowseCredentials decrypts only the credentials needed for a browse
+// request and refreshes an expiring OAuth access token before it is used.
+func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role string, job *db.SyncJob) (syncBrowseCredentials, error) {
+	creds := syncBrowseCredentials{
+		provider: job.SourceProvider,
+		url:      job.SourceURL,
+		username: job.SourceUsername,
+	}
+	passwordEncrypted := job.SourcePasswordEncrypted
+	refreshEncrypted := job.SourceRefreshTokenEncrypted.String
+	expiresAt := job.SourceTokenExpiresAt
+	if role == "target" {
+		creds.provider = job.TargetProvider
+		creds.url = job.TargetURL
+		creds.username = job.TargetUsername
+		passwordEncrypted = job.TargetPasswordEncrypted
+		refreshEncrypted = job.TargetRefreshTokenEncrypted.String
+		expiresAt = job.TargetTokenExpiresAt
+	}
+
+	if oauth.IsProvider(creds.provider) && expiresAt.Valid && !time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) && refreshEncrypted != "" {
+		refreshToken, err := crypto.Decrypt(refreshEncrypted, s.encryptionKey)
+		if err != nil {
+			return syncBrowseCredentials{}, err
+		}
+		defer crypto.ZeroString(&refreshToken)
+		if refreshToken != "" {
+			token, err := oauth.RefreshToken(ctx, creds.provider, refreshToken)
+			if err == nil && token != nil && token.AccessToken != "" {
+				creds.password = token.AccessToken
+				accessEncrypted, accessErr := crypto.Encrypt(token.AccessToken, s.encryptionKey)
+				newRefreshEncrypted, refreshErr := crypto.Encrypt(token.RefreshToken, s.encryptionKey)
+				if accessErr == nil && refreshErr == nil {
+					expiresIn := token.ExpiresIn
+					if expiresIn <= 0 {
+						expiresIn = 3600
+					}
+					if err := db.UpdateSyncJobOAuthTokens(s.db, id, role, accessEncrypted, newRefreshEncrypted, time.Now().Add(time.Duration(expiresIn)*time.Second), refreshEncrypted); err != nil {
+						return syncBrowseCredentials{}, err
+					}
+				}
+			}
+		}
+	}
+
+	if creds.password == "" && passwordEncrypted != "" {
+		password, err := crypto.Decrypt(passwordEncrypted, s.encryptionKey)
+		if err != nil {
+			return syncBrowseCredentials{}, err
+		}
+		creds.password = password
+	}
+	return creds, nil
+}
 
 type createSyncRequest struct {
 	SourceProfileID      string   `json:"source_profile_id,omitempty"`
@@ -53,7 +131,7 @@ func (s *APIServer) handleListSyncs(w http.ResponseWriter, r *http.Request) {
 
 	jobs, err := db.GetSyncJobsForUser(s.db, userID)
 	if err != nil {
-		log.Printf("Error fetching sync jobs for user %s: %v\n", userID, err)
+		s.logf(r, "Error fetching sync jobs for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -90,7 +168,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: req.SourceRefreshToken,
 	})
 	if err != nil {
-		log.Printf("handleCreateSync: failed to load source profile: %v", err)
+		s.logf(r, "handleCreateSync: failed to load source profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -112,7 +190,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: req.TargetRefreshToken,
 	})
 	if err != nil {
-		log.Printf("handleCreateSync: failed to load target profile: %v", err)
+		s.logf(r, "handleCreateSync: failed to load target profile: %v", err)
 		writeError(w, http.StatusNotFound, ErrProfileNotFound)
 		return
 	}
@@ -281,7 +359,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 	jobID, err := db.CreateSyncJobAndSchedule(s.db, job, sched)
 	if err != nil {
-		log.Printf("Failed to create sync job and schedule: %v\n", err)
+		s.logf(r, "Failed to create sync job and schedule: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -312,13 +390,7 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -355,19 +427,13 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
 	claimed, err := s.syncEngine.StartSyncPass(s.backgroundCtx, id)
 	if err != nil {
-		log.Printf("[Sync] Failed to claim sync job %s: %v", id, err)
+		s.logf(r, "[Sync] Failed to claim sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -399,13 +465,7 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 
 	id := r.PathValue("id")
 
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -414,7 +474,7 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 	emptyErr := ""
 	paused, err := db.PauseSyncJob(s.db, id, &emptyErr)
 	if err != nil {
-		log.Printf("Failed to pause sync job %s: %v", id, err)
+		s.logf(r, "Failed to pause sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -422,15 +482,18 @@ func (s *APIServer) handlePauseSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, ErrSyncInvalidState)
 		return
 	}
-	// Deactivate schedule
-	_, _ = s.db.Exec(`UPDATE schedules SET is_active = FALSE WHERE task_type = 'sync' AND task_id = $1`, id)
+	if err := db.DeactivateSchedulesForTask(s.db, "sync", id); err != nil {
+		s.logf(r, "failed to deactivate schedules for paused sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 
 	if _, err := db.CancelOpenSyncTasksForPause(s.db, id); err != nil {
-		log.Printf("Warning: failed to cancel open tasks for paused sync job %s: %v", id, err)
+		s.logf(r, "Warning: failed to cancel open tasks for paused sync job %s: %v", id, err)
 	}
 	s.syncEngine.CancelPass(id)
 	if err := s.queue.PublishSyncCancelEvent(r.Context(), id); err != nil {
-		log.Printf("Warning: failed to publish cancel event for sync job %s: %v", id, err)
+		s.logf(r, "Warning: failed to publish cancel event for sync job %s: %v", id, err)
 	}
 
 	s.writeAudit(r, db.AuditSyncPaused, id, userID, nil)
@@ -447,13 +510,7 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 
 	id := r.PathValue("id")
 
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -462,14 +519,14 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 	// Wait for the cancelled coordinator on any API instance to exit before
 	// publishing a new INDEXING claim; otherwise it could finish stale writes.
 	if err := s.syncEngine.WaitForPassDrain(r.Context(), id); err != nil {
-		log.Printf("Failed waiting for sync job %s to drain: %v", id, err)
+		s.logf(r, "Failed waiting for sync job %s to drain: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	emptyErr := ""
 	resumed, err := db.ResumeSyncJob(s.db, id, &emptyErr)
 	if err != nil {
-		log.Printf("Failed to resume sync job %s: %v", id, err)
+		s.logf(r, "Failed to resume sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -482,11 +539,15 @@ func (s *APIServer) handleResumeSync(w http.ResponseWriter, r *http.Request) {
 	// instance race or a transient DB error, the next scheduler tick safely
 	// starts the already-resumed IDLE job instead of reporting a false failure.
 	nextRun := time.Now()
-	_, _ = s.db.Exec(`UPDATE schedules SET is_active = TRUE, next_run_at = $1 WHERE task_type = 'sync' AND task_id = $2`, nextRun, id)
+	if err := db.ReactivateSchedulesForTask(s.db, "sync", id, nextRun); err != nil {
+		s.logf(r, "failed to reactivate schedules for resumed sync job %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
 	if startErr != nil {
-		log.Printf("Deferred resumed sync job %s after immediate start error: %v", id, startErr)
+		s.warnf(r, "Deferred resumed sync job %s after immediate start error: %v", id, startErr)
 	} else if !claimed {
-		log.Printf("Deferred resumed sync job %s because another instance claimed it", id)
+		s.warnf(r, "Deferred resumed sync job %s because another instance claimed it", id)
 	}
 
 	s.writeAudit(r, db.AuditSyncResumed, id, userID, nil)
@@ -503,13 +564,7 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 
 	id := r.PathValue("id")
 
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -517,12 +572,12 @@ func (s *APIServer) handleDeleteSync(w http.ResponseWriter, r *http.Request) {
 	// the goroutine does not keep operating against a deleted job.
 	s.syncEngine.CancelPass(id)
 	if err := s.queue.PublishSyncCancelEvent(r.Context(), id); err != nil {
-		log.Printf("Warning: failed to publish cancel event for sync job %s: %v", id, err)
+		s.logf(r, "Warning: failed to publish cancel event for sync job %s: %v", id, err)
 	}
 
-	err = db.DeleteSyncJobCascade(s.db, id)
+	err := db.DeleteSyncJobCascade(s.db, id)
 	if err != nil {
-		log.Printf("Failed to delete sync job: %v\n", err)
+		s.logf(r, "Failed to delete sync job: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -541,13 +596,7 @@ func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 
 	id := r.PathValue("id")
 
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -595,20 +644,13 @@ func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
 		return
 	}
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		log.Printf("Error checking sync job %s error-list ownership: %v", id, err)
-		writeError(w, http.StatusInternalServerError, ErrInternalError)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 	limit, offset := parseErrorListPagination(r)
 	items, total, err := db.GetSyncErrors(s.db, id, limit, offset)
 	if err != nil {
-		log.Printf("Error fetching sync job %s errors: %v", id, err)
+		s.logf(r, "Error fetching sync job %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -623,31 +665,10 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rate-limit connection attempts (mirrors handleMigrationStream).
-	if !s.rateLimiter.Allow(r.Context(), "sync-stream", s.clientIP(r), streamRateLimit, streamRateWindow) {
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+	if !s.acquireSyncStream(w, r, userID) {
 		return
 	}
-
-	// Cap concurrent streams per user to prevent unlimited DB-polling goroutines.
-	s.streamMu.Lock()
-	if s.activeStreams[userID] >= maxStreamsPerUser {
-		s.streamMu.Unlock()
-		w.Header().Set("Retry-After", "15")
-		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
-		return
-	}
-	s.activeStreams[userID]++
-	s.streamMu.Unlock()
-	defer func() {
-		s.streamMu.Lock()
-		s.activeStreams[userID]--
-		if s.activeStreams[userID] <= 0 {
-			delete(s.activeStreams, userID)
-		}
-		s.streamMu.Unlock()
-	}()
+	defer s.releaseSyncStream(userID)
 
 	// Disable the server write deadline for this long-lived connection.
 	rc := http.NewResponseController(w)
@@ -710,7 +731,7 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Only push to client when data actually changed
-			if string(data) == string(lastJSON) {
+			if bytes.Equal(data, lastJSON) {
 				continue
 			}
 			lastJSON = data
@@ -762,9 +783,7 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -780,7 +799,7 @@ func (s *APIServer) handleSetSyncThreads(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := db.UpdateSyncJobThreads(s.db, id, threads); err != nil {
-		log.Printf("Error updating threads for sync job %s: %v", id, err)
+		s.logf(r, "Error updating threads for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -801,9 +820,7 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 	}
 
 	userID := auth.GetUserIDFromContext(r.Context())
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil || !owned {
-		writeError(w, http.StatusForbidden, ErrSyncNotOwned)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -817,14 +834,14 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err := db.UpdateSyncJobBandwidthLimit(s.db, id, req.LimitMbps); err != nil {
-		log.Printf("Error updating bandwidth limit for sync job %s: %v", id, err)
+		s.logf(r, "Error updating bandwidth limit for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 
 	job, err := db.GetSyncJob(s.db, id)
 	if err != nil {
-		log.Printf("Error loading sync job %s after bandwidth update: %v", id, err)
+		s.logf(r, "Error loading sync job %s after bandwidth update: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -840,7 +857,7 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		SyncJobID:          id,
 		BandwidthLimitMbps: req.LimitMbps,
 	}); err != nil {
-		log.Printf("Warning: failed to publish bandwidth change for sync job %s: %v", id, err)
+		s.logf(r, "Warning: failed to publish bandwidth change for sync job %s: %v", id, err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
@@ -871,13 +888,7 @@ func (s *APIServer) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Requ
 	}
 
 	id := r.PathValue("id")
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
@@ -893,7 +904,7 @@ func (s *APIServer) handleUpdateSyncSchedule(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := db.UpdateSyncJobInterval(s.db, id, req.IntervalMinutes); err != nil {
-		log.Printf("Error updating sync schedule for job %s: %v", id, err)
+		s.logf(r, "Error updating sync schedule for job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
@@ -915,19 +926,17 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 	}
 
 	id := r.PathValue("id")
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	if id == "" {
+		writeError(w, http.StatusBadRequest, ErrSyncIdMissing)
 		return
 	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
 	job, err := db.GetSyncJob(s.db, id)
 	if err != nil {
-		log.Printf("Error getting sync job %s for browse: %v", id, err)
+		s.logf(r, "Error getting sync job %s for browse: %v", id, err)
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
@@ -949,79 +958,19 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var provider, urlStr, username, passEnc, refreshEnc string
-	var tokenExpiresAt sql.NullTime
-
-	if role == "target" {
-		provider = job.TargetProvider
-		urlStr = job.TargetURL
-		username = job.TargetUsername
-		passEnc = job.TargetPasswordEncrypted
-		refreshEnc = job.TargetRefreshTokenEncrypted.String
-		tokenExpiresAt = job.TargetTokenExpiresAt
-	} else {
-		provider = job.SourceProvider
-		urlStr = job.SourceURL
-		username = job.SourceUsername
-		passEnc = job.SourcePasswordEncrypted
-		refreshEnc = job.SourceRefreshTokenEncrypted.String
-		tokenExpiresAt = job.SourceTokenExpiresAt
+	creds, err := s.syncJobBrowseCredentials(r.Context(), id, role, job)
+	if err != nil {
+		s.logf(r, "handleBrowseSyncJob: failed to load credentials for job %s role %s: %v", id, role, err)
+		errCode := ErrSourceConnectionFailed
+		if role == "target" {
+			errCode = ErrTargetConnectionFailed
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
+		return
 	}
+	defer crypto.ZeroString(&creds.password)
 
-	var password string
-	if oauth.IsProvider(provider) {
-		shouldRefresh := tokenExpiresAt.Valid && !time.Now().Before(tokenExpiresAt.Time.Add(-2*time.Minute))
-		if shouldRefresh && refreshEnc != "" {
-			refreshToken, derr := crypto.Decrypt(refreshEnc, s.encryptionKey)
-			if derr == nil && refreshToken != "" {
-				tokenResp, rerr := oauth.RefreshToken(r.Context(), provider, refreshToken)
-				crypto.ZeroString(&refreshToken)
-				if rerr == nil && tokenResp != nil {
-					password = tokenResp.AccessToken
-					newAccessEnc, e1 := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
-					newRefreshEnc, e2 := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
-					if e1 == nil && e2 == nil {
-						expiresIn := tokenResp.ExpiresIn
-						if expiresIn <= 0 {
-							expiresIn = 3600
-						}
-						newExpiresAt := time.Now().Add(time.Duration(expiresIn) * time.Second)
-						if uerr := db.UpdateSyncJobOAuthTokens(s.db, id, role, newAccessEnc, newRefreshEnc, newExpiresAt, refreshEnc); uerr != nil {
-							log.Printf("handleBrowseSyncJob: failed to persist refreshed OAuth tokens for job %s role %s: %v", id, role, uerr)
-						}
-					}
-				}
-			}
-		}
-		if password == "" && passEnc != "" {
-			var derr error
-			password, derr = crypto.Decrypt(passEnc, s.encryptionKey)
-			if derr != nil {
-				log.Printf("handleBrowseSyncJob: failed to decrypt token for job %s role %s: %v", id, role, derr)
-				errCode := ErrSourceConnectionFailed
-				if role == "target" {
-					errCode = ErrTargetConnectionFailed
-				}
-				writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
-				return
-			}
-		}
-	} else if passEnc != "" {
-		var derr error
-		password, derr = crypto.Decrypt(passEnc, s.encryptionKey)
-		if derr != nil {
-			log.Printf("handleBrowseSyncJob: failed to decrypt password for job %s role %s: %v", id, role, derr)
-			errCode := ErrSourceConnectionFailed
-			if role == "target" {
-				errCode = ErrTargetConnectionFailed
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
-			return
-		}
-	}
-	defer crypto.ZeroString(&password)
-
-	if !storage.IsValidProvider(provider) {
+	if !storage.IsValidProvider(creds.provider) {
 		errCode := ErrSourceUrlInvalid
 		if role == "target" {
 			errCode = ErrTargetUrlInvalid
@@ -1031,9 +980,9 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 	}
 
 	browseCtx := storage.WithLocalUserScope(r.Context(), userID)
-	client, err := storage.NewProvider(browseCtx, provider, urlStr, username, password)
+	client, err := storage.NewProvider(browseCtx, creds.provider, creds.url, creds.username, creds.password)
 	if err != nil {
-		log.Printf("handleBrowseSyncJob: NewProvider failed for provider %s: %v", provider, err)
+		s.logf(r, "handleBrowseSyncJob: NewProvider failed for provider %s: %v", creds.provider, err)
 		errCode := ErrSourceUrlInvalid
 		if role == "target" {
 			errCode = ErrTargetUrlInvalid
@@ -1048,7 +997,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 
 	ok, err := client.Connect(ctx)
 	if !ok {
-		log.Printf("handleBrowseSyncJob: connection failed for provider %s: %v", provider, err)
+		s.logf(r, "handleBrowseSyncJob: connection failed for provider %s: %v", creds.provider, err)
 		errCode := ErrSourceConnectionFailed
 		if role == "target" {
 			errCode = ErrTargetConnectionFailed
@@ -1059,7 +1008,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 
 	items, err := client.GetDirectoryListing(ctx, resourceType, reqPath)
 	if err != nil {
-		log.Printf("handleBrowseSyncJob: failed to list %s for path %s (provider %s): %v", resourceType, reqPath, provider, err)
+		s.logf(r, "handleBrowseSyncJob: failed to list %s for path %s (provider %s): %v", resourceType, reqPath, creds.provider, err)
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(ErrListFailed)})
 		return
 	}
@@ -1086,19 +1035,13 @@ func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 	}
 
 	id := r.PathValue("id")
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
-		return
-	}
-	if !owned {
-		writeError(w, http.StatusNotFound, ErrSyncNotFound)
+	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
 
 	job, err := db.GetSyncJob(s.db, id)
 	if err != nil {
-		log.Printf("Error getting sync job %s for scope update: %v", id, err)
+		s.logf(r, "Error getting sync job %s for scope update: %v", id, err)
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}
@@ -1132,7 +1075,7 @@ func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusConflict, ErrSyncInvalidState)
 			return
 		}
-		log.Printf("Error updating scope for sync job %s: %v", id, err)
+		s.logf(r, "Error updating scope for sync job %s: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}

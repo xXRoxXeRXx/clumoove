@@ -141,6 +141,28 @@ func DeactivateSchedule(db *sql.DB, id string) error {
 	return err
 }
 
+// DeactivateSchedulesForTask prevents a paused job from being triggered by
+// the scheduler while preserving its schedule for a later resume.
+func DeactivateSchedulesForTask(db *sql.DB, taskType, taskID string) error {
+	_, err := db.Exec(`
+		UPDATE schedules
+		SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+		WHERE task_type = $1 AND task_id = $2
+	`, taskType, taskID)
+	return err
+}
+
+// ReactivateSchedulesForTask enables a job's existing schedules and makes
+// them due at nextRunAt after a successful resume.
+func ReactivateSchedulesForTask(db *sql.DB, taskType, taskID string, nextRunAt time.Time) error {
+	_, err := db.Exec(`
+		UPDATE schedules
+		SET is_active = TRUE, next_run_at = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE task_type = $2 AND task_id = $3
+	`, nextRunAt, taskType, taskID)
+	return err
+}
+
 func DeleteSchedule(db *sql.DB, id string) error {
 	query := `DELETE FROM schedules WHERE id = $1`
 	_, err := db.Exec(query, id)

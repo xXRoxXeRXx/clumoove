@@ -27,7 +27,12 @@ func oauthExpiry(seconds int) time.Time {
 
 func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request) {
 	id, userID := r.PathValue("id"), auth.GetUserIDFromContext(r.Context())
-	if ok, _ := db.VerifyMigrationOwnership(s.db, id, userID); !ok {
+	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !owned {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
@@ -86,8 +91,11 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 
 func (s *APIServer) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 	id, userID := r.PathValue("id"), auth.GetUserIDFromContext(r.Context())
+	if !s.requireSyncOwnership(w, r, id, userID) {
+		return
+	}
 	job, err := db.GetSyncJob(s.db, id)
-	if err != nil || job.UserID != userID {
+	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
 	}

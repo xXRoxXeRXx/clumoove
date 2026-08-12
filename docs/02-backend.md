@@ -28,6 +28,8 @@ Responsibilities (started in `main()`):
   - `sched.Run(ctx)` — the Core Scheduler Engine.
 - Graceful shutdown on `SIGINT`/`SIGTERM` (5-second window).
 
+- `server.runGarbageCollector` deletes terminal migrations and their cascaded task histories after 30 days; it runs hourly and stops with the API context.
+
 Key server struct fields: `db`, `queue`, `indexer`, `encryptionKey`, `jwtSecret`, `rateLimiter`,
 `activeStreams`, `trustedProxy`.
 
