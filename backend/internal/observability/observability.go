@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -22,14 +23,31 @@ import (
 
 type contextKey struct{}
 
-var sensitiveName = regexp.MustCompile(`(?i)(authorization|bearer|token|access_token|refresh_token|password|secret|api_key|cookie|state|code|signature|sig|credential|host_key)\s*[:=]\s*[^\s,&]+`)
+var sensitiveName = regexp.MustCompile(`(?i)(^|[^a-z0-9_-])([a-z0-9_-]+)\s*[:=]\s*[^\s,&]+`)
+var bearerToken = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,&]+`)
 var urlValue = regexp.MustCompile(`https?://[^\s"']+`)
 var emailValue = regexp.MustCompile(`(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b`)
-var pathValue = regexp.MustCompile(`(?:[A-Za-z]:)?/[A-Za-z0-9._~%+@=-]+(?:/[A-Za-z0-9._~%+@=-]+)+`)
+
+// pathValue intentionally recognizes only rooted POSIX and drive-qualified
+// Windows paths. Bare filenames and relative values are ambiguous with normal
+// operational data, so callers must not rely on message redaction for those.
+var pathValue = regexp.MustCompile(`(?i)(?:[a-z]:[\\/]|/)[a-z._~@][a-z0-9._~%+@=-]*(?:[\\/][a-z0-9._~%+@=-]+)*`)
 
 // sensitiveKeys are attribute keys whose value is always replaced, regardless
-// of log level, because they carry secret material.
-var sensitiveKeys = []string{"token", "secret", "password", "cookie", "credential", "authorization", "state", "code", "sig", "signature", "host_key"}
+// of log level, because they carry secret material. Add non-secret labels that
+// contain one of these fragments to safeSensitiveFragmentKeys.
+var sensitiveKeys = []string{"token", "secret", "password", "cookie", "credential", "authorization", "state", "code", "sig", "signature", "host_key", "api_key"}
+
+// safeSensitiveFragmentKeys are operational labels that happen to contain a
+// sensitive fragment but never contain the corresponding secret value.
+var safeSensitiveFragmentKeys = map[string]struct{}{
+	"token_type":      {},
+	"error_code":      {},
+	"error_kind":      {},
+	"sync_state":      {},
+	"migration_state": {},
+	"postal_code":     {},
+}
 
 // Configure installs the process-wide JSON logger. An invalid LOG_LEVEL is a
 // startup error so deployments cannot silently run at an unexpected verbosity.
@@ -39,8 +57,9 @@ func Configure(service string) (*slog.Logger, error) {
 		return nil, err
 	}
 	attrs := []slog.Attr{slog.String("service", service)}
-	// Operator-defined deployment labels are not secrets and must not be
-	// redacted, otherwise the correlation identifiers become unusable.
+	// Operator-defined deployment labels are not secret attributes. Their
+	// values still pass through normal message redaction if they resemble paths
+	// or other personal metadata.
 	if value := os.Getenv("INSTANCE_ID"); value != "" {
 		attrs = append(attrs, slog.String("instance_id", value))
 	}
@@ -90,7 +109,14 @@ func redactCore(value string) string {
 		parsed.Fragment = ""
 		return parsed.String()
 	})
-	return sensitiveName.ReplaceAllString(value, "$1=[redacted]")
+	value = bearerToken.ReplaceAllString(value, "$1 [redacted]")
+	return sensitiveName.ReplaceAllStringFunc(value, func(raw string) string {
+		parts := sensitiveName.FindStringSubmatch(raw)
+		if len(parts) != 3 || !isSensitiveKey(parts[2]) {
+			return raw
+		}
+		return parts[1] + parts[2] + "=[redacted]"
+	})
 }
 
 func parseLevel(value string) (slog.Level, error) {
@@ -116,23 +142,38 @@ func IsDebugEnabled(ctx context.Context) bool {
 
 // NewRequestID returns a server-generated UUIDv4-like correlation identifier.
 func NewRequestID() string {
+	return newRequestID(rand.Read, time.Now)
+}
+
+func newRequestID(readRandom func([]byte) (int, error), now func() time.Time) string {
 	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return fmt.Sprintf("request-%d", time.Now().UnixNano())
+	if _, err := readRandom(bytes); err != nil {
+		// Preserve the UUID shape for downstream log and header consumers even
+		// if the operating system entropy source is temporarily unavailable.
+		binary.BigEndian.PutUint64(bytes[8:], uint64(now().UnixNano()))
 	}
 	bytes[6] = (bytes[6] & 0x0f) | 0x40
 	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	return formatRequestID(bytes)
+}
+
+func formatRequestID(bytes []byte) string {
 	encoded := hex.EncodeToString(bytes)
 	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:]
 }
 
 func WithLogger(ctx context.Context, logger *slog.Logger) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return context.WithValue(ctx, contextKey{}, logger)
 }
 
 func Logger(ctx context.Context) *slog.Logger {
-	if logger, ok := ctx.Value(contextKey{}).(*slog.Logger); ok && logger != nil {
-		return logger
+	if ctx != nil {
+		if logger, ok := ctx.Value(contextKey{}).(*slog.Logger); ok && logger != nil {
+			return logger
+		}
 	}
 	return slog.Default()
 }
@@ -206,8 +247,8 @@ func errorKindFromTypedError(err error) string {
 	return ""
 }
 
-// httpStatusFromError extracts an HTTP status previously attached to the error
-// via the standard errors.Join / fmt.Errorf conventions used across handlers.
+// errorKindFromHTTP extracts an HTTP status from errors that expose one, such
+// as provider failures, before falling back to message-text classification.
 func errorKindFromHTTP(err error) string {
 	type httpStatuser interface{ HTTPStatus() int }
 	var hs httpStatuser
@@ -249,7 +290,9 @@ func errorKindFromMessage(msg string) string {
 		return "conflict"
 	case strings.Contains(lower, "rate limit"), strings.Contains(lower, "too many requests"), strings.Contains(lower, "throttled"):
 		return "rate_limited"
-	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "unauthenticated"), strings.Contains(lower, "invalid token"), strings.Contains(lower, "forbidden"), strings.Contains(lower, "access denied"):
+	case strings.Contains(lower, "forbidden"), strings.Contains(lower, "access denied"), strings.Contains(lower, "permission denied"):
+		return "authorization"
+	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "unauthenticated"), strings.Contains(lower, "invalid token"):
 		return "authentication"
 	case strings.Contains(lower, "deadline"), strings.Contains(lower, "timeout"), strings.Contains(lower, "timed out"):
 		return "timeout"
@@ -287,26 +330,67 @@ func (w legacyWriter) Write(data []byte) (int, error) {
 	if msg == "" {
 		return len(data), nil
 	}
-	w.logger.Info("legacy_log", slog.String("component", "legacy"), slog.String("message", Redact(msg)))
+	ctx := context.Background()
+	debug := w.logger.Enabled(ctx, slog.LevelDebug)
+	attrs := []slog.Attr{slog.String("component", "legacy"), slog.String("message", redactMessage(msg, debug))}
+	// Legacy log.Printf calls have no severity. Emit them at DEBUG when available
+	// so its personal-metadata policy is honored; otherwise use the lowest
+	// enabled operational level so diagnostics remain visible at WARN or ERROR.
+	switch {
+	case debug:
+		w.logger.LogAttrs(ctx, slog.LevelDebug, "legacy_log", attrs...)
+	case w.logger.Enabled(ctx, slog.LevelInfo):
+		w.logger.LogAttrs(ctx, slog.LevelInfo, "legacy_log", attrs...)
+	case w.logger.Enabled(ctx, slog.LevelWarn):
+		w.logger.LogAttrs(ctx, slog.LevelWarn, "legacy_log", attrs...)
+	default:
+		w.logger.LogAttrs(ctx, slog.LevelError, "legacy_log", attrs...)
+	}
 	return len(data), nil
 }
 
-type redactingHandler struct{ next slog.Handler }
+type redactingHandler struct {
+	next slog.Handler
+	ops  []handlerOp
+}
+
+type handlerOp struct {
+	group string
+	attrs []slog.Attr
+}
 
 func (h *redactingHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.next.Enabled(ctx, level)
 }
 func (h *redactingHandler) WithGroup(name string) slog.Handler {
-	return &redactingHandler{next: h.next.WithGroup(name)}
+	if name == "" {
+		return h
+	}
+	ops := append([]handlerOp(nil), h.ops...)
+	ops = append(ops, handlerOp{group: name})
+	return &redactingHandler{next: h.next, ops: ops}
 }
 func (h *redactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &redactingHandler{next: h.next.WithAttrs(redactAttrs(attrs, false))}
+	ops := append([]handlerOp(nil), h.ops...)
+	ops = append(ops, handlerOp{attrs: append([]slog.Attr(nil), attrs...)})
+	return &redactingHandler{next: h.next, ops: ops}
 }
 func (h *redactingHandler) Handle(ctx context.Context, record slog.Record) error {
 	debug := record.Level <= slog.LevelDebug
 	clean := slog.NewRecord(record.Time, record.Level, redactMessage(record.Message, debug), record.PC)
-	record.Attrs(func(attr slog.Attr) bool { clean.AddAttrs(redactAttr(attr, debug)); return true })
-	return h.next.Handle(ctx, clean)
+	next := h.next
+	for _, op := range h.ops {
+		if op.group != "" {
+			next = next.WithGroup(op.group)
+			continue
+		}
+		next = next.WithAttrs(redactAttrs(op.attrs, debug))
+	}
+	record.Attrs(func(attr slog.Attr) bool {
+		clean.AddAttrs(redactAttr(attr, debug))
+		return true
+	})
+	return next.Handle(ctx, clean)
 }
 
 // redactAttrs redacts a batch of attributes. When debug is true, path and email
@@ -322,6 +406,9 @@ func redactAttrs(attrs []slog.Attr, debug bool) []slog.Attr {
 
 func isSensitiveKey(key string) bool {
 	lower := strings.ToLower(key)
+	if _, ok := safeSensitiveFragmentKeys[lower]; ok {
+		return false
+	}
 	for _, sensitive := range sensitiveKeys {
 		if strings.Contains(lower, sensitive) {
 			return true
