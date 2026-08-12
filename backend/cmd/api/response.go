@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"backend/internal/db"
+	"backend/internal/httpresp"
 )
 
 const (
@@ -54,21 +55,20 @@ func decodeJSON(r *http.Request, dst any) bool {
 	return true
 }
 
-// Helpers
+// Helpers delegate to internal/httpresp so auth middleware and API handlers
+// always emit the same response envelope.
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+	httpresp.WriteJSON(w, status, data)
 }
 
 // APIErrorCode is a machine-readable error identifier sent to the client.
 // The frontend localizes it via its own translation tables; the backend
 // never sends localized text.
-type APIErrorCode string
+type APIErrorCode = httpresp.APIErrorCode
 
 const (
 	ErrInvalidBody                  APIErrorCode = "INVALID_BODY"
-	ErrUnauthorized                 APIErrorCode = "UNAUTHORIZED"
+	ErrUnauthorized                              = httpresp.ErrUnauthorized
 	ErrForbidden                    APIErrorCode = "FORBIDDEN"
 	ErrCredentialsInvalid           APIErrorCode = "CREDENTIALS_INVALID"
 	ErrRefreshTokenMissing          APIErrorCode = "REFRESH_TOKEN_MISSING"
@@ -120,6 +120,7 @@ const (
 	ErrDisplayNameRequired          APIErrorCode = "DISPLAY_NAME_REQUIRED"
 	ErrPasswordMismatch             APIErrorCode = "PASSWORD_MISMATCH"
 	ErrPasswordTooShort             APIErrorCode = "PASSWORD_TOO_SHORT"
+	ErrPasswordTooLong              APIErrorCode = "PASSWORD_TOO_LONG"
 	ErrAvatarInvalid                APIErrorCode = "AVATAR_INVALID"
 	ErrAvatarTypeUnsupported        APIErrorCode = "AVATAR_TYPE_UNSUPPORTED"
 	ErrAvatarTooLarge               APIErrorCode = "AVATAR_TOO_LARGE"
@@ -181,7 +182,7 @@ const (
 // writeError emits a structured error response carrying only a machine-readable
 // code. It deliberately omits any localized message (the frontend translates).
 func writeError(w http.ResponseWriter, status int, code APIErrorCode) {
-	writeJSON(w, status, map[string]any{"success": false, "error_code": string(code)})
+	httpresp.WriteError(w, status, code)
 }
 
 func writeValidationError(w http.ResponseWriter, code APIErrorCode) {

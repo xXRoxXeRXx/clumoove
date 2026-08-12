@@ -113,13 +113,28 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Success: clear failed attempts/lockout and issue normal tokens.
+	// Success: clear failed attempts/lockout. Account state can change while a
+	// 2FA session is pending, so never mint an access token for an account that
+	// now requires a password rotation.
 	if !backupCodeConsumed {
 		if err := db.ResetTOTPFailed(s.db, u.ID); err != nil {
 			log.Printf("handleTOTP: failed to reset attempts for user %s: %v\n", u.ID, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
+	}
+	if u.MustChangePassword {
+		mustToken, err := auth.GenerateMustChangePasswordToken(u, s.jwtSecret)
+		if err != nil {
+			log.Printf("handleTOTP: failed to generate must-change token for user %s: %v", u.ID, err)
+			writeError(w, http.StatusInternalServerError, ErrInternalError)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]interface{}{
+			"must_change_password": true,
+			"temp_session":         mustToken,
+		})
+		return
 	}
 
 	s.issueTokens(w, r, u)

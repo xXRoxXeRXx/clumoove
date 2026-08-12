@@ -3,12 +3,12 @@ package auth
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
 	"backend/internal/db"
+	"backend/internal/httpresp"
 	"backend/internal/storage"
 )
 
@@ -21,12 +21,7 @@ const ClaimsKey ContextKey = "claims"
 // convention. Returning a structured code (rather than English text) lets the
 // frontend localize via translateApiError and avoids leaking request details.
 func writeUnauthorized(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"success":    false,
-		"error_code": "UNAUTHORIZED",
-	})
+	httpresp.WriteError(w, http.StatusUnauthorized, httpresp.ErrUnauthorized)
 }
 
 // AuthStateLookup retrieves the authoritative, current account state for an

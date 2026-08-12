@@ -131,8 +131,7 @@ func (s *APIServer) handleResetPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if len(req.NewPassword) < minPasswordLength {
-		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
+	if !validatePasswordLength(w, req.NewPassword) {
 		return
 	}
 

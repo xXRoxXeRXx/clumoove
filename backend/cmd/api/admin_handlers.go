@@ -91,8 +91,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if len(req.NewPassword) < minPasswordLength {
-		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
+	if !validatePasswordLength(w, req.NewPassword) {
 		return
 	}
 
@@ -343,8 +342,7 @@ func (s *APIServer) handleAdminCreateUser(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if len(req.Password) < minPasswordLength {
-		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
+	if !validatePasswordLength(w, req.Password) {
 		return
 	}
 

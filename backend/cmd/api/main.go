@@ -77,6 +77,18 @@ const (
 	minPasswordLength   = 12
 )
 
+func validatePasswordLength(w http.ResponseWriter, password string) bool {
+	if len(password) < minPasswordLength {
+		writeError(w, http.StatusBadRequest, ErrPasswordTooShort)
+		return false
+	}
+	if len(password) > auth.MaxPasswordBytes {
+		writeError(w, http.StatusBadRequest, ErrPasswordTooLong)
+		return false
+	}
+	return true
+}
+
 func main() {
 	if _, err := observability.Configure("api"); err != nil {
 		fmt.Fprintln(os.Stderr, err)

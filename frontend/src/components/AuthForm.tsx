@@ -159,6 +159,15 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       }
 
       const data = await response.json();
+      if (data.must_change_password && data.temp_session) {
+        setMustChangeSession(data.temp_session);
+        setTotpSession('');
+        setNewPassword('');
+        setConfirmNewPassword('');
+        setMustChangeError('');
+        setOtpError('');
+        return;
+      }
       onAuthSuccess(data.access_token, data.user);
     } catch (err: unknown) {
       setOtpError(err instanceof Error ? err.message : t('reset.networkError'));

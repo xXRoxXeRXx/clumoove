@@ -639,6 +639,7 @@
     "DISPLAY_NAME_REQUIRED": "Der Anzeigename ist ein Pflichtfeld.",
     "PASSWORD_MISMATCH": "Die neuen Passwörter stimmen nicht überein.",
     "PASSWORD_TOO_SHORT": "Das Passwort muss mindestens 12 Zeichen lang sein.",
+    "PASSWORD_TOO_LONG": "Das Passwort darf höchstens 72 Bytes lang sein.",
     "AVATAR_INVALID": "Ungültiges Bildformat.",
     "AVATAR_TYPE_UNSUPPORTED": "Nicht unterstütztes Bildformat. Bitte verwende PNG, JPEG, WebP oder GIF.",
     "AVATAR_TOO_LARGE": "Das Profilbild darf maximal 2 MB groß sein.",

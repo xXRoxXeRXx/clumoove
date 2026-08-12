@@ -24,8 +24,24 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// HashPassword hashes a raw password using bcrypt
+const (
+	tokenIssuer       = "clumoove-api"
+	accessTokenTTL    = 15 * time.Minute
+	temporaryTokenTTL = 5 * time.Minute
+
+	// MaxPasswordBytes is bcrypt's maximum accepted password size. Password
+	// validation rejects larger values before they reach bcrypt, so distinct
+	// passphrases cannot be treated as equal after a 72-byte truncation.
+	MaxPasswordBytes = 72
+)
+
+// HashPassword hashes a raw password using bcrypt. API password validation
+// enforces MaxPasswordBytes before calling this; this check protects any future
+// non-HTTP callers too.
 func HashPassword(password string) (string, error) {
+	if len(password) > MaxPasswordBytes {
+		return "", fmt.Errorf("password exceeds bcrypt's %d-byte limit", MaxPasswordBytes)
+	}
 	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	return string(bytes), err
 }
@@ -36,33 +52,38 @@ func CheckPasswordHash(password, hash string) bool {
 	return err == nil
 }
 
-// GenerateAccessToken generates a short-lived (15 minutes) JWT token
-func GenerateAccessToken(user *db.User, secretKey string) (string, error) {
+// generateToken issues an HS256 JWT for a specific authentication state.
+// Access tokens reflect the account's must-change state; temporary tokens use
+// only their explicit marker so a 2FA session cannot double as a password
+// rotation session.
+func generateToken(user *db.User, secretKey string, ttl time.Duration, twoFA, mustChange bool) (string, error) {
 	if secretKey == "" {
 		return "", errors.New("empty JWT secret key")
 	}
 
-	expirationTime := time.Now().Add(15 * time.Minute)
+	now := time.Now()
 	claims := &Claims{
 		UserID:             user.ID,
 		Email:              user.Email,
 		DisplayName:        user.DisplayName,
 		Role:               user.Role,
-		MustChangePassword: user.MustChangePassword,
+		TwoFAPending:       twoFA,
+		MustChangePassword: mustChange,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "clumoove-api",
+			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now),
+			Issuer:    tokenIssuer,
 		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secretKey))
-	if err != nil {
-		return "", err
-	}
-	return tokenString, nil
+	return token.SignedString([]byte(secretKey))
+}
+
+// GenerateAccessToken generates a short-lived (15 minutes) JWT token.
+func GenerateAccessToken(user *db.User, secretKey string) (string, error) {
+	return generateToken(user, secretKey, accessTokenTTL, false, user.MustChangePassword)
 }
 
 // ValidateToken parses and validates a JWT access token
@@ -77,7 +98,7 @@ func ValidateToken(tokenStr, secretKey string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(secretKey), nil
-	})
+	}, jwt.WithIssuer(tokenIssuer), jwt.WithLeeway(30*time.Second))
 
 	if err != nil {
 		return nil, err
@@ -94,31 +115,7 @@ func ValidateToken(tokenStr, secretKey string) (*Claims, error) {
 // TwoFAPending marker. It is returned by the login endpoint when 2FA is enabled
 // and must be presented to /api/auth/totp to complete authentication.
 func Generate2FATempToken(user *db.User, secretKey string) (string, error) {
-	if secretKey == "" {
-		return "", errors.New("empty JWT secret key")
-	}
-
-	expirationTime := time.Now().Add(5 * time.Minute)
-	claims := &Claims{
-		UserID:       user.ID,
-		Email:        user.Email,
-		DisplayName:  user.DisplayName,
-		Role:         user.Role,
-		TwoFAPending: true,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "clumoove-api",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secretKey))
-	if err != nil {
-		return "", err
-	}
-	return tokenString, nil
+	return generateToken(user, secretKey, temporaryTokenTTL, true, false)
 }
 
 // Validate2FATempToken parses and validates a 2FA temp token, ensuring it
@@ -141,31 +138,7 @@ func Validate2FATempToken(tokenStr, secretKey string) (*Claims, error) {
 // a dedicated middleware allowing must-change tokens is used for the password
 // rotation route.
 func GenerateMustChangePasswordToken(user *db.User, secretKey string) (string, error) {
-	if secretKey == "" {
-		return "", errors.New("empty JWT secret key")
-	}
-
-	expirationTime := time.Now().Add(5 * time.Minute)
-	claims := &Claims{
-		UserID:             user.ID,
-		Email:              user.Email,
-		DisplayName:        user.DisplayName,
-		Role:               user.Role,
-		MustChangePassword: true,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(expirationTime),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			NotBefore: jwt.NewNumericDate(time.Now()),
-			Issuer:    "clumoove-api",
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(secretKey))
-	if err != nil {
-		return "", err
-	}
-	return tokenString, nil
+	return generateToken(user, secretKey, temporaryTokenTTL, false, true)
 }
 
 // RequireAuthenticated returns an error if the claims represent a token that is

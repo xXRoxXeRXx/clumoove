@@ -81,10 +81,12 @@ func TestHandleTOTP_ConcurrentBackupCodeIsAcceptedOnce(t *testing.T) {
 	close(responses)
 
 	var success, rejected int
+	var mustChangeResponse *httptest.ResponseRecorder
 	for response := range responses {
 		switch response.Code {
-		case http.StatusOK:
+		case http.StatusAccepted:
 			success++
+			mustChangeResponse = response
 		case http.StatusUnauthorized:
 			rejected++
 		default:
@@ -94,12 +96,29 @@ func TestHandleTOTP_ConcurrentBackupCodeIsAcceptedOnce(t *testing.T) {
 	if success != 1 || rejected != 1 {
 		t.Fatalf("responses = %d success, %d rejected; want 1 each", success, rejected)
 	}
+	var responseBody struct {
+		TempSession        string `json:"temp_session"`
+		MustChangePassword bool   `json:"must_change_password"`
+	}
+	if err := json.Unmarshal(mustChangeResponse.Body.Bytes(), &responseBody); err != nil {
+		t.Fatalf("decode must-change response: %v", err)
+	}
+	if !responseBody.MustChangePassword {
+		t.Fatalf("expected must_change_password response")
+	}
+	claims, err := auth.ValidateToken(responseBody.TempSession, s.jwtSecret)
+	if err != nil {
+		t.Fatalf("validate must-change token: %v", err)
+	}
+	if !claims.MustChangePassword || claims.TwoFAPending {
+		t.Fatalf("unexpected returned token state: twoFA=%v mustChange=%v", claims.TwoFAPending, claims.MustChangePassword)
+	}
 
 	var refreshTokenCount int
 	if err := database.QueryRow(`SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1`, user.ID).Scan(&refreshTokenCount); err != nil {
 		t.Fatalf("count refresh tokens: %v", err)
 	}
-	if refreshTokenCount != 1 {
-		t.Fatalf("refresh tokens = %d, want 1", refreshTokenCount)
+	if refreshTokenCount != 0 {
+		t.Fatalf("refresh tokens = %d, want 0", refreshTokenCount)
 	}
 }

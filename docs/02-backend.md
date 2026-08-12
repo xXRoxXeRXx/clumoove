@@ -304,7 +304,9 @@ size-comparison fallback.
 - `middleware.go` — `AuthMiddleware` (reads claims via `ClaimsKey`), ownership helpers, and
   `AuthMiddlewareAllowMustChange` (allows users with `must_change_password` to reach change-password).
 
----
+### Additional auth guarantees
+
+JWT validation also requires issuer `clumoove-api` and allows 30 seconds of clock skew. Passwords are limited to bcrypt's 72-byte input maximum at every API creation, reset, and change boundary, and in `HashPassword` for non-HTTP callers.
 
 ## 11. Sanitize (`internal/sanitize`)
 

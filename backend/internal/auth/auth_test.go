@@ -1,9 +1,13 @@
 package auth
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"backend/internal/db"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func TestHashPassword(t *testing.T) {
@@ -23,6 +27,13 @@ func TestHashPassword(t *testing.T) {
 
 	if CheckPasswordHash("wrongpassword", hash) {
 		t.Errorf("expected CheckPasswordHash to return false for incorrect password")
+	}
+}
+
+func TestHashPasswordRejectsPasswordsOverBcryptLimit(t *testing.T) {
+	_, err := HashPassword(strings.Repeat("a", MaxPasswordBytes+1))
+	if err == nil {
+		t.Fatalf("expected password over bcrypt limit to be rejected")
 	}
 }
 
@@ -65,6 +76,54 @@ func TestAccessToken(t *testing.T) {
 	_, err = ValidateToken(token, "wrong-secret-key")
 	if err == nil {
 		t.Errorf("expected validation to fail for incorrect secret key, but it succeeded")
+	}
+}
+
+func TestGeneratedTokenStates(t *testing.T) {
+	secret := "test-secret-key-12345-67890-abcdef"
+	user := &db.User{ID: "user-uuid-1", MustChangePassword: true}
+
+	tests := []struct {
+		name               string
+		generate           func(*db.User, string) (string, error)
+		wantTwoFAPending   bool
+		wantMustChangePass bool
+	}{
+		{"access", GenerateAccessToken, false, true},
+		{"two-factor temporary", Generate2FATempToken, true, false},
+		{"must-change temporary", GenerateMustChangePasswordToken, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token, err := tt.generate(user, secret)
+			if err != nil {
+				t.Fatalf("generate token: %v", err)
+			}
+			claims, err := ValidateToken(token, secret)
+			if err != nil {
+				t.Fatalf("validate token: %v", err)
+			}
+			if claims.TwoFAPending != tt.wantTwoFAPending || claims.MustChangePassword != tt.wantMustChangePass {
+				t.Fatalf("unexpected token state: twoFA=%v mustChange=%v", claims.TwoFAPending, claims.MustChangePassword)
+			}
+		})
+	}
+}
+
+func TestValidateTokenRejectsUnexpectedIssuer(t *testing.T) {
+	secret := "test-secret-key-12345-67890-abcdef"
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, &Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "another-service",
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
+		},
+	})
+	tokenString, err := token.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	if _, err := ValidateToken(tokenString, secret); err == nil {
+		t.Fatal("expected token with unexpected issuer to be rejected")
 	}
 }
 
