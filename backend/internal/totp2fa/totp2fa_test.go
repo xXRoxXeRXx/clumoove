@@ -3,6 +3,9 @@ package totp2fa
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/pquerna/otp/totp"
 )
 
 func TestGenerateProvisioning(t *testing.T) {
@@ -24,17 +27,43 @@ func TestGenerateProvisioning(t *testing.T) {
 	}
 }
 
-func TestValidateTOTP(t *testing.T) {
+func TestGenerateProvisioningEmptyEmail(t *testing.T) {
+	secret, uri, png, err := GenerateProvisioning("")
+	if err == nil {
+		t.Fatal("expected empty email to be rejected")
+	}
+	if secret != "" || uri != "" || png != "" {
+		t.Errorf("expected no provisioning data on empty email, got secret=%q uri=%q png=%q", secret, uri, png)
+	}
+}
+
+func TestValidateTOTPPositive(t *testing.T) {
 	secret, _, _, err := GenerateProvisioning("user@example.com")
 	if err != nil {
 		t.Fatalf("GenerateProvisioning failed: %v", err)
 	}
-	// A freshly generated secret has no valid current code unless we generate one.
+	code, err := totp.GenerateCode(secret, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("GenerateCode failed: %v", err)
+	}
+	if !Validate(secret, code) {
+		t.Error("expected freshly generated code to validate")
+	}
+}
+
+func TestValidateTOTPRejectsInvalidInput(t *testing.T) {
+	secret, _, _, err := GenerateProvisioning("user@example.com")
+	if err != nil {
+		t.Fatalf("GenerateProvisioning failed: %v", err)
+	}
 	if Validate(secret, "000000") {
 		t.Errorf("expected invalid code to fail validation")
 	}
 	if Validate(secret, "") {
 		t.Errorf("expected empty code to fail validation")
+	}
+	if Validate("not-a-base32-secret", "123456") {
+		t.Error("expected malformed secret to fail validation")
 	}
 }
 
@@ -75,6 +104,15 @@ func TestVerifyBackupCodeWrong(t *testing.T) {
 	}
 	if idx := VerifyBackupCode(hashes, ""); idx != -1 {
 		t.Errorf("expected -1 for empty backup code, got %d", idx)
+	}
+}
+
+func TestVerifyBackupCodeEmptyHashes(t *testing.T) {
+	if idx := VerifyBackupCode(nil, "ABCDEF2345"); idx != -1 {
+		t.Errorf("expected -1 for nil hashes, got %d", idx)
+	}
+	if idx := VerifyBackupCode([]string{}, "ABCDEF2345"); idx != -1 {
+		t.Errorf("expected -1 for empty hashes, got %d", idx)
 	}
 }
 

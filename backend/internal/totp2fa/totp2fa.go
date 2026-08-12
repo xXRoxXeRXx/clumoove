@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"image/png"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/boombuler/barcode"
@@ -30,6 +32,10 @@ var validateOpts = totp.ValidateOpts{
 // returns the base32 secret, the otpauth URI, and a base64 PNG data URL of the
 // QR code encoding that URI.
 func GenerateProvisioning(userEmail string) (secretBase32, otpauthURI, qrPNGDataURL string, err error) {
+	if strings.TrimSpace(userEmail) == "" {
+		return "", "", "", errors.New("user email is required")
+	}
+
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      issuer,
 		AccountName: userEmail,
@@ -81,11 +87,16 @@ const backupCodeAlphabet = "ABCDEFGHJKMNPQRSTVWXYZ23456789"
 func GenerateBackupCodes() (plain []string, hashes []string, err error) {
 	plain = make([]string, 0, backupCodeCount)
 	hashes = make([]string, 0, backupCodeCount)
-	for i := 0; i < backupCodeCount; i++ {
+	seen := make(map[string]struct{}, backupCodeCount)
+	for len(plain) < backupCodeCount {
 		code, err := randomCode(backupCodeLen)
 		if err != nil {
 			return nil, nil, err
 		}
+		if _, duplicate := seen[code]; duplicate {
+			continue
+		}
+		seen[code] = struct{}{}
 		hash, err := HashBackupCode(code)
 		if err != nil {
 			return nil, nil, err
