@@ -55,8 +55,8 @@ func TestGenerateAndVerifyBackupCodes(t *testing.T) {
 		if len(code) != backupCodeLen {
 			t.Errorf("backup code %d has length %d, want %d", i, len(code), backupCodeLen)
 		}
-		if !strings.ContainsAny(code, "0O1IL") {
-			// alphabet excludes ambiguous chars; sanity check the alphabet usage
+		if strings.ContainsAny(code, "0O1IL") {
+			t.Errorf("backup code %d contains ambiguous characters: %q", i, code)
 		}
 		idx := VerifyBackupCode(hashes, code)
 		if idx != i {

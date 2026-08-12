@@ -6,14 +6,25 @@ import (
 	"encoding/base64"
 	"image/png"
 	"math/big"
+	"time"
 
 	"github.com/boombuler/barcode"
 	"github.com/boombuler/barcode/qr"
+	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const issuer = "Clumoove"
+
+// validateOpts pins the TOTP security parameters independently of library
+// defaults. Skew 1 permits one 30-second period of clock tolerance each side.
+var validateOpts = totp.ValidateOpts{
+	Digits:    otp.DigitsSix,
+	Algorithm: otp.AlgorithmSHA1,
+	Skew:      1,
+	Period:    30,
+}
 
 // GenerateProvisioning creates a new TOTP secret for the given user email,
 // returns the base32 secret, the otpauth URI, and a base64 PNG data URL of the
@@ -47,7 +58,8 @@ func GenerateProvisioning(userEmail string) (secretBase32, otpauthURI, qrPNGData
 
 // Validate checks a user-submitted TOTP code against the base32 secret.
 func Validate(secretBase32, code string) bool {
-	return totp.Validate(code, secretBase32)
+	ok, err := totp.ValidateCustom(code, secretBase32, time.Now().UTC(), validateOpts)
+	return err == nil && ok
 }
 
 // backupCodeLen is the number of characters in a generated backup code.
@@ -96,6 +108,9 @@ func HashBackupCode(code string) (string, error) {
 // VerifyBackupCode checks the supplied code against the list of stored bcrypt
 // hashes. It returns the index of the matching hash, or -1 if none matched.
 // bcrypt.CompareHashAndPassword is itself constant-time for a given hash.
+// The loop short-circuits on a match, leaking its index via timing; the index
+// is not security-sensitive, and checking every hash would enable a mild
+// self-DoS. The caller rate-limits failed attempts.
 func VerifyBackupCode(hashes []string, code string) int {
 	for i, h := range hashes {
 		if bcrypt.CompareHashAndPassword([]byte(h), []byte(code)) == nil {
