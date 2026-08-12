@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
 	"path"
 	"strings"
 	"sync/atomic"
@@ -72,13 +71,13 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	// Parse action/metadata
 	var meta map[string]interface{}
 	if err := json.Unmarshal(task.Metadata, &meta); err != nil {
-		log.Printf("[Worker] Failed to parse task metadata for task %s: %v", task.ID, err)
+		processorLogf("[Worker] Failed to parse task metadata for task %s: %v", task.ID, err)
 		return fmt.Errorf("failed to parse task metadata: %w", err)
 	}
 	action, _ := meta["action"].(string)
 	side, _ := meta["side"].(string)
 
-	log.Printf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
+	processorLogf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
 		p.workerID, threadID, strings.ToUpper(action), task.FilePath, task.FileSize, job.SourceProvider, job.TargetProvider)
 
 	// Decrypt credentials
@@ -156,7 +155,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		sanitized := sanitize.SanitizeFilename(dirName, mkProvider)
 		if sanitized.Changed {
 			mkPath = path.Join(path.Dir(mkPath), sanitized.SanitizedName)
-			log.Printf("[Worker] Sanitized directory name: %s -> %s (%s)",
+			processorLogf("[Worker] Sanitized directory name: %s -> %s (%s)",
 				dirName, sanitized.SanitizedName, strings.Join(sanitized.Reasons, ", "))
 		}
 
@@ -165,7 +164,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			dirPath := path.Dir(mkPath)
 			dirName := path.Base(mkPath)
 			if collision, _ := sanitize.CheckCaseCollision(ctx, mkClient, task.ResourceType, dirPath, dirName); collision != "" {
-				log.Printf("[Worker] Directory case collision detected: %s conflicts with %s", mkPath, collision)
+				processorLogf("[Worker] Directory case collision detected: %s conflicts with %s", mkPath, collision)
 				task.Status = "SKIPPED"
 				task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Directory skipped due to case collision with %s", collision), Valid: true}
 				return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, 0)
@@ -458,7 +457,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 					}
 					if err != nil {
 						consecutiveFailures++
-						log.Printf("[Worker %s] heartbeat error for task %s (failure %d/5): %v", p.workerID, task.ID, consecutiveFailures, err)
+						processorLogf("[Worker %s] heartbeat error for task %s (failure %d/5): %v", p.workerID, task.ID, consecutiveFailures, err)
 						if consecutiveFailures >= 5 {
 							cancel()
 							return
@@ -481,7 +480,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	hashingReader := io.TeeReader(sizedReader, activeWriter)
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
 	if sourceHashStr != "" && sourceAlgo != "ETAG" {
-		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
+		uploadCtx = storage.WithUploadChecksum(uploadCtx, fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
 	}
 	defer uploadCancel()
 
@@ -567,7 +566,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Payload, procErr error) {
 	task, err := db.GetTask(p.db, payload.TaskID)
 	if err != nil {
-		log.Printf("Error fetching task on sync failure handler: %v\n", err)
+		processorLogf("Error fetching task on sync failure handler: %v\n", err)
 		return
 	}
 	task.ClaimEpoch = payload.ClaimEpoch
@@ -586,7 +585,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 	if isShutdown {
 		task.Status = "PENDING"
 		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
-			log.Printf("Error returning cancelled sync task %s to pending: %v", task.ID, err)
+			processorLogf("Error returning cancelled sync task %s to pending: %v", task.ID, err)
 		}
 		return
 	}
@@ -605,7 +604,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 			task.Status = "FAILED"
 			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 			if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
-				log.Printf("Error scheduling sync task %s retry after connection loss: %v", task.ID, err)
+				processorLogf("Error scheduling sync task %s retry after connection loss: %v", task.ID, err)
 			}
 			return
 		}
@@ -618,41 +617,33 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 
 		task.Status = "PENDING"
 		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
-			log.Printf("Error re-queueing sync task %s after connection loss: %v", task.ID, err)
+			processorLogf("Error re-queueing sync task %s after connection loss: %v", task.ID, err)
 		}
 		return
 	}
 
-	isPermanent := errors.Is(procErr, oauth.ErrRefreshTokenInvalid) ||
-		errors.Is(procErr, storage.ErrUnsupportedResourceType) ||
-		errors.Is(procErr, storage.ErrPathEscapesRoot)
+	isPermanent := isPermanentTransferError(procErr)
 	errStr := procErr.Error()
-	if !isPermanent && (strings.Contains(errStr, "exportSizeLimitExceeded") ||
-		strings.Contains(errStr, "badRequest") ||
-		strings.Contains(errStr, "notFound") ||
-		strings.Contains(errStr, "fileNotFound")) {
-		isPermanent = true
-	}
 
 	isAuthError := errors.Is(procErr, storage.ErrAuth) ||
 		strings.Contains(errStr, "authError") ||
 		strings.Contains(errStr, "Invalid Credentials")
 
 	if isAuthError {
-		if role := oauthSyncAuthFailureRole(job, errStr); role != "" && task.Attempts <= 3 {
+		if role := oauthAuthFailureRoleForProviders(job.SourceProvider, job.TargetProvider, errStr); role != "" && task.Attempts <= 3 {
 			if _, refreshErr := p.refreshSyncOAuthToken(ctx, job, role); refreshErr == nil {
 				backoff := retryBackoff(task.Attempts)
 				task.Status = "FAILED"
 				task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
 				task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
 				if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
-					log.Printf("Error scheduling sync OAuth retry for task %s: %v", task.ID, err)
+					processorLogf("Error scheduling sync OAuth retry for task %s: %v", task.ID, err)
 				}
-				log.Printf("[Worker %s] OAuth 401 for sync task %s (job %s, %s) — refreshed token and retrying in %ds\n",
+				processorLogf("[Worker %s] OAuth 401 for sync task %s (job %s, %s) — refreshed token and retrying in %ds\n",
 					p.workerID, payload.TaskID, payload.SyncJobID, role, int(backoff.Seconds()))
 				return
 			} else {
-				log.Printf("[Worker %s] OAuth 401 recovery refresh failed for sync task %s (job %s, %s): %v\n",
+				processorLogf("[Worker %s] OAuth 401 recovery refresh failed for sync task %s (job %s, %s): %v\n",
 					p.workerID, payload.TaskID, payload.SyncJobID, role, refreshErr)
 			}
 		}
@@ -665,7 +656,7 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
 		if err := db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 0, 0, 1, 0); err != nil {
-			log.Printf("Error recording terminal sync task failure for %s: %v", task.ID, err)
+			processorLogf("Error recording terminal sync task failure for %s: %v", task.ID, err)
 			return
 		}
 
@@ -673,10 +664,10 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		cancelled, cerr := db.CancelRemainingPendingSyncTasksForGeneration(p.db, task.SyncJobID, task.PassGeneration)
 		if cerr == nil && cancelled > 0 {
 			if err := db.IncrementSyncJobProgressForGeneration(p.db, ctx, task.SyncJobID, task.PassGeneration, 0, 0, 0, cancelled, 0); err != nil {
-				log.Printf("Error recording %d cancelled sync tasks for job %s: %v", cancelled, task.SyncJobID, err)
+				processorLogf("Error recording %d cancelled sync tasks for job %s: %v", cancelled, task.SyncJobID, err)
 			}
 		} else if cerr != nil {
-			log.Printf("Error cancelling pending sync tasks for job %s: %v", task.SyncJobID, cerr)
+			processorLogf("Error cancelling pending sync tasks for job %s: %v", task.SyncJobID, cerr)
 		}
 		return
 	}
@@ -687,13 +678,13 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 		if err := db.UpdateClaimedSyncTaskStatus(p.db, ctx, task); err != nil {
-			log.Printf("Error scheduling sync task %s retry: %v", task.ID, err)
+			processorLogf("Error scheduling sync task %s retry: %v", task.ID, err)
 		}
 	} else {
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
 		if err := db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 0, 0, 1, 0); err != nil {
-			log.Printf("Error recording exhausted sync task failure for %s: %v", task.ID, err)
+			processorLogf("Error recording exhausted sync task failure for %s: %v", task.ID, err)
 			return
 		}
 		p.clearConnLossTask(task.ID)
@@ -776,11 +767,11 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 			// recovery passes across workers/API replicas.
 			recovered, recoverErr := db.RecoverConnectionLostSyncJob(p.db, ctx, id)
 			if recoverErr != nil {
-				log.Printf("[RecoveryScheduler] Error recovering sync job %s: %v\n", id, recoverErr)
+				processorLogf("[RecoveryScheduler] Error recovering sync job %s: %v\n", id, recoverErr)
 				continue
 			}
 			if recovered {
-				log.Printf("[RecoveryScheduler] Connection restored for sync job %s; scheduled API retry\n", id)
+				processorLogf("[RecoveryScheduler] Connection restored for sync job %s; scheduled API retry\n", id)
 			}
 			p.recoveryAttempts.Delete(id)
 		} else {
@@ -820,7 +811,7 @@ func pruneEmptyParentDirectories(ctx context.Context, client, otherClient storag
 		if err := client.DeleteFile(ctx, resourceType, currDir); err != nil {
 			break
 		}
-		log.Printf("[SyncTask] Pruned empty parent directory %s (no longer on other side)\n", currDir)
+		processorLogf("[SyncTask] Pruned empty parent directory %s (no longer on other side)\n", currDir)
 		currDir = path.Clean(path.Dir(currDir))
 	}
 }

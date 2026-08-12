@@ -374,6 +374,38 @@ func UpdateMigrationStatus(db *sql.DB, id string, status string, errMsg *string)
 	return tx.Commit()
 }
 
+// PauseMigrationForConnectionLoss transitions only an active migration. A
+// worker can observe a network failure after a user has cancelled the job, so
+// this guard must be part of the update rather than a preceding read.
+func PauseMigrationForConnectionLoss(db *sql.DB, id string) (bool, error) {
+	result, err := db.Exec(`
+		UPDATE migrations
+		SET status = 'PAUSED_CONNECTION_LOSS', error_message = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status IN ('RUNNING', 'INDEXING')
+	`, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
+// RecoverConnectionLostMigration resumes only the paused state owned by the
+// connection-recovery scheduler. It deliberately cannot overwrite a later
+// cancellation or terminal transition.
+func RecoverConnectionLostMigration(db *sql.DB, id string) (bool, error) {
+	result, err := db.Exec(`
+		UPDATE migrations
+		SET status = 'RUNNING', updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND status = 'PAUSED_CONNECTION_LOSS'
+	`, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
+}
+
 // FailMigrationWhileIndexing records an indexing failure only if the indexer
 // still owns the migration lifecycle. It prevents a late provider error from
 // replacing a user's CANCELLED status.

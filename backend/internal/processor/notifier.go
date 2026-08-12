@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
+	"sync"
 	"time"
 
 	"backend/internal/crypto"
@@ -30,10 +30,10 @@ func (p *Processor) RunNotifier(ctx context.Context) {
 			p.sendPendingNotifications(ctx)
 		case <-cleanup.C:
 			if err := db.DeleteExpiredPasswordResetTokens(p.db); err != nil {
-				log.Printf("[Notifier] reset cleanup failed: %v", err)
+				processorLogf("[Notifier] reset cleanup failed: %v", err)
 			}
 			if err := db.DeleteExpiredEmailChangeTokens(p.db); err != nil {
-				log.Printf("[Notifier] email-change cleanup failed: %v", err)
+				processorLogf("[Notifier] email-change cleanup failed: %v", err)
 			}
 		case <-throttle.C:
 			p.cleanupThrottlers()
@@ -110,58 +110,78 @@ func migStatusOrEmpty(mig *db.Migration, err error) string {
 func (p *Processor) sendPendingNotifications(ctx context.Context) {
 	deliveries, err := db.ClaimNotificationDeliveries(p.db, 10)
 	if err != nil {
-		log.Printf("[Notifier] claim failed: %v", err)
+		processorLogf("[Notifier] claim failed: %v", err)
 		return
 	}
+	const notificationWorkers = 3
+	jobs := make(chan db.NotificationDelivery)
+	var wg sync.WaitGroup
+	for i := 0; i < notificationWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for d := range jobs {
+				p.sendNotificationDelivery(ctx, d)
+			}
+		}()
+	}
 	for _, d := range deliveries {
-		if d.ChannelType == "email" {
-			settings, err := db.GetInstanceSMTPSettings(p.db)
-			if err != nil {
-				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_NOT_CONFIGURED")
-				continue
-			}
-			if err := withDecryptedNotificationSecret(settings.SMTPPasswordEnc, p.secretKey, func(password string) error {
-				cfg := notify.Config{
-					"smtp_host":       settings.SMTPHost,
-					"smtp_port":       settings.SMTPPort,
-					"smtp_username":   settings.SMTPUsername,
-					"smtp_password":   password,
-					"smtp_from_email": settings.SMTPFromEmail,
-					"smtp_from_name":  settings.SMTPFromName,
-					"smtp_encryption": settings.SMTPEncryption,
-				}
-				return notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
-			}); err != nil {
-				if errors.Is(err, errNotificationDecryptFailed) {
-					_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_DECRYPT_FAILED")
-				} else {
-					_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
-				}
-				continue
-			}
-			_ = db.CompleteNotificationDelivery(p.db, d.ID, true, "")
-			continue
+		jobs <- d
+	}
+	close(jobs)
+	wg.Wait()
+}
+
+// sendNotificationDelivery handles one independently claimed delivery. The
+// caller runs a bounded worker pool so a slow channel cannot block the batch.
+func (p *Processor) sendNotificationDelivery(ctx context.Context, d db.NotificationDelivery) {
+	if d.ChannelType == "email" {
+		settings, err := db.GetInstanceSMTPSettings(p.db)
+		if err != nil {
+			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_NOT_CONFIGURED")
+			return
 		}
-		if err := withDecryptedNotificationSecret(d.ConfigEncrypted, p.secretKey, func(plain string) error {
-			cfg, err := decodeNotificationConfig(plain)
-			if err != nil {
-				return err
+		if err := withDecryptedNotificationSecret(settings.SMTPPasswordEnc, p.secretKey, func(password string) error {
+			cfg := notify.Config{
+				"smtp_host":       settings.SMTPHost,
+				"smtp_port":       settings.SMTPPort,
+				"smtp_username":   settings.SMTPUsername,
+				"smtp_password":   password,
+				"smtp_from_email": settings.SMTPFromEmail,
+				"smtp_from_name":  settings.SMTPFromName,
+				"smtp_encryption": settings.SMTPEncryption,
 			}
 			return notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
 		}); err != nil {
 			if errors.Is(err, errNotificationDecryptFailed) {
-				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
-				// A decryptable but malformed configuration is security-relevant: it
-				// cannot be delivered and may indicate corrupted persisted state.
-				log.Printf("[Notifier] channel=%s delivery=%s failed", d.ChannelType, d.ID)
-				continue
+				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "SMTP_DECRYPT_FAILED")
+			} else {
+				_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
 			}
-			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
-			log.Printf("[Notifier] channel=%s delivery=%s send failed", d.ChannelType, d.ID)
-			continue
+			return
 		}
 		_ = db.CompleteNotificationDelivery(p.db, d.ID, true, "")
+		return
 	}
+	if err := withDecryptedNotificationSecret(d.ConfigEncrypted, p.secretKey, func(plain string) error {
+		cfg, err := decodeNotificationConfig(plain)
+		if err != nil {
+			return err
+		}
+		return notify.Send(ctx, d.ChannelType, cfg, d.Payload, d.RecipientEmail, d.Language)
+	}); err != nil {
+		if errors.Is(err, errNotificationDecryptFailed) {
+			_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_DECRYPT_FAILED")
+			// A decryptable but malformed configuration is security-relevant: it
+			// cannot be delivered and may indicate corrupted persisted state.
+			processorLogf("[Notifier] channel=%s delivery=%s failed", d.ChannelType, d.ID)
+			return
+		}
+		_ = db.CompleteNotificationDelivery(p.db, d.ID, false, "NOTIFICATION_SEND_FAILED")
+		processorLogf("[Notifier] channel=%s delivery=%s send failed", d.ChannelType, d.ID)
+		return
+	}
+	_ = db.CompleteNotificationDelivery(p.db, d.ID, true, "")
 }
 
 var errNotificationDecryptFailed = errors.New("notification secret decryption failed")

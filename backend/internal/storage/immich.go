@@ -349,7 +349,7 @@ func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string,
 	}
 	req.Header.Set("x-api-key", p.APIKey)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	if checksum, _ := ctx.Value("oc-checksum").(string); strings.HasPrefix(checksum, "SHA1:") {
+	if checksum := UploadChecksum(ctx); strings.HasPrefix(checksum, "SHA1:") {
 		req.Header.Set("x-immich-checksum", strings.TrimPrefix(checksum, "SHA1:"))
 	}
 	r, err := p.HTTPClient.Do(req)

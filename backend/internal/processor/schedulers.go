@@ -3,7 +3,6 @@ package processor
 import (
 	"context"
 	"database/sql"
-	"log"
 	"time"
 
 	"backend/internal/crypto"
@@ -28,12 +27,12 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 		case <-ticker.C:
 			err := p.queue.RegisterActiveWorker(ctx, p.workerID, 120*time.Second)
 			if err != nil {
-				log.Printf("[Liveness] Error registering active worker: %v\n", err)
+				processorLogf("[Liveness] Error registering active worker: %v\n", err)
 			}
 		case <-cleanupTicker.C:
 			deadWorkers, err := p.queue.GetAbandonedWorkerQueues(ctx, p.db)
 			if err != nil {
-				log.Printf("[Liveness] Error scanning for dead workers: %v\n", err)
+				processorLogf("[Liveness] Error scanning for dead workers: %v\n", err)
 				continue
 			}
 			for _, deadWorkerID := range deadWorkers {
@@ -44,9 +43,9 @@ func (p *Processor) RunWorkerLiveness(ctx context.Context) {
 				if lockErr != nil || !claimed {
 					continue
 				}
-				log.Printf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
+				processorLogf("[Liveness] Found abandoned queue for worker %s, recovering tasks...\n", deadWorkerID)
 				if err := p.queue.RecoverAbandonedTasks(ctx, p.db, deadWorkerID); err != nil {
-					log.Printf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
+					processorLogf("[Liveness] Error recovering tasks for worker %s: %v\n", deadWorkerID, err)
 				} else {
 					p.queue.NotifyTaskAvailable(ctx, p.db)
 				}
@@ -73,7 +72,7 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	// Use two set-based updates in one transaction instead of one UPDATE per task.
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
-		log.Printf("[RetryScheduler] begin transaction: %v\n", err)
+		processorLogf("[RetryScheduler] begin transaction: %v\n", err)
 		return
 	}
 	defer tx.Rollback()
@@ -85,18 +84,18 @@ func (p *Processor) requeueFailedTasks(ctx context.Context) {
 	} {
 		result, err := tx.ExecContext(ctx, updateQuery, now)
 		if err != nil {
-			log.Printf("[RetryScheduler] re-enqueue tasks: %v\n", err)
+			processorLogf("[RetryScheduler] re-enqueue tasks: %v\n", err)
 			return
 		}
 		count, _ := result.RowsAffected()
 		requeued += count
 	}
 	if err := tx.Commit(); err != nil {
-		log.Printf("[RetryScheduler] commit re-enqueue: %v\n", err)
+		processorLogf("[RetryScheduler] commit re-enqueue: %v\n", err)
 		return
 	}
 	if requeued > 0 {
-		log.Printf("[RetryScheduler] Re-enqueued %d task(s)\n", requeued)
+		processorLogf("[RetryScheduler] Re-enqueued %d task(s)\n", requeued)
 		p.queue.NotifyTaskAvailable(ctx, p.db)
 	}
 }
@@ -122,7 +121,7 @@ func (p *Processor) RunProgressReconciler(ctx context.Context) {
 
 func (p *Processor) repairMissingMigrationNotifications() {
 	if _, err := db.RepairMissingMigrationNotificationEvents(p.db, 100); err != nil {
-		log.Printf("[NotificationRepair] migration outbox repair: %v\n", err)
+		processorLogf("[NotificationRepair] migration outbox repair: %v\n", err)
 	}
 }
 
@@ -137,7 +136,7 @@ func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
 		WHERE m.status = 'RUNNING'
 	`)
 	if err != nil {
-		log.Printf("[ProgressReconciler] DB query error: %v\n", err)
+		processorLogf("[ProgressReconciler] DB query error: %v\n", err)
 		return
 	}
 	defer rows.Close()
@@ -151,20 +150,20 @@ func (p *Processor) reconcileActiveMigrations(ctx context.Context) {
 		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[ProgressReconciler] rows error: %v\n", err)
+		processorLogf("[ProgressReconciler] rows error: %v\n", err)
 		return
 	}
 
 	for _, id := range ids {
 		requeued, err := db.MaybeRetryFailedMigrationTasks(p.db, ctx, id)
 		if err != nil {
-			log.Printf("[ProgressReconciler] error checking failed tasks retry for migration %s: %v\n", id, err)
+			processorLogf("[ProgressReconciler] error checking failed tasks retry for migration %s: %v\n", id, err)
 		}
 		if requeued {
 			p.queue.NotifyTaskAvailable(ctx, p.db)
 		}
 		if err := db.ReconcileMigrationProgress(p.db, id); err != nil {
-			log.Printf("[ProgressReconciler] error reconciling migration %s: %v\n", id, err)
+			processorLogf("[ProgressReconciler] error reconciling migration %s: %v\n", id, err)
 		}
 	}
 }
@@ -176,7 +175,7 @@ func (p *Processor) reconcileActiveSyncJobs(ctx context.Context) {
 		WHERE sj.status = 'RUNNING'
 	`)
 	if err != nil {
-		log.Printf("[ProgressReconciler] Sync DB query error: %v\n", err)
+		processorLogf("[ProgressReconciler] Sync DB query error: %v\n", err)
 		return
 	}
 	defer rows.Close()
@@ -194,13 +193,13 @@ func (p *Processor) reconcileActiveSyncJobs(ctx context.Context) {
 		passes = append(passes, pass)
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[ProgressReconciler] Sync rows error: %v\n", err)
+		processorLogf("[ProgressReconciler] Sync rows error: %v\n", err)
 		return
 	}
 
 	for _, pass := range passes {
 		if err := db.ReconcileSyncJobProgress(p.db, pass.id, pass.generation); err != nil {
-			log.Printf("[ProgressReconciler] error reconciling sync job %s: %v\n", pass.id, err)
+			processorLogf("[ProgressReconciler] error reconciling sync job %s: %v\n", pass.id, err)
 		}
 	}
 }
@@ -226,43 +225,27 @@ func (p *Processor) RunOrphanedRunningTasksRecovery(ctx context.Context) {
 
 func (p *Processor) requeueOrphanedRunningTasks(ctx context.Context) {
 	query := `
-		SELECT t.id, COALESCE(t.migration_id::text, t.sync_job_id::text, '')
-		FROM tasks t
-		LEFT JOIN migrations m ON t.migration_id = m.id
-		LEFT JOIN sync_jobs sj ON t.sync_job_id = sj.id
+		UPDATE tasks t
+		SET status = 'PENDING', worker_hash = NULL, updated_at = NOW()
 		WHERE t.status = 'RUNNING'
 		  AND t.updated_at < NOW() - INTERVAL '10 minutes'
 		  AND (
-		    (t.migration_id IS NOT NULL AND m.status IN ('RUNNING', 'INDEXING'))
-		    OR
-		    (t.sync_job_id IS NOT NULL AND sj.status IN ('RUNNING', 'INDEXING'))
+			EXISTS (SELECT 1 FROM migrations m WHERE m.id = t.migration_id AND m.status IN ('RUNNING', 'INDEXING'))
+			OR EXISTS (SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id AND sj.status IN ('RUNNING', 'INDEXING'))
 		  )
 	`
-	rows, err := p.db.QueryContext(ctx, query)
+	result, err := p.db.ExecContext(ctx, query)
 	if err != nil {
-		log.Printf("[OrphanedTaskRecovery] DB query error: %v\n", err)
+		processorLogf("[OrphanedTaskRecovery] DB update error: %v\n", err)
 		return
 	}
-	defer rows.Close()
-
-	var count int
-	for rows.Next() {
-		var taskID, parentID string
-		if err := rows.Scan(&taskID, &parentID); err != nil {
-			continue
-		}
-		_, err := p.db.ExecContext(ctx, "UPDATE tasks SET status='PENDING', worker_hash=NULL, updated_at=NOW() WHERE id=$1 AND status='RUNNING'", taskID)
-		if err != nil {
-			log.Printf("[OrphanedTaskRecovery] Error resetting task %s: %v\n", taskID, err)
-		} else {
-			count++
-		}
-	}
-	if err := rows.Err(); err != nil {
-		log.Printf("[OrphanedTaskRecovery] rows error: %v\n", err)
+	count, err := result.RowsAffected()
+	if err != nil {
+		processorLogf("[OrphanedTaskRecovery] Cannot count reset tasks: %v\n", err)
+		return
 	}
 	if count > 0 {
-		log.Printf("[OrphanedTaskRecovery] Re-enqueued %d orphaned RUNNING tasks\n", count)
+		processorLogf("[OrphanedTaskRecovery] Re-enqueued %d orphaned RUNNING tasks\n", count)
 		p.queue.NotifyTaskAvailable(ctx, p.db)
 	}
 }
@@ -399,22 +382,22 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		tClient.Close()
 
 		if sOK && tOK {
-			log.Printf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
-			updateQuery := `
-				UPDATE migrations
-				SET status = 'RUNNING'
-				WHERE id = $1
-			`
-			_, err = p.db.ExecContext(ctx, updateQuery, id)
-			if err != nil {
-				log.Printf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, err)
+			processorLogf("[RecoveryScheduler] Connection restored for migration %s! Resuming...\n", id)
+			recovered, recoverErr := db.RecoverConnectionLostMigration(p.db, id)
+			if recoverErr != nil {
+				processorLogf("[RecoveryScheduler] Error resuming migration %s: %v\n", id, recoverErr)
+				continue
 			}
-			p.recoveryAttempts.Delete(id)
+			if recovered {
+				p.recoveryAttempts.Delete(id)
+			} else {
+				processorLogf("[RecoveryScheduler] Did not resume migration %s because its status changed", id)
+			}
 		} else {
 			p.recordRecoveryFailure(id, ra.attempts)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[RecoveryScheduler] rows error: %v\n", err)
+		processorLogf("[RecoveryScheduler] rows error: %v\n", err)
 	}
 }

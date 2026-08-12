@@ -128,6 +128,18 @@ func TestWrapGoogleErrorDoesNotMarkOtherGoogleErrorsAsAuthenticationFailures(t *
 	}
 }
 
+func TestWrapGoogleErrorMarksPermanentTransferResponses(t *testing.T) {
+	apiErr := &googleapi.Error{Code: http.StatusBadRequest, Message: "export unavailable"}
+	err := wrapGoogleError("google export", apiErr)
+	if !errors.Is(err, ErrPermanentTransfer) {
+		t.Fatalf("errors.Is(err, ErrPermanentTransfer) = false, want true (err = %v)", err)
+	}
+	var wrappedAPIError *googleapi.Error
+	if !errors.As(err, &wrappedAPIError) || wrappedAPIError != apiErr {
+		t.Fatalf("wrapped error does not retain the Google API error: %v", err)
+	}
+}
+
 func TestWrapGoogleErrorDoesNotDoubleWrapAuthenticationFailures(t *testing.T) {
 	wrapped := wrapGoogleError("google drive file lookup", &googleapi.Error{Code: http.StatusUnauthorized, Message: "Invalid Credentials"})
 	got := wrapGoogleNotFound(wrapped)

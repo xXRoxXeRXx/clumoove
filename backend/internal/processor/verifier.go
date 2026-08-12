@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,7 +117,7 @@ func (p *Processor) processVerifyingMigrations(ctx context.Context) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[VERIFIER] Listing verifying migrations: %v", err)
+		processorLogf("[VERIFIER] Listing verifying migrations: %v", err)
 		return
 	}
 
@@ -145,7 +144,7 @@ func (p *Processor) processVerifyingSyncJobs(ctx context.Context) {
 		}
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[VERIFIER] Listing verifying sync jobs: %v", err)
+		processorLogf("[VERIFIER] Listing verifying sync jobs: %v", err)
 		return
 	}
 
@@ -167,7 +166,10 @@ type verificationPassConfig struct {
 	TargetUsername   string
 	TargetPassword   string
 	TargetDir        string
-	Threads          int
+	// Threads is retained for test fixture compatibility. Verification is
+	// intentionally serial because one target client is shared for the pass and
+	// providers do not promise concurrent safety.
+	Threads int
 	// TargetClient is test-only injection for a connected target. Production
 	// callers leave it nil and construct a scoped provider below.
 	TargetClient storage.StorageProvider
@@ -183,16 +185,13 @@ type verificationPassConfig struct {
 	// claim. CanWrite reads its result without issuing a DB query.
 	RenewLease func(ctx context.Context) (bool, error)
 	CanWrite   func() bool
-	// IsStillVerifying is used for sync jobs, whose engine can cancel a
-	// cross-process verifier by moving the persisted status out of VERIFYING.
-	IsStillVerifying func(ctx context.Context) (bool, error)
 }
 
 func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPassConfig) {
 	guardKey := fmt.Sprintf("%s:%s", strings.ToLower(cfg.EntityType), cfg.EntityID)
 	if !cfg.GuardAlreadyHeld {
 		if _, loaded := p.verifyingEntities.LoadOrStore(guardKey, true); loaded {
-			log.Printf("[VERIFIER] Verification pass already in progress for %s %s, skipping tick.\n", cfg.EntityType, cfg.EntityID)
+			processorLogf("[VERIFIER] Verification pass already in progress for %s %s, skipping tick.\n", cfg.EntityType, cfg.EntityID)
 			return
 		}
 	}
@@ -207,16 +206,10 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 
 	passCtx, cancelPass := context.WithCancel(ctx)
 	defer cancelPass()
-	if cfg.IsStillVerifying != nil || cfg.RenewLease != nil {
-		stillVerifying := true
-		var err error
-		if cfg.RenewLease != nil {
-			stillVerifying, err = cfg.RenewLease(passCtx)
-		} else {
-			stillVerifying, err = cfg.IsStillVerifying(passCtx)
-		}
+	if cfg.RenewLease != nil {
+		stillVerifying, err := cfg.RenewLease(passCtx)
 		if err != nil {
-			log.Printf("[VERIFIER] Cannot confirm verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+			processorLogf("[VERIFIER] Cannot confirm verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 			return
 		}
 		if !stillVerifying {
@@ -225,11 +218,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		stopWatch := make(chan struct{})
 		defer close(stopWatch)
 		go func() {
-			interval := 250 * time.Millisecond
-			if cfg.RenewLease != nil {
-				interval = 15 * time.Second
-			}
-			ticker := time.NewTicker(interval)
+			ticker := time.NewTicker(15 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
@@ -238,19 +227,13 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				case <-passCtx.Done():
 					return
 				case <-ticker.C:
-					stillVerifying := true
-					var err error
-					if cfg.RenewLease != nil {
-						stillVerifying, err = cfg.RenewLease(passCtx)
-					} else {
-						stillVerifying, err = cfg.IsStillVerifying(passCtx)
-					}
+					stillVerifying, err := cfg.RenewLease(passCtx)
 					if err != nil {
-						log.Printf("[VERIFIER] Cannot refresh verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+						processorLogf("[VERIFIER] Cannot refresh verification state for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 						continue
 					}
 					if !stillVerifying {
-						log.Printf("[VERIFIER] %s %s cancelled because it is no longer VERIFYING.\n", cfg.EntityType, cfg.EntityID)
+						processorLogf("[VERIFIER] %s %s cancelled because it is no longer VERIFYING.\n", cfg.EntityType, cfg.EntityID)
 						cancelPass()
 						return
 					}
@@ -265,15 +248,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		if cfg.CanWrite != nil && !cfg.CanWrite() {
 			return false
 		}
-		if cfg.IsStillVerifying == nil {
-			return true
-		}
-		stillVerifying, err := cfg.IsStillVerifying(passCtx)
-		if err != nil {
-			log.Printf("[VERIFIER] Cannot confirm write ownership for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
-			return false
-		}
-		return stillVerifying
+		return true
 	}
 	markVerified := func(task *db.Task, targetHash string) bool {
 		if !canWrite() {
@@ -282,7 +257,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		if cfg.MarkVerified != nil {
 			ok, err := cfg.MarkVerified(passCtx, task, targetHash)
 			if err != nil {
-				log.Printf("[VERIFIER] Failed to save verification for task %s: %v\n", task.ID, err)
+				processorLogf("[VERIFIER] Failed to save verification for task %s: %v\n", task.ID, err)
 			}
 			return ok && err == nil
 		}
@@ -315,19 +290,19 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 
 	unverifiedTasks, err := cfg.GetTasks(passCtx)
 	if err != nil {
-		log.Printf("[VERIFIER] Error fetching unverified tasks for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+		processorLogf("[VERIFIER] Error fetching unverified tasks for %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 		return
 	}
 
 	total := len(unverifiedTasks)
 	if total == 0 {
 		_ = cfg.ReconcileProgress()
-		log.Printf("[VERIFIER] %s %s verification completed (0 unverified remaining).\n", cfg.EntityType, cfg.EntityID)
+		processorLogf("[VERIFIER] %s %s verification completed (0 unverified remaining).\n", cfg.EntityType, cfg.EntityID)
 		return
 	}
 
 	if cfg.TargetProvider == "webdav" {
-		log.Printf("[VERIFIER] WebDAV target has no checksum API; validating each target size.\n")
+		processorLogf("[VERIFIER] WebDAV target has no checksum API; validating each target size.\n")
 	}
 
 	passCtx = storage.WithLocalUserScope(passCtx, cfg.UserID)
@@ -339,7 +314,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 		}
 		targetClient, err = newTargetProvider(passCtx, cfg.TargetProvider, cfg.TargetURL, cfg.TargetUsername, cfg.TargetPassword)
 		if err != nil {
-			log.Printf("[VERIFIER] Failed to create target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
+			processorLogf("[VERIFIER] Failed to create target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, err)
 			return
 		}
 		defer targetClient.Close()
@@ -347,7 +322,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 			if connectErr == nil {
 				connectErr = errors.New("provider rejected connection")
 			}
-			log.Printf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, connectErr)
+			processorLogf("[VERIFIER] Failed to connect to target provider for verification on %s %s: %v\n", cfg.EntityType, cfg.EntityID, connectErr)
 			return
 		}
 	}
@@ -360,7 +335,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	// assuming provider clients are safe for concurrent use.
 	numWorkers := 1
 
-	log.Printf("[VERIFIER] Starting checksum verification pass for %d tasks in %s %s (%d workers)\n", total, cfg.EntityType, cfg.EntityID, numWorkers)
+	processorLogf("[VERIFIER] Starting checksum verification pass for %d tasks in %s %s (%d workers)\n", total, cfg.EntityType, cfg.EntityID, numWorkers)
 
 	taskChan := make(chan *db.Task, total)
 	for _, t := range unverifiedTasks {
@@ -397,13 +372,13 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				if cfg.TargetProvider == "immich" {
 					var metadata storage.FileMetadata
 					if err := json.Unmarshal(task.Metadata, &metadata); err != nil {
-						log.Printf("[VERIFIER] Immich task %s has invalid metadata; leaving it unverified: %v\n", task.ID, err)
+						processorLogf("[VERIFIER] Immich task %s has invalid metadata; leaving it unverified: %v\n", task.ID, err)
 						processedCount.Add(1)
 						continue
 					}
 					assetID := metadata.CustomProps["immich_target_asset_id"]
 					if strings.TrimSpace(assetID) == "" {
-						log.Printf("[VERIFIER] Immich task %s has no persisted target asset ID; leaving it unverified until retransfer.\n", task.ID)
+						processorLogf("[VERIFIER] Immich task %s has no persisted target asset ID; leaving it unverified until retransfer.\n", task.ID)
 						processedCount.Add(1)
 						continue
 					}
@@ -426,39 +401,39 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 				// extra provider round trip before the hash lookup.
 				markVerifiedForFile := func(targetHash string) bool {
 					if isDirErr(errHash) {
-						log.Printf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
+						processorLogf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
 						return markVerified(task, targetHash)
 					}
 					exists, targetSize, sizeErr := verifyTargetSize(taskCtx, targetClient, task.ResourceType, targetPath)
 					if sizeErr != nil {
 						if isDirErr(sizeErr) {
-							log.Printf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
+							processorLogf("[VERIFIER] [DIRECTORY_VERIFIED] %s — target directory confirmed [PASSED]\n", targetPath)
 							return markVerified(task, targetHash)
 						}
-						log.Printf("[VERIFIER] Cannot recheck target size for %s: %v\n", targetPath, sizeErr)
+						processorLogf("[VERIFIER] Cannot recheck target size for %s: %v\n", targetPath, sizeErr)
 						return false
 					}
 					if !exists || (targetSize != task.FileSize && !(task.FileSize == 0 && isDirectoryTask(task))) {
-						log.Printf("[VERIFIER] [SIZE_MISMATCH] %s | Got: %d | Expected: %d\n", targetPath, targetSize, task.FileSize)
+						processorLogf("[VERIFIER] [SIZE_MISMATCH] %s | Got: %d | Expected: %d\n", targetPath, targetSize, task.FileSize)
 						markMismatch(task, fmt.Sprintf("target size mismatch: got %d bytes, expected %d", targetSize, task.FileSize), targetHash)
 						return false
 					}
 					return markVerified(task, targetHash)
 				}
 				if verificationMode == storage.VerificationSizeOnly {
-					log.Printf("[VERIFIER] [SIZE_ONLY] %s | Target does not expose a comparable cryptographic hash — verifying size (%d bytes)\n", targetPath, task.FileSize)
+					processorLogf("[VERIFIER] [SIZE_ONLY] %s | Target does not expose a comparable cryptographic hash — verifying size (%d bytes)\n", targetPath, task.FileSize)
 					if !markVerifiedForFile("") {
 						return
 					}
 					current := processedCount.Add(1)
 					if current == 1 || current%50 == 0 || current == int64(total) {
-						log.Printf("[VERIFIER] %s %s verification progress: %d/%d tasks processed (%.1f%%)\n",
+						processorLogf("[VERIFIER] %s %s verification progress: %d/%d tasks processed (%.1f%%)\n",
 							cfg.EntityType, cfg.EntityID, current, total, float64(current)/float64(total)*100.0)
 					}
 					continue
 				}
 				if verificationMode == storage.VerificationNone {
-					log.Printf("[VERIFIER] [NO_INDEPENDENT_VERIFICATION] %s | Target does not support verification\n", targetPath)
+					processorLogf("[VERIFIER] [NO_INDEPENDENT_VERIFICATION] %s | Target does not support verification\n", targetPath)
 					continue
 				}
 				for attempt := 0; attempt < 3; attempt++ {
@@ -497,7 +472,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 
 						if isComparableHash(sourceAlgo) && isComparableHash(targetAlgo) && sourceAlgo == targetAlgo {
 							if cleanSource == cleanTarget {
-								log.Printf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
+								processorLogf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
 								if cfg.TargetProvider == "immich" {
 									// A matching checksum from GET /assets/{id} already
 									// confirms the specific target asset exists.
@@ -506,21 +481,21 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 									_ = markVerifiedForFile(targetHash)
 								}
 							} else {
-								log.Printf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
+								processorLogf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)
 								markMismatch(task, fmt.Sprintf("checksum mismatch: expected (%s) %s, got (%s) %s", sourceAlgo, cleanSource, targetAlgo, cleanTarget), targetHash)
 							}
 						} else if sourceAlgo == "ETAG" || targetAlgo == "ETAG" {
-							log.Printf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
+							processorLogf("[VERIFIER] [SIZE_VERIFIED] %s | Source (%s): %s | Target: No cryptographic hash on target (returned ETag: %s) — size (%d bytes) verified [PASSED]\n",
 								targetPath, sourceAlgo, cleanSource, cleanTarget, task.FileSize)
 							_ = markVerifiedForFile(targetHash)
 						} else {
-							log.Printf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — size (%d bytes) verified\n",
+							processorLogf("[VERIFIER] [ALGO_DIFF] %s | Source (%s): %s | Target (%s): %s — size (%d bytes) verified\n",
 								targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget, task.FileSize)
 							_ = markVerifiedForFile(targetHash)
 						}
 					} else {
-						log.Printf("[VERIFIER] [NO_SOURCE_HASH] %s | Target (%s): %s — registered target hash\n", targetPath, targetAlgo, cleanTarget)
+						processorLogf("[VERIFIER] [NO_SOURCE_HASH] %s | Target (%s): %s — registered target hash\n", targetPath, targetAlgo, cleanTarget)
 						_ = markVerifiedForFile(targetHash)
 					}
 				} else {
@@ -530,10 +505,10 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 					}
 					srcHash := bestSourceHash(task)
 					if srcHash != "" {
-						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Expected: %s | Reason: %s — falling back to size verification (%d bytes)\n",
+						processorLogf("[VERIFIER] [NO_TARGET_HASH] %s | Expected: %s | Reason: %s — falling back to size verification (%d bytes)\n",
 							targetPath, srcHash, reason, task.FileSize)
 					} else {
-						log.Printf("[VERIFIER] [NO_TARGET_HASH] %s | Reason: %s — falling back to size verification (%d bytes)\n",
+						processorLogf("[VERIFIER] [NO_TARGET_HASH] %s | Reason: %s — falling back to size verification (%d bytes)\n",
 							targetPath, reason, task.FileSize)
 					}
 					if !markVerifiedForFile("") {
@@ -543,7 +518,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 
 				current := processedCount.Add(1)
 				if current == 1 || current%50 == 0 || current == int64(total) {
-					log.Printf("[VERIFIER] %s %s verification progress: %d/%d tasks processed (%.1f%%)\n",
+					processorLogf("[VERIFIER] %s %s verification progress: %d/%d tasks processed (%.1f%%)\n",
 						cfg.EntityType, cfg.EntityID, current, total, float64(current)/float64(total)*100.0)
 				}
 			}
@@ -552,17 +527,17 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 
 	wg.Wait()
 	if passCtx.Err() != nil {
-		log.Printf("[VERIFIER] %s %s verification pass aborted.\n", cfg.EntityType, cfg.EntityID)
+		processorLogf("[VERIFIER] %s %s verification pass aborted.\n", cfg.EntityType, cfg.EntityID)
 		return
 	}
 	_ = cfg.ReconcileProgress()
-	log.Printf("[VERIFIER] %s %s checksum verification pass completed.\n", cfg.EntityType, cfg.EntityID)
+	processorLogf("[VERIFIER] %s %s checksum verification pass completed.\n", cfg.EntityType, cfg.EntityID)
 }
 
 func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID string, guardAlreadyHeld bool) {
 	generation, claimed, err := db.ClaimMigrationVerification(p.db, ctx, migrationID)
 	if err != nil {
-		log.Printf("[VERIFIER] Cannot claim verification for migration %s: %v\n", migrationID, err)
+		processorLogf("[VERIFIER] Cannot claim verification for migration %s: %v\n", migrationID, err)
 		return
 	}
 	if !claimed {
@@ -585,7 +560,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 	}
 	targetPass, err = p.ensureFreshOAuthToken(ctx, mig, "target", targetPass)
 	if err != nil {
-		log.Printf("[VERIFIER] Failed to refresh target OAuth token for migration %s: %v\n", migrationID, err)
+		processorLogf("[VERIFIER] Failed to refresh target OAuth token for migration %s: %v\n", migrationID, err)
 		return
 	}
 
@@ -622,7 +597,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 		CanWrite: leaseOwned.Load,
 		Release: func(ctx context.Context) {
 			if err := db.ReleaseMigrationVerificationLease(p.db, ctx, migrationID, generation); err != nil {
-				log.Printf("[VERIFIER] Cannot release verification lease for migration %s: %v\n", migrationID, err)
+				processorLogf("[VERIFIER] Cannot release verification lease for migration %s: %v\n", migrationID, err)
 			}
 		},
 	}
@@ -633,7 +608,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string, guardAlreadyHeld bool) {
 	verificationGeneration, claimed, err := db.ClaimSyncJobVerification(p.db, ctx, syncJobID)
 	if err != nil {
-		log.Printf("[VERIFIER] Cannot claim verification for sync job %s: %v", syncJobID, err)
+		processorLogf("[VERIFIER] Cannot claim verification for sync job %s: %v", syncJobID, err)
 		return
 	}
 	if !claimed {
@@ -642,7 +617,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	job, err := db.GetSyncJob(p.db, syncJobID)
 	if err != nil || job.Status != "VERIFYING" {
 		if releaseErr := db.ReleaseSyncJobVerificationLease(p.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
-			log.Printf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
+			processorLogf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
 		}
 		return
 	}
@@ -658,9 +633,9 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 	}
 	targetPass, err = p.ensureFreshSyncOAuthToken(ctx, job, "target", targetPass)
 	if err != nil {
-		log.Printf("[VERIFIER] Failed to refresh target OAuth token for sync job %s: %v\n", syncJobID, err)
+		processorLogf("[VERIFIER] Failed to refresh target OAuth token for sync job %s: %v\n", syncJobID, err)
 		if releaseErr := db.ReleaseSyncJobVerificationLease(p.db, context.Background(), syncJobID, verificationGeneration); releaseErr != nil {
-			log.Printf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
+			processorLogf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, releaseErr)
 		}
 		return
 	}
@@ -701,7 +676,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 		CanWrite: leaseOwned.Load,
 		Release: func(ctx context.Context) {
 			if err := db.ReleaseSyncJobVerificationLease(p.db, ctx, syncJobID, verificationGeneration); err != nil {
-				log.Printf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, err)
+				processorLogf("[VERIFIER] Cannot release verification lease for sync job %s: %v", syncJobID, err)
 			}
 		},
 	}

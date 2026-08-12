@@ -45,6 +45,23 @@ func isGoogleAuthError(err error) bool {
 		strings.Contains(errStr, "403")
 }
 
+func isGooglePermanentTransferError(err error) bool {
+	var gErr *googleapi.Error
+	if !errors.As(err, &gErr) {
+		return false
+	}
+	if gErr.Code == http.StatusBadRequest || gErr.Code == http.StatusNotFound {
+		return true
+	}
+	for _, detail := range gErr.Errors {
+		switch detail.Reason {
+		case "exportSizeLimitExceeded", "badRequest", "fileNotDownloadable", "notFound", "fileNotFound":
+			return true
+		}
+	}
+	return false
+}
+
 // wrapGoogleError translates Google API authentication failures to ErrAuth while
 // retaining the original error for diagnostics.
 func wrapGoogleError(operation string, err error) error {
@@ -56,6 +73,9 @@ func wrapGoogleError(operation string, err error) error {
 	}
 	if isGoogleAuthError(err) {
 		return fmt.Errorf("%s: %w: %w", operation, ErrAuth, err)
+	}
+	if isGooglePermanentTransferError(err) {
+		return fmt.Errorf("%s: %w: %w", operation, ErrPermanentTransfer, err)
 	}
 	return fmt.Errorf("%s: %w", operation, err)
 }

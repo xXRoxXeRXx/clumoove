@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"log"
 	"net"
 	"os"
 	"path"
@@ -420,16 +419,6 @@ func retryDelay(err error, attempt int) time.Duration {
 	return delay
 }
 
-// queryTargetSize reports whether the target file exists and its size. When retry
-// is true, transient query errors are retried (used for integrity checks where a
-// transient Nextcloud 502/503/423 must not be mistaken for a corrupt transfer).
-func queryTargetSize(ctx context.Context, client storage.StorageProvider, resourceType, p string, retry bool) (exists bool, size int64, err error) {
-	if retry {
-		return verifyTargetSize(ctx, client, resourceType, p)
-	}
-	return client.FileExists(ctx, resourceType, p)
-}
-
 func (p *Processor) recordConnLoss(migrationID string) int {
 	actual, _ := p.connLossCounts.LoadOrStore(migrationID, new(int32))
 	return int(atomic.AddInt32(actual.(*int32), 1))
@@ -454,11 +443,11 @@ func (p *Processor) clearConnLossTask(taskID string) {
 
 // Start runs the worker dequeue loop and background schedulers
 func (p *Processor) Start(ctx context.Context) {
-	log.Printf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
+	processorLogf("[Worker %s] Started and waiting for tasks with max %d threads...\n", p.workerID, p.maxThreads)
 
 	// Recover any abandoned tasks on startup
 	if err := p.queue.RecoverAbandonedTasks(ctx, p.db, p.workerID); err != nil {
-		log.Printf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
+		processorLogf("[Worker %s] Error recovering abandoned tasks: %v\n", p.workerID, err)
 	}
 
 	p.startVerificationDispatcher(ctx)
@@ -474,11 +463,11 @@ func (p *Processor) Start(ctx context.Context) {
 
 	// Start Cancel Listener
 	go p.queue.SubscribeToCancelEvents(ctx, func(migrationID string) {
-		log.Printf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
+		processorLogf("[Worker %s] Received Cancel Event for Migration: %s\n", p.workerID, migrationID)
 		p.activeTasks.Range(func(key, value interface{}) bool {
 			info, ok := value.(activeTaskInfo)
 			if ok && info.migrationID == migrationID {
-				log.Printf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
+				processorLogf("[Worker %s] Cancelling active stream for task: %s\n", p.workerID, key)
 				info.cancel()
 			}
 			return true
@@ -488,11 +477,11 @@ func (p *Processor) Start(ctx context.Context) {
 	// Sync transfers have their own control channel because their lifecycle is
 	// coordinated by the sync engine rather than the migration processor.
 	go p.queue.SubscribeToSyncCancelEvents(ctx, func(syncJobID string) {
-		log.Printf("[Worker %s] Received Cancel Event for Sync Job: %s\n", p.workerID, syncJobID)
+		processorLogf("[Worker %s] Received Cancel Event for Sync Job: %s\n", p.workerID, syncJobID)
 		p.activeTasks.Range(func(key, value interface{}) bool {
 			info, ok := value.(activeTaskInfo)
 			if ok && info.syncJobID == syncJobID {
-				log.Printf("[Worker %s] Cancelling active sync stream for task: %s\n", p.workerID, key)
+				processorLogf("[Worker %s] Cancelling active sync stream for task: %s\n", p.workerID, key)
 				info.cancel()
 			}
 			return true
@@ -507,7 +496,7 @@ func (p *Processor) Start(ctx context.Context) {
 			jobID = event.SyncJobID
 			jobType = "sync job"
 		}
-		log.Printf("[Worker %s] Bandwidth change for %s %s: %d Mbps",
+		processorLogf("[Worker %s] Bandwidth change for %s %s: %d Mbps",
 			p.workerID, jobType, jobID, event.BandwidthLimitMbps)
 		if throttler, ok := p.throttlers.Load(jobID); ok {
 			throttler.(*throttle.MigrationThrottler).SetLimit(event.BandwidthLimitMbps)
@@ -521,10 +510,10 @@ func (p *Processor) Start(ctx context.Context) {
 	if p.dbConnStr != "" {
 		ch, err := queue.ListenForTasks(ctx, p.dbConnStr)
 		if err != nil {
-			log.Printf("[Worker %s] LISTEN task_available unavailable (falling back to polling): %v\n", p.workerID, err)
+			processorLogf("[Worker %s] LISTEN task_available unavailable (falling back to polling): %v\n", p.workerID, err)
 		} else {
 			notifyTasksCh = ch
-			log.Printf("[Worker %s] LISTEN task_available active — idle threads will wake immediately on new tasks\n", p.workerID)
+			processorLogf("[Worker %s] LISTEN task_available active — idle threads will wake immediately on new tasks\n", p.workerID)
 		}
 	}
 
@@ -555,7 +544,7 @@ func (p *Processor) Start(ctx context.Context) {
 						if ctx.Err() != nil {
 							return
 						}
-						log.Printf("[Worker %s] Thread %d dequeue error: %v. Sleeping...\n", p.workerID, threadID, err)
+						processorLogf("[Worker %s] Thread %d dequeue error: %v. Sleeping...\n", p.workerID, threadID, err)
 						time.Sleep(2 * time.Second)
 						continue
 					}
@@ -578,22 +567,22 @@ func (p *Processor) Start(ctx context.Context) {
 					}
 
 					if payload.SyncJobID != "" {
-						log.Printf("[Worker %s] Thread %d processing sync task %s for job %s\n", p.workerID, threadID, payload.TaskID, payload.SyncJobID)
+						processorLogf("[Worker %s] Thread %d processing sync task %s for job %s\n", p.workerID, threadID, payload.TaskID, payload.SyncJobID)
 						err = p.processSyncTask(ctx, payload, threadID)
 						if err != nil {
-							log.Printf("[Worker %s] Thread %d error processing sync task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
+							processorLogf("[Worker %s] Thread %d error processing sync task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
 							p.handleSyncTaskFailure(ctx, payload, err)
 						} else {
-							log.Printf("[Worker %s] Thread %d successfully processed sync task %s\n", p.workerID, threadID, payload.TaskID)
+							processorLogf("[Worker %s] Thread %d successfully processed sync task %s\n", p.workerID, threadID, payload.TaskID)
 						}
 					} else {
-						log.Printf("[Worker %s] Thread %d processing migration task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
+						processorLogf("[Worker %s] Thread %d processing migration task %s for migration %s\n", p.workerID, threadID, payload.TaskID, payload.MigrationID)
 						err = p.processTask(ctx, payload, threadID)
 						if err != nil {
-							log.Printf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
+							processorLogf("[Worker %s] Thread %d error processing task %s: %v\n", p.workerID, threadID, payload.TaskID, err)
 							p.handleTaskFailure(ctx, payload, err)
 						} else {
-							log.Printf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
+							processorLogf("[Worker %s] Thread %d successfully processed task %s\n", p.workerID, threadID, payload.TaskID)
 						}
 					}
 					p.releaseProviderSlot()
@@ -604,10 +593,10 @@ func (p *Processor) Start(ctx context.Context) {
 
 	// Wait for shutdown signal
 	<-ctx.Done()
-	log.Printf("[Worker %s] Shutdown signal received. Waiting for active tasks to finish...\n", p.workerID)
+	processorLogf("[Worker %s] Shutdown signal received. Waiting for active tasks to finish...\n", p.workerID)
 	wg.Wait()
 	p.verificationWG.Wait()
-	log.Printf("[Worker %s] Worker loop stopped.\n", p.workerID)
+	processorLogf("[Worker %s] Worker loop stopped.\n", p.workerID)
 	// Background schedulers (RunWorkerLiveness, RunRetryScheduler, RunProgressReconciler,
 	// RunOrphanedRunningTasksRecovery, RunConnectionRecoveryScheduler) are located in schedulers.go.
 }
@@ -636,7 +625,7 @@ func overwriteBackupPath(targetPath, taskID string) string {
 
 func cleanupStagingUpload(ctx context.Context, target storage.StorageProvider, resourceType, uploadPath string) {
 	if err := target.DeleteFile(ctx, resourceType, uploadPath); err != nil {
-		log.Printf("Warning: failed to clean up staging upload %s: %v", uploadPath, err)
+		processorLogf("Warning: failed to clean up staging upload %s: %v", uploadPath, err)
 	}
 }
 
@@ -723,27 +712,34 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// But just in case status changed right after dequeue:
 	if mig.Status == "PAUSED_CONNECTION_LOSS" || mig.Status == "PAUSED" {
 		// Set back to pending
-		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING")
-		time.Sleep(2 * time.Second)
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING"); err != nil {
+			processorLogf("[Worker %s] Failed to requeue paused task %s: %v", p.workerID, payload.TaskID, err)
+		}
 		return nil
 	}
 	ctx = storage.WithLocalUserScope(ctx, mig.UserID.String)
 
 	// If migration is in a terminal state (COMPLETED, COMPLETED_WITH_ERRORS or FAILED), mark task as skipped/failed
 	if mig.Status == "COMPLETED" || mig.Status == "COMPLETED_WITH_ERRORS" || mig.Status == "FAILED" {
-		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "SKIPPED")
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "SKIPPED"); err != nil {
+			processorLogf("[Worker %s] Failed to skip terminal migration task %s: %v", p.workerID, payload.TaskID, err)
+		}
 		return nil
 	}
 
 	// If migration was cancelled, mark the task cancelled and stop
 	if mig.Status == "CANCELLED" {
-		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "CANCELLED")
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "CANCELLED"); err != nil {
+			processorLogf("[Worker %s] Failed to cancel task %s: %v", p.workerID, payload.TaskID, err)
+		}
 		return nil
 	}
 
 	// If migration is in any other non-running state, requeue and return error
 	if mig.Status != "RUNNING" && mig.Status != "INDEXING" {
-		_ = db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING")
+		if err := db.TransitionClaimedTask(p.db, ctx, payload.TaskID, payload.ClaimEpoch, "PENDING"); err != nil {
+			processorLogf("[Worker %s] Failed to requeue task %s in migration state %s: %v", p.workerID, payload.TaskID, mig.Status, err)
+		}
 		return fmt.Errorf("migration is in state %s, task skipped for now", mig.Status)
 	}
 
@@ -759,7 +755,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		logPath = ResolveTargetPath(task.ResourceType, task.FilePath, task.Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
 	}
 
-	log.Printf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
+	processorLogf("[Worker %s] Thread %d -> Request: [%s] %s (%d bytes) [%s -> %s]\n",
 		p.workerID, threadID, strings.ToUpper(task.ResourceType), logPath, task.FileSize, mig.SourceProvider, mig.TargetProvider)
 
 	// Decrypt credentials
@@ -839,7 +835,10 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 
 	// Update task status to RUNNING in DB
 	task.Status = "RUNNING"
-	_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
+	if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+		processorLogf("[Worker %s] Failed to mark task %s RUNNING: %v", p.workerID, task.ID, err)
+		return fmt.Errorf("failed to mark task running: %w", err)
+	}
 
 	// Skip read-only system or app-generated calendar/contact collections
 	if task.ResourceType != "files" && storage.IsSystemOrAppGeneratedPath(task.FilePath) {
@@ -871,7 +870,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	var taskMeta map[string]interface{}
 	if task.Metadata != nil {
 		if err := json.Unmarshal(task.Metadata, &taskMeta); err != nil {
-			log.Printf("[Worker] Failed to parse task metadata for task %s: %v", task.ID, err)
+			processorLogf("[Worker] Failed to parse task metadata for task %s: %v", task.ID, err)
 			return fmt.Errorf("failed to parse task metadata: %w", err)
 		}
 	}
@@ -886,7 +885,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				dirPath := path.Dir(targetPath)
 				dirName := path.Base(targetPath)
 				if collision, _ := sanitize.CheckCaseCollision(ctx, targetClient, task.ResourceType, dirPath, dirName); collision != "" {
-					log.Printf("[Worker] Directory case collision detected: %s conflicts with %s", targetPath, collision)
+					processorLogf("[Worker] Directory case collision detected: %s conflicts with %s", targetPath, collision)
 					// Skip this directory to avoid conflicts
 					task.Status = "SKIPPED"
 					task.ErrorMessage = sql.NullString{String: fmt.Sprintf("Directory skipped due to case collision with %s", collision), Valid: true}
@@ -927,7 +926,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		if result.Changed {
 			dir := path.Dir(targetPath)
 			targetPath = path.Join(dir, result.SanitizedName)
-			log.Printf("[SANITIZE] %s: \"%s\" → \"%s\" (%s)",
+			processorLogf("[SANITIZE] %s: \"%s\" → \"%s\" (%s)",
 				task.ID, result.OriginalName, result.SanitizedName, strings.Join(result.Reasons, ", "))
 			_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 		}
@@ -936,7 +935,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 			collision, err := sanitize.CheckCaseCollision(ctx, targetClient, task.ResourceType,
 				path.Dir(targetPath), path.Base(targetPath))
 			if err != nil {
-				log.Printf("Warning: case collision check failed: %v", err)
+				processorLogf("Warning: case collision check failed: %v", err)
 			} else if collision != "" {
 				resolved, err := sanitize.ResolveCollision(ctx, targetClient, task.ResourceType,
 					path.Dir(targetPath), path.Base(targetPath), mig.TargetProvider)
@@ -944,7 +943,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 					return fmt.Errorf("failed to resolve case collision: %w", err)
 				}
 				targetPath = path.Join(path.Dir(targetPath), resolved)
-				log.Printf("[COLLISION] %s: case collision with \"%s\" → \"%s\"",
+				processorLogf("[COLLISION] %s: case collision with \"%s\" → \"%s\"",
 					task.ID, collision, path.Base(targetPath))
 				_ = db.UpdateClaimedTaskFilePath(p.db, ctx, task.ID, task.ClaimEpoch, targetPath)
 			}
@@ -1118,7 +1117,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 					}
 					if err != nil {
 						consecutiveFailures++
-						log.Printf("[Worker %s] heartbeat error for task %s (failure %d/5): %v", p.workerID, task.ID, consecutiveFailures, err)
+						processorLogf("[Worker %s] heartbeat error for task %s (failure %d/5): %v", p.workerID, task.ID, consecutiveFailures, err)
 						if consecutiveFailures >= 5 {
 							cancel()
 							return
@@ -1159,7 +1158,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	}
 	if transferMeta.ModifiedTime.IsZero() {
 		if srcInfo, inspectErr := sourceClient.InspectResource(ctx, task.ResourceType, task.FilePath); inspectErr != nil {
-			log.Printf("Warning: could not fetch source mtime for %s: %v (timestamp may be inaccurate)", task.FilePath, inspectErr)
+			processorLogf("Warning: could not fetch source mtime for %s: %v (timestamp may be inaccurate)", task.FilePath, inspectErr)
 		} else {
 			transferMeta.ModifiedTime = srcInfo.LastModified
 		}
@@ -1228,7 +1227,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 				if !errors.Is(err, storage.ErrUnsupportedOnPlatform) {
 					// Metadata propagation is non-fatal, but must remain visible to
 					// operators rather than allowing the task to appear silently complete.
-					log.Printf("Warning: metadata propagation failed for task %s (target provider %s): %v", task.ID, mig.TargetProvider, err)
+					processorLogf("Warning: metadata propagation failed for task %s (target provider %s): %v", task.ID, mig.TargetProvider, err)
 				}
 			}
 		}
@@ -1282,7 +1281,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	// 1. Fetch Task
 	task, err := db.GetTask(p.db, payload.TaskID)
 	if err != nil {
-		log.Printf("Error fetching task on failure handler: %v\n", err)
+		processorLogf("Error fetching task on failure handler: %v\n", err)
 		return
 	}
 	task.ClaimEpoch = payload.ClaimEpoch
@@ -1290,19 +1289,23 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	// Check if migration was manually cancelled
 	mig, migErr := db.GetMigration(p.db, payload.MigrationID)
 	if migErr == nil && mig.Status == "CANCELLED" {
-		log.Printf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
+		processorLogf("[Worker %s] Task %s aborted (Migration cancelled).\n", p.workerID, payload.TaskID)
 		task.Status = "CANCELLED"
-		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
+		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+			processorLogf("[Worker %s] Failed to mark cancelled task %s: %v", p.workerID, task.ID, err)
+		}
 		return
 	}
 
 	// Check if context is cancelled (graceful shutdown)
 	isShutdown := errors.Is(procErr, context.Canceled) || ctx.Err() != nil
 	if isShutdown {
-		log.Printf("[Worker %s] Shutdown detected. Requeueing task %s...\n", p.workerID, payload.TaskID)
+		processorLogf("[Worker %s] Shutdown detected. Requeueing task %s...\n", p.workerID, payload.TaskID)
 
 		task.Status = "PENDING"
-		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
+		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+			processorLogf("[Worker %s] Failed to requeue shutdown task %s: %v", p.workerID, task.ID, err)
+		}
 		return
 	}
 
@@ -1313,7 +1316,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	isConnLoss := isNetworkError(procErr)
 
 	if isConnLoss {
-		log.Printf("[Worker %s] Connection loss detected: %v\n", p.workerID, procErr)
+		processorLogf("[Worker %s] Connection loss detected: %v\n", p.workerID, procErr)
 		// Prefer per-task backoff: retry just this task instead of pausing the
 		// whole migration. Only escalate to PAUSED_CONNECTION_LOSS after several
 		// consecutive connection losses for the migration, so a single flaky task
@@ -1335,8 +1338,10 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 			nextRetry := time.Now().Add(backoff)
 			task.Status = "FAILED"
 			task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
-			_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
-			log.Printf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task conn-loss attempts %d)\n",
+			if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+				processorLogf("[Worker %s] Failed to schedule connection-loss retry for task %s: %v", p.workerID, task.ID, err)
+			}
+			processorLogf("[Worker %s] Connection loss on task %s (migration %s): retrying in %ds (consecutive losses %d/%d, task conn-loss attempts %d)\n",
 				p.workerID, payload.TaskID, payload.MigrationID, int(backoff.Seconds()),
 				lossCount, connLossEscalationThreshold, taskConnLoss)
 			return
@@ -1344,33 +1349,29 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		// Escalation: too many consecutive connection losses for the migration,
 		// or this single task exhausted its connection-loss retries — pause the
 		// migration so the connection-recovery scheduler can retry it.
-		_ = db.UpdateMigrationStatus(p.db, payload.MigrationID, "PAUSED_CONNECTION_LOSS", nil)
+		paused, pauseErr := db.PauseMigrationForConnectionLoss(p.db, payload.MigrationID)
+		if pauseErr != nil {
+			processorLogf("[Worker %s] Failed to pause migration %s after connection loss: %v", p.workerID, payload.MigrationID, pauseErr)
+			return
+		}
+		if !paused {
+			processorLogf("[Worker %s] Did not pause migration %s after connection loss because its status changed", p.workerID, payload.MigrationID)
+			return
+		}
 		p.clearConnLoss(payload.MigrationID)
 		p.clearConnLossTask(task.ID)
 		p.recoveryAttempts.Delete(payload.MigrationID)
 		// Task is set back to PENDING so it can be retried immediately upon resume
 		task.Status = "PENDING"
-		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
+		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+			processorLogf("[Worker %s] Failed to requeue task %s after pausing migration: %v", p.workerID, task.ID, err)
+		}
 		return
 	}
 
 	// Check if error is permanent / non-retryable
-	isPermanent := errors.Is(procErr, oauth.ErrRefreshTokenInvalid) ||
-		errors.Is(procErr, storage.ErrUnsupportedResourceType) ||
-		errors.Is(procErr, storage.ErrPathEscapesRoot)
+	isPermanent := isPermanentTransferError(procErr)
 	errStr := procErr.Error()
-	if !isPermanent && (strings.Contains(errStr, "exportSizeLimitExceeded") ||
-		strings.Contains(errStr, "badRequest") ||
-		strings.Contains(errStr, "conversion is not supported") ||
-		strings.Contains(errStr, "fileNotDownloadable") ||
-		strings.Contains(errStr, "Only files with binary content can be downloaded") ||
-		strings.Contains(errStr, "too large to be exported") ||
-		strings.Contains(errStr, "notFound") ||
-		strings.Contains(errStr, "fileNotFound") ||
-		strings.Contains(errStr, "not supported by") ||
-		strings.Contains(errStr, "path escapes storage root")) {
-		isPermanent = true
-	}
 
 	// Detect authentication errors that mean the stored credentials are invalid.
 	// All provider methods (Connect and every transfer method) wrap HTTP 401
@@ -1392,16 +1393,18 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 				task.Status = "FAILED"
 				task.ErrorMessage = sql.NullString{String: "OAuth access token rejected; refreshed token scheduled for retry", Valid: true}
 				task.NextRetryAt = sql.NullTime{Time: time.Now().Add(backoff), Valid: true}
-				_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
-				log.Printf("[Worker %s] OAuth 401 for task %s (migration %s, %s) — refreshed token and retrying in %ds\n",
+				if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+					processorLogf("[Worker %s] Failed to schedule OAuth retry for task %s: %v", p.workerID, task.ID, err)
+				}
+				processorLogf("[Worker %s] OAuth 401 for task %s (migration %s, %s) — refreshed token and retrying in %ds\n",
 					p.workerID, payload.TaskID, payload.MigrationID, role, int(backoff.Seconds()))
 				return
 			} else {
-				log.Printf("[Worker %s] OAuth 401 recovery refresh failed for task %s (migration %s, %s): %v\n",
+				processorLogf("[Worker %s] OAuth 401 recovery refresh failed for task %s (migration %s, %s): %v\n",
 					p.workerID, payload.TaskID, payload.MigrationID, role, refreshErr)
 			}
 		}
-		log.Printf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n",
+		processorLogf("[Worker %s] Auth error detected for task %s (migration %s) — stopping migration immediately\n",
 			p.workerID, payload.TaskID, payload.MigrationID)
 		authErrMsg := "Authentication failed — please check your credentials and start a new migration"
 		finalized, finalizeErr := db.FailMigrationForAuthentication(p.db, ctx, task, authErrMsg)
@@ -1410,7 +1413,7 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		p.recoveryAttempts.Delete(payload.MigrationID)
 		if finalizeErr != nil || !finalized {
 			if finalizeErr != nil {
-				log.Printf("[Worker %s] atomically finalizing auth failure for migration %s: %v\n", p.workerID, payload.MigrationID, finalizeErr)
+				processorLogf("[Worker %s] atomically finalizing auth failure for migration %s: %v\n", p.workerID, payload.MigrationID, finalizeErr)
 			}
 			return
 		}
@@ -1432,20 +1435,23 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		task.Status = "FAILED" // Kept as failed until cron schedules retry
 		task.NextRetryAt = sql.NullTime{Time: nextRetry, Valid: true}
 		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 0, 1, 0); err != nil {
+			processorLogf("[Worker %s] Failed to record retry state for task %s: %v", p.workerID, task.ID, err)
 			return
 		}
 
-		log.Printf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, int(backoff.Seconds()), task.Attempts)
+		processorLogf("[Worker %s] Task %s scheduled for retry in %ds (Attempt %d/3)\n", p.workerID, task.ID, int(backoff.Seconds()), task.Attempts)
 	} else {
 		// Max retries reached, fail permanently
 		task.Status = "FAILED"
 		task.NextRetryAt = sql.NullTime{}
-		_ = db.UpdateClaimedTaskStatus(p.db, ctx, task)
+		if err := db.UpdateClaimedTaskStatus(p.db, ctx, task); err != nil {
+			processorLogf("[Worker %s] Failed to record terminal failure for task %s: %v", p.workerID, task.ID, err)
+		}
 		// Task is now terminal: drop its per-task connection-loss counter so the
 		// in-memory map does not grow unbounded across a long-running worker.
 		p.clearConnLossTask(task.ID)
 
-		log.Printf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
+		processorLogf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
 	}
 }
 
@@ -1453,9 +1459,13 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 // wrapped transfer errors retain source/target context, so a valid credential
 // on the other side is never rotated unnecessarily.
 func oauthAuthFailureRole(mig *db.Migration, errText string) string {
+	return oauthAuthFailureRoleForProviders(mig.SourceProvider, mig.TargetProvider, errText)
+}
+
+func oauthAuthFailureRoleForProviders(sourceProvider, targetProvider, errText string) string {
 	errText = strings.ToLower(errText)
-	sourceOAuth := oauth.IsProvider(mig.SourceProvider)
-	targetOAuth := oauth.IsProvider(mig.TargetProvider)
+	sourceOAuth := oauth.IsProvider(sourceProvider)
+	targetOAuth := oauth.IsProvider(targetProvider)
 	switch {
 	case sourceOAuth && strings.Contains(errText, "source"):
 		return "source"
@@ -1470,22 +1480,10 @@ func oauthAuthFailureRole(mig *db.Migration, errText string) string {
 	}
 }
 
+// oauthSyncAuthFailureRole remains as a small compatibility wrapper for the
+// focused role-selection tests; both lifecycle paths use the shared resolver.
 func oauthSyncAuthFailureRole(job *db.SyncJob, errText string) string {
-	errText = strings.ToLower(errText)
-	sourceOAuth := oauth.IsProvider(job.SourceProvider)
-	targetOAuth := oauth.IsProvider(job.TargetProvider)
-	switch {
-	case sourceOAuth && strings.Contains(errText, "source"):
-		return "source"
-	case targetOAuth && strings.Contains(errText, "target"):
-		return "target"
-	case sourceOAuth && !targetOAuth:
-		return "source"
-	case targetOAuth && !sourceOAuth:
-		return "target"
-	default:
-		return ""
-	}
+	return oauthAuthFailureRoleForProviders(job.SourceProvider, job.TargetProvider, errText)
 }
 
 // ProgressReader wraps io.Reader to notify bytes read
@@ -1497,9 +1495,38 @@ type ProgressReader struct {
 func (pr *ProgressReader) Read(p []byte) (int, error) {
 	n, err := pr.Reader.Read(p)
 	if n > 0 && pr.ProgressChan != nil {
-		pr.ProgressChan <- int64(n)
+		select {
+		case pr.ProgressChan <- int64(n):
+		default:
+			// Live progress is approximate; never let a slow database update stall
+			// the source stream or upload.
+		}
 	}
 	return n, err
+}
+
+// isPermanentTransferError centralizes provider errors which cannot succeed on
+// retry. Prefer typed errors where providers expose them; the remaining legacy
+// API strings are kept in one place until those providers gain sentinels.
+func isPermanentTransferError(err error) bool {
+	if errors.Is(err, oauth.ErrRefreshTokenInvalid) ||
+		errors.Is(err, storage.ErrUnsupportedResourceType) ||
+		errors.Is(err, storage.ErrPathEscapesRoot) ||
+		errors.Is(err, storage.ErrPermanentTransfer) {
+		return true
+	}
+	errText := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"exportsizelimitexceeded", "badrequest", "conversion is not supported",
+		"filenotdownloadable", "only files with binary content can be downloaded",
+		"too large to be exported", "notfound", "filenotfound", "not supported by",
+		"path escapes storage root",
+	} {
+		if strings.Contains(errText, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func isNetworkError(err error) bool {
@@ -1638,7 +1665,7 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 		return accessToken, nil
 	}
 
-	log.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
+	processorLogf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
 		p.workerID, role, mig.ID)
 
 	refreshToken, err := crypto.DecryptWithDomain(refreshTokenEnc.String, p.secretKey, crypto.DomainOAuthRefreshToken)
@@ -1676,7 +1703,7 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 	}, expectedRefreshEnc)
 
 	if errors.Is(err, db.ErrOAuthTokenConflict) {
-		log.Printf("[Worker %s] Token update conflict for migration %s (%s) — adopting winner token from DB\n", p.workerID, mig.ID, role)
+		processorLogf("[Worker %s] Token update conflict for migration %s (%s) — adopting winner token from DB\n", p.workerID, mig.ID, role)
 		if latestMig, lerr := db.GetMigration(p.db, mig.ID); lerr == nil {
 			latest := tokenSet(latestMig)
 			if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
@@ -1792,7 +1819,7 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 		return currentToken, nil
 	}
 
-	log.Printf("[Worker %s] %s OAuth token expired or near expiry for sync job %s — refreshing inline\n",
+	processorLogf("[Worker %s] %s OAuth token expired or near expiry for sync job %s — refreshing inline\n",
 		p.workerID, role, job.ID)
 
 	refreshToken, err := crypto.DecryptWithDomain(refreshTokenEnc.String, p.secretKey, crypto.DomainOAuthRefreshToken)
@@ -1824,7 +1851,7 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 	expectedRefreshEnc := refreshTokenEnc.String
 	err = db.UpdateSyncJobOAuthTokens(p.db, job.ID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
 	if errors.Is(err, db.ErrOAuthTokenConflict) {
-		log.Printf("[Worker %s] Token update conflict for sync job %s (%s) — adopting winner token from DB\n", p.workerID, job.ID, role)
+		processorLogf("[Worker %s] Token update conflict for sync job %s (%s) — adopting winner token from DB\n", p.workerID, job.ID, role)
 		if latestJob, lerr := db.GetSyncJob(p.db, job.ID); lerr == nil {
 			latest := tokenSet(latestJob)
 			if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {

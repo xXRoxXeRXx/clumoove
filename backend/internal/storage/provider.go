@@ -8,6 +8,21 @@ import (
 	"time"
 )
 
+type checksumContextKey struct{}
+
+// WithUploadChecksum stores a provider-native checksum for a single upload.
+// Keeping the key private prevents collisions with values owned by callers.
+func WithUploadChecksum(ctx context.Context, checksum string) context.Context {
+	return context.WithValue(ctx, checksumContextKey{}, checksum)
+}
+
+// UploadChecksum returns the optional provider-native checksum attached to an
+// upload context.
+func UploadChecksum(ctx context.Context) string {
+	checksum, _ := ctx.Value(checksumContextKey{}).(string)
+	return checksum
+}
+
 var ErrDuplicateUID = errors.New("sabredav: duplicate UID index violation")
 
 // ErrAuth is returned by any provider when the server rejects credentials (HTTP 401).
@@ -30,6 +45,11 @@ var ErrUnsupportedResourceType = errors.New("resource type not supported by prov
 
 // ErrPathEscapesRoot is returned when a requested path escapes the storage root.
 var ErrPathEscapesRoot = errors.New("path escapes storage root")
+
+// ErrPermanentTransfer identifies a provider response which cannot succeed on
+// retry (for example an unexportable Google document). Callers can fail the
+// task immediately without relying on provider error text.
+var ErrPermanentTransfer = errors.New("permanent transfer error")
 
 // ErrNotFound is returned when a requested resource does not exist.
 var ErrNotFound = errors.New("resource not found")

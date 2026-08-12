@@ -127,7 +127,7 @@ func runTransferCore(req transferRequest) (transferResult, error) {
 	uploadCtx, cancelUpload := context.WithTimeout(req.UploadContext, deadline)
 	defer cancelUpload()
 	if expectedHash != "" {
-		uploadCtx = context.WithValue(uploadCtx, "oc-checksum", fmt.Sprintf("%s:%s", sourceAlgo, expectedHash))
+		uploadCtx = storage.WithUploadChecksum(uploadCtx, fmt.Sprintf("%s:%s", sourceAlgo, expectedHash))
 	}
 	if req.FileSize > chunkedUploadThreshold {
 		uploadReader := io.Reader(hashingReader)
