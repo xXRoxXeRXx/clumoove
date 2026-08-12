@@ -50,7 +50,7 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByID(s.db, claims.UserID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, claims.UserID)
 	if err != nil {
 		s.logf(r, "handleTOTP: failed to load user %s: %v\n", claims.UserID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -155,7 +155,7 @@ func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load the user to obtain the email for the otpauth account name.
-	u, err := db.GetUserByID(s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handle2FASetup: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -220,7 +220,7 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByID(s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handle2FAEnable: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -290,7 +290,7 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByID(s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handle2FADisable: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -373,7 +373,7 @@ func (s *APIServer) handle2FAStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := db.GetUserByID(s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handle2FAStatus: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

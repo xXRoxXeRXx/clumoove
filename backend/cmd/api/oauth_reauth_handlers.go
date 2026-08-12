@@ -30,7 +30,7 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 	if !authenticated {
 		return
 	}
-	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owned, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -47,7 +47,7 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 		writeValidationError(w, ErrRefreshTokenMissing)
 		return
 	}
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrMigrationNotFound)
 		return
@@ -101,7 +101,7 @@ func (s *APIServer) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 	if !s.requireSyncOwnership(w, r, id, userID) {
 		return
 	}
-	job, err := db.GetSyncJob(s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return

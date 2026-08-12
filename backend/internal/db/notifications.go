@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -100,7 +101,7 @@ func createMigrationNotificationEventTx(tx *sql.Tx, migrationID string) error {
 	var eventID string
 	err = tx.QueryRow(`INSERT INTO notification_events (user_id,kind,migration_id,run_generation,run_at,payload) VALUES ($1,'migration',$2,$3,CURRENT_TIMESTAMP,$4)
 		ON CONFLICT (migration_id,run_generation) WHERE migration_id IS NOT NULL DO NOTHING RETURNING id`, userID, migrationID, generation, payload).Scan(&eventID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
@@ -164,7 +165,7 @@ func CreateSyncNotificationEvent(database *sql.DB, syncJobID string) error {
 	payload, _ := json.Marshal(map[string]any{"kind": "sync", "name": syncJobID, "status": status, "total": total, "processed": processed, "failed": failed, "skipped": 0, "changed": changed, "deleted": deleted, "bytes": bytes, "error_message": nullString(errMsg)})
 	var eventID string
 	err = tx.QueryRow(`INSERT INTO notification_events (user_id,kind,sync_job_id,run_at,payload) VALUES ($1,'sync',$2,$3,$4) ON CONFLICT (sync_job_id,run_at) DO NOTHING RETURNING id`, userID, syncJobID, runAt, payload).Scan(&eventID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return tx.Commit()
 	}
 	if err != nil {

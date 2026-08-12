@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"time"
 )
@@ -26,27 +27,32 @@ const createScheduleQuery = `
 	`
 
 func CreateSchedule(db *sql.DB, s *Schedule) (string, error) {
-	if err := insertSchedule(db, s); err != nil {
+	if err := insertSchedule(context.Background(), db, s); err != nil {
 		return "", err
 	}
 	return s.ID, nil
 }
 
-func insertSchedule(database queryExecer, s *Schedule) error {
-	return database.QueryRow(
+func insertSchedule(ctx context.Context, database queryExecerContext, s *Schedule) error {
+	return database.QueryRowContext(ctx,
 		createScheduleQuery,
 		s.UserID, s.TaskType, s.TaskID, s.CronExpression, s.RunAt, s.NextRunAt, s.IsActive,
 	).Scan(&s.ID, &s.CreatedAt, &s.UpdatedAt)
 }
 
 func GetSchedule(db *sql.DB, id string) (*Schedule, error) {
+	return GetScheduleContext(context.Background(), db, id)
+}
+
+// GetScheduleContext retrieves a schedule while honoring caller cancellation.
+func GetScheduleContext(ctx context.Context, db *sql.DB, id string) (*Schedule, error) {
 	query := `
 		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
 		       is_active, created_at, updated_at
 		FROM schedules WHERE id = $1
 	`
 	var s Schedule
-	err := db.QueryRow(query, id).Scan(
+	err := db.QueryRowContext(ctx, query, id).Scan(
 		&s.ID, &s.UserID, &s.TaskType, &s.TaskID, &s.CronExpression, &s.RunAt, &s.NextRunAt,
 		&s.IsActive, &s.CreatedAt, &s.UpdatedAt,
 	)
@@ -57,6 +63,11 @@ func GetSchedule(db *sql.DB, id string) (*Schedule, error) {
 }
 
 func GetSchedulesForUser(db *sql.DB, userID string) ([]Schedule, error) {
+	return GetSchedulesForUserContext(context.Background(), db, userID)
+}
+
+// GetSchedulesForUserContext lists schedules while honoring caller cancellation.
+func GetSchedulesForUserContext(ctx context.Context, db *sql.DB, userID string) ([]Schedule, error) {
 	query := `
 		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
 		       is_active, created_at, updated_at
@@ -64,7 +75,7 @@ func GetSchedulesForUser(db *sql.DB, userID string) ([]Schedule, error) {
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query, userID)
+	rows, err := db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -176,9 +187,14 @@ func DeleteSchedulesForTask(db *sql.DB, taskType string, taskID string) error {
 }
 
 func VerifyScheduleOwnership(db *sql.DB, scheduleID, userID string) (bool, error) {
+	return VerifyScheduleOwnershipContext(context.Background(), db, scheduleID, userID)
+}
+
+// VerifyScheduleOwnershipContext verifies ownership while honoring caller cancellation.
+func VerifyScheduleOwnershipContext(ctx context.Context, db *sql.DB, scheduleID, userID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM schedules WHERE id = $1 AND user_id = $2)`
 	var exists bool
-	err := db.QueryRow(query, scheduleID, userID).Scan(&exists)
+	err := db.QueryRowContext(ctx, query, scheduleID, userID).Scan(&exists)
 	return exists, err
 }
 

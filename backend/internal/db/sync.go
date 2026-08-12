@@ -67,10 +67,12 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 	type alias SyncJob
 	aux := struct {
 		*alias
-		LastRunStatus string  `json:"last_run_status,omitempty"`
-		ErrorMessage  string  `json:"error_message,omitempty"`
-		LastRunAt     *string `json:"last_run_at,omitempty"`
-		NextRunAt     *string `json:"next_run_at,omitempty"`
+		LastRunStatus        string  `json:"last_run_status,omitempty"`
+		ErrorMessage         string  `json:"error_message,omitempty"`
+		LastRunAt            *string `json:"last_run_at,omitempty"`
+		NextRunAt            *string `json:"next_run_at,omitempty"`
+		SourceTokenExpiresAt *string `json:"source_token_expires_at,omitempty"`
+		TargetTokenExpiresAt *string `json:"target_token_expires_at,omitempty"`
 	}{
 		alias: (*alias)(&s),
 	}
@@ -87,6 +89,14 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 	if s.NextRunAt.Valid {
 		iso := s.NextRunAt.Time.Format(time.RFC3339)
 		aux.NextRunAt = &iso
+	}
+	if s.SourceTokenExpiresAt.Valid {
+		iso := s.SourceTokenExpiresAt.Time.Format(time.RFC3339)
+		aux.SourceTokenExpiresAt = &iso
+	}
+	if s.TargetTokenExpiresAt.Valid {
+		iso := s.TargetTokenExpiresAt.Time.Format(time.RFC3339)
+		aux.TargetTokenExpiresAt = &iso
 	}
 	return json.Marshal(aux)
 }
@@ -133,14 +143,14 @@ const createSyncJobQuery = `
 // CreateSyncJob inserts a sync job without a schedule. Production callers that
 // need periodic execution must use CreateSyncJobAndSchedule.
 func CreateSyncJob(db *sql.DB, s *SyncJob) (string, error) {
-	if err := insertSyncJob(db, s); err != nil {
+	if err := insertSyncJob(context.Background(), db, s); err != nil {
 		return "", err
 	}
 	return s.ID, nil
 }
 
-func insertSyncJob(database queryExecer, s *SyncJob) error {
-	return database.QueryRow(
+func insertSyncJob(ctx context.Context, database queryExecerContext, s *SyncJob) error {
+	return database.QueryRowContext(ctx,
 		createSyncJobQuery,
 		s.UserID, s.SourceURL, s.SourceUsername, s.SourcePasswordEncrypted,
 		s.SourceRefreshTokenEncrypted, s.SourceTokenExpiresAt, s.SourceMegaSessionIDEncrypted, s.SourceMegaMasterKeyEncrypted,
@@ -169,12 +179,12 @@ func CreateSyncJobAndSchedule(db *sql.DB, job *SyncJob, schedule *Schedule) (str
 		}
 	}()
 
-	if err := insertSyncJob(tx, job); err != nil {
+	if err := insertSyncJob(context.Background(), tx, job); err != nil {
 		return "", err
 	}
 
 	schedule.TaskID = job.ID
-	if err := insertSchedule(tx, schedule); err != nil {
+	if err := insertSchedule(context.Background(), tx, schedule); err != nil {
 		return "", err
 	}
 
@@ -197,6 +207,11 @@ func resetSyncJobAndSchedule(job *SyncJob, schedule *Schedule) {
 
 // GetSyncJob retrieves a sync job by ID
 func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
+	return GetSyncJobContext(context.Background(), db, id)
+}
+
+// GetSyncJobContext retrieves a sync job while honoring caller cancellation.
+func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
@@ -211,7 +226,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 		FROM sync_jobs WHERE id = $1
 	`
 	var s SyncJob
-	err := db.QueryRow(query, id).Scan(
+	err := db.QueryRowContext(ctx, query, id).Scan(
 		&s.ID, &s.UserID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
 		&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt, &s.SourceMegaSessionIDEncrypted, &s.SourceMegaMasterKeyEncrypted,
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
@@ -229,9 +244,9 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 }
 
 // GetSyncJobOwnerID returns the owning user_id for a sync job.
-func GetSyncJobOwnerID(database queryExecer, syncJobID string) (string, error) {
+func GetSyncJobOwnerID(database queryExecerContext, syncJobID string) (string, error) {
 	var owner sql.NullString
-	err := database.QueryRow(`SELECT user_id FROM sync_jobs WHERE id = $1`, syncJobID).Scan(&owner)
+	err := database.QueryRowContext(context.Background(), `SELECT user_id FROM sync_jobs WHERE id = $1`, syncJobID).Scan(&owner)
 	if err != nil {
 		return "", err
 	}
@@ -243,6 +258,11 @@ func GetSyncJobOwnerID(database queryExecer, syncJobID string) (string, error) {
 
 // GetSyncJobsForUser lists all sync jobs for a user
 func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
+	return GetSyncJobsForUserContext(context.Background(), db, userID)
+}
+
+// GetSyncJobsForUserContext lists sync jobs while honoring caller cancellation.
+func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]SyncJob, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, direction, conflict_strategy,
@@ -255,7 +275,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query, userID)
+	rows, err := db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -842,9 +862,14 @@ func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
 
 // VerifySyncJobOwnership checks if a sync job belongs to a specific user
 func VerifySyncJobOwnership(db *sql.DB, syncJobID, userID string) (bool, error) {
+	return VerifySyncJobOwnershipContext(context.Background(), db, syncJobID, userID)
+}
+
+// VerifySyncJobOwnershipContext verifies ownership while honoring caller cancellation.
+func VerifySyncJobOwnershipContext(ctx context.Context, db *sql.DB, syncJobID, userID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM sync_jobs WHERE id = $1 AND user_id = $2)`
 	var exists bool
-	err := db.QueryRow(query, syncJobID, userID).Scan(&exists)
+	err := db.QueryRowContext(ctx, query, syncJobID, userID).Scan(&exists)
 	if err != nil {
 		return false, err
 	}
@@ -889,6 +914,12 @@ func CancelOpenSyncTasksForPause(dbsql *sql.DB, syncJobID string) (int, error) {
 
 // ReconcileSyncJobProgress repairs progress counter drift for a sync job
 func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) error {
+	tx, err := dbsql.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	query := `
 		SELECT 
 			COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed,
@@ -900,14 +931,14 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 		WHERE sync_job_id = $1 AND pass_generation = $2
 	`
 	var completed, skipped, failed, cancelled, open int
-	err := dbsql.QueryRow(query, syncJobID, generation).Scan(&completed, &skipped, &failed, &cancelled, &open)
+	err = tx.QueryRow(query, syncJobID, generation).Scan(&completed, &skipped, &failed, &cancelled, &open)
 	if err != nil {
 		return err
 	}
 
 	total := completed + skipped + failed + cancelled + open
 	if total == 0 {
-		return nil
+		return tx.Commit()
 	}
 
 	// Always repair cached file counts
@@ -918,7 +949,7 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $3 AND run_generation = $4 AND status = 'RUNNING'
 	`
-	if _, err := dbsql.Exec(updateQuery, completed+skipped, failed+cancelled, syncJobID, generation); err != nil {
+	if _, err := tx.Exec(updateQuery, completed+skipped, failed+cancelled, syncJobID, generation); err != nil {
 		return err
 	}
 
@@ -949,11 +980,14 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 			WHERE id = $3 AND run_generation = $4 AND status = 'RUNNING'
 		`
 		var finalizedID string
-		err = dbsql.QueryRow(statusQuery+` RETURNING id`, finalRunStatus, finalErr, syncJobID, generation).Scan(&finalizedID)
+		err = tx.QueryRow(statusQuery+` RETURNING id`, finalRunStatus, finalErr, syncJobID, generation).Scan(&finalizedID)
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil
+			return tx.Commit()
 		}
 		if err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
 			return err
 		}
 		if err := CreateSyncNotificationEvent(dbsql, syncJobID); err != nil {
@@ -962,7 +996,7 @@ func ReconcileSyncJobProgress(dbsql *sql.DB, syncJobID string, generation int) e
 		return nil
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 // GetFailedSyncTasksForReport retrieves failed tasks for one sync pass.
@@ -1376,8 +1410,13 @@ type SyncListParams struct {
 
 // ListAllSyncJobs returns every sync job across all users (read-only oversight).
 func ListAllSyncJobs(database *sql.DB, p SyncListParams) ([]AdminSyncView, int, error) {
+	return ListAllSyncJobsContext(context.Background(), database, p)
+}
+
+// ListAllSyncJobsContext lists sync jobs for administration while honoring caller cancellation.
+func ListAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListParams) ([]AdminSyncView, int, error) {
 	var total int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM sync_jobs`).Scan(&total); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_jobs`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -1398,7 +1437,7 @@ func ListAllSyncJobs(database *sql.DB, p SyncListParams) ([]AdminSyncView, int, 
 		ORDER BY s.created_at DESC
 		LIMIT $1 OFFSET $2
 	`
-	rows, err := database.Query(query, p.Limit, offset)
+	rows, err := database.QueryContext(ctx, query, p.Limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1466,8 +1505,8 @@ func UpdateSyncStateTargetHash(db *sql.DB, ctx context.Context, syncJobID, relPa
 var ErrSyncInvalidState = errors.New("sync job is in an active state and cannot be modified")
 
 // DeleteSyncStateForJob removes all cached sync_state entries for a sync job (used on scope changes to prevent false deletions).
-func DeleteSyncStateForJob(exec queryExecer, syncJobID string) error {
-	_, err := exec.Exec(`DELETE FROM sync_state WHERE sync_job_id = $1`, syncJobID)
+func DeleteSyncStateForJob(exec queryExecerContext, syncJobID string) error {
+	_, err := exec.ExecContext(context.Background(), `DELETE FROM sync_state WHERE sync_job_id = $1`, syncJobID)
 	return err
 }
 

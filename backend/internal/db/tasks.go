@@ -321,7 +321,7 @@ func UpdateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, fi
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = $1, attempts = $2, error_message = $3, next_retry_at = $4, worker_hash = $5,
 			source_hash = $6, target_hash = $7, checksum_verified = $8, updated_at = CURRENT_TIMESTAMP
@@ -520,10 +520,10 @@ func ResetFailedTasksForRetry(db *sql.DB, ctx context.Context, migrationID strin
 
 	res, err := tx.Exec(`
 		UPDATE migrations
-		SET failed_files = failed_files - $1,
-		    processed_files = processed_files - $1,
-		    processed_bytes = processed_bytes - $2,
-		    live_bytes = processed_bytes,
+		SET failed_files = GREATEST(0, failed_files - $1),
+		    processed_files = GREATEST(0, processed_files - $1),
+		    processed_bytes = GREATEST(0, processed_bytes - $2),
+		    live_bytes = GREATEST(0, processed_bytes - $2),
 		    notification_generation = notification_generation + 1,
 		    failed_retry_done = FALSE,
 		    status = 'RUNNING',
@@ -691,7 +691,12 @@ func GetIndexingErrorsForReport(db *sql.DB, migrationID string) ([]IndexingError
 // GetMigrationErrors returns final transfer failures and non-fatal indexing
 // errors in one chronologically ordered, paginated list.
 func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
-	rows, err := db.Query(`
+	return GetMigrationErrorsContext(context.Background(), db, migrationID, limit, offset)
+}
+
+// GetMigrationErrorsContext retrieves paginated migration errors while honoring caller cancellation.
+func GetMigrationErrorsContext(ctx context.Context, db *sql.DB, migrationID string, limit, offset int) ([]ErrorListItem, int, error) {
+	rows, err := db.QueryContext(ctx, `
 		WITH errors AS MATERIALIZED (
 			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,
 			       COALESCE(error_message, '') AS error_message, metadata, updated_at AS occurred_at
@@ -744,7 +749,12 @@ func GetMigrationErrors(db *sql.DB, migrationID string, limit, offset int) ([]Er
 
 // GetSyncErrors returns final transfer failures for the current sync job.
 func GetSyncErrors(db *sql.DB, syncJobID string, limit, offset int) ([]ErrorListItem, int, error) {
-	rows, err := db.Query(`
+	return GetSyncErrorsContext(context.Background(), db, syncJobID, limit, offset)
+}
+
+// GetSyncErrorsContext retrieves paginated sync errors while honoring caller cancellation.
+func GetSyncErrorsContext(ctx context.Context, db *sql.DB, syncJobID string, limit, offset int) ([]ErrorListItem, int, error) {
+	rows, err := db.QueryContext(ctx, `
 		WITH errors AS MATERIALIZED (
 			SELECT id::text AS id, 'transfer' AS kind, resource_type, file_path AS path, status, attempts,
 			       COALESCE(error_message, '') AS error_message, updated_at AS occurred_at

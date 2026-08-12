@@ -1,9 +1,11 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -57,9 +59,12 @@ var ValidRoles = map[string]bool{
 	"ADMIN": true,
 }
 
-type queryExecer interface {
-	Exec(query string, args ...interface{}) (sql.Result, error)
-	QueryRow(query string, args ...interface{}) *sql.Row
+// queryExecerContext is implemented by both *sql.DB and *sql.Tx. It keeps
+// shared helpers cancellation-aware without forcing them to depend on a
+// particular database handle.
+type queryExecerContext interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
 // schemaErrorLogger records a failed bootstrap DDL statement while preserving
@@ -73,7 +78,10 @@ type schemaErrorLogger struct {
 
 func (l schemaErrorLogger) Printf(format string, v ...interface{}) {
 	l.logger.Printf(format, v...)
-	if *l.err == nil && (strings.HasPrefix(format, "Failed schema migration") || strings.HasPrefix(format, "Failed data migration")) {
+	// This logger is used only for bootstrap migration failures. Capture the
+	// first error independently of the log message wording so changing a
+	// diagnostic string can never let InitDB continue with partial DDL.
+	if *l.err == nil {
 		*l.err = fmt.Errorf("%s", strings.TrimSpace(fmt.Sprintf(format, v...)))
 	}
 }
@@ -82,7 +90,8 @@ func IsUniqueViolation(err error) bool {
 	if err == nil {
 		return false
 	}
-	if pqErr, ok := err.(*pq.Error); ok {
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
 		return pqErr.Code == "23505"
 	}
 	return false
@@ -151,10 +160,38 @@ func InitDB(connStr string) (*sql.DB, error) {
 
 		pingErr = db.Ping()
 		if pingErr == nil {
-			// Acquire PostgreSQL advisory lock to prevent concurrent DDL race conditions (e.g. api & worker starting simultaneously)
-			if _, lockErr := db.Exec(`SELECT pg_advisory_lock(84736291)`); lockErr == nil {
-				defer db.Exec(`SELECT pg_advisory_unlock(84736291)`)
+			// A session-scoped advisory lock must stay on one dedicated connection.
+			// Calling db.Exec for lock/unlock can use different pool connections,
+			// leaving the lock held after startup or failing to serialize DDL.
+			lockConn, lockErr := db.Conn(context.Background())
+			if lockErr != nil {
+				db.Close()
+				return nil, fmt.Errorf("acquire schema migration connection: %w", lockErr)
 			}
+			lockHeld := false
+			lockClosed := false
+			releaseLock := func() {
+				if lockClosed {
+					return
+				}
+				if lockHeld {
+					if _, err := lockConn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(84736291)`); err != nil {
+						log.Printf("Failed to release schema migration advisory lock: %v", err)
+					}
+					lockHeld = false
+				}
+				if err := lockConn.Close(); err != nil {
+					log.Printf("Failed to close schema migration connection: %v", err)
+				}
+				lockClosed = true
+			}
+			if _, lockErr = lockConn.ExecContext(context.Background(), `SELECT pg_advisory_lock(84736291)`); lockErr != nil {
+				releaseLock()
+				db.Close()
+				return nil, fmt.Errorf("acquire schema migration advisory lock: %w", lockErr)
+			}
+			lockHeld = true
+			defer releaseLock()
 
 			// Apply inline schema DDL migrations on startup. Shadow the package
 			// logger in this scope so every existing migration failure is retained
@@ -352,6 +389,14 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (idx_audit_log_created): %v\n", err)
 			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_audit_log_action): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_audit_log_user_id ON audit_log(user_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_audit_log_user_id): %v\n", err)
+			}
 			_, err = db.Exec(`ALTER TABLE audit_log ALTER COLUMN target SET DEFAULT '', ALTER COLUMN ip SET DEFAULT ''`)
 			if err != nil {
 				log.Printf("Failed schema migration (audit_log column defaults): %v\n", err)
@@ -464,6 +509,14 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (migrations failed_retry_done): %v\n", err)
 			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_status ON migrations(status)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_migrations_status): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_migrations_user_id): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS schedules (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -504,6 +557,14 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (idx_schedules_next_run): %v\n", err)
 			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_schedules_user_id ON schedules(user_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_schedules_user_id): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_schedules_task ON schedules(task_type, task_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_schedules_task): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS connection_profiles (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -524,11 +585,18 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (connection_profiles): %v\n", err)
 			}
 
-			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_connection_profiles_user ON connection_profiles(user_id)`)
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_conn_profiles_user ON connection_profiles(user_id)`)
 			if err != nil {
-				log.Printf("Failed schema migration (idx_connection_profiles_user): %v\n", err)
+				log.Printf("Failed schema migration (idx_conn_profiles_user): %v\n", err)
+				releaseLock()
 				db.Close()
-				return nil, fmt.Errorf("schema migration idx_connection_profiles_user: %w", err)
+				return nil, fmt.Errorf("schema migration idx_conn_profiles_user: %w", err)
+			}
+			// The previous inline migration used a different name for the same
+			// index. Keep one canonical index to avoid duplicate storage.
+			_, err = db.Exec(`DROP INDEX IF EXISTS idx_connection_profiles_user`)
+			if err != nil {
+				log.Printf("Failed schema migration (drop idx_connection_profiles_user): %v\n", err)
 			}
 			_, err = db.Exec(`ALTER TABLE connection_profiles ALTER COLUMN url SET DEFAULT '', ALTER COLUMN username SET DEFAULT '', ALTER COLUMN password_encrypted SET DEFAULT '', ALTER COLUMN refresh_token_encrypted SET DEFAULT ''`)
 			if err != nil {
@@ -583,6 +651,7 @@ func InitDB(connStr string) (*sql.DB, error) {
 				updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 			)`)
 			if err != nil {
+				releaseLock()
 				db.Close()
 				return nil, fmt.Errorf("schema migration sync_jobs: %w", err)
 			}
@@ -605,11 +674,13 @@ func InitDB(connStr string) (*sql.DB, error) {
 
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_user_id ON sync_jobs(user_id)`)
 			if err != nil {
+				releaseLock()
 				db.Close()
 				return nil, fmt.Errorf("schema migration idx_sync_jobs_user_id: %w", err)
 			}
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_status ON sync_jobs(status)`)
 			if err != nil {
+				releaseLock()
 				db.Close()
 				return nil, fmt.Errorf("schema migration idx_sync_jobs_status: %w", err)
 			}
@@ -627,11 +698,13 @@ func InitDB(connStr string) (*sql.DB, error) {
 				UNIQUE (sync_job_id, side, rel_path)
 			)`)
 			if err != nil {
+				releaseLock()
 				db.Close()
 				return nil, fmt.Errorf("schema migration sync_state: %w", err)
 			}
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_state_job ON sync_state(sync_job_id, side)`)
 			if err != nil {
+				releaseLock()
 				db.Close()
 				return nil, fmt.Errorf("schema migration idx_sync_state_job: %w", err)
 			}
@@ -687,6 +760,26 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (tasks pass_generation): %v\n", err)
 			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_migration_id ON tasks(migration_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_migration_id): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_status): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_migration_status ON tasks(migration_id, status)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_migration_status): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_retry): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(status, created_at) WHERE status = 'PENDING'`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_pending): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS indexing_errors (
 				id BIGSERIAL PRIMARY KEY,
@@ -710,6 +803,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			END $$`)
 			if err != nil {
 				log.Printf("Failed schema migration (indexing_errors id type migration): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_indexing_errors_migration_id ON indexing_errors(migration_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_indexing_errors_migration_id): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS settings (
@@ -837,6 +934,7 @@ func InitDB(connStr string) (*sql.DB, error) {
 			}
 
 			if schemaErr != nil {
+				releaseLock()
 				db.Close()
 				return nil, schemaErr
 			}
@@ -853,8 +951,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			db.SetMaxOpenConns(maxConns)
 			db.SetMaxIdleConns(10)
 			db.SetConnMaxLifetime(time.Hour)
+			db.SetConnMaxIdleTime(5 * time.Minute)
 			return db, nil
 		}
+		_ = db.Close()
 		log.Printf("Waiting for PostgreSQL database to be ready (attempt %d/10): %v\n", attempt, pingErr)
 		time.Sleep(2 * time.Second)
 	}

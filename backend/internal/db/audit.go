@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -70,7 +71,9 @@ type AuditLogParams struct {
 	To     string
 }
 
-func WriteAuditLog(database queryExecer, e AuditEntry) {
+// WriteAuditLog queues a bounded best-effort insert so audit persistence never
+// delays the request or background operation that produced the event.
+func WriteAuditLog(database *sql.DB, e AuditEntry) {
 	if database == nil {
 		return
 	}
@@ -82,9 +85,13 @@ func WriteAuditLog(database queryExecer, e AuditEntry) {
 		INSERT INTO audit_log (user_id, action, target, ip, details)
 		VALUES ($1, $2, $3, $4, $5)
 	`
-	if _, err := database.Exec(query, e.UserID, string(e.Action), e.Target, e.IP, details); err != nil {
-		log.Printf("WARNING: failed to write audit log (action=%s target=%s): %v", e.Action, e.Target, err)
-	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, err := database.ExecContext(ctx, query, e.UserID, string(e.Action), e.Target, e.IP, details); err != nil {
+			log.Printf("WARNING: failed to write audit log (action=%s target=%s): %v", e.Action, e.Target, err)
+		}
+	}()
 }
 
 func ListAuditLog(database *sql.DB, p AuditLogParams) ([]AuditLogRow, int, error) {

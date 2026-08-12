@@ -13,7 +13,7 @@ func (s *APIServer) handleListSchedules(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	schedules, err := db.GetSchedulesForUser(s.db, userID)
+	schedules, err := db.GetSchedulesForUserContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handleListSchedules: failed to get schedules for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -40,7 +40,7 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
+	owns, err := db.VerifyScheduleOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		s.logf(r, "handleGetSchedule: error verifying ownership: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -51,7 +51,7 @@ func (s *APIServer) handleGetSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	schedule, err := db.GetSchedule(s.db, id)
+	schedule, err := db.GetScheduleContext(r.Context(), s.db, id)
 	if err != nil {
 		s.logf(r, "handleGetSchedule: failed to get schedule %s: %v\n", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -74,7 +74,7 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	owns, err := db.VerifyScheduleOwnership(s.db, id, userID)
+	owns, err := db.VerifyScheduleOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		s.logf(r, "handleDeleteSchedule: error verifying ownership: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

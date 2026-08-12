@@ -91,10 +91,8 @@ func GetConnectionProfile(ctx context.Context, database *sql.DB, id string) (*Co
 	return &p, nil
 }
 
-// GetConnectionProfiles lists a user's profiles. The retained ignored argument
-// preserves the established call signature while callers migrate from the
-// removed provider-filter API.
-func GetConnectionProfiles(ctx context.Context, database *sql.DB, userID, _ string) ([]ConnectionProfile, error) {
+// GetConnectionProfiles lists a user's profiles.
+func GetConnectionProfiles(ctx context.Context, database *sql.DB, userID string) ([]ConnectionProfile, error) {
 	args := []interface{}{userID}
 	query := `
 		SELECT id, user_id, name, provider, url, username,
@@ -254,8 +252,13 @@ func DeleteConnectionProfile(database *sql.DB, id string) error {
 }
 
 func VerifyProfileOwnership(database *sql.DB, profileID, userID string) (bool, error) {
+	return VerifyProfileOwnershipContext(context.Background(), database, profileID, userID)
+}
+
+// VerifyProfileOwnershipContext verifies ownership while honoring caller cancellation.
+func VerifyProfileOwnershipContext(ctx context.Context, database *sql.DB, profileID, userID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM connection_profiles WHERE id = $1 AND user_id = $2)`
 	var exists bool
-	err := database.QueryRow(query, profileID, userID).Scan(&exists)
+	err := database.QueryRowContext(ctx, query, profileID, userID).Scan(&exists)
 	return exists, err
 }

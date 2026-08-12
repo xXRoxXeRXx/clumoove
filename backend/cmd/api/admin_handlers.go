@@ -97,7 +97,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	u, err := db.GetUserByID(s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handleChangePassword: user not found: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -131,7 +131,7 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 	s.writeAudit(r, db.AuditSettingUpdated, "password", userID, map[string]interface{}{"type": "password_change", "forced": mustChange})
 
 	if mustChange {
-		rotated, lerr := db.GetUserByID(s.db, userID)
+		rotated, lerr := db.GetUserByIDContext(r.Context(), s.db, userID)
 		if lerr != nil {
 			s.logf(r, "handleChangePassword: failed to load user for token rotation: %v\n", lerr)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -513,7 +513,7 @@ func (s *APIServer) handleAdminUpdateRole(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	target, err := db.GetUserByID(s.db, id)
+	target, err := db.GetUserByIDContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrUserNotFound)
 		return
@@ -570,7 +570,7 @@ func (s *APIServer) handleAdminListUsers(w http.ResponseWriter, r *http.Request)
 	}
 	search := strings.TrimSpace(q.Get("q"))
 
-	users, total, err := db.ListUsers(s.db, db.UserListParams{
+	users, total, err := db.ListUsersContext(r.Context(), s.db, db.UserListParams{
 		Page:   page,
 		Limit:  limit,
 		Role:   role,
@@ -620,7 +620,7 @@ func (s *APIServer) handleAdminListMigrations(w http.ResponseWriter, r *http.Req
 		limit = 20
 	}
 
-	migrations, total, err := db.ListAllMigrations(s.db, db.MigrationListParams{Page: page, Limit: limit})
+	migrations, total, err := db.ListAllMigrationsContext(r.Context(), s.db, db.MigrationListParams{Page: page, Limit: limit})
 	if err != nil {
 		s.logf(r, "Admin list migrations: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -650,7 +650,7 @@ func (s *APIServer) handleAdminListSyncs(w http.ResponseWriter, r *http.Request)
 		limit = 20
 	}
 
-	syncs, total, err := db.ListAllSyncJobs(s.db, db.SyncListParams{Page: page, Limit: limit})
+	syncs, total, err := db.ListAllSyncJobsContext(r.Context(), s.db, db.SyncListParams{Page: page, Limit: limit})
 	if err != nil {
 		s.logf(r, "Admin list syncs: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

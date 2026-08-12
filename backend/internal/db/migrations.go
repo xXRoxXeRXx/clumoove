@@ -160,14 +160,14 @@ const createMigrationQuery = `
 	`
 
 func CreateMigration(db *sql.DB, m *Migration) (string, error) {
-	if err := insertMigration(db, m); err != nil {
+	if err := insertMigration(context.Background(), db, m); err != nil {
 		return "", err
 	}
 	return m.ID, nil
 }
 
-func insertMigration(database queryExecer, m *Migration) error {
-	return database.QueryRow(
+func insertMigration(ctx context.Context, database queryExecerContext, m *Migration) error {
+	return database.QueryRowContext(ctx,
 		createMigrationQuery,
 		m.UserID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted, m.SourceProvider,
 		m.SourceRefreshTokenEncrypted, m.SourceTokenExpiresAt, m.SourceMegaSessionIDEncrypted, m.SourceMegaMasterKeyEncrypted,
@@ -194,11 +194,11 @@ func CreateMigrationAndSchedule(db *sql.DB, migration *Migration, schedule *Sche
 		}
 	}()
 
-	if err := insertMigration(tx, migration); err != nil {
+	if err := insertMigration(context.Background(), tx, migration); err != nil {
 		return "", err
 	}
 	schedule.TaskID = migration.ID
-	if err := insertSchedule(tx, schedule); err != nil {
+	if err := insertSchedule(context.Background(), tx, schedule); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
@@ -219,6 +219,11 @@ func resetMigrationAndSchedule(migration *Migration, schedule *Schedule) {
 }
 
 func GetMigration(db *sql.DB, id string) (*Migration, error) {
+	return GetMigrationContext(context.Background(), db, id)
+}
+
+// GetMigrationContext retrieves a migration while honoring caller cancellation.
+func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_password_encrypted, source_provider,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
@@ -231,7 +236,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 		FROM migrations WHERE id = $1
 	`
 	var m Migration
-	err := db.QueryRow(query, id).Scan(
+	err := db.QueryRowContext(ctx, query, id).Scan(
 		&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted, &m.SourceProvider,
 		&m.SourceRefreshTokenEncrypted, &m.SourceTokenExpiresAt, &m.SourceMegaSessionIDEncrypted, &m.SourceMegaMasterKeyEncrypted,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,
@@ -248,6 +253,11 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 }
 
 func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
+	return GetMigrationsForUserContext(context.Background(), db, userID)
+}
+
+// GetMigrationsForUserContext lists migrations while honoring caller cancellation.
+func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]Migration, error) {
 	query := `
 		SELECT id, user_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, status,
@@ -258,7 +268,7 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query, userID)
+	rows, err := db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -283,8 +293,13 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 }
 
 func ListAllMigrations(database *sql.DB, p MigrationListParams) ([]AdminMigrationView, int, error) {
+	return ListAllMigrationsContext(context.Background(), database, p)
+}
+
+// ListAllMigrationsContext lists migrations for administration while honoring caller cancellation.
+func ListAllMigrationsContext(ctx context.Context, database *sql.DB, p MigrationListParams) ([]AdminMigrationView, int, error) {
 	var total int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM migrations`).Scan(&total); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM migrations`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -304,7 +319,7 @@ func ListAllMigrations(database *sql.DB, p MigrationListParams) ([]AdminMigratio
 		ORDER BY m.created_at DESC
 		LIMIT $1 OFFSET $2
 	`
-	rows, err := database.Query(query, p.Limit, offset)
+	rows, err := database.QueryContext(ctx, query, p.Limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -407,11 +422,7 @@ func ClaimScheduledMigrationForIndexing(db *sql.DB, id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return claimSucceeded(rowsAffected), nil
-}
-
-func claimSucceeded(rowsAffected int64) bool {
-	return rowsAffected == 1
+	return rowsAffected == 1, nil
 }
 
 // TransitionMigrationIndexingToRunning completes indexing. It rejects a stale
@@ -791,15 +802,20 @@ func CountActiveMigrationsForUser(db *sql.DB, userID string) (int, error) {
 }
 
 func VerifyMigrationOwnership(db *sql.DB, migrationID, userID string) (bool, error) {
+	return VerifyMigrationOwnershipContext(context.Background(), db, migrationID, userID)
+}
+
+// VerifyMigrationOwnershipContext verifies ownership while honoring caller cancellation.
+func VerifyMigrationOwnershipContext(ctx context.Context, db *sql.DB, migrationID, userID string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM migrations WHERE id = $1 AND user_id = $2)`
 	var exists bool
-	err := db.QueryRow(query, migrationID, userID).Scan(&exists)
+	err := db.QueryRowContext(ctx, query, migrationID, userID).Scan(&exists)
 	return exists, err
 }
 
-func GetMigrationOwnerID(database queryExecer, migrationID string) (string, error) {
+func GetMigrationOwnerID(database queryExecerContext, migrationID string) (string, error) {
 	var owner sql.NullString
-	err := database.QueryRow(`SELECT user_id FROM migrations WHERE id = $1`, migrationID).Scan(&owner)
+	err := database.QueryRowContext(context.Background(), `SELECT user_id FROM migrations WHERE id = $1`, migrationID).Scan(&owner)
 	if err != nil {
 		return "", err
 	}

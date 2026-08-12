@@ -163,23 +163,6 @@ func TestClaimScheduledMigrationForIndexing(t *testing.T) {
 	}
 }
 
-func TestClaimSucceeded(t *testing.T) {
-	tests := []struct {
-		rowsAffected int64
-		want         bool
-	}{
-		{rowsAffected: 0, want: false},
-		{rowsAffected: 1, want: true},
-		{rowsAffected: 2, want: false},
-	}
-
-	for _, tt := range tests {
-		if got := claimSucceeded(tt.rowsAffected); got != tt.want {
-			t.Errorf("claimSucceeded(%d) = %v, want %v", tt.rowsAffected, got, tt.want)
-		}
-	}
-}
-
 func TestTransitionMigrationIndexingToRunning(t *testing.T) {
 	db := setupProgressTestDB(t)
 

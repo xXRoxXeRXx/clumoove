@@ -49,7 +49,7 @@ func GetSetting(db *sql.DB, key string) (string, error) {
 	var val string
 	query := `SELECT value FROM settings WHERE key = $1`
 	err := db.QueryRow(query, key).Scan(&val)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return val, err
@@ -224,7 +224,7 @@ func ClaimPasswordResetToken(db *sql.DB, ctx context.Context, tokenHash, newPass
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var userID string
 	err = tx.QueryRow(`
@@ -237,7 +237,7 @@ func ClaimPasswordResetToken(db *sql.DB, ctx context.Context, tokenHash, newPass
 		return "", err
 	}
 
-	if _, err := tx.Exec(`UPDATE users SET password_hash = $1 WHERE id = $2`, newPasswordHash, userID); err != nil {
+	if _, err := tx.Exec(`UPDATE users SET password_hash = $1, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, newPasswordHash, userID); err != nil {
 		return "", err
 	}
 
@@ -274,7 +274,7 @@ func ClaimEmailChangeToken(db *sql.DB, ctx context.Context, tokenHash string) (u
 	if err != nil {
 		return "", "", err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var uid, newMail string
 	err = tx.QueryRow(`
@@ -291,7 +291,7 @@ func ClaimEmailChangeToken(db *sql.DB, ctx context.Context, tokenHash string) (u
 	if err == nil {
 		return "", "", ErrEmailTaken
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", "", err
 	}
 

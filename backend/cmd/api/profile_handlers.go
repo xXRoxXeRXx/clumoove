@@ -62,7 +62,7 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 	if userID == "" {
 		return base, errors.New("missing authenticated user")
 	}
-	owned, err := db.VerifyProfileOwnership(s.db, profileID, userID)
+	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, profileID, userID)
 	if err != nil {
 		return base, err
 	}
@@ -171,7 +171,7 @@ func (s *APIServer) handleListProfiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profiles, err := db.GetConnectionProfiles(r.Context(), s.db, userID, "")
+	profiles, err := db.GetConnectionProfiles(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handleListProfiles: query failed for user %s: %v", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -287,7 +287,7 @@ func (s *APIServer) handleGetProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		s.logf(r, "handleGetProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -319,7 +319,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		s.logf(r, "handleUpdateProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -430,7 +430,7 @@ func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		s.logf(r, "handleDeleteProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -465,7 +465,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrProfileNotFound)
 		return
 	}
-	owned, err := db.VerifyProfileOwnership(s.db, id, userID)
+	owned, err := db.VerifyProfileOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		s.logf(r, "handleTestProfile: ownership check failed: %v", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

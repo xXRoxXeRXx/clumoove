@@ -289,13 +289,13 @@ func (s *APIServer) handlePause(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -326,13 +326,13 @@ func (s *APIServer) handleResume(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -363,13 +363,13 @@ func (s *APIServer) handleRetryFailed(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -400,13 +400,13 @@ func (s *APIServer) handleReindex(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
 	}
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -443,7 +443,7 @@ func (s *APIServer) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
@@ -487,7 +487,7 @@ func (s *APIServer) handleSetThreads(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
@@ -524,7 +524,7 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	owns, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owns, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil || !owns {
 		writeError(w, http.StatusForbidden, ErrMigrationNotOwned)
 		return
@@ -546,7 +546,7 @@ func (s *APIServer) handleSetBandwidth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err == nil {
 		switch mig.Status {
 		case "COMPLETED", "COMPLETED_WITH_ERRORS", "FAILED", "CANCELLED":
@@ -1124,7 +1124,7 @@ func (s *APIServer) handleListMigrations(w http.ResponseWriter, r *http.Request)
 	if !authenticated {
 		return
 	}
-	list, err := db.GetMigrationsForUser(s.db, userID)
+	list, err := db.GetMigrationsForUserContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "Error listing migrations for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1173,7 +1173,7 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 		return nil
 	}
 
-	initial, err := db.GetMigrationsForUser(s.db, userID)
+	initial, err := db.GetMigrationsForUserContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "Migration stream initial load error for user %s: %v\n", userID, err)
 		writeErrorEvent(ErrInternalError)
@@ -1206,7 +1206,7 @@ func (s *APIServer) handleMigrationStream(w http.ResponseWriter, r *http.Request
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			list, err := db.GetMigrationsForUser(s.db, userID)
+			list, err := db.GetMigrationsForUserContext(r.Context(), s.db, userID)
 			if err != nil {
 				s.logf(r, "Migration stream reload error for user %s: %v\n", userID, err)
 				return
@@ -1239,7 +1239,7 @@ func (s *APIServer) handleDeleteMigration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owned, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -1302,7 +1302,7 @@ func (s *APIServer) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
@@ -1334,7 +1334,7 @@ func (s *APIServer) handleDownloadReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
@@ -1422,7 +1422,7 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 	if !authenticated {
 		return
 	}
-	owned, err := db.VerifyMigrationOwnership(s.db, id, userID)
+	owned, err := db.VerifyMigrationOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		s.logf(r, "Error checking migration %s error-list ownership: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1433,13 +1433,13 @@ func (s *APIServer) handleMigrationErrors(w http.ResponseWriter, r *http.Request
 		return
 	}
 	limit, offset := parseErrorListPagination(r)
-	items, total, err := db.GetMigrationErrors(s.db, id, limit, offset)
+	items, total, err := db.GetMigrationErrorsContext(r.Context(), s.db, id, limit, offset)
 	if err != nil {
 		s.logf(r, "Error fetching migration %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	if mig, mErr := db.GetMigration(s.db, id); mErr == nil {
+	if mig, mErr := db.GetMigrationContext(r.Context(), s.db, id); mErr == nil {
 		for i := range items {
 			if items[i].Kind == "transfer" && items[i].ResourceType == "files" {
 				items[i].Path = processor.ResolveTargetPath(items[i].ResourceType, items[i].Path, items[i].Metadata, mig.TargetDir, mig.SourceProvider, mig.TargetProvider)
@@ -1562,7 +1562,7 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 	}
 	defer s.releaseMigrationStream(userID)
 
-	mig, err := db.GetMigration(s.db, id)
+	mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			writeError(w, http.StatusNotFound, ErrMigrationNotFound)
@@ -1629,7 +1629,7 @@ func (s *APIServer) handleMigrationDetailStream(w http.ResponseWriter, r *http.R
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			mig, err := db.GetMigration(s.db, id)
+			mig, err := db.GetMigrationContext(r.Context(), s.db, id)
 			if err != nil {
 				return
 			}

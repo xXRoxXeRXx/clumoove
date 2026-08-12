@@ -395,7 +395,7 @@ func (s *APIServer) handleMe(w http.ResponseWriter, r *http.Request) {
 	if !authenticated {
 		return
 	}
-	u, err := db.GetUserByID(s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handleMe: failed to load user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

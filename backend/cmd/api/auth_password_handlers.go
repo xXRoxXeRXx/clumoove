@@ -197,7 +197,7 @@ func (s *APIServer) handleChangeEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	req.NewEmail = addr.Address
 
-	u, err := db.GetUserByID(s.db, userID)
+	u, err := db.GetUserByIDContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "handleChangeEmail: error fetching user: %v\n", err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -299,7 +299,7 @@ func (s *APIServer) handleConfirmEmailChange(w http.ResponseWriter, r *http.Requ
 	}
 
 	if smtpCfg, smtpErr := s.instanceSMTPConfig(); smtpErr == nil {
-		u, lookupErr := db.GetUserByID(s.db, userID)
+		u, lookupErr := db.GetUserByIDContext(r.Context(), s.db, userID)
 		language := "en"
 		if lookupErr == nil {
 			language = u.Language

@@ -22,7 +22,7 @@ import (
 // another account to the same response. This prevents sync IDs being used for
 // account enumeration while keeping database failures distinguishable.
 func (s *APIServer) requireSyncOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
-	owned, err := db.VerifySyncJobOwnership(s.db, id, userID)
+	owned, err := db.VerifySyncJobOwnershipContext(r.Context(), s.db, id, userID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return false
@@ -126,7 +126,7 @@ func (s *APIServer) handleListSyncs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := db.GetSyncJobsForUser(s.db, userID)
+	jobs, err := db.GetSyncJobsForUserContext(r.Context(), s.db, userID)
 	if err != nil {
 		s.logf(r, "Error fetching sync jobs for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -389,7 +389,7 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	job, err := db.GetSyncJob(s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
@@ -432,7 +432,7 @@ func (s *APIServer) handleStartSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !claimed {
-		job, getErr := db.GetSyncJob(s.db, id)
+		job, getErr := db.GetSyncJobContext(r.Context(), s.db, id)
 		if getErr != nil {
 			writeError(w, http.StatusNotFound, ErrSyncNotFound)
 			return
@@ -590,7 +590,7 @@ func (s *APIServer) handleDownloadSyncReport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	job, err := db.GetSyncJob(s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
 	if err != nil {
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
 		return
@@ -641,7 +641,7 @@ func (s *APIServer) handleSyncErrors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit, offset := parseErrorListPagination(r)
-	items, total, err := db.GetSyncErrors(s.db, id, limit, offset)
+	items, total, err := db.GetSyncErrorsContext(r.Context(), s.db, id, limit, offset)
 	if err != nil {
 		s.logf(r, "Error fetching sync job %s errors: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -702,7 +702,7 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, ": ping\n\n")
 			flusher.Flush()
 		case <-ticker.C:
-			jobs, err := db.GetSyncJobsForUser(s.db, userID)
+			jobs, err := db.GetSyncJobsForUserContext(r.Context(), s.db, userID)
 			if err != nil {
 				continue
 			}
@@ -837,7 +837,7 @@ func (s *APIServer) handleSetSyncBandwidth(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	job, err := db.GetSyncJob(s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
 	if err != nil {
 		s.logf(r, "Error loading sync job %s after bandwidth update: %v", id, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -930,7 +930,7 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	job, err := db.GetSyncJob(s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
 	if err != nil {
 		s.logf(r, "Error getting sync job %s for browse: %v", id, err)
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)
@@ -1033,7 +1033,7 @@ func (s *APIServer) handleUpdateSyncScope(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	job, err := db.GetSyncJob(s.db, id)
+	job, err := db.GetSyncJobContext(r.Context(), s.db, id)
 	if err != nil {
 		s.logf(r, "Error getting sync job %s for scope update: %v", id, err)
 		writeError(w, http.StatusNotFound, ErrSyncNotFound)

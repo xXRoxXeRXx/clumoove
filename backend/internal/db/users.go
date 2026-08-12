@@ -186,6 +186,11 @@ func GetUserByEmail(ctx context.Context, db *sql.DB, email string) (*User, error
 }
 
 func GetUserByID(db *sql.DB, id string) (*User, error) {
+	return GetUserByIDContext(context.Background(), db, id)
+}
+
+// GetUserByIDContext retrieves a user while honoring caller cancellation.
+func GetUserByIDContext(ctx context.Context, db *sql.DB, id string) (*User, error) {
 	query := `
 		SELECT id, email, password_hash, display_name, language, role, active, must_change_password, avatar, avatar_mime, created_at, updated_at,
 		       totp_enabled, totp_secret_enc, totp_backup_codes, totp_failed_attempts, totp_locked_until,
@@ -196,7 +201,7 @@ func GetUserByID(db *sql.DB, id string) (*User, error) {
 	var mime sql.NullString
 	var totpSecret sql.NullString
 	var lastLogin sql.NullTime
-	err := db.QueryRow(query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
+	err := db.QueryRowContext(ctx, query, id).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.DisplayName, &u.Language, &u.Role, &u.Active, &u.MustChangePassword, &u.Avatar, &mime, &u.CreatedAt, &u.UpdatedAt,
 		&u.TotpEnabled, &totpSecret, &u.TotpBackupCodes, &u.TotpFailedAttempts, &u.TotpLockedUntil,
 		&u.LoginFailedAttempts, &u.LoginLockedUntil, &lastLogin)
 	if err != nil {
@@ -258,6 +263,11 @@ func GetUserAuthState(database *sql.DB, id string) (*UserAuthState, error) {
 }
 
 func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
+	return ListUsersContext(context.Background(), database, p)
+}
+
+// ListUsersContext lists users while honoring caller cancellation.
+func ListUsersContext(ctx context.Context, database *sql.DB, p UserListParams) ([]User, int, error) {
 	where := "TRUE"
 	args := []interface{}{}
 	idx := 1
@@ -279,7 +289,7 @@ func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
 	}
 
 	var total int
-	if err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE `+where, args...).Scan(&total); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
@@ -293,7 +303,7 @@ func ListUsers(database *sql.DB, p UserListParams) ([]User, int, error) {
 		FROM users WHERE ` + where + `
 		ORDER BY created_at DESC
 		LIMIT $` + fmt.Sprintf("%d", idx) + ` OFFSET $` + fmt.Sprintf("%d", idx+1)
-	rows, err := database.Query(query, listArgs...)
+	rows, err := database.QueryContext(ctx, query, listArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -536,57 +546,43 @@ func GetGlobalStats(database *sql.DB) (*GlobalStats, error) {
 		SyncsByStatus:      map[string]int{},
 		TasksByStatus:      map[string]int{},
 	}
-	if err := database.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&stats.TotalUsers); err != nil {
-		return nil, err
-	}
-	if err := database.QueryRow(`SELECT COUNT(*) FROM users WHERE active = TRUE`).Scan(&stats.ActiveUsers); err != nil {
-		return nil, err
-	}
-	rows, err := database.Query(`SELECT status, COUNT(*) FROM migrations GROUP BY status`)
+	rows, err := database.Query(`
+		SELECT 'users' AS category, 'total' AS status, COUNT(*) FROM users
+		UNION ALL
+		SELECT 'users', 'active', COUNT(*) FROM users WHERE active = TRUE
+		UNION ALL
+		SELECT 'migrations', status, COUNT(*) FROM migrations GROUP BY status
+		UNION ALL
+		SELECT 'syncs', status, COUNT(*) FROM sync_jobs GROUP BY status
+		UNION ALL
+		SELECT 'tasks', status, COUNT(*) FROM tasks GROUP BY status
+	`)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	for rows.Next() {
-		var status string
+		var category, status string
 		var n int
-		if err := rows.Scan(&status, &n); err != nil {
-			rows.Close()
+		if err := rows.Scan(&category, &status, &n); err != nil {
 			return nil, err
 		}
-		stats.MigrationsByStatus[status] = n
-	}
-	rows.Close()
-
-	rows, err = database.Query(`SELECT status, COUNT(*) FROM sync_jobs GROUP BY status`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var status string
-		var n int
-		if err := rows.Scan(&status, &n); err != nil {
-			rows.Close()
-			return nil, err
+		switch category {
+		case "users":
+			if status == "total" {
+				stats.TotalUsers = n
+			} else {
+				stats.ActiveUsers = n
+			}
+		case "migrations":
+			stats.MigrationsByStatus[status] = n
+		case "syncs":
+			stats.SyncsByStatus[status] = n
+		case "tasks":
+			stats.TasksByStatus[status] = n
 		}
-		stats.SyncsByStatus[status] = n
 	}
-	rows.Close()
-
-	rows, err = database.Query(`SELECT status, COUNT(*) FROM tasks GROUP BY status`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var status string
-		var n int
-		if err := rows.Scan(&status, &n); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		stats.TasksByStatus[status] = n
-	}
-	rows.Close()
-	return stats, nil
+	return stats, rows.Err()
 }
 
 func SetUserTOTPSecret(database *sql.DB, userID, encryptedSecret string) error {
