@@ -9,7 +9,7 @@ const intlLocale = (lng?: string): string => {
 export const formatBytes = (bytes: number, lng?: string): string => {
   if (!bytes || bytes <= 0) return '0 B';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
   const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   const value = bytes / Math.pow(k, i);
   const formatted = new Intl.NumberFormat(intlLocale(lng), {
@@ -47,10 +47,16 @@ export const formatDuration = (seconds: number, t: TFunc): string => {
   if (seconds < 60) return t('format.duration.seconds', { count: Math.round(seconds) });
   const mins = Math.floor(seconds / 60);
   const secs = Math.round(seconds % 60);
-  if (mins < 60) return `${t('format.duration.minutes', { count: mins })} ${t('format.duration.seconds', { count: secs })}`;
+  if (mins < 60) {
+    return secs === 0
+      ? t('format.duration.minutes', { count: mins })
+      : `${t('format.duration.minutes', { count: mins })} ${t('format.duration.seconds', { count: secs })}`;
+  }
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
-  return `${t('format.duration.hours', { count: hrs })} ${t('format.duration.minutes', { count: remMins })}`;
+  return remMins === 0
+    ? t('format.duration.hours', { count: hrs })
+    : `${t('format.duration.hours', { count: hrs })} ${t('format.duration.minutes', { count: remMins })}`;
 };
 
 export const formatNumber = (value: number, lng?: string): string =>

@@ -160,7 +160,6 @@ export function MigrationsDashboard({
     const snapshotGeneration = snapshotGenerationRef.current;
     void connectSseLoop({
       url: `${apiUrl}/api/migration/stream`,
-      token,
       signal: controller.signal,
       fetchImpl: apiFetch,
       handlers: {
@@ -197,7 +196,6 @@ export function MigrationsDashboard({
     const snapshotGeneration = snapshotGenerationRef.current;
     void connectSseLoop({
       url: `${apiUrl}/api/sync/stream`,
-      token,
       signal: controller.signal,
       fetchImpl: apiFetch,
       handlers: {

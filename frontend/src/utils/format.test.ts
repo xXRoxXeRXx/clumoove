@@ -29,6 +29,10 @@ describe('formatBytes', () => {
     expect(out).toContain('GB');
   });
 
+  it('formats petabytes without falling back to terabytes', () => {
+    expect(formatBytes(1024 ** 5)).toContain('PB');
+  });
+
   it('respects locale for decimal separator', () => {
     const de = formatBytes(1024 * 1024 * 1.5, 'de');
     const en = formatBytes(1024 * 1024 * 1.5, 'en');
@@ -72,6 +76,8 @@ describe('formatDuration', () => {
 
   it('delegates unit labels to translations', () => {
     expect(formatDuration(61, en)).toBe('1 minutes 1 seconds');
+    expect(formatDuration(60, en)).toBe('1 minutes');
+    expect(formatDuration(3600, en)).toBe('1 hours');
     expect(formatDuration(Infinity, (key) => key)).toBe('dashboard.eta.computing');
   });
 });

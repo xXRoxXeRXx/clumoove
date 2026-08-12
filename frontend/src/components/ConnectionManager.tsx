@@ -482,12 +482,20 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         return;
       }
       finalUrl = buildSmbUrl(form.smbHost, form.smbPort, form.smbShare, form.smbDomain);
+      if (!finalUrl) {
+        onError(t('connect.errors.invalidConnectionUrl'));
+        return;
+      }
     } else if (form.provider === 's3') {
       if (!form.s3Bucket.trim()) {
         onError(t('common.required'));
         return;
       }
       finalUrl = buildS3Url(form.s3Bucket, form.s3Region, form.s3Endpoint);
+      if (!finalUrl) {
+        onError(t('connect.errors.invalidConnectionUrl'));
+        return;
+      }
     } else if (form.provider === 'sftp') {
       if (!form.sftpHost.trim() || !form.sftpHostKey.trim()) {
         onError(t('common.required'));
@@ -498,6 +506,10 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         return;
       }
       finalUrl = buildSftpUrl(form.sftpHost, form.sftpPort, form.sftpHostKey);
+      if (!finalUrl) {
+        onError(t('connect.errors.invalidConnectionUrl'));
+        return;
+      }
       finalPassword = form.sftpAuthMode === 'key' ? form.sftpPrivateKey : form.password;
     } else if (form.provider === 'ftp') {
       if (!form.ftpHost.trim()) {

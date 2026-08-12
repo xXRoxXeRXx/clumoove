@@ -25,9 +25,12 @@ const AUTH_PATH_MARKERS = [
 
 let clientConfig: ApiClientConfig | null = null;
 let refreshPromise: Promise<string> | null = null;
+let refreshFailureUntil = 0;
+const REFRESH_FAILURE_COOLDOWN_MS = 5000;
 
 export function configureApiClient(cfg: ApiClientConfig): void {
   clientConfig = cfg;
+  refreshFailureUntil = 0;
 }
 
 export function getConfiguredApiUrl(): string {
@@ -65,21 +68,30 @@ function isAuthEndpoint(url: string): boolean {
 async function refreshAccessToken(): Promise<string> {
   if (!clientConfig) throw new Error('api client not configured');
   if (!refreshPromise) {
+    if (Date.now() < refreshFailureUntil) {
+      throw new Error('Silent refresh is cooling down');
+    }
     const cfg = clientConfig;
     refreshPromise = (async () => {
-      const res = await fetch(`${cfg.apiUrl}/api/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      if (!res.ok) {
-        throw new Error('Silent refresh failed');
+      try {
+        const res = await fetch(`${cfg.apiUrl}/api/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          throw new Error('Silent refresh failed');
+        }
+        const data = (await res.json()) as { access_token?: string };
+        if (!data.access_token) {
+          throw new Error('Silent refresh failed');
+        }
+        cfg.setAccessToken(data.access_token);
+        refreshFailureUntil = 0;
+        return data.access_token;
+      } catch (error) {
+        refreshFailureUntil = Date.now() + REFRESH_FAILURE_COOLDOWN_MS;
+        throw error;
       }
-      const data = (await res.json()) as { access_token?: string };
-      if (!data.access_token) {
-        throw new Error('Silent refresh failed');
-      }
-      cfg.setAccessToken(data.access_token);
-      return data.access_token;
     })().finally(() => {
       refreshPromise = null;
     });

@@ -14,6 +14,7 @@ export function parseApiOrigin(value: unknown): string | undefined {
     const url = new URL(value);
     if (
       (url.protocol !== 'https:' && url.protocol !== 'http:') ||
+      (import.meta.env.PROD && url.protocol === 'http:') ||
       url.username ||
       url.password ||
       url.pathname !== '/' ||

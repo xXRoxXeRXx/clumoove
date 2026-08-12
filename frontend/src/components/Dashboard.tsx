@@ -291,7 +291,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
     void connectSseLoop({
       url: `${apiUrl}/api/migration/${migrationId}/stream`,
-      token,
       signal: controller.signal,
       fetchImpl: apiFetch,
       handlers: {

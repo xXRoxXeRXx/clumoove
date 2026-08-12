@@ -54,7 +54,5 @@ export function getBandwidthLabel(value: number, unlimitedLabel: string): string
   if (exact) {
     return exact.label;
   }
-  const idx = valueToBandwidthIndex(value);
-  const opt = BANDWIDTH_OPTIONS[idx];
-  return opt.isUnlimited ? unlimitedLabel : opt.label;
+  return `${value} Mbps`;
 }

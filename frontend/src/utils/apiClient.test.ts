@@ -89,6 +89,22 @@ describe('apiFetch', () => {
     expect(res.status).toBe(401);
     expect(onAuthFailure).not.toHaveBeenCalled();
   });
+
+  it('backs off repeated refresh attempts after a refresh failure', async () => {
+    const fetchMock = vi
+      .fn()
+      // First API request and its failed refresh.
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      // Second API request sees the refresh cooldown.
+      .mockResolvedValueOnce(new Response(null, { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiFetch(`${apiUrl}/api/migration`);
+    await apiFetch(`${apiUrl}/api/migration`);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe('apiJson', () => {

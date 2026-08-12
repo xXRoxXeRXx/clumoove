@@ -5,9 +5,13 @@ export type SseHandlers = {
 
 export type SseConnectOptions = {
   url: string;
-  token: string;
   signal: AbortSignal;
   handlers: SseHandlers;
+  /**
+   * Auth-aware API fetch implementation. It injects the current bearer token
+   * for each connection attempt so reconnects never reuse an expired token.
+   */
+  fetchImpl: (input: string, init?: RequestInit) => Promise<Response>;
   /** Called with the delay (ms) that will be used for the next reconnect. */
   onRetryScheduled?: (delayMs: number) => void;
 };
@@ -18,7 +22,7 @@ export type SseConnectOptions = {
 export function parseSseFrame(frame: string): { event: string; data: string } {
   let event = 'message';
   let data = '';
-  for (const line of frame.split('\n')) {
+  for (const line of frame.split(/\r\n|\r|\n/)) {
     if (line.startsWith('event:')) {
       event = line.slice(6).trim();
     } else if (line.startsWith('data:')) {
@@ -48,10 +52,10 @@ export async function readSseStream(
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      let idx: number;
-      while ((idx = buffer.indexOf('\n\n')) !== -1) {
-        const frame = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
+      let boundary: RegExpExecArray | null;
+      while ((boundary = /\r\n\r\n|\n\n|\r\r/.exec(buffer)) !== null) {
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
         const { event, data } = parseSseFrame(frame);
         if (data || event !== 'message') {
           onFrame(event, data);
@@ -73,18 +77,12 @@ export async function readSseStream(
  * Connect to an SSE endpoint with exponential backoff reconnect.
  * Uses apiFetch when available via dynamic import path — callers pass fetchImpl.
  */
-export async function connectSseLoop(
-  options: SseConnectOptions & {
-    fetchImpl?: typeof fetch;
-  },
-): Promise<void> {
-  const fetchImpl = options.fetchImpl ?? fetch;
+export async function connectSseLoop(options: SseConnectOptions): Promise<void> {
   let retryDelay = 2000;
 
   while (!options.signal.aborted) {
     try {
-      const response = await fetchImpl(options.url, {
-        headers: { Authorization: `Bearer ${options.token}` },
+      const response = await options.fetchImpl(options.url, {
         signal: options.signal,
         credentials: 'include',
       });

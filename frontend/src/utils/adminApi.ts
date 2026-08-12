@@ -74,6 +74,7 @@ export interface ApiResult<T = Record<string, unknown>> {
   data?: T;
   errorCode?: string;
   status?: number;
+  networkError?: boolean;
 }
 
 export interface ListUsersResult {
@@ -161,21 +162,25 @@ async function call<T = Record<string, unknown>>(
   path: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  const res = await apiFetch(`${apiUrl}${path}`, {
-    method,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    credentials: 'include',
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({})) as { error_code?: unknown };
-  if (!res.ok) {
-    const errorCode = typeof data.error_code === 'string' ? data.error_code : 'UNKNOWN';
-    return { ok: false, errorCode, status: res.status };
+  try {
+    const res = await apiFetch(`${apiUrl}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      credentials: 'include',
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({})) as { error_code?: unknown };
+    if (!res.ok) {
+      const errorCode = typeof data.error_code === 'string' ? data.error_code : 'UNKNOWN';
+      return { ok: false, errorCode, status: res.status };
+    }
+    return { ok: true, data: data as T, status: res.status };
+  } catch {
+    return { ok: false, errorCode: 'NETWORK', status: 0, networkError: true };
   }
-  return { ok: true, data: data as T };
 }
 
 export const adminApi = {
@@ -184,13 +189,13 @@ export const adminApi = {
   createUser: (apiUrl: string, token: string, body: { email: string; display_name: string; password: string; role?: string; must_change_password?: boolean }) =>
     call<AdminUser>(apiUrl, token, 'POST', '/api/admin/users', body),
   suspendUser: (apiUrl: string, token: string, id: string) =>
-    call(apiUrl, token, 'POST', `/api/admin/users/${id}/suspend`),
+    call(apiUrl, token, 'POST', `/api/admin/users/${encodeURIComponent(id)}/suspend`),
   reactivateUser: (apiUrl: string, token: string, id: string) =>
-    call(apiUrl, token, 'POST', `/api/admin/users/${id}/reactivate`),
+    call(apiUrl, token, 'POST', `/api/admin/users/${encodeURIComponent(id)}/reactivate`),
   deleteUser: (apiUrl: string, token: string, id: string) =>
-    call(apiUrl, token, 'DELETE', `/api/admin/users/${id}`),
+    call(apiUrl, token, 'DELETE', `/api/admin/users/${encodeURIComponent(id)}`),
   updateRole: (apiUrl: string, token: string, id: string, role: string) =>
-    call(apiUrl, token, 'PUT', `/api/admin/users/${id}/role`, { role }),
+    call(apiUrl, token, 'PUT', `/api/admin/users/${encodeURIComponent(id)}/role`, { role }),
   stats: (apiUrl: string, token: string) => call<AdminStats>(apiUrl, token, 'GET', '/api/admin/stats'),
   listMigrations: (apiUrl: string, token: string, params: Record<string, string | number | undefined>) =>
     call<ListMigrationsResult>(apiUrl, token, 'GET', `/api/admin/migrations${buildQuery(params)}`),
@@ -203,6 +208,6 @@ export const adminApi = {
   testSMTP: (apiUrl: string, token: string) => call(apiUrl, token, 'POST', '/api/admin/settings/smtp/test', {}),
   deleteSMTP: (apiUrl: string, token: string) => call(apiUrl, token, 'DELETE', '/api/admin/settings/smtp'),
   getOAuth: (apiUrl: string, token: string) => call<InstanceOAuthSettings>(apiUrl, token, 'GET', '/api/admin/settings/oauth'),
-  updateOAuth: (apiUrl: string, token: string, provider: string, body: InstanceOAuthUpdate) => call(apiUrl, token, 'PUT', `/api/admin/settings/oauth/${provider}`, body),
-  deleteOAuth: (apiUrl: string, token: string, provider: string) => call(apiUrl, token, 'DELETE', `/api/admin/settings/oauth/${provider}`),
+  updateOAuth: (apiUrl: string, token: string, provider: string, body: InstanceOAuthUpdate) => call(apiUrl, token, 'PUT', `/api/admin/settings/oauth/${encodeURIComponent(provider)}`, body),
+  deleteOAuth: (apiUrl: string, token: string, provider: string) => call(apiUrl, token, 'DELETE', `/api/admin/settings/oauth/${encodeURIComponent(provider)}`),
 };

@@ -7,6 +7,40 @@ export interface SmbUrlParams {
   domain: string;
 }
 
+function isValidPort(port: string): boolean {
+  const value = Number(port);
+  return Number.isInteger(value) && value >= 1 && value <= 65535;
+}
+
+function formatUrlHost(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? '[' + host + ']' : host;
+}
+
+function isValidSmbHost(host: string): boolean {
+  return Boolean(host) && !/[\s@/?#]/.test(host);
+}
+
+function isValidSmbShare(share: string): boolean {
+  return Boolean(share)
+    && share !== '.'
+    && share !== '..'
+    && !share.includes('/')
+    && !share.includes('\\');
+}
+
+// The backend also resolves and validates every egress address. These checks
+// reject the always-forbidden literal hosts before a profile reaches it.
+function isAlwaysBlockedS3EndpointHost(host: string): boolean {
+  const normalized = host.replace(/^\[|\]$/g, '').toLowerCase();
+  if (normalized === 'localhost' || normalized.endsWith('.localhost') || normalized === '::1' || normalized.startsWith('fe80:')) {
+    return true;
+  }
+  const ipv4 = normalized.split('.').map(Number);
+  return ipv4.length === 4
+    && ipv4.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+    && (ipv4[0] === 127 || (ipv4[0] === 169 && ipv4[1] === 254));
+}
+
 export function parseSmbUrl(urlStr: string): SmbUrlParams {
   let host = '', port = '445', share = '', domain = '';
   if (!urlStr) return { host, port, share, domain };
@@ -23,10 +57,12 @@ export function parseSmbUrl(urlStr: string): SmbUrlParams {
 }
 
 export function buildSmbUrl(host: string, port: string, share: string, domain: string): string {
-  if (!host || !share) return '';
+  const trimmedHost = host.trim();
+  const normalizedShare = share.trim().replace(/^[/\\]+/, '');
   const p = port || '445';
+  if (!isValidSmbHost(trimmedHost) || !isValidSmbShare(normalizedShare) || !isValidPort(p)) return '';
   const query = domain ? `?domain=${encodeURIComponent(domain)}` : '';
-  return `smb://${host}:${p}/${share.replace(/^\//, '')}${query}`;
+  return `smb://${formatUrlHost(trimmedHost)}:${p}/${normalizedShare}${query}`;
 }
 
 export interface S3UrlParams {
@@ -50,10 +86,21 @@ export function parseS3Url(urlStr: string): S3UrlParams {
 }
 
 export function buildS3Url(bucket: string, region: string, endpoint: string): string {
-  if (!bucket) return '';
+  if (!bucket.trim()) return '';
+  const normalizedEndpoint = endpoint.trim();
+  if (normalizedEndpoint) {
+    try {
+      const endpointUrl = new URL(normalizedEndpoint);
+      if (endpointUrl.protocol !== 'https:' || !endpointUrl.hostname || endpointUrl.username || endpointUrl.password || endpointUrl.hash || isAlwaysBlockedS3EndpointHost(endpointUrl.hostname)) {
+        return '';
+      }
+    } catch {
+      return '';
+    }
+  }
   const reg = region || 'us-east-1';
-  const epPart = endpoint ? `&endpoint=${encodeURIComponent(endpoint)}` : '';
-  return `s3://${bucket}?region=${encodeURIComponent(reg)}${epPart}`;
+  const epPart = normalizedEndpoint ? `&endpoint=${encodeURIComponent(normalizedEndpoint)}` : '';
+  return `s3://${bucket.trim()}?region=${encodeURIComponent(reg)}${epPart}`;
 }
 
 export interface SftpUrlParams {
@@ -77,10 +124,11 @@ export function parseSftpUrl(urlStr: string): SftpUrlParams {
 }
 
 export function buildSftpUrl(host: string, port: string, hostKey: string): string {
-  if (!host) return '';
+  const trimmedHost = host.trim();
+  if (!trimmedHost || /[\s@/?#]/.test(trimmedHost) || !isValidPort(port || '22')) return '';
   const p = port || '22';
   const hkPart = hostKey.trim() ? `?host_key=${encodeURIComponent(hostKey.trim())}` : '';
-  return `sftp://${host}:${p}${hkPart}`;
+  return `sftp://${formatUrlHost(trimmedHost)}:${p}${hkPart}`;
 }
 
 export type FtpTlsMode = 'explicit' | 'implicit';
@@ -92,15 +140,6 @@ export interface FtpUrlParams {
 }
 
 const defaultFtpUrlParams: FtpUrlParams = { host: '', port: '21', tlsMode: 'explicit' };
-
-function isValidPort(port: string): boolean {
-  const value = Number(port);
-  return Number.isInteger(value) && value >= 1 && value <= 65535;
-}
-
-function formatUrlHost(host: string): string {
-  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
-}
 
 // Only FTPS URLs are accepted. Plain FTP must use explicit TLS.
 export function parseFtpUrl(urlStr: string): FtpUrlParams {

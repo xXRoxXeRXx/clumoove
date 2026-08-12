@@ -47,6 +47,9 @@ describe('providerUrls', () => {
       );
       expect(buildSmbUrl('', '445', 'myshare', '')).toBe('');
       expect(buildSmbUrl('host', '445', '', '')).toBe('');
+      expect(buildSmbUrl('host', '445', '../share', '')).toBe('');
+      expect(buildSmbUrl('host', '0', 'myshare', '')).toBe('');
+      expect(buildSmbUrl('user@host', '445', 'myshare', '')).toBe('');
     });
   });
 
@@ -82,6 +85,11 @@ describe('providerUrls', () => {
       );
       expect(buildS3Url('mybucket', '', '')).toBe('s3://mybucket?region=us-east-1');
       expect(buildS3Url('', 'us-east-1', '')).toBe('');
+      expect(buildS3Url('mybucket', 'us-east-1', 'http://s3.example.com')).toBe('');
+      expect(buildS3Url('mybucket', 'us-east-1', 'https://user:pass@s3.example.com')).toBe('');
+      expect(buildS3Url('mybucket', 'us-east-1', 'not-a-url')).toBe('');
+      expect(buildS3Url('mybucket', 'us-east-1', 'https://169.254.169.254')).toBe('');
+      expect(buildS3Url('mybucket', 'us-east-1', 'https://[::1]')).toBe('');
     });
   });
 
@@ -117,6 +125,8 @@ describe('providerUrls', () => {
       );
       expect(buildSftpUrl('sftp.example.com', '', '')).toBe('sftp://sftp.example.com:22');
       expect(buildSftpUrl('', '22', key)).toBe('');
+      expect(buildSftpUrl('user@sftp.example.com', '22', key)).toBe('');
+      expect(buildSftpUrl('sftp.example.com', '0', key)).toBe('');
     });
   });
 

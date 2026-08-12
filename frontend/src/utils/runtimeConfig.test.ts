@@ -26,6 +26,12 @@ describe('runtime API configuration', function () {
     expect(configuredApiOrigin()).toBe('http://localhost:8001');
   });
 
+  it('rejects plaintext API origins in production', function () {
+    vi.stubEnv('PROD', true);
+
+    expect(parseApiOrigin('http://api.example.test')).toBeUndefined();
+  });
+
   it.each([
     'https://api.example.test/api',
     'https://user:password@api.example.test',
