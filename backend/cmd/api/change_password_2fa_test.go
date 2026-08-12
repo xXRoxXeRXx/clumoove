@@ -238,6 +238,7 @@ func TestSuspensionRevokesRefreshTokensAndBlocksRefresh(t *testing.T) {
 		t.Fatalf("store stale refresh token: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/refresh", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
 	req.AddCookie(&http.Cookie{Name: "refresh_token", Value: refreshToken})
 	rec := httptest.NewRecorder()
 	s.handleRefresh(rec, req)

@@ -420,7 +420,7 @@ func (s *APIServer) issueTokens(w http.ResponseWriter, r *http.Request, u *db.Us
 		return
 	}
 
-	auth.SetRefreshTokenCookie(w, r, refreshToken, expiresAt, s.isSecure(r))
+	auth.SetRefreshTokenCookie(w, refreshToken, expiresAt)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user":         userResponse(u),

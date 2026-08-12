@@ -13,7 +13,7 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 
 **Protection legend**
 - `public` — no auth.
-- `refresh` — requires the HTTP-only refresh-token cookie.
+- `refresh` — requires the HTTP-only refresh-token cookie and a non-empty `Origin` in the server's trusted-origin whitelist.
 - `JWT` — requires `Authorization: Bearer <access_token>`.
 - `admin` — JWT + `role == ADMIN` (enforced inside the handler).
 

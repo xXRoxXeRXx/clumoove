@@ -143,6 +143,17 @@ func TestRequireTrustedCookieOrigin(t *testing.T) {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 		}
 	})
+
+	t.Run("rejects missing origin", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil)
+		rec := httptest.NewRecorder()
+		if requireTrustedCookieOrigin(rec, req) {
+			t.Fatal("request without an origin was allowed")
+		}
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
+		}
+	})
 }
 
 // captureHandler records every log record emitted through the default logger so

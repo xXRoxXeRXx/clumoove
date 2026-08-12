@@ -52,6 +52,10 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
   only the caller's active session metadata, never token hashes or token values.
 - `DELETE /api/auth/sessions/{id}` scopes deletion to the caller's user ID and returns no cross-account
   existence information, allowing a user to revoke a lost-device session.
+- The HTTP-only refresh cookie is always `Secure; SameSite=None` so a separately hosted SPA can include it.
+  Consequently, `POST /api/auth/refresh` and `POST /api/auth/logout` require a non-empty `Origin` that exactly
+  matches the `allowedOrigins` whitelist before they read the cookie. CORS response headers alone are not CSRF
+  protection.
 
 ---
 

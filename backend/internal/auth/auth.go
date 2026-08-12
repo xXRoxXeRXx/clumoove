@@ -198,7 +198,7 @@ func GenerateRefreshToken() (string, error) {
 // SetRefreshTokenCookie sets the refresh token in an HTTP-only Secure, SameSite=None
 // cookie. Secure is intentionally unconditional: refresh tokens must never be sent
 // over HTTP, including when TLS is terminated upstream.
-func SetRefreshTokenCookie(w http.ResponseWriter, r *http.Request, token string, expiresAt time.Time, secure bool) {
+func SetRefreshTokenCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    token,
@@ -212,7 +212,7 @@ func SetRefreshTokenCookie(w http.ResponseWriter, r *http.Request, token string,
 
 // ClearRefreshTokenCookie clears the refresh-token cookie, using the same Secure and
 // SameSite attributes as SetRefreshTokenCookie.
-func ClearRefreshTokenCookie(w http.ResponseWriter, r *http.Request, secure bool) {
+func ClearRefreshTokenCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "refresh_token",
 		Value:    "",

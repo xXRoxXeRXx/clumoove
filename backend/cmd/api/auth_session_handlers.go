@@ -226,7 +226,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		RETURNING user_id, user_agent
 	`, oldTokenHash).Scan(&userID, &userAgent); err != nil {
 		if err == sql.ErrNoRows {
-			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			auth.ClearRefreshTokenCookie(w)
 			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 			return
 		}
@@ -238,7 +238,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	u, err := db.GetUserByIDTx(tx, userID)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			auth.ClearRefreshTokenCookie(w)
 			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 			return
 		}
@@ -253,7 +253,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	var active bool
 	if err := tx.QueryRowContext(r.Context(), `SELECT active FROM users WHERE id = $1 FOR UPDATE`, u.ID).Scan(&active); err != nil {
 		if err == sql.ErrNoRows {
-			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			auth.ClearRefreshTokenCookie(w)
 			writeError(w, http.StatusUnauthorized, ErrRefreshTokenInvalid)
 			return
 		}
@@ -266,17 +266,17 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		// also cleans up a residual token if an earlier operation was interrupted.
 		if _, err := tx.ExecContext(r.Context(), `DELETE FROM refresh_tokens WHERE user_id = $1`, u.ID); err != nil {
 			log.Printf("Error deleting suspended user's refresh tokens: %v\n", err)
-			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			auth.ClearRefreshTokenCookie(w)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
 		if err := tx.Commit(); err != nil {
 			log.Printf("Error committing suspended-user refresh-token cleanup: %v\n", err)
-			auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+			auth.ClearRefreshTokenCookie(w)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
 		}
-		auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+		auth.ClearRefreshTokenCookie(w)
 		writeError(w, http.StatusForbidden, ErrUserDisabled)
 		return
 	}
@@ -305,7 +305,7 @@ func (s *APIServer) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	auth.SetRefreshTokenCookie(w, r, newRefreshToken, newExpiresAt, s.isSecure(r))
+	auth.SetRefreshTokenCookie(w, newRefreshToken, newExpiresAt)
 
 	accessToken, err := auth.GenerateAccessToken(u, s.jwtSecret)
 	if err != nil {
@@ -328,7 +328,7 @@ func (s *APIServer) handleLogout(w http.ResponseWriter, r *http.Request) {
 		_ = db.DeleteRefreshToken(s.db, tokenHash)
 	}
 
-	auth.ClearRefreshTokenCookie(w, r, s.isSecure(r))
+	auth.ClearRefreshTokenCookie(w)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 

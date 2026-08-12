@@ -105,10 +105,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 // requireTrustedCookieOrigin protects endpoints authenticated by the refresh
 // cookie. CORS does not prevent a browser from sending a cross-site request;
-// reject an untrusted browser Origin before it can rotate or revoke a session.
+// require a whitelisted browser Origin before it can rotate or revoke a session.
 func requireTrustedCookieOrigin(w http.ResponseWriter, r *http.Request) bool {
 	origin := r.Header.Get("Origin")
-	if origin != "" && !allowedOrigins[origin] {
+	if !allowedOrigins[origin] {
 		writeError(w, http.StatusForbidden, ErrCorsOriginUntrusted)
 		return false
 	}
