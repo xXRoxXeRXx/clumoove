@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import i18n from '../i18n';
+import { markBoundaryError } from '../utils/boundaryErrors';
 import { logger } from '../utils/logger';
 
 type ErrorBoundaryProps = {
@@ -20,6 +21,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    markBoundaryError(error);
     logger.error('application render failed', error, {
       route: window.location.pathname,
       scope: this.props.scope,

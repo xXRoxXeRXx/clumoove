@@ -216,6 +216,10 @@ func (s *APIServer) handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrAvatarTooLarge)
 		return
 	}
+	if http.DetectContentType(data) != mime {
+		writeError(w, http.StatusBadRequest, ErrAvatarTypeUnsupported)
+		return
+	}
 
 	if err := db.UpdateUserAvatar(s.db, userID, data, mime); err != nil {
 		s.logf(r, "handleSetAvatar: failed to update avatar: %v\n", err)

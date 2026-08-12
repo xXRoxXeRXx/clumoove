@@ -77,7 +77,7 @@ function inferredApiDetails(error: unknown): DiagnosticContext {
   return details;
 }
 
-function emit(level: 'error' | 'warn', message: string, error?: unknown, context: DiagnosticContext = {}): void {
+function emit(level: 'debug' | 'error' | 'warn', message: string, error?: unknown, context: DiagnosticContext = {}): void {
   if (!import.meta.env.DEV) return;
 
   const { response, ...providedContext } = context;
@@ -93,10 +93,17 @@ function emit(level: 'error' | 'warn', message: string, error?: unknown, context
     console.error(`[client] ${redactForLogging(message)}`, redactValue(error), output);
     return;
   }
+  if (level === 'debug') {
+    console.debug(`[client] ${redactForLogging(message)}`, redactValue(error), output);
+    return;
+  }
   console.warn(`[client] ${redactForLogging(message)}`, output);
 }
 
 export const logger = {
+  debug(message: string, error?: unknown, context?: DiagnosticContext): void {
+    emit('debug', message, error, context);
+  },
   error(message: string, error?: unknown, context?: DiagnosticContext): void {
     emit('error', message, error, context);
   },

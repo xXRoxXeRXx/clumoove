@@ -48,8 +48,8 @@ export interface MigrationConfig {
   target_token_expires_in: number;
   source_provider: Provider;
   target_provider: Provider;
-	source_profile_id?: string;
-	target_profile_id?: string;
+  source_profile_id?: string;
+  target_profile_id?: string;
 }
 
 export type UserRole = 'USER' | 'ADMIN';
@@ -81,7 +81,7 @@ export interface User {
 
 export interface Migration {
   id: string;
-  status: string;
+  status: JobStatus;
   source_provider: string;
   source_url: string | null;
   target_provider: string;
@@ -98,7 +98,7 @@ export interface Migration {
 
 export interface SyncJob {
   id: string;
-  status: string;
+  status: JobStatus;
   threads?: number;
   bandwidth_limit_mbps?: number;
   direction: 'one_way' | 'two_way';

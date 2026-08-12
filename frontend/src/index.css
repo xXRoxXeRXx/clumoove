@@ -4,7 +4,7 @@
 @theme {
   --font-display: 'Poppins', system-ui, -apple-system, sans-serif;
   --font-sans: 'Open Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'Open Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   --radius-sm: 0.125rem;
   --radius-md: 0.25rem;
   --radius-lg: 0.375rem;
@@ -149,9 +149,10 @@ html {
   border-radius: var(--radius-lg);
 }
 
-.ui-section.p-6,
-.ui-section.p-8 {
+@utility ui-section-elevated {
   background-color: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }
 
 @utility ui-input {

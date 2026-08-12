@@ -49,7 +49,7 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
   if (loading) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4">
-        <div className="ui-section p-8 text-center">
+        <div className="ui-section-elevated p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
             <LoadingIndicator label={t('confirmEmail.pleaseWait')} />
             <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
@@ -67,7 +67,7 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
   if (success) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4">
-        <div className="ui-section p-8 text-center">
+        <div className="ui-section-elevated p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
             <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('confirmEmail.changed')}
@@ -83,7 +83,7 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
 
   return (
     <div className="max-w-md w-full mx-auto my-8 px-4">
-      <div className="ui-section p-8 text-center">
+      <div className="ui-section-elevated p-8 text-center">
         <div className="flex flex-col items-center gap-4 py-4">
           <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
              {t('confirmEmail.invalid')}

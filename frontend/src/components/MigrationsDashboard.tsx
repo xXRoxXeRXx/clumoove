@@ -394,7 +394,7 @@ export function MigrationsDashboard({
     <div className="w-full space-y-6">
       
       {/* Welcome Banner */}
-      <section className="ui-section p-6">
+      <section className="ui-section-elevated p-6">
         <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
           <div className="space-y-2">
             <p className="text-xs font-medium text-[var(--color-text-muted)]">{t('migrations.tagline')}</p>

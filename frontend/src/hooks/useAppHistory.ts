@@ -1,0 +1,170 @@
+import { useCallback, useEffect, useState } from 'react';
+
+export type AppStep =
+  | 'login'
+  | 'history'
+  | 'connect'
+  | 'select'
+  | 'dashboard'
+  | 'settings'
+  | 'admin'
+  | 'reset-password'
+  | 'confirm-email'
+  | 'syncdetail';
+
+type NavigationState = {
+  step: AppStep;
+  migrationId: string;
+  syncId: string;
+};
+
+type HistoryEntry = {
+  step?: AppStep;
+  migration?: string;
+  sync?: string;
+};
+
+type UseAppHistoryOptions = {
+  resetToken: string | null;
+  emailChangeToken: string | null;
+  hasStoredSession: boolean;
+  onLeaveCreationFlow?: () => void;
+};
+
+function stateForStep(step: AppStep, id = ''): NavigationState {
+  if (step === 'dashboard') {
+    return { step, migrationId: id, syncId: '' };
+  }
+  if (step === 'syncdetail') {
+    return { step, migrationId: '', syncId: id };
+  }
+  return { step, migrationId: '', syncId: '' };
+}
+
+export function initialNavigationFor(
+  search: string,
+  { resetToken, emailChangeToken, hasStoredSession }: UseAppHistoryOptions,
+): NavigationState {
+  if (emailChangeToken) return stateForStep('confirm-email');
+  if (resetToken) return stateForStep('reset-password');
+  if (!hasStoredSession) return stateForStep('login');
+
+  const params = new URLSearchParams(search);
+  const migrationId = params.get('migration') ?? '';
+  const syncId = params.get('sync') ?? '';
+  if (migrationId) return stateForStep('dashboard', migrationId);
+  if (syncId) return stateForStep('syncdetail', syncId);
+  return stateForStep('history');
+}
+
+function navigationFromHistory(entry: HistoryEntry, search: string): NavigationState {
+  const params = new URLSearchParams(search);
+  if (entry.step === 'dashboard') {
+    return stateForStep('dashboard', entry.migration ?? params.get('migration') ?? '');
+  }
+  if (entry.step === 'syncdetail') {
+    return stateForStep('syncdetail', entry.sync ?? params.get('sync') ?? '');
+  }
+  return stateForStep(entry.step ?? 'login');
+}
+
+function writeHistory(nextStep: AppStep, id: string, replace: boolean): void {
+  const url = new URL(window.location.href);
+  const state: HistoryEntry = { step: nextStep };
+  url.searchParams.delete('migration');
+  url.searchParams.delete('sync');
+
+  if (nextStep === 'dashboard' && id) {
+    url.searchParams.set('migration', id);
+    state.migration = id;
+  } else if (nextStep === 'syncdetail' && id) {
+    url.searchParams.set('sync', id);
+    state.sync = id;
+  }
+
+  if (replace) {
+    window.history.replaceState(state, '', url.toString());
+  } else {
+    window.history.pushState(state, '', url.toString());
+  }
+}
+
+function leavesCreationFlow(step: AppStep): boolean {
+  return step !== 'dashboard' && step !== 'select';
+}
+
+export function useAppHistory(options: UseAppHistoryOptions) {
+  const [initialOptions] = useState<UseAppHistoryOptions>(() => options);
+  const [initialNavigation] = useState<NavigationState>(() => (
+    initialNavigationFor(window.location.search, initialOptions)
+  ));
+  const [navigation, setNavigation] = useState<NavigationState>(initialNavigation);
+
+  const applyHistory = useCallback((nextStep: AppStep, id: string, replace: boolean) => {
+    const nextNavigation = stateForStep(nextStep, id);
+    if (leavesCreationFlow(nextStep)) initialOptions.onLeaveCreationFlow?.();
+    writeHistory(nextStep, id, replace);
+    setNavigation(nextNavigation);
+  }, [initialOptions]);
+
+  // Seed the existing entry so browser history and React state start from one
+  // source of truth. This preserves authenticated migration and sync deep links
+  // until silent session validation confirms them.
+  useEffect(() => {
+    const { step, migrationId, syncId } = initialNavigation;
+    writeHistory(step, migrationId || syncId, true);
+  }, [initialNavigation]);
+
+  useEffect(() => {
+    const onPopState = (event: PopStateEvent) => {
+      const entry = event.state as HistoryEntry | null;
+      if (entry?.step) {
+        const nextNavigation = navigationFromHistory(entry, window.location.search);
+        if (leavesCreationFlow(nextNavigation.step)) initialOptions.onLeaveCreationFlow?.();
+        setNavigation(nextNavigation);
+        return;
+      }
+      const nextNavigation = initialNavigationFor(window.location.search, initialOptions);
+      if (leavesCreationFlow(nextNavigation.step)) initialOptions.onLeaveCreationFlow?.();
+      setNavigation(nextNavigation);
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [initialOptions]);
+
+  const replaceNav = useCallback(
+    (nextStep: AppStep, id = '') => applyHistory(nextStep, id, true),
+    [applyHistory],
+  );
+
+  const navigate = useCallback(
+    (nextStep: AppStep, id?: string) => {
+      const activeId = nextStep === 'dashboard'
+        ? navigation.migrationId
+        : nextStep === 'syncdetail'
+          ? navigation.syncId
+          : '';
+      applyHistory(nextStep, id ?? activeId, false);
+    },
+    [applyHistory, navigation.migrationId, navigation.syncId],
+  );
+
+  const goToOverview = useCallback(() => {
+    replaceNav('history');
+  }, [replaceNav]);
+
+  const goBack = useCallback(() => {
+    window.history.back();
+  }, []);
+
+  return {
+    ...navigation,
+    initialMigrationId: initialNavigation.migrationId,
+    initialSyncId: initialNavigation.syncId,
+    replaceNav,
+    navigate,
+    goToOverview,
+    goBack,
+  };
+}

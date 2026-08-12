@@ -7,6 +7,7 @@ import { useThemeContext } from '../contexts/useThemeContext';
 import { useConfirm } from '../contexts/useConfirm';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
+import { safeAvatarUrl } from '../utils/avatar';
 import { MessageBanner, type MessageState } from './MessageBanner';
 import { Toggle } from './Toggle';
 
@@ -40,6 +41,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
   const { t } = useTranslation();
   const translateApiError = useApiError();
   const confirm = useConfirm();
+  const userAvatar = safeAvatarUrl(user?.avatar);
 
   const [tab, setTab] = useState<'account' | 'connections' | 'appearance' | 'notifications' | 'about'>('account');
   const tabs = ['account', 'connections', 'appearance', 'notifications', 'about'] as const;
@@ -516,9 +518,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
             <div className="flex flex-col items-center sm:flex-row gap-5 p-2 bg-[var(--color-bg-tertiary)]/50 rounded-lg border border-[var(--color-border)]/50">
               <div className="relative shrink-0">
-                {user?.avatar ? (
+                {userAvatar ? (
                   <img
-                    src={user.avatar}
+                    src={userAvatar}
                     alt={t('settings.avatarAlt')}
                     className="w-20 h-20 shrink-0 rounded-full object-cover border border-[var(--color-border)] shadow-xs"
                   />

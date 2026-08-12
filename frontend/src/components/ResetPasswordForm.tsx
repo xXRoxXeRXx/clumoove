@@ -79,7 +79,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
   if (success) {
     return (
       <div className="max-w-md w-full mx-auto my-8 px-4">
-        <div className="ui-section p-8 text-center">
+        <div className="ui-section-elevated p-8 text-center">
           <div className="flex flex-col items-center gap-4 py-4">
             <h1 className="font-display font-extrabold text-xl text-[var(--color-text-primary)] tracking-tight">
                {t('reset.changed')}
@@ -95,7 +95,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
   return (
     <div className="max-w-md w-full mx-auto my-8 px-4">
-      <div className="ui-section p-8">
+      <div className="ui-section-elevated p-8">
 
         <div className="flex flex-col items-center mb-8">
           <h1 className="font-display font-extrabold text-2xl text-[var(--color-text-primary)] tracking-tight">

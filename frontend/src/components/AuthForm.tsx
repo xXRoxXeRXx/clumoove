@@ -11,7 +11,7 @@ interface AuthFormProps {
   onAuthSuccess: (token: string, user: UserType) => void;
 }
 
-const authPanelClass = 'ui-section p-8';
+const authPanelClass = 'ui-section-elevated p-8';
 const authInputClass = 'ui-input w-full px-4 py-2.5 text-sm transition-colors';
 const authButtonClass = 'ui-button-primary w-full py-3 px-4 text-xs font-bold uppercase tracking-wider font-mono cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
 const authErrorClass = 'ui-alert ui-alert-error p-3.5 text-xs mb-6 text-center font-mono leading-relaxed';
