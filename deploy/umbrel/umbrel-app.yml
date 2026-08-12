@@ -2,7 +2,7 @@ manifestVersion: 1
 id: clumoove
 category: files
 name: Clumoove
-version: 0.13.0
+version: 0.14.0
 tagline: Self-hosted cloud data migration & sync manager
 description: >-
   Clumoove is a self-hosted cloud data migration and sync engine for files, calendars, and contacts.

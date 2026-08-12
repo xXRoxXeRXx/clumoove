@@ -5,6 +5,35 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-08-12
+
+### Added
+- **Umbrel One-Click App Deployment**: Added official Umbrel deployment manifest (`deploy/umbrel/umbrel-app.yml` & `docker-compose.yml`) for seamless 1-click self-hosted installation.
+- **Worker Forced Shutdown Support**: Implemented SIGTERM/SIGINT forced shutdown handling for background worker tasks to drain transfers cleanly.
+
+### Improved & Security Hardened
+- **Multi-Provider Reliability & Security**:
+  - WebDAV / Storage: Hardened WebDAV provider operations and path resolution.
+  - Special Providers (Local, HiDrive, Immich, Seafile, MEGA): Resolved TOCTOU symlink risks in Local provider, fixed Immich goroutine leaks on context cancellation, resolved HiDrive partial upload idempotency failures, and corrected MEGA non-atomic rename paths and session decoding.
+  - OAuth Providers (Dropbox, Google Drive, OneDrive): Hardened Dropbox emoji-path encoding and credential retention, fixed Google Drive path panic triggers and pagination bugs.
+  - Hashing & Verification: Corrected QuickXor hash computation and Dropbox hash classification; improved PROPFIND retry logic.
+  - File Protocol Providers (FTP, SFTP, SMB, S3): Hardened authentication error handling for S3/SMB, enforced context deadlines for connection setup, and corrected SFTP hash handling.
+  - Security & Egress Validation: Bounded egress IP validation and mitigations for DNS rebinding.
+- **Backend Core, Queue & Rate Limiting**:
+  - Bandwidth Rate Limiting: Isolated download and upload direction token buckets to eliminate bandwidth cross-throttling.
+  - Queue & Sync State Engine: Hardened continuous sync pass state transitions, worker pass generation fencing, and added recovery daemon for stale migration indexing tasks.
+  - Security & Auth Hardening: Enforced CSRF origin check on refresh cookie endpoints, pinned TOTP settings and atomic single-use recovery code consumption, hardened credential encryption envelope (`v1:` format), and tightened authentication flows.
+  - Observability & Log Redaction: Enhanced JSON `slog` log redaction for sensitive credentials across API and worker processes.
+- **Frontend UI & Accessibility**:
+  - Modern Technical Typography: Adopted Open Sans font for clean technical text rendering across dashboard views.
+  - Accessible UI Primitives: Upgraded `Button`, `ConfirmationDialog`, `Tabs`, `StatusBadge`, and `TransferCard` components with `forwardRef` support, explicit ARIA labels for icon-only buttons, dynamic type assertions, and robust focus management.
+  - Form Resilience & State Management: Fixed auth/sync forms, enhanced OAuth re-auth guards, and eliminated re-render loops in file tree modals.
+  - Internationalization (i18n): Updated German and English locale catalogs to achieve full UI string parity.
+
+### Fixed
+- **Transfer & Sync Stability**: Resolved edge-case file stream cancellations, directory creation race conditions, and lingering worker process locks.
+- **UI Error Boundaries**: Prevented UI crashes on disconnected SSE streams and surfaced connection errors directly within the file browser.
+
 ## [0.13.0] - 2026-08-09
 
 ### Added
