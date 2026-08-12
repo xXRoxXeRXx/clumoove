@@ -144,7 +144,7 @@
     "auth": "Sign-in method",
     "authPassword": "Password",
     "sshKey": "Security key",
-	"sftpHostKey": "Server host-key fingerprint",
+    "sftpHostKey": "Server host-key fingerprint",
     "sftpHostKeyHint": "Enter the SHA256 fingerprint from a trusted server administrator or console.",
     "ftpsMode": "FTPS mode",
     "ftpsExplicit": "Explicit FTPS (TLS on port 21)",
@@ -173,7 +173,6 @@
     "magentacloudInfo": "Connects to magentacloud.de (WebDAV). Use the dedicated WebDAV password from your MagentaCLOUD account settings — NOT your regular account password.",
     "localInfo": "Reads and writes files directly on the server inside the configured LOCAL_STORAGE_ROOT directory. No credentials are required — only enter a relative path within that sandbox (no absolute paths or \"..\" traversal).",
     "googleConnect": "Google Connection",
-
     "onedriveConnect": "OneDrive Connection",
     "dropboxConnect": "Dropbox Connection",
     "hidriveConnect": "HiDrive Connection",
@@ -200,7 +199,7 @@
     "errors": {
       "sourceSftpHost": "Please enter a server address for the source.",
       "sourceSftpKey": "Please provide a security key for the source.",
-		"sourceSftpHostKey": "Please provide the source server host-key fingerprint.",
+      "sourceSftpHostKey": "Please provide the source server host-key fingerprint.",
       "targetSftpHost": "Please enter a server address for the target.",
       "targetSftpKey": "Please provide a security key for the target.",
       "targetSftpHostKey": "Please provide the target server host-key fingerprint.",
@@ -258,7 +257,6 @@
     "rename": "Rename automatically",
     "renameDesc": "Adds a number to the file name (e.g., file(1).pdf).",
     "threads": "Simultaneous transfers",
-
     "threadsHighWarn": "⚠️ Running too many simultaneous transfers speeds up the process but may cause the server to slow down your connection.",
     "threadsHint": "More simultaneous transfers speed up the process but place a heavier load on the servers involved.",
     "schedule": "Schedule transfer for later",
@@ -342,8 +340,8 @@
   },
   "migrations": {
     "tagline": "Data migration has never been this easy.",
-      "welcome": "Hello {{name}},",
-      "welcomeSub": "manage and monitor your data transfers between different cloud systems live in one central place.",
+    "welcome": "Hello {{name}},",
+    "welcomeSub": "manage and monitor your data transfers between different cloud systems live in one central place.",
     "newMigration": "New transfer",
     "dataTransferred": "Data transferred",
     "migrations": "Transfers",
@@ -584,7 +582,7 @@
     "transfer": "TRANSFER"
   },
   "errors": {
-	"MEGA_MFA_UNSUPPORTED": "MEGA accounts with two-factor authentication are not supported.",
+    "MEGA_MFA_UNSUPPORTED": "MEGA accounts with two-factor authentication are not supported.",
     "SEAFILE_AUTH_FAILED": "Seafile authentication failed. Please check your credentials.",
     "SETUP_ALREADY_COMPLETED": "Administrator initial setup has already been completed.",
     "UNKNOWN": "An unexpected error occurred.",
@@ -682,7 +680,6 @@
     "PROFILE_NAME_EXISTS": "A connection with this name already exists for this role.",
     "PROFILE_INVALID_PROVIDER": "This provider type is not supported.",
     "PROFILE_URL_REQUIRED": "This provider requires a server address (URL).",
-    "PROFILE_INVALID_ROLE": "A connection must be used as 'source' or 'target'.",
     "SYNC_ID_MISSING": "Sync ID is missing.",
     "SYNC_NOT_FOUND": "Sync job not found.",
     "SYNC_NOT_OWNED": "You do not have access to this sync job.",

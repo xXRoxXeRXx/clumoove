@@ -6,6 +6,13 @@ const localeFiles = [
   resolve(root, 'src/locales/en/translation.json'),
   resolve(root, 'src/locales/de/translation.json'),
 ];
+const apiErrorCodeFiles = [
+  resolve(root, '../backend/cmd/api/response.go'),
+  resolve(root, '../backend/internal/httpresp/response.go'),
+];
+// UNKNOWN is the translation fallback and NETWORK is emitted by the frontend's
+// API client when a request cannot reach the server.
+const frontendErrorCodes = ['UNKNOWN', 'NETWORK'];
 
 function duplicateKeys(source, file) {
   const keysByObject = [];
@@ -63,6 +70,32 @@ function shape(value) {
   return typeof value;
 }
 
+function apiErrorCodes() {
+  const codes = new Set();
+  const pattern = /\bAPIErrorCode\s*=\s*"([A-Z][A-Z0-9_]*)"/g;
+
+  for (const file of apiErrorCodeFiles) {
+    const source = readFileSync(file, 'utf8');
+    for (const match of source.matchAll(pattern)) codes.add(match[1]);
+  }
+
+  return codes;
+}
+
+function compareErrorKeys(locale, file, expectedCodes) {
+  const actualCodes = new Set(Object.keys(locale.errors ?? {}));
+  const missing = [...expectedCodes].filter((code) => !actualCodes.has(code));
+  const orphaned = [...actualCodes].filter((code) => !expectedCodes.has(code));
+
+  if (missing.length || orphaned.length) {
+    const details = [
+      missing.length && `missing: ${missing.sort().join(', ')}`,
+      orphaned.length && `orphaned: ${orphaned.sort().join(', ')}`,
+    ].filter(Boolean).join('; ');
+    throw new Error(`${file}: error translations do not match backend API error codes (${details})`);
+  }
+}
+
 const [enFile, deFile] = localeFiles;
 const enText = readFileSync(enFile, 'utf8');
 const deText = readFileSync(deFile, 'utf8');
@@ -73,4 +106,8 @@ const de = JSON.parse(deText);
 if (JSON.stringify(shape(en)) !== JSON.stringify(shape(de))) {
   throw new Error('Translation files do not have matching key structures');
 }
-console.log('Locale key structure and duplicate-key validation passed.');
+const expectedErrorCodes = apiErrorCodes();
+for (const code of frontendErrorCodes) expectedErrorCodes.add(code);
+compareErrorKeys(en, enFile, expectedErrorCodes);
+compareErrorKeys(de, deFile, expectedErrorCodes);
+console.log('Locale key structure, duplicate-key, and API error-code validation passed.');
