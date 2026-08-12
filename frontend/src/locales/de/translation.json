@@ -596,7 +596,10 @@
     "indexing": "DATEIEN ERFASSEN",
     "paused": "PAUSIERT",
     "active": "AKTIV",
-    "transfer": "ÜBERTRAGUNG"
+    "transfer": "ÜBERTRAGUNG",
+    "pending": "AUSSTEHEND",
+    "scheduled": "GEPLANT",
+    "unknown": "UNBEKANNT ({{status}})"
   },
   "errors": {
     "MEGA_MFA_UNSUPPORTED": "MEGA-Konten mit Zwei-Faktor-Authentifizierung werden nicht unterstützt.",

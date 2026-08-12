@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Button } from './Button';
 
 export interface ConfirmationDialogProps {
   isOpen: boolean;
@@ -27,8 +28,13 @@ export function ConfirmationDialog({
   const panelRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCancelRef = useRef(onCancel);
   const titleId = useId();
   const messageId = useId();
+
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -48,7 +54,7 @@ export function ConfirmationDialog({
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
-        onCancel();
+        onCancelRef.current();
         return;
       }
 
@@ -56,7 +62,7 @@ export function ConfirmationDialog({
 
       const focusable = Array.from(
         panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
-      ).filter((el) => !el.hasAttribute('disabled') && el.tabIndex !== -1);
+      );
 
       if (focusable.length === 0) {
         e.preventDefault();
@@ -90,7 +96,7 @@ export function ConfirmationDialog({
       }
       previousFocusRef.current = null;
     };
-  }, [isOpen, onCancel]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -126,21 +132,20 @@ export function ConfirmationDialog({
         </div>
 
         <div className="px-5 py-4 border-t border-[var(--color-border-light)] bg-[var(--color-bg-secondary)] flex items-center justify-end gap-2">
-          <button
+          <Button
             ref={cancelRef}
-            type="button"
             onClick={onCancel}
-            className="ui-button-secondary bg-[var(--color-bg-primary)] px-3 py-2 text-sm hover:bg-[var(--color-bg-tertiary)]"
+            className="bg-[var(--color-bg-primary)] hover:bg-[var(--color-bg-tertiary)]"
           >
             {cancelLabel ?? t('common.cancel')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="danger"
             onClick={onConfirm}
-            className="ui-button-danger px-3 py-2 text-sm font-medium hover:opacity-90"
+            className="hover:opacity-90"
           >
             {confirmLabel ?? t('common.confirm')}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import { useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 
 export interface TabItem<T extends string> {
   value: T;
@@ -18,6 +18,10 @@ interface TabsProps<T extends string> {
 export function Tabs<T extends string>({ label, items, value, onChange, className = '', children }: TabsProps<T>) {
   const id = useId();
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useEffect(() => {
+    tabRefs.current.length = items.length;
+  }, [items.length]);
 
   function selectAt(index: number): void {
     const next = (index + items.length) % items.length;
@@ -72,7 +76,15 @@ export function Tabs<T extends string>({ label, items, value, onChange, classNam
           );
         })}
       </div>
-      <div id={`${id}-panel-${value}`} role="tabpanel" aria-labelledby={`${id}-tab-${value}`}>{children}</div>
+      <div
+        id={`${id}-panel-${value}`}
+        role="tabpanel"
+        aria-labelledby={`${id}-tab-${value}`}
+        tabIndex={0}
+        className="ui-tabpanel focus:outline-none"
+      >
+        {children}
+      </div>
     </>
   );
 }

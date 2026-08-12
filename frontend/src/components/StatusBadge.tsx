@@ -1,35 +1,7 @@
 import { useTranslation } from 'react-i18next';
+import { Badge } from './Badge';
 
-type BadgeVariant = 'success' | 'error' | 'warning' | 'info' | 'muted';
-
-const variantCls: Record<BadgeVariant, string> = {
-  success: 'ui-badge-success',
-  error: 'ui-badge-error',
-  warning: 'ui-badge-warning',
-  info: 'ui-badge-info',
-  muted: 'ui-badge-muted',
-};
-
-export function Badge({
-  variant,
-  pulse,
-  label,
-  size = 'md',
-}: {
-  variant: BadgeVariant;
-  pulse?: boolean;
-  label: string;
-  size?: 'sm' | 'md';
-}) {
-  const sizeCls = size === 'sm' ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs';
-  return (
-    <span
-      className={`ui-badge inline-flex items-center font-medium ${variantCls[variant]} ${sizeCls} ${pulse ? 'animate-pulse' : ''}`}
-    >
-      {label}
-    </span>
-  );
-}
+export { Badge } from './Badge';
 
 export function StatusBadge({
   status,
@@ -125,17 +97,19 @@ export function StatusBadge({
         />
       );
     case 'PENDING':
+      return (
+        <Badge size={size} variant="muted" label={t('status.pending')} />
+      );
     case 'SCHEDULED':
       return (
-        <Badge size={size} variant="muted" label={status} />
+        <Badge size={size} variant="muted" label={t('status.scheduled')} />
       );
     default:
       return (
         <Badge
           size={size}
           variant="muted"
-          pulse={status === 'RUNNING' || status === 'INDEXING'}
-          label={status}
+          label={t('status.unknown', { status })}
         />
       );
   }

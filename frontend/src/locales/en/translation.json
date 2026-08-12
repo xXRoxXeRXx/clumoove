@@ -596,7 +596,10 @@
     "indexing": "SCANNING FILES",
     "paused": "PAUSED",
     "active": "ACTIVE",
-    "transfer": "TRANSFER"
+    "transfer": "TRANSFER",
+    "pending": "PENDING",
+    "scheduled": "SCHEDULED",
+    "unknown": "UNKNOWN ({{status}})"
   },
   "errors": {
     "MEGA_MFA_UNSUPPORTED": "MEGA accounts with two-factor authentication are not supported.",

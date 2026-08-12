@@ -9,7 +9,8 @@ import { MessageBanner } from './MessageBanner';
 import { apiFetch } from '../utils/apiClient';
 import { logger } from '../utils/logger';
 import { Toggle } from './Toggle';
-import { Badge, StatusBadge } from './StatusBadge';
+import { Badge } from './Badge';
+import { StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
 
 type Tab = 'users' | 'migrations' | 'stats' | 'audit' | 'system';
