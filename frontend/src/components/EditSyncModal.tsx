@@ -33,7 +33,7 @@ interface EditSyncModalProps {
   apiUrl: string;
   token: string;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (updates: Partial<Pick<SyncJob, "selected_paths" | "target_dir" | "conflict_strategy" | "direction" | "delete_propagation" | "interval_minutes" | "bandwidth_limit_mbps">>, partial: boolean) => void;
 }
 
 const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
@@ -132,7 +132,7 @@ const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
       "env",
     ].includes(ext)
   ) {
-    return <FileCode className={`${className} ui-file-folder`} />;
+    return <FileCode className={`${className} ui-file-default`} />;
   }
   if (
     ["zip", "tar", "gz", "7z", "rar", "bz2", "xz", "iso", "dmg"].includes(ext)
@@ -162,8 +162,6 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   const translateApiError = useApiError();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  useFocusTrap(dialogRef, closeButtonRef, onClose);
-
   const titleId = useId();
   const targetDialogRef = useRef<HTMLDivElement>(null);
   const targetCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -185,8 +183,8 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   const [conflictStrategy, setConflictStrategy] = useState<string>(job.conflict_strategy || "SKIP");
   const [direction, setDirection] = useState<"one_way" | "two_way">(job.direction || "one_way");
   const [deletePropagation, setDeletePropagation] = useState<boolean>(job.delete_propagation || false);
-  const [intervalMinutes, setIntervalMinutes] = useState<number>(job.interval_minutes || 15);
-  const [bandwidthLimit, setBandwidthLimit] = useState<number>(job.bandwidth_limit_mbps || 0);
+  const [intervalMinutes, setIntervalMinutes] = useState<number>(job.interval_minutes ?? 15);
+  const [bandwidthLimit, setBandwidthLimit] = useState<number>(job.bandwidth_limit_mbps ?? 0);
 
   // Modal UI state
   const [saving, setSaving] = useState(false);
@@ -196,6 +194,13 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   const [directoryContents, setDirectoryContents] = useState<Record<string, CloudFile[]>>({});
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({ "/": true });
   const [loadingPaths, setLoadingPaths] = useState<Record<string, boolean>>({});
+  const directoryContentsRef = useRef(directoryContents);
+  const loadingPathsRef = useRef(loadingPaths);
+
+  useEffect(() => {
+    directoryContentsRef.current = directoryContents;
+    loadingPathsRef.current = loadingPaths;
+  }, [directoryContents, loadingPaths]);
 
   // Target directory browser state
   const [isTargetBrowserOpen, setIsTargetBrowserOpen] = useState(false);
@@ -204,6 +209,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   const [targetLoadingPaths, setTargetLoadingPaths] = useState<Record<string, boolean>>({});
   const [targetError, setTargetError] = useState<string | null>(null);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
 
   const pathsToMigrate = Object.keys(selectedPaths).filter((p) => selectedPaths[p]);
@@ -211,8 +217,8 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
   // Fetch directory contents for source
   const fetchSourceDirectory = useCallback(
     async (folderPath: string, force?: boolean) => {
-      if (loadingPaths[folderPath]) return;
-      if (!force && directoryContents[folderPath]) return;
+      if (loadingPathsRef.current[folderPath]) return;
+      if (!force && directoryContentsRef.current[folderPath]) return;
 
       setLoadingPaths((prev) => ({ ...prev, [folderPath]: true }));
       try {
@@ -237,7 +243,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         setLoadingPaths((prev) => ({ ...prev, [folderPath]: false }));
       }
     },
-    [apiUrl, job.id, token, t, translateApiError, loadingPaths, directoryContents]
+    [apiUrl, job.id, token, t, translateApiError]
   );
 
   // Fetch directory contents for target
@@ -285,15 +291,20 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     void fetchTargetChildren("/");
   }, [fetchTargetChildren]);
 
-  const closeTargetBrowser = () => {
+  const closeTargetBrowser = useCallback(() => {
     setIsTargetBrowserOpen(false);
     setIsCreatingFolder(false);
+    setCreatingFolder(false);
     setNewFolderName("");
     setTargetError(null);
-  };
+  }, []);
+
+  useFocusTrap(dialogRef, closeButtonRef, onClose, !isTargetBrowserOpen);
+  useFocusTrap(targetDialogRef, targetCloseButtonRef, closeTargetBrowser, isTargetBrowserOpen);
 
   const handleCreateTargetFolder = async (parentPath: string) => {
-    if (!newFolderName.trim()) return;
+    if (!newFolderName.trim() || creatingFolder) return;
+    setCreatingFolder(true);
     try {
       const res = await apiFetch(`${apiUrl}/api/sync/${job.id}/mkdir`, {
         method: "POST",
@@ -310,6 +321,8 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     } catch (err) {
       logger.error("Failed to create target directory", err);
       setTargetError(err instanceof Error ? err.message : t("fileBrowser.mkdirFailed"));
+    } finally {
+      setCreatingFolder(false);
     }
   };
 
@@ -345,8 +358,10 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     }
     setSaving(true);
     setError(null);
+    const committedUpdates: Partial<Pick<SyncJob, "selected_paths" | "target_dir" | "conflict_strategy" | "direction" | "delete_propagation" | "interval_minutes" | "bandwidth_limit_mbps">> = {};
     try {
-      // 1. Update Scope (atomic: selected_paths, target_dir, conflict_strategy, direction, delete_propagation)
+      // Scope changes are committed independently by the API. Keep the parent in
+      // sync if a later optional update fails so it never shows stale settings.
       const scopeRes = await apiFetch(`${apiUrl}/api/sync/${job.id}/scope`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -362,9 +377,15 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         const body = await scopeRes.json().catch(() => ({}));
         throw new Error(body?.error_code ? translateApiError(body.error_code) : t("sync.createFailed"));
       }
+      Object.assign(committedUpdates, {
+        selected_paths: pathsToMigrate,
+        target_dir: targetDir,
+        conflict_strategy: conflictStrategy as SyncJob["conflict_strategy"],
+        direction,
+        delete_propagation: deletePropagation,
+      });
 
-      // 2. Update Schedule if interval changed
-      if (intervalMinutes !== job.interval_minutes) {
+      if (intervalMinutes !== (job.interval_minutes ?? 15)) {
         const schedRes = await apiFetch(`${apiUrl}/api/sync/${job.id}/schedule`, {
           method: "PUT",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -374,10 +395,10 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
           const body = await schedRes.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("sync.createFailed"));
         }
+        committedUpdates.interval_minutes = intervalMinutes;
       }
 
-      // 3. Update Bandwidth if changed
-      if (bandwidthLimit !== job.bandwidth_limit_mbps) {
+      if (bandwidthLimit !== (job.bandwidth_limit_mbps ?? 0)) {
         const bwRes = await apiFetch(`${apiUrl}/api/sync/${job.id}/bandwidth`, {
           method: "PUT",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -387,11 +408,16 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
           const body = await bwRes.json().catch(() => ({}));
           throw new Error(body?.error_code ? translateApiError(body.error_code) : t("sync.createFailed"));
         }
+        committedUpdates.bandwidth_limit_mbps = bandwidthLimit;
       }
 
-      onSuccess();
+      onSuccess(committedUpdates, false);
     } catch (err) {
       logger.error("Save error", err);
+      if (Object.keys(committedUpdates).length > 0) {
+        onSuccess(committedUpdates, true);
+        return;
+      }
       setError(err instanceof Error ? err.message : t("sync.createFailed"));
     } finally {
       setSaving(false);
@@ -451,7 +477,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
             <div
               className={`w-4.5 h-4.5 border rounded flex items-center justify-center transition-all duration-200 ${
                 isSelected
-                  ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent shadow-xs"
+                  ? "bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] border-transparent"
                   : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] hover:border-[var(--color-border)]"
               }`}
             >
@@ -508,6 +534,15 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     );
   };
 
+  const toggleTargetExpand = useCallback(
+    (folderPath: string) => {
+      const nextExpanded = !targetExpandedPaths[folderPath];
+      setTargetExpandedPaths((prev) => ({ ...prev, [folderPath]: nextExpanded }));
+      if (nextExpanded) void fetchTargetChildren(folderPath);
+    },
+    [fetchTargetChildren, targetExpandedPaths],
+  );
+
   // Render target directory tree node 1:1 matching FileBrowser.tsx
   const renderTargetNode = (file: CloudFile, depth: number = 0) => {
     const isExpanded = !!targetExpandedPaths[file.path];
@@ -515,24 +550,13 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
     const isLoading = !!targetLoadingPaths[file.path];
     const children = targetDirectoryContents[file.path] || [];
 
-    const toggleTargetExpand = (folderPath: string) => {
-      const nextExpanded = !targetExpandedPaths[folderPath];
-      setTargetExpandedPaths((prev) => ({
-        ...prev,
-        [folderPath]: nextExpanded,
-      }));
-      if (nextExpanded) {
-        void fetchTargetChildren(folderPath);
-      }
-    };
-
     return (
       <div key={file.path} className="select-none font-sans text-xs">
         {/* Row */}
         <div
           className={`flex items-center gap-2.5 py-2 px-3 border-b border-[var(--color-border-light)] hover:bg-[var(--color-bg-tertiary)] transition-colors duration-150 rounded-md ${
             isSelected
-              ? "bg-[var(--color-bg-secondary)] font-bold border border-[var(--color-border)] text-[var(--color-text-primary)] shadow-sm"
+              ? "bg-[var(--color-bg-secondary)] font-bold border border-[var(--color-border)] text-[var(--color-text-primary)]"
               : ""
           }`}
           style={{ paddingLeft: `${depth * 16 + 12}px` }}
@@ -614,7 +638,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="ui-card w-full max-w-5xl p-6 bg-[var(--color-bg-primary)] border-[var(--color-border)] shadow-xl relative max-h-[90vh] overflow-y-auto text-left space-y-6"
+        className="ui-card w-full max-w-5xl p-6 bg-[var(--color-bg-primary)] border-[var(--color-border)] relative max-h-[90vh] overflow-y-auto text-left space-y-6"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--color-border)]/50 pb-4">
@@ -626,6 +650,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label={t("common.close")}
+            title={t("common.close")}
             className="p-2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors rounded-lg"
           >
             <X className="w-5 h-5" />
@@ -688,7 +713,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                 {job.target_url || t("migrations.oauth")}
               </div>
               <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="ui-card inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono text-[var(--color-text-primary)] shadow-2xs font-bold">
+                <span className="ui-card inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono text-[var(--color-text-primary)] font-bold">
                   <Folder className="w-3.5 h-3.5 text-[var(--color-text-secondary)] shrink-0" />
                   <span>{targetDir || "/"}</span>
                 </span>
@@ -725,6 +750,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
               role="dialog"
               aria-modal="true"
               aria-labelledby={targetDialogTitleId}
+              tabIndex={-1}
               className="ui-card max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden text-left"
             >
               {/* Modal Header */}
@@ -746,6 +772,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                   onClick={closeTargetBrowser}
                   className="ui-button-secondary p-1.5 hover:bg-[var(--color-bg-tertiary)]"
                   aria-label={t("paths.close")}
+                  title={t("paths.close")}
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -766,21 +793,14 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                     <div
                       className={`flex items-center gap-2.5 py-2 px-3 border border-transparent hover:bg-[var(--color-bg-tertiary)]/50 transition-colors duration-150 rounded-xl ${
                         targetDir === "/"
-                          ? "bg-[var(--color-bg-secondary)] font-bold border-[var(--color-border)] text-[var(--color-text-primary)] shadow-xs"
+                          ? "bg-[var(--color-bg-secondary)] font-bold border-[var(--color-border)] text-[var(--color-text-primary)]"
                           : ""
                       }`}
                     >
                       <button
                         type="button"
                         className="w-4 h-4 flex items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
-                        onClick={() => {
-                          const isExpanded = !!targetExpandedPaths["/"];
-                          setTargetExpandedPaths((prev) => ({
-                            ...prev,
-                            "/": !isExpanded,
-                          }));
-                          if (!isExpanded) void fetchTargetChildren("/");
-                        }}
+                        onClick={() => toggleTargetExpand("/")}
                         aria-label={
                           targetExpandedPaths["/"]
                             ? t("common.collapse", { name: t("fileBrowser.mainDir") })
@@ -849,10 +869,11 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                   className="p-4 border-t border-[var(--color-border-light)] bg-[var(--color-bg-tertiary)]/50 flex items-center gap-3 text-left"
                 >
                   <div className="flex-grow space-y-1">
-                    <label className="block text-xs font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-wider">
+                    <label htmlFor="target-folder-name" className="block text-xs font-bold font-mono text-[var(--color-text-muted)] uppercase tracking-wider">
                       {t("fileBrowser.mkdirIn", { path: targetDir })}
                     </label>
                     <input
+                      id="target-folder-name"
                       type="text"
                       value={newFolderName}
                       onChange={(e) => setNewFolderName(e.target.value)}
@@ -864,7 +885,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                   <div className="flex items-end gap-1.5 pt-5">
                     <button
                       type="submit"
-                      disabled={!newFolderName.trim()}
+                      disabled={!newFolderName.trim() || creatingFolder}
                       className="ui-button-primary px-3.5 py-2 text-xs font-mono font-bold uppercase hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {t("common.create")}

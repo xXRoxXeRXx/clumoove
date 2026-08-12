@@ -597,9 +597,10 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           apiUrl={apiUrl}
           token={token}
           onClose={() => setIsEditing(false)}
-          onSuccess={() => {
+          onSuccess={(updates, partial) => {
+            setJob((currentJob) => currentJob ? { ...currentJob, ...updates } : currentJob);
             setIsEditing(false);
-            toast(t('sync.scopeUpdated'));
+            toast(t(partial ? 'sync.partialUpdate' : 'sync.scopeUpdated'), partial ? 'info' : 'success');
           }}
         />
       )}

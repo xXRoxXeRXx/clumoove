@@ -45,6 +45,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   const [confirmNewPassword, setConfirmNewPassword] = useState<string>('');
   const [mustChangeError, setMustChangeError] = useState<string>('');
   const [needsSetup, setNeedsSetup] = useState<boolean>(false);
+  const isLocked = lockSeconds > 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +54,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
       .then((data) => {
         if (cancelled) return;
         if (data) {
-          setRegistrationsEnabled(data.registrations_enabled === 'true');
+          setRegistrationsEnabled(String(data.registrations_enabled) === 'true');
           if (data.needs_setup === true) {
             setNeedsSetup(true);
           }
@@ -82,12 +83,12 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
   }, [apiUrl]);
 
   useEffect(() => {
-    if (lockSeconds <= 0) return;
+    if (!isLocked) return;
     const timer = setInterval(() => {
       setLockSeconds((s) => (s > 0 ? s - 1 : 0));
     }, 1000);
     return () => clearInterval(timer);
-  }, [lockSeconds]);
+  }, [isLocked]);
 
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -603,6 +604,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] transition-colors"
                   aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+                  title={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                 >
                   <span className="text-[10px]">{showPassword ? t('auth.hidePassword') : t('auth.showPassword')}</span>
                 </button>
@@ -781,6 +783,7 @@ export function AuthForm({ apiUrl, onAuthSuccess }: AuthFormProps) {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+                  title={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                   className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

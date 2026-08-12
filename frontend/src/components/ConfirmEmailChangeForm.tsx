@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LoadingIndicator } from './LoadingIndicator';
 import { useApiError } from '../utils/apiError';
@@ -12,14 +12,22 @@ interface ConfirmEmailChangeFormProps {
 export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmailChangeFormProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
-  const [error, setError] = useState<string>('');
+  const [errorCode, setErrorCode] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
   const [success, setSuccess] = useState<boolean>(false);
+  const onSuccessRef = useRef(onSuccess);
 
   useEffect(() => {
+    onSuccessRef.current = onSuccess;
+  }, [onSuccess]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let redirectTimer: number | undefined;
+
     const confirm = async () => {
       setLoading(true);
-      setError('');
+      setErrorCode('');
       try {
         const response = await apiFetch(`${apiUrl}/api/auth/confirm-email-change`, {
           method: 'POST',
@@ -31,20 +39,27 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
 
         if (!response.ok) {
           const data = (await response.json().catch(() => ({}))) as { error_code?: string };
-          throw new Error(translateApiError(data.error_code));
+          if (!cancelled) setErrorCode(data.error_code || 'UNKNOWN');
+          return;
         }
 
-        setSuccess(true);
-        setTimeout(() => onSuccess(), 1800);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : t('confirmEmail.networkError'));
+        if (!cancelled) {
+          setSuccess(true);
+          redirectTimer = window.setTimeout(() => onSuccessRef.current(), 1800);
+        }
+      } catch {
+        if (!cancelled) setErrorCode('NETWORK');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
-    confirm();
-  }, [apiUrl, token, onSuccess, t, translateApiError]);
+    void confirm();
+    return () => {
+      cancelled = true;
+      if (redirectTimer !== undefined) window.clearTimeout(redirectTimer);
+    };
+  }, [apiUrl, token]);
 
   if (loading) {
     return (
@@ -89,7 +104,11 @@ export function ConfirmEmailChangeForm({ apiUrl, token, onSuccess }: ConfirmEmai
              {t('confirmEmail.invalid')}
           </h1>
           <p className="text-xs text-[var(--color-text-muted)] font-mono leading-relaxed">
-              {error || t('confirmEmail.invalidDefault')}
+              {errorCode === 'NETWORK'
+                ? t('confirmEmail.networkError')
+                : errorCode
+                  ? translateApiError(errorCode)
+                  : t('confirmEmail.invalidDefault')}
           </p>
         </div>
       </div>

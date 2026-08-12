@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, CheckCircleIcon as CheckCircle2, ExclamationCircleIcon as AlertCircle, QuestionMarkCircleIcon as HelpCircle } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
 import { isOAuthProvider, type CloudFile, type MigrationConfig, type ProviderId } from '../types';
@@ -28,12 +28,12 @@ const formInputClass = 'ui-input w-full px-4 py-2.5 text-sm font-sans';
 const formMonoInputClass = `${formInputClass} font-mono`;
 const formTextareaClass = `${formMonoInputClass} resize-none`;
 
-function MegaCredentialFields({ username, password, onUsernameChange, onPasswordChange }: { username: string; password: string; onUsernameChange: (value: string) => void; onPasswordChange: (value: string) => void }) {
+function MegaCredentialFields({ idPrefix, username, password, onUsernameChange, onPasswordChange }: { idPrefix: string; username: string; password: string; onUsernameChange: (value: string) => void; onPasswordChange: (value: string) => void }) {
   const { t } = useTranslation();
   return <>
     <div className="ui-alert ui-alert-info p-4 flex items-start gap-2"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /><p className="text-xs font-sans leading-relaxed">{t('connect.megaInfo')}</p></div>
-    <div className="space-y-1"><label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.megaEmail')}</label><input type="email" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={formInputClass} placeholder="name@example.com" /></div>
-    <div className="space-y-1"><label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label><input type="password" required value={password} onChange={(e) => onPasswordChange(e.target.value)} className={formInputClass} /></div>
+    <div className="space-y-1"><label htmlFor={`${idPrefix}-mega-email`} className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.megaEmail')}</label><input id={`${idPrefix}-mega-email`} type="email" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={formInputClass} placeholder="name@example.com" /></div>
+    <div className="space-y-1"><label htmlFor={`${idPrefix}-mega-password`} className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label><input id={`${idPrefix}-mega-password`} type="password" required value={password} onChange={(e) => onPasswordChange(e.target.value)} className={formInputClass} /></div>
   </>;
 }
 
@@ -444,6 +444,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
   const verifyAndAdvance = async () => {
+    setSourceVerified(false);
 
     const sourceProfileSelected = sourceProfileId !== '';
 
@@ -633,7 +634,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     }
   };
 
-  const providerOptions: { id: ProviderId; name: string }[] = [
+  const providerOptions = useMemo<{ id: ProviderId; name: string }[]>(() => [
     { id: 'nextcloud', name: 'Nextcloud' },
     { id: 'opencloud', name: 'OpenCloud' },
     { id: 'seafile', name: 'Seafile' },
@@ -650,7 +651,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 	...(oauthProviders.onedrive ? [{ id: 'onedrive' as const, name: 'OneDrive' }] : []),
     ...(oauthProviders.hidrive ? [{ id: 'hidrive' as const, name: 'HiDrive' }] : []),
     ...(localStorageEnabled ? [{ id: 'local' as const, name: 'Local' }] : [])
-  ];
+  ], [localStorageEnabled, oauthProviders]);
 
   return (
     <div className="w-full max-w-5xl mx-auto py-2 space-y-6">
@@ -757,8 +758,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="space-y-1 sm:col-span-2">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <label htmlFor="source-smb-host" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
+                        id="source-smb-host"
                         type="text"
                         placeholder="192.168.1.10"
                         value={sourceSmbHost}
@@ -768,8 +770,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <label htmlFor="source-smb-port" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
+                        id="source-smb-port"
                         type="text"
                         placeholder="445"
                         value={sourceSmbPort}
@@ -782,8 +785,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
+                      <label htmlFor="source-smb-share" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
+                        id="source-smb-share"
                         type="text"
                         placeholder={t('connect.sharePlaceholder')}
                         value={sourceSmbShare}
@@ -793,8 +797,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.domain')}</label>
+                      <label htmlFor="source-smb-domain" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.domain')}</label>
                       <input
+                        id="source-smb-domain"
                         type="text"
                         placeholder="WORKGROUP"
                         value={sourceSmbDomain}
@@ -805,8 +810,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="source-smb-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="source-smb-username"
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
@@ -819,8 +825,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                    <label htmlFor="source-smb-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                     <input
+                      id="source-smb-password"
                       type="password"
                       autoComplete="section-source current-password"
                       name="source_password"
@@ -836,37 +843,38 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="space-y-1 sm:col-span-2">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
-                      <input type="text" placeholder="ftp.example.com" value={sourceFtpHost} onChange={(e) => setSourceFtpHost(e.target.value)} className={formInputClass} required />
+                      <label htmlFor="source-ftp-host" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <input id="source-ftp-host" type="text" placeholder="ftp.example.com" value={sourceFtpHost} onChange={(e) => setSourceFtpHost(e.target.value)} className={formInputClass} required />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
-                      <input type="text" placeholder={sourceFtpTlsMode === 'explicit' ? '21' : '990'} value={sourceFtpPort} onChange={(e) => setSourceFtpPort(e.target.value)} className={formInputClass} required />
+                      <label htmlFor="source-ftp-port" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <input id="source-ftp-port" type="text" placeholder={sourceFtpTlsMode === 'explicit' ? '21' : '990'} value={sourceFtpPort} onChange={(e) => setSourceFtpPort(e.target.value)} className={formInputClass} required />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.ftpsMode')}</label>
-                    <select value={sourceFtpTlsMode} onChange={(e) => { const tlsMode = e.target.value as FtpTlsMode; setSourceFtpTlsMode(tlsMode); setSourceFtpPort(tlsMode === 'explicit' ? '21' : '990'); }} className={formInputClass}>
+                    <label htmlFor="source-ftp-tls-mode" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.ftpsMode')}</label>
+                    <select id="source-ftp-tls-mode" value={sourceFtpTlsMode} onChange={(e) => { const tlsMode = e.target.value as FtpTlsMode; setSourceFtpTlsMode(tlsMode); setSourceFtpPort(tlsMode === 'explicit' ? '21' : '990'); }} className={formInputClass}>
                       <option value="explicit">{t('connect.ftpsExplicit')}</option>
                       <option value="implicit">{t('connect.ftpsImplicit')}</option>
                     </select>
                     <p className="text-xs text-[var(--color-text-muted)]">{t('connect.ftpsHint')}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
-                    <input type="text" autoComplete="section-source username" name="source_username" placeholder={t('connect.usernamePlaceholder')} value={sourceUser} onChange={(e) => setSourceUser(e.target.value)} className={formInputClass} required />
+                    <label htmlFor="source-ftp-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <input id="source-ftp-username" type="text" autoComplete="section-source username" name="source_username" placeholder={t('connect.usernamePlaceholder')} value={sourceUser} onChange={(e) => setSourceUser(e.target.value)} className={formInputClass} required />
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
-                    <input type="password" autoComplete="section-source current-password" name="source_password" placeholder={t('connect.password')} value={sourcePass} onChange={(e) => setSourcePass(e.target.value)} className={formMonoInputClass} required />
+                    <label htmlFor="source-ftp-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                    <input id="source-ftp-password" type="password" autoComplete="section-source current-password" name="source_password" placeholder={t('connect.password')} value={sourcePass} onChange={(e) => setSourcePass(e.target.value)} className={formMonoInputClass} required />
                   </div>
                 </>
               ) : sourceProvider === 'sftp' ? (
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="space-y-1 sm:col-span-2">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <label htmlFor="source-sftp-host" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
+                        id="source-sftp-host"
                         type="text"
                         placeholder="192.168.1.10"
                         value={sourceSftpHost}
@@ -876,8 +884,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <label htmlFor="source-sftp-port" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
+                        id="source-sftp-port"
                         type="text"
                         placeholder="22"
                         value={sourceSftpPort}
@@ -889,14 +898,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sftpHostKey')}</label>
-                    <input type="text" placeholder="SHA256:..." value={sourceSftpHostKey} onChange={(e) => setSourceSftpHostKey(e.target.value)} className={formMonoInputClass} required />
+                    <label htmlFor="source-sftp-host-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sftpHostKey')}</label>
+                    <input id="source-sftp-host-key" type="text" placeholder="SHA256:..." value={sourceSftpHostKey} onChange={(e) => setSourceSftpHostKey(e.target.value)} className={formMonoInputClass} required />
                     <p className="text-xs text-[var(--color-text-muted)]">{t('connect.sftpHostKeyHint')}</p>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="source-sftp-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="source-sftp-username"
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
@@ -909,7 +919,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.auth')}</label>
+                    <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.auth')}</p>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -940,8 +950,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   {sourceSftpAuthMode === 'password' ? (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                      <label htmlFor="source-sftp-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                       <input
+                        id="source-sftp-password"
                         type="password"
                       autoComplete="section-source current-password"
                       name="source_password"
@@ -954,8 +965,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sshKeyPem')}</label>
+                      <label htmlFor="source-sftp-private-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sshKeyPem')}</label>
                       <textarea
+                        id="source-sftp-private-key"
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
                         value={sourceSftpPrivateKey}
                         onChange={(e) => setSourceSftpPrivateKey(e.target.value)}
@@ -970,8 +982,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
+                      <label htmlFor="source-s3-bucket" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input
+                        id="source-s3-bucket"
                         type="text"
                         placeholder={t('connect.bucketPlaceholder')}
                         value={sourceS3Bucket}
@@ -981,8 +994,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Region')}</label>
+                      <label htmlFor="source-s3-region" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Region')}</label>
                       <input
+                        id="source-s3-region"
                         type="text"
                         placeholder="us-east-1"
                         value={sourceS3Region}
@@ -994,8 +1008,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
+                    <label htmlFor="source-s3-endpoint" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
                     <input
+                      id="source-s3-endpoint"
                       type="url"
                       placeholder={t('connect.s3EndpointPlaceholder')}
                       value={sourceS3Endpoint}
@@ -1005,8 +1020,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
+                    <label htmlFor="source-s3-access-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
                     <input
+                      id="source-s3-access-key"
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
@@ -1019,8 +1035,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
+                    <label htmlFor="source-s3-secret-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
                     <input
+                      id="source-s3-secret-key"
                       type="password"
                       autoComplete="section-source current-password"
                       name="source_password"
@@ -1040,8 +1057,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <p className="text-xs font-sans leading-relaxed">{t('connect.immichPermissionHint')}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichUrl')}</label>
+                    <label htmlFor="source-immich-url" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichUrl')}</label>
                     <input
+                      id="source-immich-url"
                       type="url"
                       placeholder={t('connect.immichUrlPlaceholder')}
                       value={sourceUrl}
@@ -1051,8 +1069,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichApiKey')}</label>
+                    <label htmlFor="source-immich-api-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichApiKey')}</label>
                     <input
+                      id="source-immich-api-key"
                       type="password"
                       autoComplete="current-password"
                       name="source_immich_api_key"
@@ -1065,14 +1084,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
                 </>
               ) : sourceProvider === 'mega' ? (
-                <MegaCredentialFields username={sourceUser} password={sourcePass} onUsernameChange={setSourceUser} onPasswordChange={setSourcePass} />
+                <MegaCredentialFields idPrefix="source" username={sourceUser} password={sourcePass} onUsernameChange={setSourceUser} onPasswordChange={setSourcePass} />
               ) : sourceProvider === 'nextcloud' || sourceProvider === 'opencloud' || sourceProvider === 'seafile' || sourceProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    <label htmlFor="source-provider-url" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                       {sourceProvider === 'seafile' ? t('connect.seafileUrl') : sourceProvider === 'opencloud' ? t('connect.opencloudUrl') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
+                      id="source-provider-url"
                       type="url"
                       placeholder={sourceProvider === 'seafile' ? t('connect.seafileUrlPlaceholder') : sourceProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : sourceProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={sourceUrl}
@@ -1083,8 +1103,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="source-provider-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="source-provider-username"
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
@@ -1098,7 +1119,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="space-y-1">
                     <div className="flex justify-between items-center mb-1.5">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.appPasswordLabel')}</label>
+                      <label htmlFor="source-provider-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.appPasswordLabel')}</label>
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
@@ -1108,6 +1129,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       </button>
                     </div>
                     <input
+                      id="source-provider-password"
                       type="password"
                       autoComplete="section-source current-password"
                       name="source_password"
@@ -1134,8 +1156,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="source-magentacloud-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="source-magentacloud-username"
                       type="text"
                       autoComplete="section-source username"
                       name="source_username"
@@ -1148,8 +1171,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
+                    <label htmlFor="source-magentacloud-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
+                      id="source-magentacloud-password"
                       type="password"
                       autoComplete="section-source current-password"
                       name="source_password"
@@ -1163,9 +1187,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : (
                 <div className="py-2 space-y-1">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
+                  <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
                     {sourceProvider === 'google' ? t('connect.googleConnect') : sourceProvider === 'onedrive' ? t('connect.onedriveConnect') : sourceProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
-                  </label>
+                  </p>
                    {sourcePass ? (
                     <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
                       <div className="truncate pr-2">
@@ -1284,8 +1308,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="space-y-1 sm:col-span-2">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <label htmlFor="target-smb-host" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
+                        id="target-smb-host"
                         type="text"
                         placeholder="192.168.1.10"
                         value={targetSmbHost}
@@ -1295,8 +1320,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <label htmlFor="target-smb-port" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
+                        id="target-smb-port"
                         type="text"
                         placeholder="445"
                         value={targetSmbPort}
@@ -1309,8 +1335,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
+                      <label htmlFor="target-smb-share" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.share')}</label>
                       <input
+                        id="target-smb-share"
                         type="text"
                         placeholder={t('connect.sharePlaceholder')}
                         value={targetSmbShare}
@@ -1320,8 +1347,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.domain')}</label>
+                      <label htmlFor="target-smb-domain" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.domain')}</label>
                       <input
+                        id="target-smb-domain"
                         type="text"
                         placeholder="WORKGROUP"
                         value={targetSmbDomain}
@@ -1332,8 +1360,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="target-smb-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="target-smb-username"
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
@@ -1346,8 +1375,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                    <label htmlFor="target-smb-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                     <input
+                      id="target-smb-password"
                       type="password"
                       autoComplete="section-target current-password"
                       name="target_password"
@@ -1363,37 +1393,38 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="space-y-1 sm:col-span-2">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
-                      <input type="text" placeholder="ftp.example.com" value={targetFtpHost} onChange={(e) => setTargetFtpHost(e.target.value)} className={formInputClass} required />
+                      <label htmlFor="target-ftp-host" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <input id="target-ftp-host" type="text" placeholder="ftp.example.com" value={targetFtpHost} onChange={(e) => setTargetFtpHost(e.target.value)} className={formInputClass} required />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
-                      <input type="text" placeholder={targetFtpTlsMode === 'explicit' ? '21' : '990'} value={targetFtpPort} onChange={(e) => setTargetFtpPort(e.target.value)} className={formInputClass} required />
+                      <label htmlFor="target-ftp-port" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <input id="target-ftp-port" type="text" placeholder={targetFtpTlsMode === 'explicit' ? '21' : '990'} value={targetFtpPort} onChange={(e) => setTargetFtpPort(e.target.value)} className={formInputClass} required />
                     </div>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.ftpsMode')}</label>
-                    <select value={targetFtpTlsMode} onChange={(e) => { const tlsMode = e.target.value as FtpTlsMode; setTargetFtpTlsMode(tlsMode); setTargetFtpPort(tlsMode === 'explicit' ? '21' : '990'); }} className={formInputClass}>
+                    <label htmlFor="target-ftp-tls-mode" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.ftpsMode')}</label>
+                    <select id="target-ftp-tls-mode" value={targetFtpTlsMode} onChange={(e) => { const tlsMode = e.target.value as FtpTlsMode; setTargetFtpTlsMode(tlsMode); setTargetFtpPort(tlsMode === 'explicit' ? '21' : '990'); }} className={formInputClass}>
                       <option value="explicit">{t('connect.ftpsExplicit')}</option>
                       <option value="implicit">{t('connect.ftpsImplicit')}</option>
                     </select>
                     <p className="text-xs text-[var(--color-text-muted)]">{t('connect.ftpsHint')}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
-                    <input type="text" autoComplete="section-target username" name="target_username" placeholder={t('connect.usernamePlaceholder')} value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className={formInputClass} required />
+                    <label htmlFor="target-ftp-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <input id="target-ftp-username" type="text" autoComplete="section-target username" name="target_username" placeholder={t('connect.usernamePlaceholder')} value={targetUser} onChange={(e) => setTargetUser(e.target.value)} className={formInputClass} required />
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
-                    <input type="password" autoComplete="section-target current-password" name="target_password" placeholder={t('connect.password')} value={targetPass} onChange={(e) => setTargetPass(e.target.value)} className={formMonoInputClass} required />
+                    <label htmlFor="target-ftp-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                    <input id="target-ftp-password" type="password" autoComplete="section-target current-password" name="target_password" placeholder={t('connect.password')} value={targetPass} onChange={(e) => setTargetPass(e.target.value)} className={formMonoInputClass} required />
                   </div>
                 </>
               ) : targetProvider === 'sftp' ? (
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div className="space-y-1 sm:col-span-2">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
+                      <label htmlFor="target-sftp-host" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.serverHost')}</label>
                       <input
+                        id="target-sftp-host"
                         type="text"
                         placeholder="192.168.1.10"
                         value={targetSftpHost}
@@ -1403,8 +1434,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
+                      <label htmlFor="target-sftp-port" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.port')}</label>
                       <input
+                        id="target-sftp-port"
                         type="text"
                         placeholder="22"
                         value={targetSftpPort}
@@ -1416,14 +1448,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sftpHostKey')}</label>
-                    <input type="text" placeholder="SHA256:..." value={targetSftpHostKey} onChange={(e) => setTargetSftpHostKey(e.target.value)} className={formMonoInputClass} required />
+                    <label htmlFor="target-sftp-host-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sftpHostKey')}</label>
+                    <input id="target-sftp-host-key" type="text" placeholder="SHA256:..." value={targetSftpHostKey} onChange={(e) => setTargetSftpHostKey(e.target.value)} className={formMonoInputClass} required />
                     <p className="text-xs text-[var(--color-text-muted)]">{t('connect.sftpHostKeyHint')}</p>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="target-sftp-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="target-sftp-username"
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
@@ -1436,7 +1469,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.auth')}</label>
+                    <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.auth')}</p>
                     <div className="flex gap-2">
                       <button
                         type="button"
@@ -1467,8 +1500,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   {targetSftpAuthMode === 'password' ? (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
+                      <label htmlFor="target-sftp-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.password')}</label>
                       <input
+                        id="target-sftp-password"
                         type="password"
                       autoComplete="section-target current-password"
                       name="target_password"
@@ -1481,8 +1515,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     </div>
                   ) : (
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sshKeyPem')}</label>
+                      <label htmlFor="target-sftp-private-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.sshKeyPem')}</label>
                       <textarea
+                        id="target-sftp-private-key"
                         placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
                         value={targetSftpPrivateKey}
                         onChange={(e) => setTargetSftpPrivateKey(e.target.value)}
@@ -1497,8 +1532,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 <>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
+                      <label htmlFor="target-s3-bucket" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Bucket')}</label>
                       <input
+                        id="target-s3-bucket"
                         type="text"
                         placeholder={t('connect.bucketPlaceholder')}
                         value={targetS3Bucket}
@@ -1508,8 +1544,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Region')}</label>
+                      <label htmlFor="target-s3-region" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Region')}</label>
                       <input
+                        id="target-s3-region"
                         type="text"
                         placeholder="us-east-1"
                         value={targetS3Region}
@@ -1521,8 +1558,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
+                    <label htmlFor="target-s3-endpoint" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.s3Endpoint')}</label>
                     <input
+                      id="target-s3-endpoint"
                       type="url"
                       placeholder={t('connect.s3EndpointPlaceholder')}
                       value={targetS3Endpoint}
@@ -1532,8 +1570,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
+                    <label htmlFor="target-s3-access-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.accessKey')}</label>
                     <input
+                      id="target-s3-access-key"
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
@@ -1546,8 +1585,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
+                    <label htmlFor="target-s3-secret-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.secretKey')}</label>
                     <input
+                      id="target-s3-secret-key"
                       type="password"
                       autoComplete="section-target current-password"
                       name="target_password"
@@ -1567,8 +1607,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <p className="text-xs font-sans leading-relaxed">{t('connect.immichPermissionHint')}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichUrl')}</label>
+                    <label htmlFor="target-immich-url" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichUrl')}</label>
                     <input
+                      id="target-immich-url"
                       type="url"
                       placeholder={t('connect.immichUrlPlaceholder')}
                       value={targetUrl}
@@ -1578,8 +1619,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichApiKey')}</label>
+                    <label htmlFor="target-immich-api-key" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.immichApiKey')}</label>
                     <input
+                      id="target-immich-api-key"
                       type="password"
                       autoComplete="current-password"
                       name="target_immich_api_key"
@@ -1592,14 +1634,15 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
                 </>
               ) : targetProvider === 'mega' ? (
-                <MegaCredentialFields username={targetUser} password={targetPass} onUsernameChange={setTargetUser} onPasswordChange={setTargetPass} />
+                <MegaCredentialFields idPrefix="target" username={targetUser} password={targetPass} onUsernameChange={setTargetUser} onPasswordChange={setTargetPass} />
               ) : targetProvider === 'nextcloud' || targetProvider === 'opencloud' || targetProvider === 'seafile' || targetProvider === 'webdav' ? (
                 <>
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+                    <label htmlFor="target-provider-url" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
                       {targetProvider === 'seafile' ? t('connect.seafileUrl') : targetProvider === 'opencloud' ? t('connect.opencloudUrl') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrl') : t('connect.webdavUrl')}
                     </label>
                     <input
+                      id="target-provider-url"
                       type="url"
                       placeholder={targetProvider === 'seafile' ? t('connect.seafileUrlPlaceholder') : targetProvider === 'opencloud' ? t('connect.opencloudUrlPlaceholder') : targetProvider === 'nextcloud' ? t('connect.nextcloudUrlPlaceholder') : t('connect.webdavUrlPlaceholder')}
                       value={targetUrl}
@@ -1610,8 +1653,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="target-provider-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="target-provider-username"
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
@@ -1625,7 +1669,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
 
                   <div className="space-y-1">
                     <div className="flex justify-between items-center mb-1.5">
-                      <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.appPasswordLabel')}</label>
+                      <label htmlFor="target-provider-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.appPasswordLabel')}</label>
                       <button
                         type="button"
                         onClick={() => setShowHelp(!showHelp)}
@@ -1635,6 +1679,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                       </button>
                     </div>
                     <input
+                      id="target-provider-password"
                       type="password"
                       autoComplete="section-target current-password"
                       name="target_password"
@@ -1661,8 +1706,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
+                    <label htmlFor="target-magentacloud-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
                     <input
+                      id="target-magentacloud-username"
                       type="text"
                       autoComplete="section-target username"
                       name="target_username"
@@ -1675,8 +1721,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
+                    <label htmlFor="target-magentacloud-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
                     <input
+                      id="target-magentacloud-password"
                       type="password"
                       autoComplete="section-target current-password"
                       name="target_password"
@@ -1690,9 +1737,9 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                 </>
               ) : (
                 <div className="py-2 space-y-1">
-                  <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
+                  <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
                     {targetProvider === 'google' ? t('connect.googleConnect') : targetProvider === 'onedrive' ? t('connect.onedriveConnect') : targetProvider === 'hidrive' ? t('connect.hidriveConnect') : t('connect.dropboxConnect')}
-                  </label>
+                  </p>
                   {targetPass ? (
                     <div className="ui-alert ui-alert-success p-4 flex items-center justify-between">
                       <div className="truncate pr-2">

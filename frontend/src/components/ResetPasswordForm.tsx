@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';
@@ -10,7 +10,9 @@ interface ResetPasswordFormProps {
   onSuccess: () => void;
 }
 
-function getPasswordStrength(password: string): { score: number; label: string; color: string } {
+type PasswordStrengthLabel = 'weak' | 'medium' | 'strong' | '';
+
+function getPasswordStrength(password: string): { score: number; label: PasswordStrengthLabel; color: string } {
   if (password.length === 0) return { score: 0, label: '', color: '' };
   let score = 0;
   if (password.length >= 12) score++;
@@ -34,8 +36,15 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [success, setSuccess] = useState<boolean>(false);
+  const redirectTimerRef = useRef<number | null>(null);
 
   const strength = getPasswordStrength(password);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current !== null) window.clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +77,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
       }
 
       setSuccess(true);
-      setTimeout(() => onSuccess(), 1500);
+      redirectTimerRef.current = window.setTimeout(onSuccess, 1500);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : t('reset.networkError'));
     } finally {
@@ -115,7 +124,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-1.5">
             <label htmlFor="reset-password" className="ui-field-label">
-              {t('reset.title')}
+              {t('auth.newPassword')}
             </label>
             <div className="relative group">
               <input
@@ -140,7 +149,7 @@ export function ResetPasswordForm({ apiUrl, token, onSuccess }: ResetPasswordFor
 
             {password.length > 0 && (
               <div className="flex items-center gap-2 mt-2">
-                <ProgressBar label={t('reset.title')} value={(strength.score / 5) * 100} className="flex-1 h-1.5" indicatorClassName={strength.color} />
+                <ProgressBar label={t('reset.passwordStrength')} value={(strength.score / 5) * 100} className="flex-1 h-1.5" indicatorClassName={strength.color} />
                  <span className="text-[9px] font-mono text-[var(--color-text-muted)] uppercase">{t(`reset.strength.${strength.label}`)}</span>
               </div>
             )}

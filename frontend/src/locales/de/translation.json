@@ -556,6 +556,7 @@
     "mismatch": "Die Passwörter stimmen nicht überein.",
     "failed": "Das Zurücksetzen des Passworts ist fehlgeschlagen.",
     "networkError": "Verbindung zum Server fehlgeschlagen.",
+    "passwordStrength": "Passwortstärke",
     "strength": {
       "weak": "Schwach",
       "medium": "Mittel",
@@ -867,6 +868,7 @@
     "saveChanges": "Änderungen speichern",
     "intervalUpdated": "Sync-Intervall aktualisiert.",
     "scopeUpdated": "Sync-Scope aktualisiert.",
+    "partialUpdate": "Einige Synchronisierungseinstellungen wurden aktualisiert. Öffne den Editor erneut, um die übrigen Änderungen zu wiederholen.",
     "scopeUpdateWarning": "Hinweis: Änderungen am Scope setzen den Sync-Zustand zurück.",
     "deleteConfirm": "Sind Sie sicher, dass Sie diesen Sync-Job löschen möchten? Alle Konfigurationen und History gehen verloren.",
     "sourcePath": "Quell-Verzeichnis",

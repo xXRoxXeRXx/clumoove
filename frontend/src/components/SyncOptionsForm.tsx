@@ -84,6 +84,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
                   <button
                     type="button"
                     onClick={() => setDirection("one_way")}
+                    aria-pressed={direction === "one_way"}
                     className={`py-2 px-2.5 text-[11px] font-bold font-mono transition-all cursor-pointer ${
                       direction === "one_way"
                         ? "ui-button-primary"
@@ -95,6 +96,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
                   <button
                     type="button"
                     onClick={() => setDirection("two_way")}
+                    aria-pressed={direction === "two_way"}
                     className={`py-2 px-2.5 text-[11px] font-bold font-mono transition-all cursor-pointer ${
                       direction === "two_way"
                         ? "ui-button-primary"
@@ -211,7 +213,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
                 aria-pressed={conflictStrategy === "OVERWRITE"}
                 className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
                   conflictStrategy === "OVERWRITE"
-                    ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs"
+                    ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold"
                     : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30"
                 }`}
               >
@@ -239,7 +241,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
                 aria-pressed={conflictStrategy === "RENAME"}
                 className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
                   conflictStrategy === "RENAME"
-                    ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs"
+                    ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold"
                     : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30"
                 }`}
               >
@@ -267,7 +269,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
                 aria-pressed={conflictStrategy === "SKIP"}
                 className={`w-full text-left p-3.5 rounded-lg border transition-all duration-200 cursor-pointer ${
                   conflictStrategy === "SKIP"
-                    ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold shadow-xs"
+                    ? "bg-[var(--color-bg-tertiary)]/50 border-[var(--color-text-primary)] text-[var(--color-text-primary)] font-bold"
                     : "bg-[var(--color-bg-secondary)] border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]/30"
                 }`}
               >
@@ -294,11 +296,12 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
         {/* Thread count selector (optional) */}
         {setThreads && (
           <div className="space-y-3 text-xs">
-            <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
+            <label htmlFor="sync-threads" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">
               {t("fileBrowser.threads")}
             </label>
             <div className="flex items-center gap-4">
               <input
+                id="sync-threads"
                 type="range"
                 min="1"
                 max={16}
@@ -330,11 +333,12 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
 
         {/* Bandwidth limit */}
         <div className="space-y-3 text-xs">
-          <label className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
+          <label htmlFor="sync-bandwidth" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-3">
             {t("fileBrowser.bandwidth")}
           </label>
           <div className="flex items-center gap-4">
             <input
+              id="sync-bandwidth"
               type="range"
               min="0"
               max={BANDWIDTH_OPTIONS.length - 1}
@@ -402,7 +406,7 @@ export const SyncOptionsForm: React.FC<SyncOptionsFormProps> = ({
       )}
 
       {error && (
-        <div className="ui-alert ui-alert-error p-4 text-[11px] font-semibold leading-normal flex gap-2 text-left">
+        <div role="alert" className="ui-alert ui-alert-error p-4 text-[11px] font-semibold leading-normal flex gap-2 text-left">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>{error}</span>
         </div>
