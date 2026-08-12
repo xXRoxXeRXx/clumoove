@@ -763,17 +763,15 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		p.workerID, threadID, strings.ToUpper(task.ResourceType), logPath, task.FileSize, mig.SourceProvider, mig.TargetProvider)
 
 	// Decrypt credentials
-	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, p.secretKey)
+	sourcePass, err := crypto.DecryptWithDomain(mig.SourcePasswordEncrypted, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(mig.SourceProvider)))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt source password: %w", err)
 	}
-	defer crypto.ZeroString(&sourcePass)
 
-	targetPass, err := crypto.Decrypt(mig.TargetPasswordEncrypted, p.secretKey)
+	targetPass, err := crypto.DecryptWithDomain(mig.TargetPasswordEncrypted, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(mig.TargetProvider)))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target password: %w", err)
 	}
-	defer crypto.ZeroString(&targetPass)
 
 	// For OAuth providers: if the token is expired or within 2 minutes of expiry,
 	// refresh it now so this task does not hit a 401. The daemon already handles
@@ -783,13 +781,11 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	if err != nil {
 		return fmt.Errorf("failed to refresh source OAuth token: %w", err)
 	}
-	defer crypto.ZeroString(&sourceProviderPass)
 
 	targetProviderPass, err := p.ensureFreshOAuthToken(ctx, mig, "target", targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
-	defer crypto.ZeroString(&targetProviderPass)
 
 	// Providers are task-scoped because they retain credentials internally.
 	sourceCtx, err := megasecret.WithSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, p.secretKey)
@@ -1605,7 +1601,7 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 			if latestMig, lerr := db.GetMigration(p.db, mig.ID); lerr == nil {
 				latest := tokenSet(latestMig)
 				if latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
-					if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+					if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 						return latestAccess, nil
 					}
 				}
@@ -1624,7 +1620,7 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 	}
 
 	latest := tokenSet(latestMig)
-	if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+	if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 		accessToken = latestAccess
 	}
 	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
@@ -1644,11 +1640,10 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 	log.Printf("[Worker %s] %s OAuth token expired or near expiry for migration %s — refreshing inline\n",
 		p.workerID, role, mig.ID)
 
-	refreshToken, err := crypto.Decrypt(refreshTokenEnc.String, p.secretKey)
+	refreshToken, err := crypto.DecryptWithDomain(refreshTokenEnc.String, p.secretKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt %s refresh token: %w", role, err)
 	}
-	defer crypto.ZeroString(&refreshToken)
 
 	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	tokenResp, err := oauth.RefreshToken(refreshCtx, provider, refreshToken)
@@ -1656,13 +1651,12 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 	if err != nil {
 		return "", fmt.Errorf("OAuth refresh failed for %s (%s): %w", role, provider, err)
 	}
-	defer crypto.ZeroString(&tokenResp.RefreshToken)
 
-	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
+	newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, p.secretKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new %s access token after refresh: %w", role, err)
 	}
-	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, p.secretKey)
+	newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, p.secretKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new %s refresh token after refresh: %w", role, err)
 	}
@@ -1684,7 +1678,7 @@ func (p *Processor) refreshOAuthTokenIfNeeded(ctx context.Context, mig *db.Migra
 		log.Printf("[Worker %s] Token update conflict for migration %s (%s) — adopting winner token from DB\n", p.workerID, mig.ID, role)
 		if latestMig, lerr := db.GetMigration(p.db, mig.ID); lerr == nil {
 			latest := tokenSet(latestMig)
-			if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+			if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 				return latestAccess, nil
 			}
 		}
@@ -1766,7 +1760,7 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 			if latestJob, lerr := db.GetSyncJob(p.db, job.ID); lerr == nil {
 				latest := tokenSet(latestJob)
 				if latest.expiresAt.Valid && time.Now().Before(latest.expiresAt.Time.Add(-2*time.Minute)) {
-					if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+					if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 						return latestAccess, nil
 					}
 				}
@@ -1784,7 +1778,7 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 	}
 
 	latest := tokenSet(latestJob)
-	if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+	if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 		currentToken = latestAccess
 	}
 	refreshTokenEnc, expiresAt, provider = latest.refreshEnc, latest.expiresAt, latest.provider
@@ -1800,11 +1794,10 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 	log.Printf("[Worker %s] %s OAuth token expired or near expiry for sync job %s — refreshing inline\n",
 		p.workerID, role, job.ID)
 
-	refreshToken, err := crypto.Decrypt(refreshTokenEnc.String, p.secretKey)
+	refreshToken, err := crypto.DecryptWithDomain(refreshTokenEnc.String, p.secretKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt %s refresh token for sync job: %w", role, err)
 	}
-	defer crypto.ZeroString(&refreshToken)
 
 	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	tokenResp, err := oauth.RefreshToken(refreshCtx, provider, refreshToken)
@@ -1812,13 +1805,12 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 	if err != nil {
 		return "", fmt.Errorf("OAuth refresh failed for sync job %s (%s): %w", role, provider, err)
 	}
-	defer crypto.ZeroString(&tokenResp.RefreshToken)
 
-	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, p.secretKey)
+	newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, p.secretKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new %s access token after refresh: %w", role, err)
 	}
-	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, p.secretKey)
+	newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, p.secretKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt new %s refresh token after refresh: %w", role, err)
 	}
@@ -1834,7 +1826,7 @@ func (p *Processor) refreshSyncOAuthTokenIfNeeded(ctx context.Context, job *db.S
 		log.Printf("[Worker %s] Token update conflict for sync job %s (%s) — adopting winner token from DB\n", p.workerID, job.ID, role)
 		if latestJob, lerr := db.GetSyncJob(p.db, job.ID); lerr == nil {
 			latest := tokenSet(latestJob)
-			if latestAccess, derr := crypto.Decrypt(latest.accessEnc, p.secretKey); derr == nil {
+			if latestAccess, derr := crypto.DecryptWithDomain(latest.accessEnc, p.secretKey, crypto.DomainOAuthAccessToken); derr == nil {
 				return latestAccess, nil
 			}
 		}

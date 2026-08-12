@@ -10,7 +10,8 @@ defense-in-depth. This document summarizes the controls; see linked sections for
 Two unrelated secrets are required and **must differ**:
 
 - `ENCRYPTION_SECRET_KEY` — used **exclusively** for AES-256-GCM encryption/decryption of stored
-  credentials (`crypto.Encrypt`/`Decrypt`). The raw secret is SHA-256-hashed inside `crypto.deriveKey`
+  credentials (`crypto.EncryptWithDomain`/`DecryptBytesWithDomain`). Each persisted field type supplies
+  stable AAD, preventing ciphertext from one secret category being replayed into another. The raw secret is SHA-256-hashed inside `crypto.deriveKey`
   to produce the actual 32-byte key, so any-length secrets are accepted.
 - `JWT_SECRET_KEY` — used **exclusively** for HS256 JWT signing/validation (`auth.GenerateAccessToken`).
 
@@ -25,7 +26,9 @@ bytes. This prevents key reuse and weak signing keys.
   PostgreSQL.
 - Plaintext credentials are **never** passed to background goroutines. The worker queries them from the
   DB by `MigrationID` and decrypts **at the last moment** (inside `processTask` / `indexer.Start`) using
-  `crypto.Decrypt`, then constructs the provider client.
+  the domain-bound crypto API, which clears its temporary GCM plaintext buffer before returning a
+  string required by an integration. APIs that can retain bytes use `DecryptBytesWithDomain` and clear
+  the returned buffer themselves; Go strings cannot be reliably scrubbed without unsafe memory writes.
 - The frontend holds secrets **in memory only** and clears them (`setCredentials(null)`) once the
   migration is created or when navigating away from selection/dashboard screens.
 - Transfers are streamed through RAM buffers (zero on-disk retention of file contents).

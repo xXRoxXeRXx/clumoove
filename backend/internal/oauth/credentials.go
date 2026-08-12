@@ -137,7 +137,7 @@ func clientSecret(provider string) (string, error) {
 	if cfgRef == nil {
 		return "", fmt.Errorf("oauth credentials are not configured")
 	}
-	return crypto.Decrypt(c.ClientSecretEnc, cfgRef.key)
+	return crypto.DecryptWithDomain(c.ClientSecretEnc, cfgRef.key, crypto.DomainOAuthClientSecret)
 }
 
 // ConfiguredProviders returns the set of OAuth provider keys that have both a

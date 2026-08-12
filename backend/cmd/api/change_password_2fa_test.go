@@ -177,7 +177,7 @@ func TestHandle2FADisable_WithBackupCode(t *testing.T) {
 	const encryptionKey = "test-encryption-key"
 	s := &APIServer{db: database, encryptionKey: encryptionKey}
 	user := createChangePasswordTestUser(t, database, false)
-	secret, err := crypto.Encrypt("JBSWY3DPEHPK3PXP", encryptionKey)
+	secret, err := crypto.EncryptWithDomain("JBSWY3DPEHPK3PXP", encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
 		t.Fatalf("encrypt TOTP secret: %v", err)
 	}

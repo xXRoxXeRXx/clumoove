@@ -32,7 +32,7 @@ func (s *APIServer) instanceSMTPConfig() (email.SMTPConfig, error) {
 	if err != nil {
 		return email.SMTPConfig{}, err
 	}
-	password, err := crypto.Decrypt(settings.SMTPPasswordEnc, s.encryptionKey)
+	password, err := crypto.DecryptWithDomain(settings.SMTPPasswordEnc, s.encryptionKey, crypto.DomainSMTPPassword)
 	if err != nil {
 		return email.SMTPConfig{}, err
 	}

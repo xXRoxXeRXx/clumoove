@@ -18,11 +18,11 @@ func WithSession(ctx context.Context, provider, sessionIDEncrypted, masterKeyEnc
 	if sessionIDEncrypted == "" || masterKeyEncrypted == "" {
 		return nil, errors.New("incomplete encrypted MEGA session")
 	}
-	id, err := crypto.Decrypt(sessionIDEncrypted, encryptionKey)
+	id, err := crypto.DecryptWithDomain(sessionIDEncrypted, encryptionKey, crypto.DomainMegaSessionID)
 	if err != nil {
 		return nil, err
 	}
-	keyText, err := crypto.Decrypt(masterKeyEncrypted, encryptionKey)
+	keyText, err := crypto.DecryptWithDomain(masterKeyEncrypted, encryptionKey, crypto.DomainMegaMasterKey)
 	if err != nil {
 		return nil, err
 	}

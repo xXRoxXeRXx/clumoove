@@ -20,6 +20,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/megasecret"
+	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
@@ -81,29 +82,25 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		p.workerID, threadID, strings.ToUpper(action), task.FilePath, task.FileSize, job.SourceProvider, job.TargetProvider)
 
 	// Decrypt credentials
-	sourcePass, err := crypto.Decrypt(job.SourcePasswordEncrypted, p.secretKey)
+	sourcePass, err := crypto.DecryptWithDomain(job.SourcePasswordEncrypted, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.SourceProvider)))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt source password: %w", err)
 	}
-	defer crypto.ZeroString(&sourcePass)
 
-	targetPass, err := crypto.Decrypt(job.TargetPasswordEncrypted, p.secretKey)
+	targetPass, err := crypto.DecryptWithDomain(job.TargetPasswordEncrypted, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.TargetProvider)))
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target password: %w", err)
 	}
-	defer crypto.ZeroString(&targetPass)
 
 	sourceProviderPass, err := p.ensureFreshSyncOAuthToken(ctx, job, "source", sourcePass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh source OAuth token: %w", err)
 	}
-	defer crypto.ZeroString(&sourceProviderPass)
 
 	targetProviderPass, err := p.ensureFreshSyncOAuthToken(ctx, job, "target", targetPass)
 	if err != nil {
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
-	defer crypto.ZeroString(&targetProviderPass)
 
 	sourceCtx, err := megasecret.WithSession(ctx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
@@ -740,12 +737,12 @@ func (p *Processor) recoverPausedSyncJobs(ctx context.Context) {
 		probes++
 		p.setRecoveryCursor(true, id)
 
-		sPass, err := crypto.Decrypt(sPassEnc, p.secretKey)
+		sPass, err := crypto.DecryptWithDomain(sPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(sProv)))
 		if err != nil {
 			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
-		tPass, err := crypto.Decrypt(tPassEnc, p.secretKey)
+		tPass, err := crypto.DecryptWithDomain(tPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(tProv)))
 		if err != nil {
 			p.recordRecoveryFailure(id, ra.attempts)
 			continue

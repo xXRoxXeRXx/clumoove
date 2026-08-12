@@ -13,6 +13,7 @@ import (
 	"backend/internal/crypto"
 	"backend/internal/db"
 	"backend/internal/megasecret"
+	"backend/internal/oauth"
 	"backend/internal/queue"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
@@ -187,19 +188,17 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	// 1. Fetch the claimed job configuration.
 
 	// 3. Decrypt credentials
-	sourcePass, err := crypto.Decrypt(job.SourcePasswordEncrypted, e.encryptionKey)
+	sourcePass, err := crypto.DecryptWithDomain(job.SourcePasswordEncrypted, e.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.SourceProvider)))
 	if err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to decrypt source password: %v", err))
 		return
 	}
-	defer crypto.ZeroString(&sourcePass)
 
-	targetPass, err := crypto.Decrypt(job.TargetPasswordEncrypted, e.encryptionKey)
+	targetPass, err := crypto.DecryptWithDomain(job.TargetPasswordEncrypted, e.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.TargetProvider)))
 	if err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Failed to decrypt target password: %v", err))
 		return
 	}
-	defer crypto.ZeroString(&targetPass)
 
 	// Refresh OAuth tokens if necessary
 	if job.SourceRefreshTokenEncrypted.Valid && job.SourceRefreshTokenEncrypted.String != "" {

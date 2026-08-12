@@ -75,7 +75,7 @@ func (s *APIServer) handleTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := crypto.Decrypt(u.TotpSecretEnc, s.encryptionKey)
+	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, s.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
 		s.logf(r, "handleTOTP: failed to decrypt secret for user %s: %v\n", u.ID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -177,7 +177,7 @@ func (s *APIServer) handle2FASetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	encrypted, err := crypto.Encrypt(secret, s.encryptionKey)
+	encrypted, err := crypto.EncryptWithDomain(secret, s.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
 		s.logf(r, "handle2FASetup: failed to encrypt secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -235,7 +235,7 @@ func (s *APIServer) handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := crypto.Decrypt(u.TotpSecretEnc, s.encryptionKey)
+	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, s.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
 		s.logf(r, "handle2FAEnable: failed to decrypt secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -312,7 +312,7 @@ func (s *APIServer) handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := crypto.Decrypt(u.TotpSecretEnc, s.encryptionKey)
+	secret, err := crypto.DecryptWithDomain(u.TotpSecretEnc, s.encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
 		s.logf(r, "handle2FADisable: failed to decrypt secret for user %s: %v\n", userID, err)
 		writeError(w, http.StatusInternalServerError, ErrInternalError)

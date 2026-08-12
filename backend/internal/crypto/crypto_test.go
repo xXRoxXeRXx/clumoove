@@ -1,134 +1,193 @@
 package crypto
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 )
 
+const testDomain = "test:credential"
+
 func TestEncryptDecryptRoundTrip(t *testing.T) {
 	secret := "test-encryption-secret-key-32-bytes-long!"
 	plain := "my-super-secret-credential"
-
-	cipher, err := Encrypt(plain, secret)
+	ciphertext, err := EncryptWithDomain(plain, secret, testDomain)
 	if err != nil {
 		t.Fatalf("Encrypt failed: %v", err)
 	}
-	if cipher == plain {
-		t.Errorf("ciphertext must differ from plaintext, got identical value")
+	if ciphertext == plain || ciphertext == "" || !strings.HasPrefix(ciphertext, envelopeV1Prefix) {
+		t.Errorf("unexpected ciphertext %q", ciphertext)
 	}
-	if cipher == "" {
-		t.Errorf("ciphertext must not be empty")
-	}
-
-	decrypted, err := Decrypt(cipher, secret)
+	decrypted, err := DecryptBytesWithDomain(ciphertext, secret, testDomain)
 	if err != nil {
 		t.Fatalf("Decrypt failed: %v", err)
 	}
-	if decrypted != plain {
+	defer clear(decrypted)
+	if string(decrypted) != plain {
 		t.Errorf("decrypted %q, want %q", decrypted, plain)
 	}
 }
 
 func TestEncryptDecryptDifferentCiphertexts(t *testing.T) {
 	secret := "test-encryption-secret-key-32-bytes-long!"
-
-	c1, err := Encrypt("same-input", secret)
+	c1, err := EncryptWithDomain("same-input", secret, testDomain)
 	if err != nil {
-		t.Fatalf("Encrypt 1 failed: %v", err)
+		t.Fatal(err)
 	}
-	c2, err := Encrypt("same-input", secret)
+	c2, err := EncryptWithDomain("same-input", secret, testDomain)
 	if err != nil {
-		t.Fatalf("Encrypt 2 failed: %v", err)
+		t.Fatal(err)
 	}
 	if c1 == c2 {
-		t.Errorf("expected different ciphertexts for identical plaintext due to random nonce")
+		t.Error("expected random nonces to produce distinct ciphertexts")
 	}
-
-	d1, err := Decrypt(c1, secret)
-	if err != nil {
-		t.Fatalf("Decrypt 1 failed: %v", err)
-	}
-	d2, err := Decrypt(c2, secret)
-	if err != nil {
-		t.Fatalf("Decrypt 2 failed: %v", err)
-	}
-	if d1 != "same-input" || d2 != "same-input" {
-		t.Errorf("both decryptions must yield original plaintext")
+	for _, ciphertext := range []string{c1, c2} {
+		plain, err := DecryptBytesWithDomain(ciphertext, secret, testDomain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(plain) != "same-input" {
+			t.Errorf("got %q", plain)
+		}
+		clear(plain)
 	}
 }
 
-func TestEncryptDecryptEmpty(t *testing.T) {
+func TestEmptySentinel(t *testing.T) {
 	secret := "test-encryption-secret-key-32-bytes-long!"
-
-	c, err := Encrypt("", secret)
-	if err != nil {
-		t.Fatalf("Encrypt empty failed: %v", err)
+	ciphertext, err := EncryptWithDomain("", secret, testDomain)
+	if err != nil || ciphertext != "" {
+		t.Errorf("Encrypt empty = %q, %v", ciphertext, err)
 	}
-	if c != "" {
-		t.Errorf("expected empty ciphertext for empty plaintext, got %q", c)
-	}
-	d, err := Decrypt("", secret)
-	if err != nil {
-		t.Fatalf("Decrypt empty failed: %v", err)
-	}
-	if d != "" {
-		t.Errorf("expected empty plaintext for empty ciphertext, got %q", d)
+	plain, err := DecryptBytesWithDomain("", secret, testDomain)
+	if err != nil || plain != nil {
+		t.Errorf("Decrypt empty = %q, %v", plain, err)
 	}
 }
 
-func TestDecryptWrongKey(t *testing.T) {
+func TestDecryptAuthenticationFailures(t *testing.T) {
 	secret := "test-encryption-secret-key-32-bytes-long!"
-	wrong := "another-secret-key-which-is-also-32-bytes!!"
-
-	c, err := Encrypt("payload", secret)
+	ciphertext, err := EncryptWithDomain("payload", secret, testDomain)
 	if err != nil {
-		t.Fatalf("Encrypt failed: %v", err)
+		t.Fatal(err)
 	}
-	if _, err := Decrypt(c, wrong); err == nil {
-		t.Errorf("expected Decrypt to fail with wrong key, got nil error")
+	if _, err := DecryptBytesWithDomain(ciphertext, "another-secret-key-which-is-also-32-bytes!!", testDomain); !errors.Is(err, ErrAuthentication) {
+		t.Errorf("wrong key error = %v", err)
+	}
+	raw, err := hex.DecodeString(strings.TrimPrefix(ciphertext, envelopeV1Prefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, index := range []int{0, len(raw) - 1} {
+		tampered := append([]byte(nil), raw...)
+		tampered[index] ^= 1
+		if _, err := DecryptBytesWithDomain(envelopeV1Prefix+hex.EncodeToString(tampered), secret, testDomain); !errors.Is(err, ErrAuthentication) {
+			t.Errorf("tampered ciphertext error = %v", err)
+		}
 	}
 }
 
-func TestDecryptInvalidHex(t *testing.T) {
+func TestDecryptDomainMismatch(t *testing.T) {
+	ciphertext, err := EncryptWithDomain("payload", "test-encryption-secret-key-32-bytes-long!", testDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecryptBytesWithDomain(ciphertext, "test-encryption-secret-key-32-bytes-long!", "test:other"); !errors.Is(err, ErrAuthentication) {
+		t.Errorf("domain mismatch error = %v", err)
+	}
+}
+
+func TestConnectionCredentialDomain(t *testing.T) {
+	if got := ConnectionCredentialDomain(false); got != DomainProviderPassword {
+		t.Errorf("non-OAuth domain = %q", got)
+	}
+	if got := ConnectionCredentialDomain(true); got != DomainOAuthAccessToken {
+		t.Errorf("OAuth domain = %q", got)
+	}
+}
+
+func TestDecryptMalformedCiphertexts(t *testing.T) {
 	secret := "test-encryption-secret-key-32-bytes-long!"
-	if _, err := Decrypt("not-hex!!", secret); err == nil {
-		t.Errorf("expected Decrypt to fail on invalid hex input")
+	if _, err := DecryptBytesWithDomain("not-hex!!", secret, testDomain); !errors.Is(err, ErrInvalidCiphertextEncoding) {
+		t.Errorf("invalid hex error = %v", err)
+	}
+	if _, err := DecryptBytesWithDomain("v2:00", secret, testDomain); !errors.Is(err, ErrUnsupportedCiphertextVersion) {
+		t.Errorf("version error = %v", err)
+	}
+	for size := 0; size < gcmNonceSize+16; size++ {
+		ciphertext := envelopeV1Prefix + hex.EncodeToString(make([]byte, size))
+		if _, err := DecryptBytesWithDomain(ciphertext, secret, testDomain); !errors.Is(err, ErrCiphertextTooShort) {
+			t.Errorf("size %d error = %v", size, err)
+		}
 	}
 }
 
-func TestDecryptTooShort(t *testing.T) {
+func TestUnicodeAndLargePayloadRoundTrip(t *testing.T) {
 	secret := "test-encryption-secret-key-32-bytes-long!"
-	if _, err := Decrypt("abcd", secret); err == nil {
-		t.Errorf("expected Decrypt to fail on ciphertext shorter than nonce")
+	for _, want := range []string{"\u3071\u3059\u308f\u30fc\u3069\U0001f510", strings.Repeat("x", 1<<20)} {
+		ciphertext, err := EncryptWithDomain(want, secret, testDomain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := DecryptBytesWithDomain(ciphertext, secret, testDomain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Error("round trip mismatch")
+		}
+		clear(got)
 	}
 }
 
-// heapString returns a string that is NOT a string literal in read-only memory,
-// so it is safe to mutate via ZeroString (which overwrites backing bytes).
-func heapString(s string) string {
-	return strings.Clone(s)
+func TestNonceUniquenessSanity(t *testing.T) {
+	secret := "test-encryption-secret-key-32-bytes-long!"
+	seen := make(map[string]struct{}, 1000)
+	for range 1000 {
+		ciphertext, err := EncryptWithDomain("same-input", secret, testDomain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := hex.DecodeString(strings.TrimPrefix(ciphertext, envelopeV1Prefix))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nonce := string(raw[:gcmNonceSize])
+		if _, ok := seen[nonce]; ok {
+			t.Fatal("duplicate nonce")
+		}
+		seen[nonce] = struct{}{}
+	}
 }
 
-func TestZeroString(t *testing.T) {
-	s := heapString("sensitive-data")
-	ZeroString(&s)
-	if s != "" {
-		t.Errorf("expected ZeroString to reset string to empty, got %q", s)
+func TestDecryptLegacyEnvelope(t *testing.T) {
+	secret := "test-encryption-secret-key-32-bytes-long!"
+	block, err := aes.NewCipher(deriveKey(secret))
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// nil and empty must be no-ops and not panic.
-	ZeroString(nil)
-	empty := heapString("")
-	ZeroString(&empty)
-	if empty != "" {
-		t.Errorf("expected empty string to remain empty")
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	legacy := append(nonce, gcm.Seal(nil, nonce, []byte("legacy"), nil)...)
+	plain, err := DecryptBytesWithDomain(hex.EncodeToString(legacy), secret, testDomain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(plain)
+	if string(plain) != "legacy" {
+		t.Errorf("legacy plaintext = %q", plain)
 	}
 }
 
 func TestDeriveKeyLength(t *testing.T) {
 	for _, s := range []string{"short", strings.Repeat("x", 100)} {
-		k := deriveKey(s)
-		if len(k) != 32 {
+		if k := deriveKey(s); len(k) != 32 {
 			t.Errorf("deriveKey(%q) returned %d bytes, want 32", s, len(k))
 		}
 	}

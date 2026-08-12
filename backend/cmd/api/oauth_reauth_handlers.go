@@ -60,12 +60,12 @@ func (s *APIServer) handleMigrationReauth(w http.ResponseWriter, r *http.Request
 		writeValidationError(w, ErrProviderUnsupported)
 		return
 	}
-	access, err := crypto.Encrypt(req.AccessToken, s.encryptionKey)
+	access, err := crypto.EncryptWithDomain(req.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	refresh, err := crypto.Encrypt(req.RefreshToken, s.encryptionKey)
+	refresh, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
@@ -122,12 +122,12 @@ func (s *APIServer) handleSyncReauth(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrProviderUnsupported)
 		return
 	}
-	access, err := crypto.Encrypt(req.AccessToken, s.encryptionKey)
+	access, err := crypto.EncryptWithDomain(req.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
-	refresh, err := crypto.Encrypt(req.RefreshToken, s.encryptionKey)
+	refresh, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return

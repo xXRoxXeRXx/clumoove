@@ -102,7 +102,7 @@ func (s *APIServer) handleAdminPutOAuth(w http.ResponseWriter, r *http.Request) 
 		// Keep the existing ciphertext; the secret is unchanged.
 		encrypted = existing.ClientSecretEnc
 	} else {
-		encrypted, err = crypto.Encrypt(req.ClientSecret, s.encryptionKey)
+		encrypted, err = crypto.EncryptWithDomain(req.ClientSecret, s.encryptionKey, crypto.DomainOAuthClientSecret)
 		if err != nil {
 			s.logf(r, "instance OAuth secret encryption failed for %s: %v", provider, err)
 			writeError(w, http.StatusInternalServerError, ErrInternalError)

@@ -1,3 +1,4 @@
+// Package crypto provides encryption for persisted application secrets.
 package crypto
 
 import (
@@ -7,103 +8,150 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
-	"runtime"
-	"unsafe"
 )
+
+const (
+	// envelopeV1Prefix makes new ciphertext self-identifying without
+	// ambiguously colliding with the legacy hex-only envelope.
+	envelopeV1Prefix = "v1:"
+	// gcmNonceSize is the standard 96-bit nonce size used by cipher.NewGCM.
+	gcmNonceSize = 12
+
+	DomainProviderPassword   = "clumoove:provider-password"
+	DomainOAuthAccessToken   = "clumoove:oauth-access-token"
+	DomainOAuthRefreshToken  = "clumoove:oauth-refresh-token"
+	DomainTOTPSecret         = "clumoove:totp-secret"
+	DomainMegaSessionID      = "clumoove:mega-session-id"
+	DomainMegaMasterKey      = "clumoove:mega-master-key"
+	DomainSMTPPassword       = "clumoove:smtp-password"
+	DomainOAuthClientSecret  = "clumoove:oauth-client-secret"
+	DomainNotificationConfig = "clumoove:notification-config"
+)
+
+var (
+	// ErrCiphertextTooShort indicates that an envelope cannot contain a GCM
+	// nonce and authentication tag.
+	ErrCiphertextTooShort = errors.New("crypto: ciphertext too short")
+	// ErrAuthentication indicates that a ciphertext was tampered with, was
+	// encrypted with a different key, or was encrypted for another domain.
+	ErrAuthentication = errors.New("crypto: authentication failed")
+	// ErrUnsupportedCiphertextVersion indicates an unknown envelope version.
+	ErrUnsupportedCiphertextVersion = errors.New("crypto: unsupported ciphertext version")
+	// ErrInvalidCiphertextEncoding indicates a malformed hex envelope.
+	ErrInvalidCiphertextEncoding = errors.New("crypto: invalid ciphertext encoding")
+)
+
+// ConnectionCredentialDomain returns the AAD domain for the polymorphic
+// password_encrypted columns. OAuth providers store an access token there;
+// other providers store a password or API key.
+func ConnectionCredentialDomain(isOAuthProvider bool) string {
+	if isOAuthProvider {
+		return DomainOAuthAccessToken
+	}
+	return DomainProviderPassword
+}
 
 // deriveKey ensures the key is exactly 32 bytes using SHA-256. The input is
 // the deployment's high-entropy ENCRYPTION_SECRET_KEY, not a user password;
-// this is key derivation for AES, never password verification.
+// this is key derivation for AES, never password verification. The digest is
+// deliberately not cached so the derived key is not retained process-wide.
 func deriveKey(secret string) []byte {
 	hash := sha256.Sum256([]byte(secret))
 	return hash[:]
 }
 
-// Encrypt encrypts plain text using AES-256-GCM with a secret key
-func Encrypt(plainText string, secretKey string) (string, error) {
+// EncryptWithDomain encrypts plaintext using AES-256-GCM and authenticates it
+// to domain. Empty plaintext is a no-op sentinel and returns an empty
+// ciphertext. Domain must be a stable, non-empty identifier for the persisted
+// field type; it prevents ciphertext from another secret field being replayed.
+func EncryptWithDomain(plainText, secretKey, domain string) (string, error) {
 	if plainText == "" {
 		return "", nil
 	}
+	if domain == "" {
+		return "", errors.New("crypto: empty encryption domain")
+	}
 
-	// codeql[go/weak-sensitive-data-hashing]: secretKey is a deployment encryption key; SHA-256 derives a fixed-size AES key and is not used for password hashing.
-	key := deriveKey(secretKey)
-	block, err := aes.NewCipher(key)
+	block, err := aes.NewCipher(deriveKey(secretKey))
 	if err != nil {
 		return "", err
 	}
-
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", err
 	}
 
-	// 12-byte nonce for GCM
-	nonce := make([]byte, gcm.NonceSize())
+	nonce := make([]byte, gcmNonceSize)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", err
 	}
-
-	sealed := gcm.Seal(nil, nonce, []byte(plainText), nil)
-
-	// Combine nonce + ciphertext and encode as hex
-	combined := append(nonce, sealed...)
-	return hex.EncodeToString(combined), nil
+	sealed := gcm.Seal(nil, nonce, []byte(plainText), []byte(domain))
+	combined := make([]byte, len(nonce)+len(sealed))
+	copy(combined, nonce)
+	copy(combined[len(nonce):], sealed)
+	return envelopeV1Prefix + hex.EncodeToString(combined), nil
 }
 
-// Decrypt decrypts hex-encoded cipher text using AES-256-GCM with a secret key
-func Decrypt(cipherTextHex string, secretKey string) (string, error) {
-	if cipherTextHex == "" {
-		return "", nil
-	}
-
-	// codeql[go/weak-sensitive-data-hashing]: secretKey is a deployment encryption key; SHA-256 derives a fixed-size AES key and is not used for password hashing.
-	key := deriveKey(secretKey)
-	combined, err := hex.DecodeString(cipherTextHex)
+// DecryptWithDomain decrypts a field-specific ciphertext into a string. The
+// temporary GCM plaintext allocation is cleared before this function returns.
+// Prefer DecryptBytesWithDomain when the receiving API can avoid strings.
+func DecryptWithDomain(cipherText string, secretKey, domain string) (string, error) {
+	plainText, err := DecryptBytesWithDomain(cipherText, secretKey, domain)
 	if err != nil {
 		return "", err
 	}
-
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(combined) < nonceSize {
-		return "", errors.New("ciphertext too short")
-	}
-
-	nonce := combined[:nonceSize]
-	cipherText := combined[nonceSize:]
-
-	plainText, err := gcm.Open(nil, nonce, cipherText, nil)
-	if err != nil {
-		return "", err
-	}
-
+	defer clear(plainText)
 	return string(plainText), nil
 }
 
-// ZeroString overwrites the backing memory of s with zero bytes so that
-// decrypted plaintext credentials do not linger after they are no longer
-// needed (zero-plaintext-in-memory goal). It mutates the caller's string via
-// a pointer. The string must not be referenced elsewhere (e.g. a constant).
-// Best-effort: callers must only pass an unaliased, mutable string allocated
-// from decrypted data; string literals and shared strings must never be passed.
-func ZeroString(s *string) {
-	if s == nil || *s == "" {
-		return
+// DecryptBytesWithDomain decrypts a field-specific ciphertext. It accepts the
+// pre-versioned, unauthenticated-domain envelope for existing database rows;
+// callers should re-encrypt legacy values during their normal next write.
+// The returned buffer contains the GCM plaintext allocation and must be
+// cleared by callers handling secrets.
+func DecryptBytesWithDomain(cipherText, secretKey, domain string) ([]byte, error) {
+	if cipherText == "" {
+		return nil, nil
 	}
-	// unsafe.StringData avoids the deprecated reflect.StringHeader layout.
-	// The backing storage is owned by the caller (see the contract above).
-	b := unsafe.Slice(unsafe.StringData(*s), len(*s))
-	clear(b)
-	runtime.KeepAlive(b)
-	*s = ""
+	if domain == "" {
+		return nil, errors.New("crypto: empty encryption domain")
+	}
+
+	legacy := false
+	encoded := cipherText
+	if len(cipherText) >= len(envelopeV1Prefix) && cipherText[:len(envelopeV1Prefix)] == envelopeV1Prefix {
+		encoded = cipherText[len(envelopeV1Prefix):]
+	} else if len(cipherText) >= 2 && cipherText[0] == 'v' && cipherText[1] >= '0' && cipherText[1] <= '9' {
+		return nil, ErrUnsupportedCiphertextVersion
+	} else {
+		legacy = true
+	}
+
+	combined, err := hex.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidCiphertextEncoding, err)
+	}
+	block, err := aes.NewCipher(deriveKey(secretKey))
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(combined) < gcmNonceSize+gcm.Overhead() {
+		return nil, ErrCiphertextTooShort
+	}
+
+	additionalData := []byte(domain)
+	if legacy {
+		additionalData = nil
+	}
+	plainText, err := gcm.Open(nil, combined[:gcmNonceSize], combined[gcmNonceSize:], additionalData)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrAuthentication, err)
+	}
+	return plainText, nil
 }

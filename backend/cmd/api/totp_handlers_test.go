@@ -33,7 +33,7 @@ func TestHandleTOTP_ConcurrentBackupCodeIsAcceptedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hash backup code: %v", err)
 	}
-	secret, err := crypto.Encrypt("JBSWY3DPEHPK3PXP", encryptionKey)
+	secret, err := crypto.EncryptWithDomain("JBSWY3DPEHPK3PXP", encryptionKey, crypto.DomainTOTPSecret)
 	if err != nil {
 		t.Fatalf("encrypt TOTP secret: %v", err)
 	}

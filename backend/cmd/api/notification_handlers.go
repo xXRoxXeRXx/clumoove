@@ -92,7 +92,7 @@ func (s *APIServer) handleGetNotificationSettings(w http.ResponseWriter, r *http
 			}
 			continue
 		}
-		plain, err := crypto.Decrypt(c.ConfigEncrypted, s.encryptionKey)
+		plain, err := crypto.DecryptWithDomain(c.ConfigEncrypted, s.encryptionKey, crypto.DomainNotificationConfig)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrNotificationDecryptFailed)
 			return
@@ -134,7 +134,7 @@ func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *h
 			writeError(w, http.StatusBadRequest, ErrSmtpNotConfigured)
 			return
 		}
-		enc, err := crypto.Encrypt("{}", s.encryptionKey)
+		enc, err := crypto.EncryptWithDomain("{}", s.encryptionKey, crypto.DomainNotificationConfig)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -155,7 +155,7 @@ func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *h
 		return
 	}
 	if old != nil {
-		plain, err := crypto.Decrypt(old.ConfigEncrypted, s.encryptionKey)
+		plain, err := crypto.DecryptWithDomain(old.ConfigEncrypted, s.encryptionKey, crypto.DomainNotificationConfig)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrNotificationDecryptFailed)
 			return
@@ -176,7 +176,7 @@ func (s *APIServer) handleUpdateNotificationSettings(w http.ResponseWriter, r *h
 		return
 	}
 	raw, _ := json.Marshal(req.Config)
-	enc, err := crypto.Encrypt(string(raw), s.encryptionKey)
+	enc, err := crypto.EncryptWithDomain(string(raw), s.encryptionKey, crypto.DomainNotificationConfig)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
@@ -214,7 +214,7 @@ func (s *APIServer) handleTestNotification(w http.ResponseWriter, r *http.Reques
 	// A blank secret means “keep the saved secret”, matching PUT semantics;
 	// plaintext is still supplied only to the sender and never returned.
 	if existing, err := db.GetNotificationChannel(s.db, userID, req.Type); err == nil {
-		if plain, derr := crypto.Decrypt(existing.ConfigEncrypted, s.encryptionKey); derr == nil {
+		if plain, derr := crypto.DecryptWithDomain(existing.ConfigEncrypted, s.encryptionKey, crypto.DomainNotificationConfig); derr == nil {
 			var prior map[string]any
 			if json.Unmarshal([]byte(plain), &prior) == nil {
 				for key := range secretKeys(req.Type) {

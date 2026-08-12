@@ -8,6 +8,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/storage"
 )
 
@@ -366,12 +367,12 @@ func (p *Processor) recoverPausedMigrations(ctx context.Context) {
 		probes++
 		p.setRecoveryCursor(false, id)
 
-		sPass, err := crypto.Decrypt(sPassEnc, p.secretKey)
+		sPass, err := crypto.DecryptWithDomain(sPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(sProv)))
 		if err != nil {
 			p.recordRecoveryFailure(id, ra.attempts)
 			continue
 		}
-		tPass, err := crypto.Decrypt(tPassEnc, p.secretKey)
+		tPass, err := crypto.DecryptWithDomain(tPassEnc, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(tProv)))
 		if err != nil {
 			p.recordRecoveryFailure(id, ra.attempts)
 			continue

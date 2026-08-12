@@ -62,17 +62,16 @@ func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role strin
 	}
 
 	if oauth.IsProvider(creds.provider) && expiresAt.Valid && !time.Now().Before(expiresAt.Time.Add(-2*time.Minute)) && refreshEncrypted != "" {
-		refreshToken, err := crypto.Decrypt(refreshEncrypted, s.encryptionKey)
+		refreshToken, err := crypto.DecryptWithDomain(refreshEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
 			return syncBrowseCredentials{}, err
 		}
-		defer crypto.ZeroString(&refreshToken)
 		if refreshToken != "" {
 			token, err := oauth.RefreshToken(ctx, creds.provider, refreshToken)
 			if err == nil && token != nil && token.AccessToken != "" {
 				creds.password = token.AccessToken
-				accessEncrypted, accessErr := crypto.Encrypt(token.AccessToken, s.encryptionKey)
-				newRefreshEncrypted, refreshErr := crypto.Encrypt(token.RefreshToken, s.encryptionKey)
+				accessEncrypted, accessErr := crypto.EncryptWithDomain(token.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
+				newRefreshEncrypted, refreshErr := crypto.EncryptWithDomain(token.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if accessErr == nil && refreshErr == nil {
 					expiresIn := token.ExpiresIn
 					if expiresIn <= 0 {
@@ -87,7 +86,7 @@ func (s *APIServer) syncJobBrowseCredentials(ctx context.Context, id, role strin
 	}
 
 	if creds.password == "" && passwordEncrypted != "" {
-		password, err := crypto.Decrypt(passwordEncrypted, s.encryptionKey)
+		password, err := crypto.DecryptWithDomain(passwordEncrypted, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(creds.provider)))
 		if err != nil {
 			return syncBrowseCredentials{}, err
 		}
@@ -263,13 +262,13 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Encrypt passwords
-	sEnc, err := crypto.Encrypt(req.SourcePassword, s.encryptionKey)
+	sEnc, err := crypto.EncryptWithDomain(req.SourcePassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.SourceProvider)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 
-	tEnc, err := crypto.Encrypt(req.TargetPassword, s.encryptionKey)
+	tEnc, err := crypto.EncryptWithDomain(req.TargetPassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.TargetProvider)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
@@ -291,7 +290,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	var sourceRefreshEnc sql.NullString
 	var sourceTokenExpiresAt sql.NullTime
 	if req.SourceRefreshToken != "" {
-		enc, eerr := crypto.Encrypt(req.SourceRefreshToken, s.encryptionKey)
+		enc, eerr := crypto.EncryptWithDomain(req.SourceRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if eerr != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
@@ -303,7 +302,7 @@ func (s *APIServer) handleCreateSync(w http.ResponseWriter, r *http.Request) {
 	var targetRefreshEnc sql.NullString
 	var targetTokenExpiresAt sql.NullTime
 	if req.TargetRefreshToken != "" {
-		enc, eerr := crypto.Encrypt(req.TargetRefreshToken, s.encryptionKey)
+		enc, eerr := crypto.EncryptWithDomain(req.TargetRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if eerr != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
@@ -965,7 +964,6 @@ func (s *APIServer) handleBrowseSyncJob(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": string(errCode)})
 		return
 	}
-	defer crypto.ZeroString(&creds.password)
 
 	if !storage.IsValidProvider(creds.provider) {
 		errCode := ErrSourceUrlInvalid

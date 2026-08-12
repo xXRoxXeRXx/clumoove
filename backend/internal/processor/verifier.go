@@ -14,6 +14,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
@@ -577,7 +578,7 @@ func (p *Processor) verifyMigrationChecksums(ctx context.Context, migrationID st
 
 	targetPass := ""
 	if mig.TargetPasswordEncrypted != "" {
-		dec, err := crypto.Decrypt(mig.TargetPasswordEncrypted, p.secretKey)
+		dec, err := crypto.DecryptWithDomain(mig.TargetPasswordEncrypted, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(mig.TargetProvider)))
 		if err == nil {
 			targetPass = dec
 		}
@@ -650,7 +651,7 @@ func (p *Processor) verifySyncJobChecksums(ctx context.Context, syncJobID string
 
 	targetPass := ""
 	if job.TargetPasswordEncrypted != "" {
-		dec, err := crypto.Decrypt(job.TargetPasswordEncrypted, p.secretKey)
+		dec, err := crypto.DecryptWithDomain(job.TargetPasswordEncrypted, p.secretKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.TargetProvider)))
 		if err == nil {
 			targetPass = dec
 		}

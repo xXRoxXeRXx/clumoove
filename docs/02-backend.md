@@ -288,8 +288,12 @@ size-comparison fallback.
 
 - `deriveKey(secret)` → SHA-256 of the secret → 32-byte AES-256 key (any-length secret accepted; the
   hash is the actual key).
-- `Encrypt(plainText, secretKey)` → random 12-byte nonce + AES-GCM seal, stored as `hex(nonce+cipher)`.
-- `Decrypt(cipherTextHex, secretKey)` → reverse. Empty strings round-trip to empty.
+- `EncryptWithDomain(plainText, secretKey, domain)` → random 12-byte nonce + AES-GCM seal with the
+  stable persisted-field domain as authenticated additional data (AAD), stored as
+  `v1:hex(nonce+cipher)`. The `v1:` prefix leaves room for future key-rotation formats.
+- `DecryptBytesWithDomain(cipherText, secretKey, domain)` → reverse and returns the actual GCM
+  plaintext buffer for callers to clear. It can read the legacy unversioned `hex(nonce+cipher)` envelope
+  (which had no AAD) so existing rows remain usable. Empty strings round-trip to empty.
 - Used **only** for credential encryption (never JWT signing). See
   [Security](./07-security.md#key-segregation).
 

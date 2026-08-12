@@ -75,11 +75,10 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	}
 	ctx = storage.WithLocalUserScope(ctx, mig.UserID.String)
 
-	// Decrypt source credentials at the last moment (Zero Plaintext rule).
-	// The plaintext is scoped to this block and zeroed immediately after the
-	// provider is constructed so it does not linger in memory during the
-	// (possibly long) BFS traversal.
-	sourcePass, err := crypto.Decrypt(mig.SourcePasswordEncrypted, idx.encryptionKey)
+	// Decrypt source credentials at the last moment. The temporary GCM plaintext
+	// buffer is cleared before DecryptWithDomain returns; keep the resulting
+	// string scoped to this block during the potentially long BFS traversal.
+	sourcePass, err := crypto.DecryptWithDomain(mig.SourcePasswordEncrypted, idx.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(mig.SourceProvider)))
 	if err != nil {
 		failMigration(idx.db, migID, fmt.Sprintf("Failed to decrypt source password: %v", err))
 		return
@@ -92,7 +91,6 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 	if mig.SourceRefreshTokenEncrypted.Valid && mig.SourceRefreshTokenEncrypted.String != "" {
 		sourcePass, err = idx.ensureFreshSourceToken(migID, mig, sourcePass)
 		if err != nil {
-			crypto.ZeroString(&sourcePass)
 			failMigration(idx.db, migID, fmt.Sprintf("Failed to refresh source OAuth token: %v", err))
 			return
 		}
@@ -100,13 +98,11 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 
 	sourceCtx, err := megasecret.WithSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, idx.encryptionKey)
 	if err != nil {
-		crypto.ZeroString(&sourcePass)
 		failMigration(idx.db, migID, "Failed to decrypt source connection session.")
 		return
 	}
 	sourceClient, err := storage.NewProvider(sourceCtx, mig.SourceProvider, mig.SourceURL, mig.SourceUsername, sourcePass)
 	if err != nil {
-		crypto.ZeroString(&sourcePass)
 		// Log the detailed (sanitized) error server-side for diagnostics, but do
 		// not persist/leak the raw Go error string to the client (Security ->
 		// Error messages). Surface a neutral, user-safe message instead.
@@ -381,7 +377,7 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 			time.Sleep(200 * time.Millisecond)
 			if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
 				if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
-					if latestAccess, derr := crypto.Decrypt(latestMig.SourcePasswordEncrypted, idx.encryptionKey); derr == nil {
+					if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 						return latestAccess, nil
 					}
 				}
@@ -396,7 +392,7 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 	// Re-fetch latest migration details inside lock
 	if latestMig, err := db.GetMigration(idx.db, migID); err == nil {
 		if latestMig.SourceTokenExpiresAt.Valid && time.Now().Before(latestMig.SourceTokenExpiresAt.Time.Add(-2*time.Minute)) {
-			if latestAccess, derr := crypto.Decrypt(latestMig.SourcePasswordEncrypted, idx.encryptionKey); derr == nil {
+			if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 				return latestAccess, nil
 			}
 		}
@@ -407,22 +403,20 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 		return accessToken, nil
 	}
 
-	refreshToken, err := crypto.Decrypt(mig.SourceRefreshTokenEncrypted.String, idx.encryptionKey)
+	refreshToken, err := crypto.DecryptWithDomain(mig.SourceRefreshTokenEncrypted.String, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt source refresh token: %w", err)
 	}
-	defer crypto.ZeroString(&refreshToken)
 
 	tokenResp, err := oauth.RefreshToken(ctx, mig.SourceProvider, refreshToken)
 	if err != nil {
 		return "", fmt.Errorf("oauth refresh failed for source (%s): %w", mig.SourceProvider, err)
 	}
-	defer crypto.ZeroString(&tokenResp.RefreshToken)
-	newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, idx.encryptionKey)
+	newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, idx.encryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt refreshed source access token: %w", err)
 	}
-	newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, idx.encryptionKey)
+	newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, idx.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to encrypt refreshed source refresh token: %w", err)
 	}
@@ -443,7 +437,7 @@ func (idx *Indexer) ensureFreshSourceToken(migID string, mig *db.Migration, acce
 	if errors.Is(err, db.ErrOAuthTokenConflict) {
 		log.Printf("[Indexer] Token update conflict for migration %s (source) — adopting winner token from DB\n", migID)
 		if latestMig, lerr := db.GetMigration(idx.db, migID); lerr == nil {
-			if latestAccess, derr := crypto.Decrypt(latestMig.SourcePasswordEncrypted, idx.encryptionKey); derr == nil {
+			if latestAccess, derr := crypto.DecryptWithDomain(latestMig.SourcePasswordEncrypted, idx.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
 				return latestAccess, nil
 			}
 		}

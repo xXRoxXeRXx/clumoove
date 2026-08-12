@@ -35,11 +35,11 @@ func (s *APIServer) encryptMegaSession(session storage.MegaSession) (string, str
 			session.MasterKey[i] = 0
 		}
 	}()
-	sessionID, err := crypto.Encrypt(session.ID, s.encryptionKey)
+	sessionID, err := crypto.EncryptWithDomain(session.ID, s.encryptionKey, crypto.DomainMegaSessionID)
 	if err != nil {
 		return "", "", err
 	}
-	masterKey, err := crypto.Encrypt(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey)
+	masterKey, err := crypto.EncryptWithDomain(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey, crypto.DomainMegaMasterKey)
 	if err != nil {
 		return "", "", err
 	}
@@ -88,13 +88,13 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 	}
 	password := base.Password
 	if p.PasswordEncrypted != "" {
-		if dec, derr := crypto.Decrypt(p.PasswordEncrypted, s.encryptionKey); derr == nil {
+		if dec, derr := crypto.DecryptWithDomain(p.PasswordEncrypted, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(provider))); derr == nil {
 			password = dec
 		}
 	}
 	refreshToken := base.RefreshToken
 	if p.RefreshTokenEncrypted != "" {
-		if dec, derr := crypto.Decrypt(p.RefreshTokenEncrypted, s.encryptionKey); derr == nil {
+		if dec, derr := crypto.DecryptWithDomain(p.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken); derr == nil {
 			refreshToken = dec
 		}
 	}
@@ -103,8 +103,8 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 		if p.MegaSessionIDEncrypted == "" || p.MegaMasterKeyEncrypted == "" {
 			return base, errors.New("incomplete MEGA session")
 		}
-		id, idErr := crypto.Decrypt(p.MegaSessionIDEncrypted, s.encryptionKey)
-		keyText, keyErr := crypto.Decrypt(p.MegaMasterKeyEncrypted, s.encryptionKey)
+		id, idErr := crypto.DecryptWithDomain(p.MegaSessionIDEncrypted, s.encryptionKey, crypto.DomainMegaSessionID)
+		keyText, keyErr := crypto.DecryptWithDomain(p.MegaMasterKeyEncrypted, s.encryptionKey, crypto.DomainMegaMasterKey)
 		key, decodeErr := base64.StdEncoding.DecodeString(keyText)
 		if idErr != nil || keyErr != nil || decodeErr != nil || id == "" || len(key) == 0 {
 			return base, errors.New("invalid encrypted MEGA session")
@@ -136,11 +136,11 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 }
 
 func (s *APIServer) persistProfileOAuthTokens(p *db.ConnectionProfile, token *oauth.TokenResponse) error {
-	accessEncrypted, err := crypto.Encrypt(token.AccessToken, s.encryptionKey)
+	accessEncrypted, err := crypto.EncryptWithDomain(token.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
 	if err != nil {
 		return err
 	}
-	refreshEncrypted, err := crypto.Encrypt(token.RefreshToken, s.encryptionKey)
+	refreshEncrypted, err := crypto.EncryptWithDomain(token.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 	if err != nil {
 		return err
 	}
@@ -221,7 +221,7 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 
 	var passEnc string
 	if req.Password != "" {
-		enc, err := crypto.Encrypt(req.Password, s.encryptionKey)
+		enc, err := crypto.EncryptWithDomain(req.Password, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.Provider)))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
@@ -232,7 +232,7 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 	var refreshEnc sql.NullString
 	var tokenExpiresAt sql.NullTime
 	if req.RefreshToken != "" {
-		enc, err := crypto.Encrypt(req.RefreshToken, s.encryptionKey)
+		enc, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
@@ -351,6 +351,10 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		}
 		in.Provider = &req.Provider
 	}
+	credentialProvider := existing.Provider
+	if req.Provider != "" {
+		credentialProvider = req.Provider
+	}
 	if r.URL.Query().Get("url") == "1" || req.URL != "" {
 		u := normalizeProviderURL(req.Provider, req.URL)
 		in.URL = &u
@@ -359,7 +363,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		in.Username = &req.Username
 	}
 	if req.Password != "" {
-		enc, err := crypto.Encrypt(req.Password, s.encryptionKey)
+		enc, err := crypto.EncryptWithDomain(req.Password, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(credentialProvider)))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
@@ -372,7 +376,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		in.MegaMasterKeyEncrypted = &empty
 	}
 	if req.RefreshToken != "" {
-		enc, err := crypto.Encrypt(req.RefreshToken, s.encryptionKey)
+		enc, err := crypto.EncryptWithDomain(req.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
@@ -479,7 +483,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 
 	var password, refreshToken string
 	if p.PasswordEncrypted != "" {
-		dec, derr := crypto.Decrypt(p.PasswordEncrypted, s.encryptionKey)
+		dec, derr := crypto.DecryptWithDomain(p.PasswordEncrypted, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(p.Provider)))
 		if derr != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
 			return
@@ -487,7 +491,7 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		password = dec
 	}
 	if p.RefreshTokenEncrypted != "" {
-		dec, derr := crypto.Decrypt(p.RefreshTokenEncrypted, s.encryptionKey)
+		dec, derr := crypto.DecryptWithDomain(p.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if derr != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
 			return
@@ -506,8 +510,8 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 
 	providerCtx := r.Context()
 	if p.Provider == "mega" && p.MegaSessionIDEncrypted != "" && p.MegaMasterKeyEncrypted != "" {
-		sessionID, idErr := crypto.Decrypt(p.MegaSessionIDEncrypted, s.encryptionKey)
-		keyText, keyErr := crypto.Decrypt(p.MegaMasterKeyEncrypted, s.encryptionKey)
+		sessionID, idErr := crypto.DecryptWithDomain(p.MegaSessionIDEncrypted, s.encryptionKey, crypto.DomainMegaSessionID)
+		keyText, keyErr := crypto.DecryptWithDomain(p.MegaMasterKeyEncrypted, s.encryptionKey, crypto.DomainMegaMasterKey)
 		masterKey, decodeErr := base64.StdEncoding.DecodeString(keyText)
 		if idErr != nil || keyErr != nil || decodeErr != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
@@ -541,12 +545,12 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 				session.MasterKey[i] = 0
 			}
 		}()
-		sessionIDEncrypted, encErr := crypto.Encrypt(session.ID, s.encryptionKey)
+		sessionIDEncrypted, encErr := crypto.EncryptWithDomain(session.ID, s.encryptionKey, crypto.DomainMegaSessionID)
 		if encErr != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
 			return
 		}
-		masterKeyEncrypted, encErr := crypto.Encrypt(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey)
+		masterKeyEncrypted, encErr := crypto.EncryptWithDomain(base64.StdEncoding.EncodeToString(session.MasterKey), s.encryptionKey, crypto.DomainMegaMasterKey)
 		if encErr != nil || db.UpdateConnectionProfileMegaSession(r.Context(), s.db, p.ID, sessionIDEncrypted, masterKeyEncrypted, p.MegaSessionIDEncrypted) != nil {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrSourceConnectionFailed})
 			return

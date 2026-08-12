@@ -334,12 +334,11 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					defer s.queue.ReleaseOAuthLock(ctx, "migration", entry.MigrationID, entry.Role, lockToken)
 				}
 
-				refreshToken, err := crypto.Decrypt(entry.RefreshTokenEncrypted, s.encryptionKey)
+				refreshToken, err := crypto.DecryptWithDomain(entry.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_decrypt_failed", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("role", entry.Role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
 				}
-				defer crypto.ZeroString(&refreshToken)
 
 				refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 				tokenResp, err := oauth.RefreshToken(refreshCtx, entry.Provider, refreshToken)
@@ -353,15 +352,13 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					_ = db.UpdateMigrationStatus(s.db, entry.MigrationID, "FAILED", &errMsg)
 					return
 				}
-				defer crypto.ZeroString(&tokenResp.AccessToken)
-				defer crypto.ZeroString(&tokenResp.RefreshToken)
 
-				newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
+				newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_encrypt_failed", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("token_type", "access"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
 				}
-				newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
+				newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_encrypt_failed", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("token_type", "refresh"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
@@ -410,12 +407,11 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					defer s.queue.ReleaseOAuthLock(ctx, "sync", entry.SyncJobID, entry.Role, lockToken)
 				}
 
-				refreshToken, err := crypto.Decrypt(entry.RefreshTokenEncrypted, s.encryptionKey)
+				refreshToken, err := crypto.DecryptWithDomain(entry.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_decrypt_failed", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("role", entry.Role), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
 				}
-				defer crypto.ZeroString(&refreshToken)
 
 				refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 				tokenResp, err := oauth.RefreshToken(refreshCtx, entry.Provider, refreshToken)
@@ -426,15 +422,13 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 					_ = db.UpdateSyncJobStatus(s.db, entry.SyncJobID, "FAILED", &errMsg)
 					return
 				}
-				defer crypto.ZeroString(&tokenResp.AccessToken)
-				defer crypto.ZeroString(&tokenResp.RefreshToken)
 
-				newAccessEnc, err := crypto.Encrypt(tokenResp.AccessToken, s.encryptionKey)
+				newAccessEnc, err := crypto.EncryptWithDomain(tokenResp.AccessToken, s.encryptionKey, crypto.DomainOAuthAccessToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_encrypt_failed", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("token_type", "access"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return
 				}
-				newRefreshEnc, err := crypto.Encrypt(tokenResp.RefreshToken, s.encryptionKey)
+				newRefreshEnc, err := crypto.EncryptWithDomain(tokenResp.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_encrypt_failed", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("token_type", "refresh"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 					return

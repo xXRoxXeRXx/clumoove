@@ -14,7 +14,7 @@ import (
 const testEncryptionKey = "0123456789abcdef0123456789abcdef"
 
 func TestOneDriveOAuthFlow(t *testing.T) {
-	enc, err := crypto.Encrypt("client-secret", testEncryptionKey)
+	enc, err := crypto.EncryptWithDomain("client-secret", testEncryptionKey, crypto.DomainOAuthClientSecret)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -945,13 +945,13 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 		targetDir = "/"
 	}
 
-	sourcePassEnc, err := crypto.Encrypt(req.SourcePassword, s.encryptionKey)
+	sourcePassEnc, err := crypto.EncryptWithDomain(req.SourcePassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.SourceProvider)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
 	}
 
-	targetPassEnc, err := crypto.Encrypt(req.TargetPassword, s.encryptionKey)
+	targetPassEnc, err := crypto.EncryptWithDomain(req.TargetPassword, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(req.TargetProvider)))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 		return
@@ -970,7 +970,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	var sourceRefreshEnc sql.NullString
 	var sourceTokenExpiresAt sql.NullTime
 	if req.SourceRefreshToken != "" {
-		enc, err := crypto.Encrypt(req.SourceRefreshToken, s.encryptionKey)
+		enc, err := crypto.EncryptWithDomain(req.SourceRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return
@@ -986,7 +986,7 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 	var targetRefreshEnc sql.NullString
 	var targetTokenExpiresAt sql.NullTime
 	if req.TargetRefreshToken != "" {
-		enc, err := crypto.Encrypt(req.TargetRefreshToken, s.encryptionKey)
+		enc, err := crypto.EncryptWithDomain(req.TargetRefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
 			return

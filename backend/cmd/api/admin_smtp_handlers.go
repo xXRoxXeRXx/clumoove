@@ -82,7 +82,7 @@ func (s *APIServer) handleAdminPutSMTP(w http.ResponseWriter, r *http.Request) {
 		encrypted = existing.SMTPPasswordEnc
 	} else {
 		var e error
-		encrypted, e = crypto.Encrypt(req.SMTPPassword, s.encryptionKey)
+		encrypted, e = crypto.EncryptWithDomain(req.SMTPPassword, s.encryptionKey, crypto.DomainSMTPPassword)
 		if e != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return
@@ -115,12 +115,11 @@ func (s *APIServer) handleAdminTestSMTP(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrInternalError})
 		return
 	}
-	password, err := crypto.Decrypt(cfg.SMTPPasswordEnc, s.encryptionKey)
+	password, err := crypto.DecryptWithDomain(cfg.SMTPPasswordEnc, s.encryptionKey, crypto.DomainSMTPPassword)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrSmtpDecryptFailed})
 		return
 	}
-	defer crypto.ZeroString(&password)
 	user, err := db.GetUserByID(s.db, actor)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"success": false, "error_code": ErrInternalError})
