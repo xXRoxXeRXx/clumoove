@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+	"time"
+
+	configpkg "backend/internal/config"
+)
 
 func TestLoadWorkerConfigUsesConfiguredValues(t *testing.T) {
 	values := map[string]string{
@@ -27,10 +33,13 @@ func TestLoadWorkerConfigAppliesSafeDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadWorkerConfig() error = %v", err)
 	}
-	if config.databaseURL != defaultDatabaseURL {
-		t.Fatalf("database URL = %q, want %q", config.databaseURL, defaultDatabaseURL)
+	if config.databaseURL != configpkg.DefaultDatabaseURL {
+		t.Fatalf("database URL = %q, want %q", config.databaseURL, configpkg.DefaultDatabaseURL)
 	}
-	if config.redisURL != "localhost:6379" {
+	if !config.databaseURLDefaulted {
+		t.Fatal("database URL default was not recorded")
+	}
+	if config.redisURL != configpkg.DefaultRedisURL {
 		t.Fatalf("Redis URL = %q, want localhost default", config.redisURL)
 	}
 }
@@ -38,5 +47,30 @@ func TestLoadWorkerConfigAppliesSafeDefaults(t *testing.T) {
 func TestLoadWorkerConfigRejectsMissingEncryptionKey(t *testing.T) {
 	if _, err := loadWorkerConfig(func(string) string { return "" }); err == nil {
 		t.Fatal("loadWorkerConfig() succeeded without an encryption key")
+	}
+}
+
+func TestWatchShutdownSignalsCancelsThenForcesExit(t *testing.T) {
+	signals := make(chan os.Signal, 2)
+	cancelled := make(chan struct{})
+	exited := make(chan int, 1)
+
+	go watchShutdownSignals(signals, func() { close(cancelled) }, func(code int) { exited <- code })
+	signals <- os.Interrupt
+
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("first signal did not cancel")
+	}
+
+	signals <- os.Interrupt
+	select {
+	case code := <-exited:
+		if code != 1 {
+			t.Fatalf("forced exit code = %d, want 1", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second signal did not force exit")
 	}
 }

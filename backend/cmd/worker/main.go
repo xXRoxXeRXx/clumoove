@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"backend/internal/config"
 	"backend/internal/db"
 	"backend/internal/oauth"
 	"backend/internal/observability"
@@ -16,30 +17,36 @@ import (
 	"backend/internal/queue"
 )
 
-const defaultDatabaseURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=require"
-
 type workerConfig struct {
-	databaseURL   string
-	redisURL      string
-	encryptionKey string
+	databaseURL          string
+	databaseURLDefaulted bool
+	redisURL             string
+	encryptionKey        string
 }
 
 func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
-	config := workerConfig{
-		databaseURL:   getenv("DATABASE_URL"),
-		redisURL:      getenv("REDIS_URL"),
-		encryptionKey: getenv("ENCRYPTION_SECRET_KEY"),
+	databaseURL, databaseURLDefaulted := config.DatabaseURL(getenv("DATABASE_URL"))
+	redisURL, _ := config.RedisURL(getenv("REDIS_URL"))
+	workerCfg := workerConfig{
+		databaseURL:          databaseURL,
+		databaseURLDefaulted: databaseURLDefaulted,
+		redisURL:             redisURL,
+		encryptionKey:        getenv("ENCRYPTION_SECRET_KEY"),
 	}
-	if config.databaseURL == "" {
-		config.databaseURL = defaultDatabaseURL
-	}
-	if config.redisURL == "" {
-		config.redisURL = "localhost:6379"
-	}
-	if config.encryptionKey == "" {
+	if workerCfg.encryptionKey == "" {
 		return workerConfig{}, errors.New("ENCRYPTION_SECRET_KEY is required")
 	}
-	return config, nil
+	return workerCfg, nil
+}
+
+func watchShutdownSignals(sigChan <-chan os.Signal, cancel context.CancelFunc, exit func(int)) {
+	sig := <-sigChan
+	slog.Info("shutdown_requested", slog.String("component", "worker"), slog.String("signal", sig.String()))
+	cancel()
+
+	sig = <-sigChan
+	slog.Warn("shutdown_forced", slog.String("component", "worker"), slog.String("signal", sig.String()))
+	exit(1)
 }
 
 func main() {
@@ -49,16 +56,16 @@ func main() {
 	}
 	slog.Info("service_starting", slog.String("component", "worker"))
 
-	// Read environment variables
-	if os.Getenv("DATABASE_URL") == "" {
-		// No explicit DATABASE_URL: default to TLS-required rather than
-		// silently falling back to an unencrypted connection.
-		slog.Warn("database_url_defaulted", slog.String("component", "worker"))
-	}
+	// Read environment variables.
 	config, err := loadWorkerConfig(os.Getenv)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "worker"), slog.String("reason", "encryption_key_missing"), slog.String("error_kind", "configuration"), observability.Error(err))
 		os.Exit(1)
+	}
+	if config.databaseURLDefaulted {
+		// No explicit DATABASE_URL: default to TLS-required rather than
+		// silently falling back to an unencrypted connection.
+		slog.Warn("database_url_defaulted", slog.String("component", "worker"))
 	}
 
 	// 1. Initialize PostgreSQL
@@ -100,15 +107,12 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// Wait for termination signals
-	sigChan := make(chan os.Signal, 1)
+	sigChan := make(chan os.Signal, 2)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
 
-	// Cancel context on signal, in a separate goroutine so Start() blocks main.
-	go func() {
-		sig := <-sigChan
-		slog.Info("shutdown_requested", slog.String("component", "worker"), slog.String("signal", sig.String()))
-		cancel()
-	}()
+	// A second signal lets an operator abort a potentially long task drain.
+	go watchShutdownSignals(sigChan, cancel, os.Exit)
 
 	// Block until context is cancelled AND all in-flight tasks have finished.
 	proc.Start(ctx)

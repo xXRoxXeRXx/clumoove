@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"backend/internal/auth"
+	"backend/internal/config"
 	"backend/internal/db"
 	"backend/internal/indexer"
 	"backend/internal/oauth"
@@ -96,16 +97,12 @@ func main() {
 	}
 	slog.Info("service_starting", slog.String("component", "api"))
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
+	dbURL, databaseURLDefaulted := config.DatabaseURL(os.Getenv("DATABASE_URL"))
+	if databaseURLDefaulted {
 		slog.Warn("database_url_defaulted", slog.String("component", "api"))
-		dbURL = "postgres://postgres:postgres@localhost:5432/cloud_migration_db?sslmode=require"
 	}
 
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		redisURL = "localhost:6379"
-	}
+	redisURL, _ := config.RedisURL(os.Getenv("REDIS_URL"))
 
 	encryptionKey := os.Getenv("ENCRYPTION_SECRET_KEY")
 	if encryptionKey == "" {
