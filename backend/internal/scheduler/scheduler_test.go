@@ -13,10 +13,7 @@ func TestValidateCronExpression(t *testing.T) {
 		"*/15 * * * *", // every 15 minutes
 		"0 0 * * 0",    // weekly on Sunday midnight
 		"0 0 1 * *",    // monthly on the 1st
-		"@daily",       // robfig/cron descriptor (parsed by standard parser? no)
 	}
-	// Note: @daily is NOT supported by cron.ParseStandard; only 5-field expressions.
-	valid = valid[:len(valid)-1]
 
 	for _, expr := range valid {
 		if err := ValidateCronExpression(expr); err != nil {
@@ -31,6 +28,7 @@ func TestValidateCronExpression(t *testing.T) {
 		"*/30 * * * * *", // too many fields (6-field with seconds)
 		"99 * * * *",     // minute out of range
 		"* * * *",        // too few fields
+		"@daily",         // descriptors are deliberately unsupported
 	}
 	for _, expr := range invalid {
 		if err := ValidateCronExpression(expr); err == nil {

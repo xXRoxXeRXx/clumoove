@@ -25,6 +25,7 @@ const (
 	AuditMigrationResumed   AuditAction = "MIGRATION_RESUMED"
 	AuditMigrationCancelled AuditAction = "MIGRATION_CANCELLED"
 	AuditMigrationDeleted   AuditAction = "MIGRATION_DELETED"
+	AuditMigrationRecovered AuditAction = "MIGRATION_RECOVERED"
 	AuditSettingUpdated     AuditAction = "SETTING_UPDATED"
 	AuditUserSuspended      AuditAction = "USER_SUSPENDED"
 	AuditUserReactivated    AuditAction = "USER_REACTIVATED"
@@ -74,6 +75,12 @@ type AuditLogParams struct {
 // WriteAuditLog queues a bounded best-effort insert so audit persistence never
 // delays the request or background operation that produced the event.
 func WriteAuditLog(database *sql.DB, e AuditEntry) {
+	WriteAuditLogContext(context.Background(), database, e)
+}
+
+// WriteAuditLogContext queues a bounded best-effort audit insert that is
+// cancelled when the caller's operation has ended.
+func WriteAuditLogContext(ctx context.Context, database *sql.DB, e AuditEntry) {
 	if database == nil {
 		return
 	}
@@ -86,7 +93,7 @@ func WriteAuditLog(database *sql.DB, e AuditEntry) {
 		VALUES ($1, $2, $3, $4, $5)
 	`
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		defer cancel()
 		if _, err := database.ExecContext(ctx, query, e.UserID, string(e.Action), e.Target, e.IP, details); err != nil {
 			log.Printf("WARNING: failed to write audit log (action=%s target=%s): %v", e.Action, e.Target, err)

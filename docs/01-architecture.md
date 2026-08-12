@@ -178,6 +178,11 @@ the `backup` task type, but backup triggering is not implemented.
   non-terminal task updated in the last 10 minutes (avoids killing a live transfer). Resets to `IDLE`,
   sets a recovery `error_message`, advances the active schedule, and claims
   `sync:orphaned-recovery-lock` (`SET NX`) so only one API replica runs recovery per tick.
+- **Orphaned migration-indexing recovery:** `scheduler.RunOrphanedMigrationIndexingRecovery` handles
+  API crashes during migration indexing. After 30 minutes of staleness, migrations with a linked
+  schedule return to `SCHEDULED` and reactivate that schedule for immediate retry; migrations without
+  a safe scheduler trigger move to `FAILED` with a recovery message. The
+  `migration:orphaned-indexing-recovery-lock` Redis lock makes the pass single-writer.
 - **Failure handling:** If `triggerJob` errors (e.g. linked task deleted, migration not in `SCHEDULED`
   state), the schedule is **deactivated** to prevent an infinite retry loop.
 

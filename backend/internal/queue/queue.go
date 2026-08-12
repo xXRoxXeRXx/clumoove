@@ -311,6 +311,12 @@ func (q *Queue) TryClaimOrphanedSyncRecoveryLock(ctx context.Context, ttl time.D
 	return q.client.SetNX(ctx, "sync:orphaned-recovery-lock", "1", ttl).Result()
 }
 
+// TryClaimOrphanedMigrationRecoveryLock claims a single-writer lock for stale
+// API-side migration indexing recovery.
+func (q *Queue) TryClaimOrphanedMigrationRecoveryLock(ctx context.Context, ttl time.Duration) (bool, error) {
+	return q.client.SetNX(ctx, "migration:orphaned-indexing-recovery-lock", "1", ttl).Result()
+}
+
 // TryClaimOAuthLock claims a single-writer lock for OAuth token rotation of a specific job and role using a random token.
 // Returns (lockToken, claimed, error). Callers must pass lockToken to ReleaseOAuthLock when finished.
 func (q *Queue) TryClaimOAuthLock(ctx context.Context, jobType, jobID, role string, ttl time.Duration) (string, bool, error) {

@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"backend/internal/db"
 	"backend/internal/indexer"
+	"backend/internal/observability"
 	"backend/internal/queue"
 	"backend/internal/sync"
 )
@@ -19,12 +21,16 @@ type Scheduler struct {
 	db         *sql.DB
 	queue      *queue.Queue
 	indexer    *indexer.Indexer
-	syncEngine *sync.Engine
+	syncEngine atomic.Pointer[sync.Engine]
 }
 
 // SetSyncEngine registers the sync engine with the scheduler
 func (s *Scheduler) SetSyncEngine(se *sync.Engine) {
-	s.syncEngine = se
+	s.syncEngine.Store(se)
+}
+
+func schedulerLogger(ctx context.Context) *slog.Logger {
+	return observability.Logger(ctx).With(slog.String("component", "scheduler"))
 }
 
 // NewScheduler creates a new Scheduler instance
@@ -38,7 +44,7 @@ func NewScheduler(database *sql.DB, q *queue.Queue, idx *indexer.Indexer) *Sched
 
 // Run starts the scheduler daemon that checks for due schedules every minute
 func (s *Scheduler) Run(ctx context.Context) {
-	log.Println("[Scheduler] Started. Checking for due schedules every minute...")
+	schedulerLogger(ctx).InfoContext(ctx, "scheduler_started", slog.Duration("interval", time.Minute))
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
@@ -48,7 +54,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[Scheduler] Shutting down.")
+			schedulerLogger(ctx).Info("scheduler_stopped")
 			return
 		case <-ticker.C:
 			s.processDueSchedules(ctx)
@@ -58,9 +64,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 
 // processDueSchedules queries and processes all due schedules
 func (s *Scheduler) processDueSchedules(ctx context.Context) {
-	schedules, err := db.GetDueSchedules(s.db)
+	logger := schedulerLogger(ctx)
+	schedules, err := db.GetDueSchedulesContext(ctx, s.db)
 	if err != nil {
-		log.Printf("[Scheduler] Error querying due schedules: %v", err)
+		logger.ErrorContext(ctx, "due_schedule_query_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return
 	}
 
@@ -68,7 +75,7 @@ func (s *Scheduler) processDueSchedules(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[Scheduler] Found %d due schedule(s) to process", len(schedules))
+	logger.InfoContext(ctx, "due_schedules_found", slog.Int("count", len(schedules)))
 
 	for _, schedule := range schedules {
 		// Distributed claim: only one API instance may process a given schedule.
@@ -76,11 +83,11 @@ func (s *Scheduler) processDueSchedules(ctx context.Context) {
 		// immediately re-trigger the same schedule, while a stale lock eventually expires.
 		claimed, err := s.queue.TryClaimScheduleLock(ctx, schedule.ID, 2*time.Minute)
 		if err != nil {
-			log.Printf("[Scheduler] Error claiming lock for schedule %s: %v", schedule.ID, err)
+			logger.ErrorContext(ctx, "schedule_lock_claim_failed", slog.String("schedule_id", schedule.ID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
 		if !claimed {
-			log.Printf("[Scheduler] Schedule %s already claimed by another instance, skipping", schedule.ID)
+			logger.DebugContext(ctx, "schedule_lock_unavailable", slog.String("schedule_id", schedule.ID))
 			continue
 		}
 		s.processSchedule(ctx, &schedule)
@@ -89,26 +96,32 @@ func (s *Scheduler) processDueSchedules(ctx context.Context) {
 
 // processSchedule handles a single due schedule with overlap protection
 func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) {
-	log.Printf("[Scheduler] Processing schedule %s (type=%s, task_id=%s)",
-		schedule.ID, schedule.TaskType, schedule.TaskID)
+	logger := schedulerLogger(ctx).With(slog.String("schedule_id", schedule.ID), slog.String("task_type", schedule.TaskType), slog.String("task_id", schedule.TaskID))
+	logger.InfoContext(ctx, "schedule_processing")
 
 	// 1. Check overlap protection - skip if job is already running
-	isActive, err := s.isJobActive(schedule.TaskType, schedule.TaskID)
+	isActive, err := s.isJobActive(ctx, schedule.TaskType, schedule.TaskID)
 	if err != nil {
-		log.Printf("[Scheduler] Error checking job status for %s/%s: %v",
-			schedule.TaskType, schedule.TaskID, err)
+		logger.ErrorContext(ctx, "schedule_job_status_check_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return
 	}
 
 	if isActive {
-		log.Printf("[Scheduler] Skipping schedule %s: job %s/%s is still running (overlap protection)",
-			schedule.ID, schedule.TaskType, schedule.TaskID)
+		logger.InfoContext(ctx, "schedule_overlap_skipped")
 		// For recurring jobs, still update next_run_at even if skipped
 		if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
-			nextRun, err := s.nextRunForSchedule(schedule)
+			nextRun, err := s.nextRunForSchedule(ctx, schedule)
 			if err == nil {
-				_ = db.UpdateNextRunAt(s.db, schedule.ID, nextRun)
+				if err := db.UpdateNextRunAtContext(ctx, s.db, schedule.ID, nextRun); err != nil {
+					logger.ErrorContext(ctx, "schedule_next_run_update_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+				}
+			} else {
+				logger.ErrorContext(ctx, "schedule_next_run_calculation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			}
+		} else if err := db.DeactivateScheduleContext(ctx, s.db, schedule.ID); err != nil {
+			logger.ErrorContext(ctx, "one_shot_overlap_deactivation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		} else {
+			logger.InfoContext(ctx, "one_shot_overlap_deactivated")
 		}
 		return
 	}
@@ -116,62 +129,41 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 	// 2. Trigger the job
 	err = s.triggerJob(ctx, schedule)
 	if err != nil {
-		log.Printf("[Scheduler] Error triggering job for schedule %s: %v", schedule.ID, err)
-		if errors.Is(err, sql.ErrNoRows) {
-			if deactErr := db.DeactivateSchedule(s.db, schedule.ID); deactErr != nil {
-				log.Printf("[Scheduler] Error deactivating schedule %s for missing job: %v", schedule.ID, deactErr)
-			} else {
-				log.Printf("[Scheduler] Deactivated schedule %s (linked %s %s no longer exists)", schedule.ID, schedule.TaskType, schedule.TaskID)
-			}
-			return
-		}
-		// For recurring jobs, DO NOT deactivate on transient trigger failure!
-		// Advance next_run_at so it retries automatically on the next interval.
-		if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
-			nextRun, nErr := s.nextRunForSchedule(schedule)
-			if nErr == nil {
-				_ = db.UpdateNextRunAt(s.db, schedule.ID, nextRun)
-				log.Printf("[Scheduler] Recurring schedule %s trigger failed; next retry scheduled at %s",
-					schedule.ID, nextRun.Format(time.RFC3339))
-			}
+		logger.ErrorContext(ctx, "schedule_trigger_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)), slog.Bool("linked_job_missing", errors.Is(err, sql.ErrNoRows)))
+		// A trigger failure is not safe to retry blindly: the linked job may have
+		// been deleted or moved to a non-runnable state. Deactivate every schedule
+		// type so an operator can make the recovery decision explicitly.
+		if deactErr := db.DeactivateScheduleContext(ctx, s.db, schedule.ID); deactErr != nil {
+			logger.ErrorContext(ctx, "failed_schedule_deactivation_failed", observability.Error(deactErr), slog.String("error_kind", observability.ErrorKind(deactErr)))
 		} else {
-			// One-shot job: deactivate after trigger failure
-			if deactErr := db.DeactivateSchedule(s.db, schedule.ID); deactErr != nil {
-				log.Printf("[Scheduler] Error deactivating failed schedule %s: %v", schedule.ID, deactErr)
-			} else {
-				log.Printf("[Scheduler] Deactivated one-shot schedule %s after trigger failure", schedule.ID)
-			}
+			logger.InfoContext(ctx, "failed_schedule_deactivated")
 		}
 		return
 	}
 
-	log.Printf("[Scheduler] Successfully triggered job for schedule %s", schedule.ID)
+	logger.InfoContext(ctx, "schedule_triggered")
 
 	// 3. Update schedule lifecycle
 	if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
 		// Recurring: calculate next run time
-		nextRun, err := s.nextRunForSchedule(schedule)
+		nextRun, err := s.nextRunForSchedule(ctx, schedule)
 		if err != nil {
-			log.Printf("[Scheduler] Error calculating next run for schedule %s: %v",
-				schedule.ID, err)
+			logger.ErrorContext(ctx, "schedule_next_run_calculation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			return
 		}
-		err = db.UpdateNextRunAt(s.db, schedule.ID, nextRun)
+		err = db.UpdateNextRunAtContext(ctx, s.db, schedule.ID, nextRun)
 		if err != nil {
-			log.Printf("[Scheduler] Error updating next_run_at for schedule %s: %v",
-				schedule.ID, err)
+			logger.ErrorContext(ctx, "schedule_next_run_update_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		} else {
-			log.Printf("[Scheduler] Updated next_run_at for schedule %s to %s",
-				schedule.ID, nextRun.Format(time.RFC3339))
+			logger.InfoContext(ctx, "schedule_next_run_updated", slog.Time("next_run_at", nextRun))
 		}
 	} else {
 		// One-shot: deactivate the schedule
-		err = db.DeactivateSchedule(s.db, schedule.ID)
+		err = db.DeactivateScheduleContext(ctx, s.db, schedule.ID)
 		if err != nil {
-			log.Printf("[Scheduler] Error deactivating schedule %s: %v",
-				schedule.ID, err)
+			logger.ErrorContext(ctx, "one_shot_schedule_deactivation_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		} else {
-			log.Printf("[Scheduler] Deactivated one-shot schedule %s", schedule.ID)
+			logger.InfoContext(ctx, "one_shot_schedule_deactivated")
 		}
 	}
 }
@@ -181,9 +173,9 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 // intervals above 59 minutes (for example 90 minutes) are not representable in
 // cron's minute field. Checking task type first also repairs existing sync
 // schedules that may still contain an old invalid cron expression.
-func (s *Scheduler) nextRunForSchedule(schedule *db.Schedule) (time.Time, error) {
+func (s *Scheduler) nextRunForSchedule(ctx context.Context, schedule *db.Schedule) (time.Time, error) {
 	if schedule.TaskType == "sync" {
-		job, err := db.GetSyncJob(s.db, schedule.TaskID)
+		job, err := db.GetSyncJobContext(ctx, s.db, schedule.TaskID)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("get sync job interval: %w", err)
 		}
@@ -215,12 +207,12 @@ func isJobActiveStatus(status string) bool {
 }
 
 // isJobActive checks if the linked job is currently running (overlap protection)
-func (s *Scheduler) isJobActive(taskType, taskID string) (bool, error) {
+func (s *Scheduler) isJobActive(ctx context.Context, taskType, taskID string) (bool, error) {
 	switch taskType {
 	case "migration":
-		mig, err := db.GetMigration(s.db, taskID)
+		mig, err := db.GetMigrationContext(ctx, s.db, taskID)
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return false, nil // Migration doesn't exist, not active
 			}
 			return false, err
@@ -229,9 +221,9 @@ func (s *Scheduler) isJobActive(taskType, taskID string) (bool, error) {
 		return isJobActiveStatus(mig.Status), nil
 
 	case "sync":
-		job, err := db.GetSyncJob(s.db, taskID)
+		job, err := db.GetSyncJobContext(ctx, s.db, taskID)
 		if err != nil {
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return false, nil
 			}
 			return false, err
@@ -272,14 +264,14 @@ func (s *Scheduler) triggerMigration(ctx context.Context, migrationID string) er
 	// Atomically claim the migration before starting the asynchronous indexer.
 	// A prior status read cannot prevent a competing cancel/trigger from changing
 	// the row before this point.
-	claimed, err := db.ClaimScheduledMigrationForIndexing(s.db, migrationID)
+	claimed, err := db.ClaimScheduledMigrationForIndexingContext(ctx, s.db, migrationID)
 	if err != nil {
 		return fmt.Errorf("claim scheduled migration %s: %w", migrationID, err)
 	}
 	if !claimed {
 		// This is intentionally an error: processSchedule deactivates a one-shot
 		// schedule after an invalid claim, including a user cancellation or delete.
-		return fmt.Errorf("migration %s is no longer scheduled", migrationID)
+		return fmt.Errorf("migration %s is no longer scheduled: %w", migrationID, sql.ErrNoRows)
 	}
 
 	// Delegate to the shared indexer in a goroutine. The migration is already
@@ -287,17 +279,18 @@ func (s *Scheduler) triggerMigration(ctx context.Context, migrationID string) er
 	// FAILED internally. Spawning asynchronously prevents blocking the scheduler
 	// loop (indexing can take up to 20 minutes).
 	go s.indexer.Start(ctx, migrationID)
-	log.Printf("[Scheduler] Migration %s indexing started", migrationID)
+	schedulerLogger(ctx).InfoContext(ctx, "migration_indexing_started", slog.String("migration_id", migrationID))
 	return nil
 }
 
 // triggerSync triggers a sync pass for a scheduled sync job.
 func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
-	if s.syncEngine == nil {
+	syncEngine := s.syncEngine.Load()
+	if syncEngine == nil {
 		return fmt.Errorf("sync engine not initialized in scheduler")
 	}
 
-	job, err := db.GetSyncJob(s.db, syncJobID)
+	job, err := db.GetSyncJobContext(ctx, s.db, syncJobID)
 	if err != nil {
 		return fmt.Errorf("failed to fetch sync job %s: %w", syncJobID, err)
 	}
@@ -305,7 +298,7 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 	// Skip an already active pass without deactivating the recurring schedule.
 	// The conditional UPDATE below closes the race after this status read.
 	if isJobActiveStatus(job.Status) {
-		log.Printf("[Scheduler] Skipping sync job %s trigger: job is already %s (overlap protection)", syncJobID, job.Status)
+		schedulerLogger(ctx).InfoContext(ctx, "sync_trigger_overlap_skipped", slog.String("sync_job_id", syncJobID), slog.String("status", job.Status))
 		return nil
 	}
 
@@ -313,26 +306,25 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 		return fmt.Errorf("sync job %s is in a non-runnable state (current: %s)", syncJobID, job.Status)
 	}
 
-	claimed, err := s.syncEngine.StartSyncPass(ctx, syncJobID)
+	claimed, err := syncEngine.StartSyncPass(ctx, syncJobID)
 	if err != nil {
 		return fmt.Errorf("failed to claim sync job %s: %w", syncJobID, err)
 	}
 	if !claimed {
 		// A competing API/scheduler trigger claimed it between the status read
 		// above and this atomic update. Skip without deactivating the schedule.
-		log.Printf("[Scheduler] Skipping sync job %s trigger: pass was claimed by another starter", syncJobID)
+		schedulerLogger(ctx).InfoContext(ctx, "sync_trigger_claim_unavailable", slog.String("sync_job_id", syncJobID))
 		return nil
 	}
 
-	log.Printf("[Scheduler] Sync job %s pass started", syncJobID)
+	schedulerLogger(ctx).InfoContext(ctx, "sync_pass_started", slog.String("sync_job_id", syncJobID))
 	return nil
 }
 
 // triggerBackup is a placeholder for future backup job implementation
 func (s *Scheduler) triggerBackup(ctx context.Context, backupJobID string) error {
 	// Future: Implement backup job triggering
-	log.Printf("[Scheduler] Backup job triggering not yet implemented (job_id=%s)", backupJobID)
-	return nil
+	return fmt.Errorf("backup scheduling is not implemented for job %s", backupJobID)
 }
 
 // RunOrphanedSyncJobRecovery periodically frees sync jobs whose API-side
@@ -375,10 +367,11 @@ func (s *Scheduler) RunOrphanedSyncJobRecovery(ctx context.Context) {
 //     and job updated_at; a live transfer must not be reset).
 //   - Multi-instance: Redis SET NX lock so only one API replica runs recovery.
 func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
+	logger := schedulerLogger(ctx).With(slog.String("recovery_type", "orphaned_sync"))
 	if s.queue != nil {
 		claimed, err := s.queue.TryClaimOrphanedSyncRecoveryLock(ctx, 4*time.Minute)
 		if err != nil {
-			log.Printf("[OrphanedSyncJobRecovery] Error claiming recovery lock: %v", err)
+			logger.ErrorContext(ctx, "recovery_lock_claim_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			return
 		}
 		if !claimed {
@@ -418,7 +411,7 @@ func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
 
 	rows, err := s.db.QueryContext(ctx, query, recoveryMsg)
 	if err != nil {
-		log.Printf("[OrphanedSyncJobRecovery] DB query error: %v", err)
+		logger.ErrorContext(ctx, "orphaned_sync_query_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return
 	}
 	defer rows.Close()
@@ -432,13 +425,13 @@ func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
 		var id string
 		var userID sql.NullString
 		if err := rows.Scan(&id, &userID); err != nil {
-			log.Printf("[OrphanedSyncJobRecovery] Scan error: %v", err)
+			logger.ErrorContext(ctx, "orphaned_sync_scan_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 			continue
 		}
 		recovered = append(recovered, recoveredJob{id: id, userID: userID.String})
 	}
 	if err := rows.Err(); err != nil {
-		log.Printf("[OrphanedSyncJobRecovery] rows error: %v", err)
+		logger.ErrorContext(ctx, "orphaned_sync_rows_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return
 	}
 
@@ -446,13 +439,142 @@ func (s *Scheduler) recoverOrphanedSyncJobs(ctx context.Context) {
 		if _, err := s.db.ExecContext(ctx,
 			`UPDATE schedules SET next_run_at = NOW() WHERE task_type = 'sync' AND task_id = $1 AND is_active = TRUE`,
 			job.id); err != nil {
-			log.Printf("[OrphanedSyncJobRecovery] Error advancing schedule for job %s: %v", job.id, err)
+			logger.ErrorContext(ctx, "orphaned_sync_schedule_advance_failed", slog.String("sync_job_id", job.id), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		}
-		db.WriteAuditLog(s.db, db.AuditEntry{
+		db.WriteAuditLogContext(ctx, s.db, db.AuditEntry{
 			UserID: sql.NullString{String: job.userID, Valid: job.userID != ""},
 			Action: db.AuditSyncRecovered,
 			Target: job.id,
 		})
-		log.Printf("[OrphanedSyncJobRecovery] Recovered orphaned sync job %s (was stuck in INDEXING/RUNNING)", job.id)
+		logger.InfoContext(ctx, "orphaned_sync_recovered", slog.String("sync_job_id", job.id))
 	}
 }
+
+// RunOrphanedMigrationIndexingRecovery recovers migrations left in INDEXING
+// when the API process hosting the indexer exits unexpectedly. Scheduled
+// migrations are returned to SCHEDULED and their schedule is made due again;
+// unscheduled migrations are failed visibly because there is no safe automatic
+// trigger for them.
+func (s *Scheduler) RunOrphanedMigrationIndexingRecovery(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(30 * time.Second):
+		s.recoverOrphanedMigrationIndexing(ctx)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.recoverOrphanedMigrationIndexing(ctx)
+		}
+	}
+}
+
+func (s *Scheduler) recoverOrphanedMigrationIndexing(ctx context.Context) {
+	logger := schedulerLogger(ctx).With(slog.String("recovery_type", "orphaned_migration_indexing"))
+	if s.queue != nil {
+		claimed, err := s.queue.TryClaimOrphanedMigrationRecoveryLock(ctx, 4*time.Minute)
+		if err != nil {
+			logger.ErrorContext(ctx, "recovery_lock_claim_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			return
+		}
+		if !claimed {
+			return
+		}
+	}
+
+	const recoveryMsg = "Recovered from stale INDEXING (indexer lost)"
+	s.recoverScheduledMigrations(ctx, logger, recoveryMsg)
+	s.failOrphanedImmediateMigrations(ctx, logger, recoveryMsg)
+}
+
+// recoverScheduledMigrations makes stale scheduled migrations due again. A
+// migration is transitioned first; its linked schedules are then reactivated
+// before the next scheduler tick can claim them.
+func (s *Scheduler) recoverScheduledMigrations(ctx context.Context, logger *slog.Logger, recoveryMsg string) {
+	rows, err := s.db.QueryContext(ctx, `
+		UPDATE migrations m
+		SET status = 'SCHEDULED', error_message = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE m.status = 'INDEXING'
+		  AND m.updated_at < NOW() - INTERVAL '30 minutes'
+		  AND EXISTS (
+			SELECT 1 FROM schedules s
+			WHERE s.task_type = 'migration' AND s.task_id = m.id
+		)
+		RETURNING m.id, m.user_id
+	`, recoveryMsg)
+	if err != nil {
+		logger.ErrorContext(ctx, "orphaned_migration_query_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		return
+	}
+	defer rows.Close()
+
+	type recoveredMigration struct{ id, userID string }
+	var scheduled []recoveredMigration
+	for rows.Next() {
+		var migrationID string
+		var userID sql.NullString
+		if err := rows.Scan(&migrationID, &userID); err != nil {
+			logger.ErrorContext(ctx, "orphaned_migration_scan_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			continue
+		}
+		scheduled = append(scheduled, recoveredMigration{id: migrationID, userID: userID.String})
+	}
+	if err := rows.Err(); err != nil {
+		logger.ErrorContext(ctx, "orphaned_migration_rows_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		return
+	}
+
+	for _, migration := range scheduled {
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE schedules SET is_active = TRUE, next_run_at = NOW(), updated_at = CURRENT_TIMESTAMP
+			WHERE task_type = 'migration' AND task_id = $1
+		`, migration.id); err != nil {
+			logger.ErrorContext(ctx, "orphaned_migration_schedule_reactivation_failed", slog.String("migration_id", migration.id), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			continue
+		}
+		db.WriteAuditLogContext(ctx, s.db, db.AuditEntry{UserID: sql.NullString{String: migration.userID, Valid: migration.userID != ""}, Action: db.AuditMigrationRecovered, Target: migration.id})
+		logger.InfoContext(ctx, "orphaned_migration_rescheduled", slog.String("migration_id", migration.id))
+	}
+}
+
+// failOrphanedImmediateMigrations makes stale immediate migrations visible to
+// their owner. Without a schedule there is no safe automatic restart path.
+func (s *Scheduler) failOrphanedImmediateMigrations(ctx context.Context, logger *slog.Logger, recoveryMsg string) {
+	unscheduledRows, err := s.db.QueryContext(ctx, `
+		SELECT m.id, m.user_id FROM migrations m
+		WHERE m.status = 'INDEXING' AND m.updated_at < NOW() - INTERVAL '30 minutes'
+		  AND NOT EXISTS (SELECT 1 FROM schedules s WHERE s.task_type = 'migration' AND s.task_id = m.id)
+	`)
+	if err != nil {
+		logger.ErrorContext(ctx, "orphaned_unscheduled_migration_query_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		return
+	}
+	defer unscheduledRows.Close()
+	for unscheduledRows.Next() {
+		var migrationID string
+		var userID sql.NullString
+		if err := unscheduledRows.Scan(&migrationID, &userID); err != nil {
+			logger.ErrorContext(ctx, "orphaned_unscheduled_migration_scan_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			continue
+		}
+		failed, err := db.FailStaleIndexingMigration(ctx, s.db, migrationID, stringPtr(recoveryMsg))
+		if err != nil {
+			logger.ErrorContext(ctx, "orphaned_unscheduled_migration_failure_persist_failed", slog.String("migration_id", migrationID), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			continue
+		}
+		if failed {
+			db.WriteAuditLogContext(ctx, s.db, db.AuditEntry{UserID: userID, Action: db.AuditMigrationRecovered, Target: migrationID})
+			logger.InfoContext(ctx, "orphaned_unscheduled_migration_failed", slog.String("migration_id", migrationID))
+		}
+	}
+	if err := unscheduledRows.Err(); err != nil {
+		logger.ErrorContext(ctx, "orphaned_unscheduled_migration_rows_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+	}
+}
+
+func stringPtr(value string) *string { return &value }

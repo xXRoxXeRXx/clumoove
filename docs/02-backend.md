@@ -236,11 +236,13 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 - `Run` ticks every 1 minute (and once on startup to catch overdue schedules).
 - `processDueSchedules` claims each schedule via `TryClaimScheduleLock` (multi-instance safety).
 - `processSchedule` applies overlap protection (`isJobActive`: `RUNNING`/`INDEXING`/`VERIFYING`/`PAUSED_CONNECTION_LOSS`), triggers the job,
-  then advances `next_run_at` (recurring) or deactivates (one-shot / trigger failure).
+  then advances `next_run_at` (recurring) or deactivates (one-shot / any trigger failure).
 - `triggerMigration` verifies `SCHEDULED` state and delegates to the shared `indexer.Start` in a
   goroutine (indexing can take up to 20 min). `triggerSync` atomically claims an `IDLE`/`FAILED`
   job and starts the sync-pass coordinator; it is the exclusive starter, including after worker
   connection recovery. Backup triggers remain placeholders for future work.
+- `RunOrphanedMigrationIndexingRecovery` repairs API-crash leftovers: stale scheduled migrations are
+  made due for a fresh `SCHEDULED` attempt, while stale immediate migrations become visibly `FAILED`.
 - **Operations note:** connection recovery is detected by workers every 60 seconds; the API scheduler
   polls due schedules every minute. A recovered sync pass can therefore begin up to roughly one API
   scheduler interval after detection, plus normal claiming/indexing time.
@@ -262,7 +264,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 6. On any fatal error, `failMigration` marks `FAILED` (with a sanitized, credential-redacted message)
    and writes an audit log entry.
 
-`indexingTimeout()` is configurable via `INDEXING_TIMEOUT_MINUTES` (default 60).
+`indexingTimeout()` is configurable via `INDEXING_TIMEOUT_MINUTES` (default 20).
 `sanitizeError` redacts `user:pass@` from any URL embedded in error strings before persisting.
 
 ---

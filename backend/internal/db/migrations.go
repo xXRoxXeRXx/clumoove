@@ -437,16 +437,55 @@ func FailMigrationWhileIndexing(db *sql.DB, id string, errMsg *string) (bool, er
 	return true, tx.Commit()
 }
 
+// FailStaleIndexingMigration marks only a long-stale indexing migration as
+// failed. The timestamp guard prevents recovery from overwriting a newly
+// started indexer after it has been selected for inspection.
+func FailStaleIndexingMigration(ctx context.Context, database *sql.DB, id string, errMsg *string) (bool, error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `
+		UPDATE migrations
+		SET status = 'FAILED', error_message = $1, updated_at = CURRENT_TIMESTAMP,
+		    notification_generation = notification_generation + 1
+		WHERE id = $2
+		  AND status = 'INDEXING'
+		  AND updated_at < NOW() - INTERVAL '30 minutes'
+	`, errMsg, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if affected != 1 {
+		return false, nil
+	}
+	if err := createMigrationNotificationEventTx(tx, id); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 // ClaimScheduledMigrationForIndexing atomically claims a scheduled migration for
 // indexing. A false result means the row either does not exist or is no longer
 // in SCHEDULED state; both cases are intentionally treated as an invalid claim.
 func ClaimScheduledMigrationForIndexing(db *sql.DB, id string) (bool, error) {
+	return ClaimScheduledMigrationForIndexingContext(context.Background(), db, id)
+}
+
+// ClaimScheduledMigrationForIndexingContext atomically claims a scheduled
+// migration while honoring caller cancellation.
+func ClaimScheduledMigrationForIndexingContext(ctx context.Context, db *sql.DB, id string) (bool, error) {
 	query := `
 		UPDATE migrations
-		SET status = 'INDEXING', updated_at = CURRENT_TIMESTAMP
+		SET status = 'INDEXING', error_message = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1 AND status = 'SCHEDULED'
 	`
-	result, err := db.Exec(query, id)
+	result, err := db.ExecContext(ctx, query, id)
 	if err != nil {
 		return false, err
 	}

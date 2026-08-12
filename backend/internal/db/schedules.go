@@ -100,6 +100,12 @@ func GetSchedulesForUserContext(ctx context.Context, db *sql.DB, userID string) 
 }
 
 func GetDueSchedules(db *sql.DB) ([]Schedule, error) {
+	return GetDueSchedulesContext(context.Background(), db)
+}
+
+// GetDueSchedulesContext lists active schedules that are ready to run while
+// honoring caller cancellation.
+func GetDueSchedulesContext(ctx context.Context, db *sql.DB) ([]Schedule, error) {
 	query := `
 		SELECT id, user_id, task_type, task_id, cron_expression, run_at, next_run_at,
 		       is_active, created_at, updated_at
@@ -108,7 +114,7 @@ func GetDueSchedules(db *sql.DB) ([]Schedule, error) {
 		  AND next_run_at <= NOW()
 		ORDER BY next_run_at ASC
 	`
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -133,22 +139,32 @@ func GetDueSchedules(db *sql.DB) ([]Schedule, error) {
 }
 
 func UpdateNextRunAt(db *sql.DB, id string, nextRunAt time.Time) error {
+	return UpdateNextRunAtContext(context.Background(), db, id, nextRunAt)
+}
+
+// UpdateNextRunAtContext updates a schedule while honoring caller cancellation.
+func UpdateNextRunAtContext(ctx context.Context, db *sql.DB, id string, nextRunAt time.Time) error {
 	query := `
 		UPDATE schedules
 		SET next_run_at = $1, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $2
 	`
-	_, err := db.Exec(query, nextRunAt, id)
+	_, err := db.ExecContext(ctx, query, nextRunAt, id)
 	return err
 }
 
 func DeactivateSchedule(db *sql.DB, id string) error {
+	return DeactivateScheduleContext(context.Background(), db, id)
+}
+
+// DeactivateScheduleContext deactivates a schedule while honoring caller cancellation.
+func DeactivateScheduleContext(ctx context.Context, db *sql.DB, id string) error {
 	query := `
 		UPDATE schedules
 		SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
 	`
-	_, err := db.Exec(query, id)
+	_, err := db.ExecContext(ctx, query, id)
 	return err
 }
 

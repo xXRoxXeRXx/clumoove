@@ -323,6 +323,7 @@ func main() {
 	sched.SetSyncEngine(syncEng)
 	go sched.Run(ctx)
 	go sched.RunOrphanedSyncJobRecovery(ctx)
+	go sched.RunOrphanedMigrationIndexingRecovery(ctx)
 
 	go func() {
 		slog.Info("http_server_listening", slog.String("component", "api"))
