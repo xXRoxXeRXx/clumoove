@@ -98,6 +98,27 @@ func TestWebDAVProviderVerificationModeIsSizeOnly(t *testing.T) {
 	}
 }
 
+func TestWebDAVListingSkipsFailedPropstat(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>/dav/vanished.txt</d:href><d:propstat><d:prop/><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response>
+	  <d:response><d:href>http://example.test/DAV/present.txt</d:href><d:propstat><d:prop><d:getcontentlength>7</d:getcontentlength><d:getetag>W/"etag"</d:getetag></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>`))
+	}))
+	defer server.Close()
+
+	p := &WebDAVProvider{BaseURL: server.URL + "/dav", HTTPClient: server.Client()}
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/")
+	if err != nil {
+		t.Fatalf("GetDirectoryListing: %v", err)
+	}
+	if len(items) != 1 || items[0].Name != "present.txt" || items[0].ETag != "etag" {
+		t.Fatalf("GetDirectoryListing() = %#v, want only present.txt with clean ETag", items)
+	}
+}
+
 func TestWebDAVProviderErrAuth(t *testing.T) {
 	if !errors.Is(ErrAuth, ErrAuth) {
 		t.Error("ErrAuth mismatch")

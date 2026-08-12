@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -8,6 +9,51 @@ import (
 	"testing"
 	"time"
 )
+
+func TestNextcloudListingPreservesEncodedHashInAbsoluteHref(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response><d:href>http://example.test/remote.php/dav/files/user/%23report</d:href><d:propstat><d:prop><d:getcontentlength>7</d:getcontentlength></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>`))
+	}))
+	defer server.Close()
+
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
+	if err != nil {
+		t.Fatalf("NewNextcloudProvider: %v", err)
+	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
+
+	items, err := p.GetDirectoryListing(context.Background(), "files", "/")
+	if err != nil {
+		t.Fatalf("GetDirectoryListing: %v", err)
+	}
+	if len(items) != 1 || items[0].Path != "/#report" {
+		t.Fatalf("GetDirectoryListing() = %#v, want /#report", items)
+	}
+}
+
+func TestNextcloudCalendarBadRequestIsDuplicateUID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	p, err := NewNextcloudProvider("https://nextcloud.example.test", "user", "pass")
+	if err != nil {
+		t.Fatalf("NewNextcloudProvider: %v", err)
+	}
+	p.BaseURL = server.URL + "/remote.php/dav"
+	p.HTTPClient = server.Client()
+
+	err = p.StreamUpload(context.Background(), "calendars", "/entry.ics", bytes.NewReader([]byte("BEGIN:VCALENDAR")), 15)
+	if !errors.Is(err, ErrDuplicateUID) {
+		t.Fatalf("StreamUpload() error = %v, want ErrDuplicateUID", err)
+	}
+}
 
 func TestNewNextcloudProviderURLNormalization(t *testing.T) {
 	tests := []struct {

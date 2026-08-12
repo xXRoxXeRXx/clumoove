@@ -59,7 +59,7 @@ func NewMagentacloudProvider(username, password string) (*MagentacloudProvider, 
 			Username:     username,
 			Password:     password,
 			HTTPClient: &http.Client{
-				Transport:     newDAVTransport("magentacloud.de"),
+				Transport:     newLoggingTransport(newDAVTransport("magentacloud.de")),
 				Timeout:       0,
 				CheckRedirect: rejectEgressRedirect,
 			},

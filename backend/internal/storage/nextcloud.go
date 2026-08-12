@@ -33,6 +33,7 @@ type pathBuilder interface {
 type davProvider struct {
 	providerName         string
 	BaseURL              string
+	baseURLMu            sync.RWMutex
 	Username             string
 	Password             string
 	HTTPClient           *http.Client
@@ -40,6 +41,9 @@ type davProvider struct {
 	UserAgent            string
 	pb                   pathBuilder
 	disableChunkedUpload bool
+	// useBearerToken selects OAuth-style Bearer authentication instead of Basic
+	// authentication. It belongs here so every shared DAV operation applies it.
+	useBearerToken bool
 	// supportedResourceTypes lists the resource types the provider can handle.
 	// Nextcloud supports files/calendars/contacts; files-only providers (e.g.
 	// MagentaCLOUD) declare only "files".
@@ -96,11 +100,36 @@ type XMLChecksums struct {
 	Checksum []string `xml:"checksum"`
 }
 
+// decodeDAVHref normalizes a DAV href to a decoded path. Absolute hrefs must
+// be parsed before unescaping: unescaping first turns an encoded '#' into a
+// fragment delimiter and loses the rest of the resource path.
+func decodeDAVHref(href string) string {
+	if parsed, err := url.Parse(href); err == nil && parsed.IsAbs() {
+		href = parsed.EscapedPath()
+	}
+	if decoded, err := url.PathUnescape(href); err == nil {
+		return decoded
+	}
+	return href
+}
+
 func (p *davProvider) name() string {
 	if p.providerName != "" {
 		return p.providerName
 	}
 	return "dav"
+}
+
+func (p *davProvider) baseURL() string {
+	p.baseURLMu.RLock()
+	defer p.baseURLMu.RUnlock()
+	return p.BaseURL
+}
+
+func (p *davProvider) setBaseURL(baseURL string) {
+	p.baseURLMu.Lock()
+	p.BaseURL = baseURL
+	p.baseURLMu.Unlock()
 }
 
 func requireDAVSuccessStatus(operation, status string) error {
@@ -212,7 +241,15 @@ func (p *davProvider) newRequest(method, urlStr string, body io.Reader) (*http.R
 	if err != nil {
 		return nil, err
 	}
-	req.SetBasicAuth(p.Username, p.Password)
+	if p.useBearerToken {
+		if strings.HasPrefix(p.Password, "Bearer ") {
+			req.Header.Set("Authorization", p.Password)
+		} else {
+			req.Header.Set("Authorization", "Bearer "+p.Password)
+		}
+	} else {
+		req.SetBasicAuth(p.Username, p.Password)
+	}
 	req.Header.Set("User-Agent", p.UserAgent)
 	return req, nil
 }
@@ -221,7 +258,7 @@ func (p *davProvider) Connect(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	// Query root folders via PROPFIND to test credentials
-	u := p.pb.resourceURL(p.BaseURL, p.Username, "files", "/")
+	u := p.pb.resourceURL(p.baseURL(), p.Username, "files", "/")
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:">
 			<d:prop>
@@ -253,13 +290,26 @@ func (p *davProvider) Connect(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+func (p *davProvider) confirmCollection(ctx context.Context, resourceType, dirPath string) error {
+	confirmCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resource, err := p.InspectResource(confirmCtx, resourceType, dirPath)
+	if err != nil {
+		return fmt.Errorf("failed to confirm existing directory: %w", err)
+	}
+	if !resource.IsDir {
+		return fmt.Errorf("existing path is not a directory")
+	}
+	return nil
+}
+
 func (p *davProvider) InspectResource(ctx context.Context, resourceType, resourcePath string) (CloudResource, error) {
 	if err := p.assertResourceType(resourceType); err != nil {
 		return CloudResource{}, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, resourcePath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, resourcePath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
@@ -322,7 +372,7 @@ func (p *davProvider) InspectResource(ctx context.Context, resourceType, resourc
 			}
 
 			if prop.GetLastModified != "" {
-				if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
+				if t, err := http.ParseTime(prop.GetLastModified); err == nil {
 					res.LastModified = t
 				}
 			}
@@ -351,7 +401,7 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 	if err := p.assertResourceType(resourceType); err != nil {
 		return nil, err
 	}
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, dirPath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, dirPath)
 
 	body := []byte(`<?xml version="1.0" encoding="utf-8" ?>
 		<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns">
@@ -392,7 +442,7 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 
 	var resources []CloudResource
 
-	uParsed, parseErr := url.Parse(p.BaseURL)
+	uParsed, parseErr := url.Parse(p.baseURL())
 	var basePath string
 	if parseErr == nil {
 		basePath = strings.TrimSuffix(uParsed.Path, "/")
@@ -404,10 +454,7 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 	prefixLower := strings.ToLower(prefixPath)
 
 	for _, r := range multistatus.Responses {
-		decodedHref, err := url.PathUnescape(r.Href)
-		if err != nil {
-			decodedHref = r.Href
-		}
+		decodedHref := decodeDAVHref(r.Href)
 
 		hrefLower := strings.ToLower(decodedHref)
 		if !strings.HasPrefix(hrefLower, prefixLower) {
@@ -445,7 +492,7 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 				}
 
 				if prop.GetLastModified != "" {
-					if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
+					if t, err := http.ParseTime(prop.GetLastModified); err == nil {
 						res.LastModified = t
 					}
 				}
@@ -535,7 +582,7 @@ func (p *davProvider) StreamDownload(ctx context.Context, resourceType, filePath
 	if err := p.assertResourceType(resourceType); err != nil {
 		return nil, err
 	}
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 	req, err := p.newRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -563,7 +610,7 @@ func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 	if err := p.assertResourceType(resourceType); err != nil {
 		return err
 	}
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 
 	err := p.CreateParentDirectories(ctx, resourceType, filePath)
 	if err != nil {
@@ -574,9 +621,9 @@ func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 	// per-request timeout so a hanging server fails fast and can be retried via
 	// the normal backoff path rather than blocking a thread for 10 minutes.
 	// For regular files scale the timeout by size: allow at least 5 min plus
-	// 1 extra minute per 50 MB, capped at 30 minutes. This prevents a slow
+	// 1 extra minute per 50 MB, capped at 12 hours. This prevents a slow
 	// Nextcloud target from holding threads indefinitely while still giving
-	// large files (e.g. several GB) enough headroom.
+	// large files (e.g. several GB) enough headroom. The limit is 12 hours.
 	uploadCtx := ctx
 	var uploadCancel context.CancelFunc
 	if resourceType == "calendars" || resourceType == "contacts" {
@@ -625,11 +672,13 @@ func (p *davProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		respBody := string(bodyBytes)
-		if strings.Contains(respBody, "calobjects_by_uid_index") || strings.Contains(respBody, "unique constraint") {
+		respBody := strings.ToLower(string(bodyBytes))
+		if (resourceType == "calendars" || resourceType == "contacts") &&
+			(resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusConflict ||
+				strings.Contains(respBody, "calobjects_by_uid_index") || strings.Contains(respBody, "unique constraint")) {
 			return ErrDuplicateUID
 		}
-		return fmt.Errorf("upload failed with status: %d, response: %s", resp.StatusCode, respBody)
+		return fmt.Errorf("upload failed with status: %d", resp.StatusCode)
 	}
 
 	return nil
@@ -654,8 +703,9 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 	}
 
 	transferID := fmt.Sprintf("upload-%x", time.Now().UnixNano())
-	uploadsFolderURL := p.pb.uploadsURL(p.BaseURL, p.Username, "/"+transferID)
-	destURL := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	baseURL := p.baseURL()
+	uploadsFolderURL := p.pb.uploadsURL(baseURL, p.Username, "/"+transferID)
+	destURL := p.pb.resourceURL(baseURL, p.Username, resourceType, filePath)
 
 	req, err := p.newRequest("MKCOL", uploadsFolderURL, nil)
 	if err != nil {
@@ -691,6 +741,9 @@ func (p *davProvider) StreamUploadChunked(ctx context.Context, resourceType, fil
 	var totalUploaded int64
 
 	for {
+		if chunkIndex >= 10000 {
+			return fmt.Errorf("file requires more than 10000 upload chunks")
+		}
 		bytesRead, readErr := io.ReadFull(stream, buffer)
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
 			return readErr
@@ -786,9 +839,12 @@ func (p *davProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string,
 		resp, err := p.HTTPClient.Do(req)
 		if err != nil {
 			lastErr = err
-			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+			if err := waitForRetry(ctx, time.Duration(attempt+1)*2*time.Second); err != nil {
+				return err
+			}
 			continue
 		}
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -798,14 +854,27 @@ func (p *davProvider) uploadChunkWithRetry(ctx context.Context, chunkURL string,
 			return fmt.Errorf("nextcloud upload chunk: %w", ErrAuth)
 		}
 		lastErr = fmt.Errorf("status code %d", resp.StatusCode)
-		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+		if err := waitForRetry(ctx, time.Duration(attempt+1)*2*time.Second); err != nil {
+			return err
+		}
 	}
 	return lastErr
 }
 
-// globalNextcloudCreatedDirs caches directory existence across Nextcloud provider instances within the worker process.
+func waitForRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// globalDAVCreatedDirs caches directory existence across DAV provider instances within the worker process.
 // Key format: BaseURL + "|" + Username + "|" + resourceType + ":" + currentPath
-var globalNextcloudCreatedDirs = newBoundedDirCache(5000)
+var globalDAVCreatedDirs = newBoundedDirCache(5000)
 
 func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	if err := p.assertResourceType(resourceType); err != nil {
@@ -830,17 +899,18 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 	for i, part := range parts {
 		currentPath = currentPath + "/" + part
 		localDirKey := resourceType + ":" + currentPath
-		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
+		baseURL := p.baseURL()
+		globalDirKey := baseURL + "|" + p.Username + "|" + localDirKey
 
 		if _, exists := p.createdDirs.Load(localDirKey); exists {
 			continue
 		}
-		if globalNextcloudCreatedDirs.Contains(globalDirKey) {
+		if globalDAVCreatedDirs.Contains(globalDirKey) {
 			p.createdDirs.Store(localDirKey, true)
 			continue
 		}
 
-		u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, currentPath)
+		u := p.pb.resourceURL(baseURL, p.Username, resourceType, currentPath)
 
 		var req *http.Request
 		var err error
@@ -874,9 +944,14 @@ func (p *davProvider) CreateParentDirectories(ctx context.Context, resourceType,
 		if resp.StatusCode == http.StatusUnauthorized {
 			return fmt.Errorf("nextcloud mkdir: %w", ErrAuth)
 		}
+		if resp.StatusCode == http.StatusMethodNotAllowed {
+			if err := p.confirmCollection(ctx, resourceType, currentPath); err != nil {
+				return err
+			}
+		}
 		if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
 			p.createdDirs.Store(localDirKey, true)
-			globalNextcloudCreatedDirs.Add(globalDirKey)
+			globalDAVCreatedDirs.Add(globalDirKey)
 		} else {
 			return fmt.Errorf("failed to create directory %s, status: %d", currentPath, resp.StatusCode)
 		}
@@ -904,7 +979,7 @@ func cardDAVMkcolBody() []byte {
 // For calendars the first (and only) segment uses MKCALENDAR; for contacts it uses a
 // CardDAV-typed MKCOL body; everything else uses a plain MKCOL.
 func (p *davProvider) mkcolRequest(ctx context.Context, resourceType, dirPath string) (*http.Request, error) {
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, dirPath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, dirPath)
 	var req *http.Request
 	var err error
 	switch resourceType {
@@ -954,11 +1029,16 @@ func (p *davProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("nextcloud mkdir: %w", ErrAuth)
 	}
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		if err := p.confirmCollection(ctx, resourceType, dirPath); err != nil {
+			return err
+		}
+	}
 	if resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusOK {
 		localDirKey := resourceType + ":" + dirPath
-		globalDirKey := p.BaseURL + "|" + p.Username + "|" + localDirKey
+		globalDirKey := p.baseURL() + "|" + p.Username + "|" + localDirKey
 		p.createdDirs.Store(localDirKey, true)
-		globalNextcloudCreatedDirs.Add(globalDirKey)
+		globalDAVCreatedDirs.Add(globalDirKey)
 	} else {
 		return fmt.Errorf("failed to create directory %s, status: %d", dirPath, resp.StatusCode)
 	}
@@ -971,10 +1051,9 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 
-	// Try lightweight HEAD request first (Nextcloud returns OC-Checksum in HTTP header directly)
-	var fallbackETag string
+	// Try lightweight HEAD request first (Nextcloud returns OC-Checksum in HTTP header directly).
 	headReq, err := p.newRequest("HEAD", u, nil)
 	if err == nil {
 		headReq = headReq.WithContext(ctx)
@@ -984,11 +1063,6 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 			case http.StatusOK:
 				if chk := headResp.Header.Get("OC-Checksum"); chk != "" {
 					return chk, nil
-				}
-				if etag := headResp.Header.Get("OC-ETag"); etag != "" {
-					fallbackETag = "ETAG:" + strings.Trim(etag, `"`)
-				} else if etag := headResp.Header.Get("ETag"); etag != "" {
-					fallbackETag = "ETAG:" + strings.Trim(etag, `"`)
 				}
 				// 200 OK without OC-Checksum: fall through to PROPFIND for XML <oc:checksums/>
 			case http.StatusNotFound:
@@ -1012,9 +1086,6 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 
 	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
-		if fallbackETag != "" {
-			return fallbackETag, nil
-		}
 		return "", err
 	}
 	req.Header.Set("Depth", "0")
@@ -1023,9 +1094,6 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		if fallbackETag != "" {
-			return fallbackETag, nil
-		}
 		return "", err
 	}
 	defer resp.Body.Close()
@@ -1037,18 +1105,12 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 		return "", fmt.Errorf("nextcloud get-hash: %w", ErrAuth)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if fallbackETag != "" {
-			return fallbackETag, nil
-		}
 		return "", fmt.Errorf("PROPFIND for hash failed: status %d", resp.StatusCode)
 	}
 
 	var multistatus XMLMultistatus
 	decoder := xml.NewDecoder(resp.Body)
 	if err := decoder.Decode(&multistatus); err != nil {
-		if fallbackETag != "" {
-			return fallbackETag, nil
-		}
 		return "", err
 	}
 
@@ -1066,18 +1128,11 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 				if pstat.Prop.GetContentHash != "" {
 					return pstat.Prop.GetContentHash, nil
 				}
-				if pstat.Prop.GetETag != "" {
-					return "ETAG:" + strings.Trim(pstat.Prop.GetETag, `"`), nil
-				}
 			}
 		}
 	}
 
-	if fallbackETag != "" {
-		return fallbackETag, nil
-	}
-
-	return "", fmt.Errorf("checksum not available")
+	return "", ErrChecksumNotAvailable
 }
 
 func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
@@ -1086,7 +1141,7 @@ func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath str
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 
 	// HEAD is only an optimization. Bound it separately so a slow DAV server
 	// cannot consume the verification deadline needed by the PROPFIND fallback.
@@ -1178,7 +1233,7 @@ func (p *davProvider) DeleteFile(ctx context.Context, resourceType, filePath str
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 	req, err := p.newRequest("DELETE", u, nil)
 	if err != nil {
 		return err
@@ -1189,6 +1244,7 @@ func (p *davProvider) DeleteFile(ctx context.Context, resourceType, filePath str
 	if err != nil {
 		return err
 	}
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -1206,13 +1262,13 @@ func (p *davProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, oldPath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, oldPath)
 	req, err := p.newRequest("MOVE", u, nil)
 	if err != nil {
 		return err
 	}
 	req = req.WithContext(ctx)
-	destURL := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, newPath)
+	destURL := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, newPath)
 	req.Header.Set("Destination", destURL)
 	req.Header.Set("Overwrite", "T")
 
@@ -1245,7 +1301,7 @@ func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath 
 		return nil
 	}
 
-	u := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+	u := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 	operation := p.name() + " apply metadata"
 	unixSec := meta.ModifiedTime.Unix()
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8" ?>

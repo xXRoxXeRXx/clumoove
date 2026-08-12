@@ -96,6 +96,29 @@ func TestOpenCloudAuthHeaders(t *testing.T) {
 	}
 }
 
+func TestOpenCloudConnectUsesBearerAuth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer secret-bearer-token" {
+			t.Errorf("Authorization = %q, want Bearer token", got)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	p, err := NewOpenCloudProvider("https://opencloud.example.test/dav/spaces", "", "secret-bearer-token")
+	if err != nil {
+		t.Fatalf("NewOpenCloudProvider: %v", err)
+	}
+	p.BaseURL = server.URL + "/dav/spaces"
+	p.HTTPClient = server.Client()
+	connected, err := p.Connect(context.Background())
+	if err != nil || !connected {
+		t.Fatalf("Connect() = (%v, %v), want (true, nil)", connected, err)
+	}
+}
+
 func TestOpenCloudConnectFallback(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +202,41 @@ func TestOpenCloudTUSChunkedUpload(t *testing.T) {
 	}
 	if patchOffset != "0" {
 		t.Errorf("expected initial Upload-Offset 0, got %q", patchOffset)
+	}
+}
+
+func TestOpenCloudTUSFailureAfterReadDoesNotReuseStream(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.Method {
+		case "MKCOL":
+			w.WriteHeader(http.StatusCreated)
+		case "POST":
+			w.Header().Set("Location", "/upload-session")
+			w.WriteHeader(http.StatusCreated)
+		case "PATCH":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Errorf("unexpected fallback request %s", r.Method)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	p, err := NewOpenCloudProvider("https://opencloud.example.test/dav/spaces", "user", "pass")
+	if err != nil {
+		t.Fatalf("NewOpenCloudProvider: %v", err)
+	}
+	p.BaseURL = server.URL + "/dav/spaces"
+	p.HTTPClient = server.Client()
+
+	err = p.StreamUploadChunked(context.Background(), "files", "/sub/file.txt", bytes.NewReader([]byte("content")), 7, nil)
+	if err == nil {
+		t.Fatal("StreamUploadChunked unexpectedly succeeded")
+	}
+	if requests != 3 {
+		t.Fatalf("request count = %d, want 3 without DAV fallback", requests)
 	}
 }
 

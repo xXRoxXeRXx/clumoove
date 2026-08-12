@@ -6,12 +6,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
 	"strings"
+
+	"backend/internal/observability"
 )
 
 // openCloudPaths implements pathBuilder for OpenCloud instances.
@@ -47,22 +49,6 @@ type OpenCloudProvider struct {
 
 var _ StorageProvider = (*OpenCloudProvider)(nil)
 
-func (p *OpenCloudProvider) newRequest(method, urlStr string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequest(method, urlStr, body)
-	if err != nil {
-		return nil, err
-	}
-	if strings.HasPrefix(p.Password, "Bearer ") {
-		req.Header.Set("Authorization", p.Password)
-	} else if p.Username == "" && p.Password != "" {
-		req.Header.Set("Authorization", "Bearer "+p.Password)
-	} else {
-		req.SetBasicAuth(p.Username, p.Password)
-	}
-	req.Header.Set("User-Agent", p.UserAgent)
-	return req, nil
-}
-
 // NewOpenCloudProvider initializes an OpenCloudProvider with host URL and credentials.
 func NewOpenCloudProvider(rawURL, username, password string) (*OpenCloudProvider, error) {
 	baseURL := strings.TrimSuffix(rawURL, "/")
@@ -86,13 +72,14 @@ func NewOpenCloudProvider(rawURL, username, password string) (*OpenCloudProvider
 		Username:     username,
 		Password:     password,
 		HTTPClient: &http.Client{
-			Transport:     newDAVTransport(parsed.Hostname()),
+			Transport:     newLoggingTransport(newDAVTransport(parsed.Hostname())),
 			Timeout:       0,
 			CheckRedirect: rejectEgressRedirect,
 		},
 		Threads:                8,
 		UserAgent:              "OpenCloud-Migration-Worker/1.0",
 		pb:                     openCloudPaths{},
+		useBearerToken:         strings.HasPrefix(password, "Bearer ") || (username == "" && password != ""),
 		supportedResourceTypes: map[string]bool{"files": true},
 	}
 
@@ -109,16 +96,29 @@ func (p *OpenCloudProvider) Connect(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 
-	// If connecting to /dav/spaces failed, attempt fallback to legacy /remote.php/webdav
-	if strings.Contains(p.BaseURL, "/dav/spaces") {
-		fallbackURL := strings.Replace(p.BaseURL, "/dav/spaces", "/remote.php/webdav", 1)
-		origURL := p.BaseURL
-		p.BaseURL = fallbackURL
-		okFallback, errFallback := p.davProvider.Connect(ctx)
+	// If connecting to /dav/spaces failed, attempt fallback using a copy so an
+	// unsuccessful probe never changes the URL concurrently used by operations.
+	baseURL := p.baseURL()
+	if strings.Contains(baseURL, "/dav/spaces") {
+		fallbackURL := strings.Replace(baseURL, "/dav/spaces", "/remote.php/webdav", 1)
+		fallback := &davProvider{
+			providerName:           p.providerName,
+			BaseURL:                fallbackURL,
+			Username:               p.Username,
+			Password:               p.Password,
+			HTTPClient:             p.HTTPClient,
+			Threads:                p.Threads,
+			UserAgent:              p.UserAgent,
+			pb:                     p.pb,
+			disableChunkedUpload:   p.disableChunkedUpload,
+			useBearerToken:         p.useBearerToken,
+			supportedResourceTypes: p.supportedResourceTypes,
+		}
+		okFallback, errFallback := fallback.Connect(ctx)
 		if okFallback && errFallback == nil {
+			p.setBaseURL(fallbackURL)
 			return true, nil
 		}
-		p.BaseURL = origURL
 	}
 
 	return ok, err
@@ -136,25 +136,31 @@ func (p *OpenCloudProvider) StreamUploadChunked(ctx context.Context, resourceTyp
 	}
 
 	if size > 0 {
-		err := p.uploadTUS(ctx, resourceType, filePath, stream, size, progressChan)
+		consumed, err := p.uploadTUS(ctx, resourceType, filePath, stream, size, progressChan)
 		if err == nil {
 			return nil
 		}
-		log.Printf("opencloud: TUS upload failed for %q (%v); falling back to DAV chunked", filePath, err)
+		if consumed {
+			return fmt.Errorf("TUS upload failed after consuming the source stream: %w", err)
+		}
+		slog.WarnContext(ctx, "opencloud_tus_upload_fallback",
+			slog.String("component", "storage"),
+			observability.Error(err),
+		)
 	}
 
 	return p.davProvider.StreamUploadChunked(ctx, resourceType, filePath, stream, size, progressChan)
 }
 
 // uploadTUS implements TUS 1.0.0 protocol POST session creation and PATCH chunk uploads.
-func (p *OpenCloudProvider) uploadTUS(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
-	uploadURL := p.pb.resourceURL(p.BaseURL, p.Username, resourceType, filePath)
+func (p *OpenCloudProvider) uploadTUS(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) (bool, error) {
+	uploadURL := p.pb.resourceURL(p.baseURL(), p.Username, resourceType, filePath)
 	fileName := path.Base(filePath)
 	metaVal := base64.StdEncoding.EncodeToString([]byte(fileName))
 
 	req, err := p.newRequest("POST", uploadURL, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 	req = req.WithContext(ctx)
 	req.Header.Set("Tus-Resumable", "1.0.0")
@@ -164,12 +170,12 @@ func (p *OpenCloudProvider) uploadTUS(ctx context.Context, resourceType, filePat
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("TUS creation failed with status: %d", resp.StatusCode)
+		return false, fmt.Errorf("TUS creation failed with status: %d", resp.StatusCode)
 	}
 
 	loc := resp.Header.Get("Location")
@@ -177,27 +183,28 @@ func (p *OpenCloudProvider) uploadTUS(ctx context.Context, resourceType, filePat
 		loc = resp.Header.Get("Upload-Url")
 	}
 	if loc == "" {
-		return fmt.Errorf("TUS creation response missing Location header")
+		return false, fmt.Errorf("TUS creation response missing Location header")
 	}
 
 	reqParsed, err := url.Parse(uploadURL)
 	if err != nil {
-		return err
+		return false, err
 	}
 	locParsed, err := url.Parse(loc)
 	if err != nil {
-		return err
+		return false, err
 	}
 	targetURL := reqParsed.ResolveReference(locParsed).String()
 
-	var offset int64 = 0
+	var offset int64
+	consumed := false
 	chunkSize := int64(5 * 1024 * 1024)
 	buf := make([]byte, chunkSize)
 
 	for offset < size {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return consumed, ctx.Err()
 		default:
 		}
 
@@ -206,13 +213,14 @@ func (p *OpenCloudProvider) uploadTUS(ctx context.Context, resourceType, filePat
 			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
 				break
 			}
-			return readErr
+			return consumed, readErr
 		}
+		consumed = true
 
 		chunkData := buf[:n]
 		patchReq, err := p.newRequest("PATCH", targetURL, bytes.NewReader(chunkData))
 		if err != nil {
-			return err
+			return consumed, err
 		}
 		patchReq = patchReq.WithContext(ctx)
 		patchReq.Header.Set("Tus-Resumable", "1.0.0")
@@ -222,12 +230,12 @@ func (p *OpenCloudProvider) uploadTUS(ctx context.Context, resourceType, filePat
 
 		patchResp, err := p.HTTPClient.Do(patchReq)
 		if err != nil {
-			return err
+			return consumed, err
 		}
 		patchResp.Body.Close()
 
 		if patchResp.StatusCode != http.StatusNoContent && patchResp.StatusCode != http.StatusOK {
-			return fmt.Errorf("TUS patch failed with status: %d", patchResp.StatusCode)
+			return consumed, fmt.Errorf("TUS patch failed with status: %d", patchResp.StatusCode)
 		}
 
 		offset += int64(n)
@@ -240,5 +248,5 @@ func (p *OpenCloudProvider) uploadTUS(ctx context.Context, resourceType, filePat
 		}
 	}
 
-	return nil
+	return consumed, nil
 }

@@ -211,13 +211,13 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 			}
 
 			if prop.GetLastModified != "" {
-				if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
+				if t, err := http.ParseTime(prop.GetLastModified); err == nil {
 					res.LastModified = t
 				}
 			}
 
 			if prop.GetETag != "" {
-				res.ETag = strings.Trim(prop.GetETag, `"`)
+				res.ETag = cleanETag(prop.GetETag)
 			}
 		}
 	}
@@ -276,22 +276,13 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 	}
 
 	for _, r := range multistatus.Responses {
-		decodedHref, err := url.PathUnescape(r.Href)
-		if err != nil {
-			decodedHref = r.Href
-		}
+		decodedHref := decodeDAVHref(r.Href)
 
-		if strings.HasPrefix(decodedHref, "http://") || strings.HasPrefix(decodedHref, "https://") {
-			if parsed, parseErr := url.Parse(decodedHref); parseErr == nil {
-				decodedHref = parsed.Path
-			}
-		}
-
-		if !strings.HasPrefix(decodedHref, prefixPath) {
+		if !strings.HasPrefix(strings.ToLower(decodedHref), strings.ToLower(prefixPath)) {
 			continue
 		}
 
-		relativeHref := strings.TrimPrefix(decodedHref, prefixPath)
+		relativeHref := decodedHref[len(prefixPath):]
 		if relativeHref == "" {
 			relativeHref = "/"
 		}
@@ -307,8 +298,10 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 		res.Path = relativeHref
 		res.Name = path.Base(relativeHref)
 
+		isOK := false
 		for _, pstat := range r.Propstat {
 			if strings.Contains(pstat.Status, "200 OK") {
+				isOK = true
 				prop := pstat.Prop
 				res.IsDir = prop.ResourceType.Collection != nil
 
@@ -319,15 +312,18 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 				}
 
 				if prop.GetLastModified != "" {
-					if t, err := time.Parse(time.RFC1123, prop.GetLastModified); err == nil {
+					if t, err := http.ParseTime(prop.GetLastModified); err == nil {
 						res.LastModified = t
 					}
 				}
 
 				if prop.GetETag != "" {
-					res.ETag = strings.Trim(prop.GetETag, `"`)
+					res.ETag = cleanETag(prop.GetETag)
 				}
 			}
+		}
+		if !isOK {
+			continue
 		}
 		resources = append(resources, res)
 	}
