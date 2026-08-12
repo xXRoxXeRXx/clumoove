@@ -336,7 +336,7 @@ JWT validation also requires issuer `clumoove-api` and allows 30 seconds of cloc
 
 - `SMTPConfig` + `SendMail` — sends mail through the administrator-managed instance SMTP configuration.
 - Password-reset, email-change, test, and outbox paths load the singleton configuration from the database and decrypt its password only immediately before sending.
-- `BuildMigrationReportEmail` — HTML migration summary used by the completion notifier.
+- SMTP requires `tls` or `starttls`, rejects non-public destinations (including CGNAT and benchmarking ranges), and requires TLS 1.2 or later.
 
 User-facing email and notification strings are not defined in Go. They are sourced from `delivery.*` in
 `frontend/src/locales/{de,en}/translation.json`; `backend/internal/i18n/translations_gen.go` is generated

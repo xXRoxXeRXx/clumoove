@@ -10,7 +10,9 @@ import (
 	"net/mail"
 	"net/smtp"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"backend/internal/i18n"
@@ -23,13 +25,23 @@ type SMTPConfig struct {
 	Password   string
 	FromEmail  string
 	FromName   string
-	Encryption string // tls, starttls, none
+	Encryption string // tls, starttls
 }
 
 const smtpOperationTimeout = 15 * time.Second
 
-var resolveSMTPIPs = func(ctx context.Context, host string) ([]net.IP, error) {
-	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+var (
+	resolveSMTPIPs = func(ctx context.Context, host string) ([]net.IP, error) {
+		return net.DefaultResolver.LookupIP(ctx, "ip", host)
+	}
+	resolveSMTPIPsMu sync.RWMutex
+)
+
+func lookupSMTPIPs(ctx context.Context, host string) ([]net.IP, error) {
+	resolveSMTPIPsMu.RLock()
+	resolver := resolveSMTPIPs
+	resolveSMTPIPsMu.RUnlock()
+	return resolver(ctx, host)
 }
 
 // ValidateSMTPHost rejects SMTP endpoints that resolve to a private or internal
@@ -52,7 +64,7 @@ func validateSMTPHost(ctx context.Context, host string) error {
 		return nil
 	}
 
-	ips, err := resolveSMTPIPs(ctx, host)
+	ips, err := lookupSMTPIPs(ctx, host)
 	if err != nil {
 		return fmt.Errorf("SMTP host lookup failed: %w", err)
 	}
@@ -68,12 +80,27 @@ func validateSMTPHost(ctx context.Context, host string) error {
 }
 
 func isAllowedSMTPIP(ip net.IP) bool {
-	return ip.IsGlobalUnicast() && !ip.IsPrivate()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return false
+	}
+
+	// CGNAT and benchmarking ranges are non-public address space. Do not allow
+	// the instance mailer to become a path into an internal network through
+	// either range.
+	if ipv4 := ip.To4(); ipv4 != nil {
+		return !((ipv4[0] == 100 && ipv4[1] >= 64 && ipv4[1] <= 127) ||
+			(ipv4[0] == 198 && (ipv4[1] == 18 || ipv4[1] == 19)))
+	}
+	return true
 }
 
 func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), smtpOperationTimeout)
 	defer cancel()
+
+	if err := validateSMTPPort(cfg.Port); err != nil {
+		return err
+	}
 
 	if err := validateSMTPHost(ctx, cfg.Host); err != nil {
 		return err
@@ -91,14 +118,22 @@ func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
 		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
 	}
 
-	switch strings.ToLower(cfg.Encryption) {
+	switch strings.ToLower(strings.TrimSpace(cfg.Encryption)) {
 	case "tls":
 		return sendWithTLS(ctx, cfg, auth, to, msg)
 	case "starttls":
 		return sendWithSTARTTLS(ctx, cfg, auth, to, msg)
 	default:
-		return sendWithoutTLS(ctx, cfg, auth, to, msg)
+		return fmt.Errorf("unsupported SMTP encryption %q", cfg.Encryption)
 	}
+}
+
+func validateSMTPPort(port string) error {
+	value, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || value == 0 {
+		return fmt.Errorf("SMTP port must be between 1 and 65535")
+	}
+	return nil
 }
 
 // sanitizeEmailContent removes ASCII control characters from SMTP header and
@@ -117,7 +152,7 @@ func sanitizeEmailContent(value string) string {
 }
 
 func smtpDialContext(ctx context.Context, host, port string) (net.Conn, error) {
-	ips, err := resolveSMTPIPs(ctx, host)
+	ips, err := lookupSMTPIPs(ctx, host)
 	if err != nil {
 		return nil, fmt.Errorf("SMTP host lookup failed: %w", err)
 	}
@@ -163,6 +198,7 @@ func setSMTPDeadline(ctx context.Context, conn net.Conn) error {
 func sendWithTLS(ctx context.Context, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
 	tlsConfig := &tls.Config{
 		ServerName: cfg.Host,
+		MinVersion: tls.VersionTLS12,
 	}
 
 	conn, err := smtpDialContext(ctx, cfg.Host, cfg.Port)
@@ -205,29 +241,11 @@ func sendWithSTARTTLS(ctx context.Context, cfg SMTPConfig, auth smtp.Auth, to, m
 
 	tlsConfig := &tls.Config{
 		ServerName: cfg.Host,
+		MinVersion: tls.VersionTLS12,
 	}
 	if err := client.StartTLS(tlsConfig); err != nil {
 		return fmt.Errorf("STARTTLS failed: %w", err)
 	}
-
-	return sendSMTPMessage(client, cfg, auth, to, msg)
-}
-
-func sendWithoutTLS(ctx context.Context, cfg SMTPConfig, auth smtp.Auth, to, msg string) error {
-	conn, err := smtpDialContext(ctx, cfg.Host, cfg.Port)
-	if err != nil {
-		return fmt.Errorf("dial failed: %w", err)
-	}
-	defer conn.Close()
-	if err := setSMTPDeadline(ctx, conn); err != nil {
-		return fmt.Errorf("SMTP deadline failed: %w", err)
-	}
-
-	client, err := smtp.NewClient(conn, cfg.Host)
-	if err != nil {
-		return fmt.Errorf("SMTP client creation failed: %w", err)
-	}
-	defer client.Close()
 
 	return sendSMTPMessage(client, cfg, auth, to, msg)
 }
@@ -259,7 +277,11 @@ func sendSMTPMessage(client *smtp.Client, cfg SMTPConfig, auth smtp.Auth, to, ms
 	if err := w.Close(); err != nil {
 		return fmt.Errorf("SMTP close failed: %w", err)
 	}
-	return client.Quit()
+	// A successful DATA close means the server accepted the message. QUIT is
+	// best-effort: reporting its failure would make the durable outbox resend an
+	// already accepted delivery.
+	_ = client.Quit()
+	return nil
 }
 
 // normalizeEnvelopeAddress canonicalizes one SMTP envelope address. Unlike a
@@ -328,204 +350,22 @@ func encodeFromHeader(from string) string {
 	return mime.QEncoding.Encode("UTF-8", from)
 }
 
-// BuildMigrationReportEmail is retained for source compatibility only. The
-// notifier uses the localized delivery catalog and does not call this legacy
-// German-only report builder.
-func BuildMigrationReportEmail(migrationID, status string, totalFiles, processedFiles, failedFiles, skippedFiles int, totalBytes, processedBytes int64, errorMessage string) string {
-	statusColor := "#10b981"
-	statusLabel := "Erfolgreich abgeschlossen"
-	if status == "FAILED" {
-		statusColor = "#ef4444"
-		statusLabel = "Fehlgeschlagen"
-	} else if status == "COMPLETED_WITH_ERRORS" {
-		statusColor = "#f59e0b"
-		statusLabel = "Abgeschlossen mit Fehlern"
-	}
-
-	errorSection := ""
-	if errorMessage != "" {
-		errorSection = fmt.Sprintf(`
-			<div style="margin-top:20px;padding:15px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">
-				<strong style="color:#991b1b;">Fehlermeldung:</strong>
-				<p style="color:#991b1b;margin:5px 0 0;">%s</p>
-			</div>`, html.EscapeString(errorMessage))
-	}
-
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
-	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
-			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Migrationsbericht</p>
-		</div>
-		<div style="padding:30px;">
-			<div style="text-align:center;margin-bottom:24px;">
-				<span style="display:inline-block;padding:8px 20px;background:%s;color:white;border-radius:20px;font-weight:bold;font-size:14px;">%s</span>
-			</div>
-			<table style="width:100%%;border-collapse:collapse;margin-bottom:20px;">
-				<tr><td style="padding:8px 0;color:#6b7280;font-size:13px;">Migration ID</td><td style="padding:8px 0;text-align:right;font-family:monospace;font-size:13px;">%s</td></tr>
-				<tr><td style="padding:8px 0;color:#6b7280;font-size:13px;border-top:1px solid #f3f4f6;">Dateien verarbeitet</td><td style="padding:8px 0;text-align:right;font-size:13px;border-top:1px solid #f3f4f6;">%d / %d</td></tr>
-				<tr><td style="padding:8px 0;color:#6b7280;font-size:13px;border-top:1px solid #f3f4f6;">Fehlgeschlagen</td><td style="padding:8px 0;text-align:right;font-size:13px;border-top:1px solid #f3f4f6;color:%s;">%d</td></tr>
-				<tr><td style="padding:8px 0;color:#6b7280;font-size:13px;border-top:1px solid #f3f4f6;">Übersprungen</td><td style="padding:8px 0;text-align:right;font-size:13px;border-top:1px solid #f3f4f6;">%d</td></tr>
-				<tr><td style="padding:8px 0;color:#6b7280;font-size:13px;border-top:1px solid #f3f4f6;">Daten übertragen</td><td style="padding:8px 0;text-align:right;font-size:13px;border-top:1px solid #f3f4f6;">%s / %s</td></tr>
-			</table>
-			%s
-		</div>
-		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
-		</div>
-	</div>
-</body>
-</html>`, statusColor, statusLabel, migrationID, processedFiles, totalFiles, statusColor, failedFiles, skippedFiles, formatBytes(processedBytes), formatBytes(totalBytes), errorSection)
-}
-
-// BuildEmailChangeEmail is a legacy German template. New delivery uses
-// BuildEmailChangeEmailLocalized and the delivery.* catalog.
-func BuildEmailChangeEmail(confirmURL, newEmail string) string {
-	escapedURL := html.EscapeString(confirmURL)
-	escapedEmail := html.EscapeString(newEmail)
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
-	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
-			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">E-Mail-Adresse ändern</p>
-		</div>
-		<div style="padding:30px;">
-			<p style="color:#374151;font-size:14px;line-height:1.6;">
-				Du hast eine Änderung deiner E-Mail-Adresse auf <strong>%s</strong> angefordert. Bestätige die Änderung, indem du auf den Button unten klickst.
-			</p>
-			<div style="text-align:center;margin:30px 0;">
-				<a href="%s" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#f97316,#ea580c);color:white;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">
-					E-Mail-Adresse bestätigen
-				</a>
-			</div>
-			<p style="color:#6b7280;font-size:12px;line-height:1.6;">
-				Der Link ist 4 Stunden gültig. Falls du diese Änderung nicht angefordert hast, kannst du diese E-Mail ignorieren. Deine E-Mail-Adresse bleibt unverändert.
-			</p>
-			<div style="margin-top:20px;padding:12px;background:#f9fafb;border-radius:8px;word-break:break-all;">
-				<p style="margin:0;color:#9ca3af;font-size:11px;">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
-				<p style="margin:5px 0 0;color:#6b7280;font-size:11px;font-family:monospace;">%s</p>
-			</div>
-		</div>
-		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
-		</div>
-	</div>
-</body>
-</html>`, escapedEmail, escapedURL, escapedURL)
-}
-
-// BuildEmailChangedNotificationEmail is a legacy German template. New delivery
-// uses BuildEmailChangedNotificationEmailLocalized and the delivery.* catalog.
-func BuildEmailChangedNotificationEmail(newEmail string) string {
-	escapedEmail := html.EscapeString(newEmail)
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
-	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
-			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">E-Mail-Adresse geändert</p>
-		</div>
-		<div style="padding:30px;text-align:center;">
-			<div style="display:inline-block;padding:16px;background:#ecfdf5;border-radius:50%%;margin-bottom:20px;">
-				<span style="font-size:32px;">&#10003;</span>
-			</div>
-			<h2 style="color:#065f46;margin:0 0 10px;">Änderung erfolgreich!</h2>
-			<p style="color:#6b7280;font-size:14px;line-height:1.6;">
-				Deine Clumoove-Konto-E-Mail-Adresse ist nun <strong>%s</strong>. Du wirst bei künftigen Anmeldungen diese Adresse verwenden müssen.
-			</p>
-		</div>
-		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
-		</div>
-	</div>
-</body>
-</html>`, escapedEmail)
-}
-
-// BuildPasswordResetEmail is a legacy German template. New delivery uses
-// BuildPasswordResetEmailLocalized and the delivery.* catalog.
-func BuildPasswordResetEmail(resetURL string) string {
-	escapedURL := html.EscapeString(resetURL)
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
-	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
-			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">Passwort zurücksetzen</p>
-		</div>
-		<div style="padding:30px;">
-			<p style="color:#374151;font-size:14px;line-height:1.6;">
-				Du hast eine Anfrage zum Zurücksetzen deines Passworts erhalten. Klicke auf den Button unten, um ein neues Passwort festzulegen.
-			</p>
-			<div style="text-align:center;margin:30px 0;">
-				<a href="%s" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#f97316,#ea580c);color:white;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">
-					Passwort zurücksetzen
-				</a>
-			</div>
-			<p style="color:#6b7280;font-size:12px;line-height:1.6;">
-				Der Link ist 4 Stunden gültig. Falls du diese E-Mail nicht angefordert hast, kannst du sie ignorieren. Dein Passwort bleibt unverändert.
-			</p>
-			<div style="margin-top:20px;padding:12px;background:#f9fafb;border-radius:8px;word-break:break-all;">
-				<p style="margin:0;color:#9ca3af;font-size:11px;">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
-				<p style="margin:5px 0 0;color:#6b7280;font-size:11px;font-family:monospace;">%s</p>
-			</div>
-		</div>
-		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
-		</div>
-	</div>
-</body>
-</html>`, escapedURL, escapedURL)
-}
-
-// BuildTestEmail is a legacy German template. New delivery uses
-// BuildTestEmailLocalized and the delivery.* catalog.
-func BuildTestEmail() string {
-	return `<!DOCTYPE html>
-<html>
-<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:20px;">
-	<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
-		<div style="background:linear-gradient(135deg,#f97316,#ea580c);padding:24px;text-align:center;">
-			<h1 style="color:white;margin:0;font-size:24px;">Clumoove</h1>
-			<p style="color:rgba(255,255,255,0.9);margin:8px 0 0;font-size:14px;">SMTP-Test</p>
-		</div>
-		<div style="padding:30px;text-align:center;">
-			<div style="display:inline-block;padding:16px;background:#ecfdf5;border-radius:50%;margin-bottom:20px;">
-				<span style="font-size:32px;">&#10003;</span>
-			</div>
-			<h2 style="color:#065f46;margin:0 0 10px;">SMTP-Verbindung erfolgreich!</h2>
-			<p style="color:#6b7280;font-size:14px;">Deine SMTP-Einstellungen sind korrekt konfiguriert. Du wirst bei Abschluss von Migrationen per E-Mail benachrichtigt.</p>
-		</div>
-		<div style="background:#f9fafb;padding:16px;text-align:center;border-top:1px solid #f3f4f6;">
-			<p style="margin:0;color:#9ca3af;font-size:11px;">Diese E-Mail wurde automatisch von Clumoove generiert.</p>
-		</div>
-	</div>
-</body>
-</html>`
-}
-
 // Localized mail builders keep the user-facing language choice out of HTTP
 // handlers and worker code. German remains the legacy/default template.
 func BuildPasswordResetEmailLocalized(url, language string) string {
-	return buildActionEmail(i18n.T(language, "delivery.passwordReset.title"), i18n.T(language, "delivery.passwordReset.message"), i18n.T(language, "delivery.passwordReset.action"), url, i18n.T(language, "delivery.passwordReset.note"))
+	return buildActionEmail(language, i18n.T(language, "delivery.passwordReset.title"), i18n.T(language, "delivery.passwordReset.message"), i18n.T(language, "delivery.passwordReset.action"), url, i18n.T(language, "delivery.passwordReset.note"))
 }
 
 func BuildEmailChangeEmailLocalized(url, newEmail, language string) string {
-	return buildActionEmail(i18n.T(language, "delivery.emailChange.title"), i18n.Format(language, "delivery.emailChange.message", map[string]string{"email": html.EscapeString(newEmail)}), i18n.T(language, "delivery.emailChange.action"), url, i18n.T(language, "delivery.emailChange.note"))
+	return buildActionEmail(language, i18n.T(language, "delivery.emailChange.title"), i18n.Format(language, "delivery.emailChange.message", map[string]string{"email": html.EscapeString(newEmail)}), i18n.T(language, "delivery.emailChange.action"), url, i18n.T(language, "delivery.emailChange.note"))
 }
 
 func BuildEmailChangedNotificationEmailLocalized(newEmail, language string) string {
-	return buildActionEmail(i18n.T(language, "delivery.emailChanged.title"), i18n.Format(language, "delivery.emailChanged.message", map[string]string{"email": html.EscapeString(newEmail)}), "", "", "")
+	return buildActionEmail(language, i18n.T(language, "delivery.emailChanged.title"), i18n.Format(language, "delivery.emailChanged.message", map[string]string{"email": html.EscapeString(newEmail)}), "", "", "")
 }
 
 func BuildTestEmailLocalized(language string) string {
-	return buildActionEmail(i18n.T(language, "delivery.smtpTest.title"), i18n.T(language, "delivery.smtpTest.message"), "", "", "")
+	return buildActionEmail(language, i18n.T(language, "delivery.smtpTest.title"), i18n.T(language, "delivery.smtpTest.message"), "", "", "")
 }
 
 // BuildNotificationEmailLocalized renders the delivery summary with the same
@@ -548,7 +388,7 @@ func BuildNotificationEmailLocalized(kind, name, status, processed, total, faile
 	}
 
 	title := fmt.Sprintf("%s · %s", i18n.T(language, "delivery.notification.kind."+kind), name)
-	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0 0 20px;color:#52525b;font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p><table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;border-collapse:collapse">%s</table>`, html.EscapeString(title), table.String()))
+	return buildEmailShell(language, title, fmt.Sprintf(`<p style="margin:0 0 20px;color:#52525b;font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p><table role="presentation" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;border-collapse:collapse">%s</table>`, html.EscapeString(title), table.String()))
 }
 
 func PasswordResetSubject(language string) string {
@@ -562,7 +402,7 @@ func EmailChangedSubject(language string) string {
 }
 func SMTPTestSubject(language string) string { return i18n.T(language, "delivery.smtpTest.subject") }
 
-func buildActionEmail(title, message, action, actionURL, note string) string {
+func buildActionEmail(language, title, message, action, actionURL, note string) string {
 	button := ""
 	if action != "" && actionURL != "" {
 		button = fmt.Sprintf(`<table role="presentation" class="cta-table" width="100%%" cellspacing="0" cellpadding="0" border="0" style="width:100%%;margin:24px 0"><tr><td align="center"><a class="cta-link" href="%s" style="display:inline-block;padding:12px 20px;background:#18181b;border:1px solid #18181b;border-radius:4px;color:#ffffff;font-size:14px;font-weight:600;line-height:20px;text-align:center;text-decoration:none;word-break:break-word;overflow-wrap:anywhere">%s</a></td></tr></table>`, html.EscapeString(actionURL), html.EscapeString(action))
@@ -571,12 +411,15 @@ func buildActionEmail(title, message, action, actionURL, note string) string {
 	if note != "" {
 		noteBlock = fmt.Sprintf(`<p style="margin:20px 0 0;color:#71717a;font-size:12px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p>`, html.EscapeString(note))
 	}
-	return buildEmailShell(title, fmt.Sprintf(`<p style="margin:0;color:#52525b;font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p>%s%s`, message, button, noteBlock))
+	return buildEmailShell(language, title, fmt.Sprintf(`<p style="margin:0;color:#52525b;font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere">%s</p>%s%s`, message, button, noteBlock))
 }
 
-func buildEmailShell(title, content string) string {
+func buildEmailShell(language, title, content string) string {
+	if language != "de" {
+		language = "en"
+	}
 	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
+<html lang="%s">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -608,18 +451,5 @@ func buildEmailShell(title, content string) string {
     </table>
   </td></tr></table>
 </body>
-</html>`, html.EscapeString(title), content)
-}
-
-func formatBytes(b int64) string {
-	const unit = 1024
-	if b < unit {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := int64(unit), 0
-	for n := b / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+</html>`, language, html.EscapeString(title), content)
 }

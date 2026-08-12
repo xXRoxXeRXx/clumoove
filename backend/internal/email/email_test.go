@@ -5,19 +5,23 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 )
 
-func TestValidateSMTPHost(t *testing.T) {
-	originalResolver := resolveSMTPIPs
-	defer func() { resolveSMTPIPs = originalResolver }()
+var resolveSMTPIPsTestMu sync.Mutex
 
-	resolveSMTPIPs = func(_ context.Context, host string) ([]net.IP, error) {
+func TestValidateSMTPHost(t *testing.T) {
+	withSMTPResolver(t, func(_ context.Context, host string) ([]net.IP, error) {
 		switch host {
 		case "private.example":
 			return []net.IP{net.ParseIP("10.0.0.5")}, nil
 		case "mixed.example":
 			return []net.IP{net.ParseIP("203.0.113.10"), net.ParseIP("192.168.1.10")}, nil
+		case "cgnat.example":
+			return []net.IP{net.ParseIP("100.64.0.1")}, nil
+		case "benchmark.example":
+			return []net.IP{net.ParseIP("198.18.0.1")}, nil
 		case "error.example":
 			return nil, errors.New("DNS unavailable")
 		case "empty.example":
@@ -25,7 +29,7 @@ func TestValidateSMTPHost(t *testing.T) {
 		default:
 			return []net.IP{net.ParseIP("203.0.113.10")}, nil
 		}
-	}
+	})
 
 	tests := []struct {
 		name    string
@@ -37,6 +41,8 @@ func TestValidateSMTPHost(t *testing.T) {
 		{name: "private literal", host: "10.0.0.5", wantErr: "private or internal"},
 		{name: "private DNS answer", host: "private.example", wantErr: "private or internal"},
 		{name: "mixed DNS answers", host: "mixed.example", wantErr: "private or internal"},
+		{name: "CGNAT DNS answer", host: "cgnat.example", wantErr: "private or internal"},
+		{name: "benchmark DNS answer", host: "benchmark.example", wantErr: "private or internal"},
 		{name: "DNS lookup failure", host: "error.example", wantErr: "lookup failed"},
 		{name: "empty DNS answers", host: "empty.example", wantErr: "no addresses"},
 	}
@@ -55,19 +61,16 @@ func TestValidateSMTPHost(t *testing.T) {
 }
 
 func TestSendMailRejectsReboundPrivateAddress(t *testing.T) {
-	originalResolver := resolveSMTPIPs
-	defer func() { resolveSMTPIPs = originalResolver }()
-
 	lookups := 0
-	resolveSMTPIPs = func(context.Context, string) ([]net.IP, error) {
+	withSMTPResolver(t, func(context.Context, string) ([]net.IP, error) {
 		lookups++
 		if lookups == 1 {
 			return []net.IP{net.ParseIP("203.0.113.10")}, nil
 		}
 		return []net.IP{net.ParseIP("10.0.0.5")}, nil
-	}
+	})
 
-	err := SendMail(SMTPConfig{Host: "smtp.example", Port: "25"}, "recipient@example.com", "subject", "body")
+	err := SendMail(SMTPConfig{Host: "smtp.example", Port: "25", Encryption: "starttls"}, "recipient@example.com", "subject", "body")
 	if err == nil || !strings.Contains(err.Error(), "private or internal address") {
 		t.Fatalf("expected rebinding to be rejected with private-address error, got: %v", err)
 	}
@@ -95,6 +98,55 @@ func TestNormalizeEnvelopeAddressReturnsMailboxOnly(t *testing.T) {
 	if got != "support@example.com" {
 		t.Fatalf("normalizeEnvelopeAddress() = %q", got)
 	}
+}
+
+func TestNormalizeMailboxAddressFallbackSanitizesUnparseableValue(t *testing.T) {
+	input := "not an address\r\nBcc: attacker@example.com"
+	want := "not an addressBcc: attacker@example.com"
+
+	if got := normalizeMailboxHeader(input); got != want {
+		t.Fatalf("normalizeMailboxHeader() = %q, want %q", got, want)
+	}
+	if got := normalizeEnvelopeAddress(input); got != want {
+		t.Fatalf("normalizeEnvelopeAddress() = %q, want %q", got, want)
+	}
+}
+
+func TestValidateSMTPPort(t *testing.T) {
+	for _, port := range []string{"", "0", "65536", "smtp"} {
+		if err := validateSMTPPort(port); err == nil {
+			t.Fatalf("validateSMTPPort(%q) succeeded, want error", port)
+		}
+	}
+	if err := validateSMTPPort("587"); err != nil {
+		t.Fatalf("validateSMTPPort(\"587\") error = %v", err)
+	}
+}
+
+func TestSendMailRejectsUnsupportedEncryption(t *testing.T) {
+	withSMTPResolver(t, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+	})
+
+	err := SendMail(SMTPConfig{Host: "smtp.example", Port: "587", Encryption: "none"}, "recipient@example.com", "subject", "body")
+	if err == nil || !strings.Contains(err.Error(), "unsupported SMTP encryption") {
+		t.Fatalf("SendMail() error = %v, want unsupported encryption error", err)
+	}
+}
+
+func withSMTPResolver(t *testing.T, resolver func(context.Context, string) ([]net.IP, error)) {
+	t.Helper()
+	resolveSMTPIPsTestMu.Lock()
+	resolveSMTPIPsMu.Lock()
+	originalResolver := resolveSMTPIPs
+	resolveSMTPIPs = resolver
+	resolveSMTPIPsMu.Unlock()
+	t.Cleanup(func() {
+		resolveSMTPIPsMu.Lock()
+		resolveSMTPIPs = originalResolver
+		resolveSMTPIPsMu.Unlock()
+		resolveSMTPIPsTestMu.Unlock()
+	})
 }
 
 func TestBuildMessagePreventsSMTPMessageInjection(t *testing.T) {
@@ -134,6 +186,15 @@ func TestLocalizedActionEmailUsesResponsiveBrandedShell(t *testing.T) {
 	}
 	if strings.Contains(body, "name<script>@example.com") {
 		t.Fatalf("action email included unescaped dynamic email: %q", body)
+	}
+}
+
+func TestLocalizedEmailSetsDocumentLanguage(t *testing.T) {
+	if body := BuildTestEmailLocalized("de"); !strings.Contains(body, `<html lang="de">`) {
+		t.Fatalf("German email did not set lang=de: %q", body)
+	}
+	if body := BuildTestEmailLocalized("fr"); !strings.Contains(body, `<html lang="en">`) {
+		t.Fatalf("fallback email did not set lang=en: %q", body)
 	}
 }
 
