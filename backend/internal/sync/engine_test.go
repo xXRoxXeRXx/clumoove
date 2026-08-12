@@ -146,6 +146,23 @@ func TestIsFileMatchingTarget(t *testing.T) {
 	}
 }
 
+func TestIsFileModified(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	previous := db.SyncState{Size: 10, Mtime: sql.NullTime{Time: now, Valid: true}, SourceHash: "SHA1:old", TargetHash: "SHA1:target-old", ETag: "old"}
+	if isFileModified(fileState{Size: 10, LastModified: now.Add(time.Second), Hash: "SHA1:old", ETag: `"old"`}, previous, true) {
+		t.Fatal("matching source state reported modified")
+	}
+	if !isFileModified(fileState{Size: 10, LastModified: now, Hash: "SHA1:new"}, previous, true) {
+		t.Fatal("changed source hash was not detected")
+	}
+	if !isFileModified(fileState{Size: 10, LastModified: now, Hash: "SHA1:target-new"}, previous, false) {
+		t.Fatal("changed target hash was not detected")
+	}
+	if !isFileModified(fileState{Size: 10, LastModified: now.Add(3 * time.Second)}, previous, true) {
+		t.Fatal("changed mtime was not detected")
+	}
+}
+
 func TestCleanRelPath(t *testing.T) {
 	tests := []struct {
 		input    string
@@ -267,9 +284,56 @@ func TestSyncStateChangesIncludesPreviousPaths(t *testing.T) {
 
 	// State generation must retain keys found only in the previous baseline so
 	// deletions are persisted on the next successful pass.
-	upserts, deletes := syncStateChanges("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil)
+	upserts, deletes := syncStateChanges("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	if len(upserts) != 0 || len(deletes) != 2 {
 		t.Fatalf("state changes = %d upserts, %d deletes; want 0, 2", len(upserts), len(deletes))
+	}
+}
+
+func TestListFilesSkipsUnchangedETagSubtree(t *testing.T) {
+	listCalls := 0
+	provider := listingTestProvider{
+		inspect: func(resourcePath string) (storage.CloudResource, error) {
+			return storage.CloudResource{Path: resourcePath, IsDir: true, ETag: "unchanged"}, nil
+		},
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			listCalls++
+			return nil, nil
+		},
+	}
+	previousFiles := map[string]fileState{"/kept.txt": {Path: "/kept.txt", Size: 42}}
+	previousDirs := map[string]string{"/": "unchanged", "/nested": "nested-etag"}
+	files, dirs, etags, errs, err := NewEngine(nil, nil, "secret").listFiles(context.Background(), provider, []string{"/"}, previousDirs, previousFiles)
+	if err != nil || len(errs) != 0 {
+		t.Fatalf("listFiles returned err=%v errors=%v", err, errs)
+	}
+	if listCalls != 0 {
+		t.Fatalf("GetDirectoryListing calls = %d; want 0 for unchanged ETag", listCalls)
+	}
+	if _, ok := files["/kept.txt"]; !ok || !dirs["/nested"] || etags["/nested"] != "nested-etag" {
+		t.Fatalf("unchanged subtree was not retained: files=%v dirs=%v etags=%v", files, dirs, etags)
+	}
+}
+
+func TestSyncStateChangesDeletesStaleDirectoryWithoutETag(t *testing.T) {
+	_, deletes := syncStateChanges("job-1", nil, nil, nil, nil, nil, nil, map[string]bool{"/": true}, map[string]bool{}, map[string]string{}, map[string]string{}, map[string]bool{"/": true, "/removed": true}, map[string]bool{}, nil)
+	for _, deletion := range deletes {
+		if deletion.Side == "source" && deletion.RelPath == "/removed" {
+			return
+		}
+	}
+	t.Fatalf("stale directory without an ETag was not deleted: %#v", deletes)
+}
+
+func TestSyncStateChangesStoresHashOnMatchingSide(t *testing.T) {
+	upserts, _ := syncStateChanges("job-1", map[string]fileState{"/a": {Path: "/a", Hash: "src"}}, map[string]fileState{"/a": {Path: "/a", Hash: "tgt"}}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	for _, state := range upserts {
+		if state.Side == "source" && (state.SourceHash != "src" || state.TargetHash != "") {
+			t.Fatalf("source hash fields = %#v", state)
+		}
+		if state.Side == "target" && (state.SourceHash != "" || state.TargetHash != "tgt") {
+			t.Fatalf("target hash fields = %#v", state)
+		}
 	}
 }
 

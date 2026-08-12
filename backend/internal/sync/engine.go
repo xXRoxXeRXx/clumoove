@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -111,7 +111,7 @@ func (e *Engine) lockPass(ctx context.Context, syncJobID string) (func(), error)
 // runSyncPass performs a previously claimed sync pass: scans, computes delta,
 // enqueues tasks, waits, and updates state.
 func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, generation int) {
-	log.Printf("[SyncEngine] Starting sync pass for job %s\n", syncJobID)
+	slog.Info("sync pass started", "sync_job_id", syncJobID, "generation", generation)
 
 	ctx, cancel := context.WithCancel(serverCtx)
 	defer cancel()
@@ -121,11 +121,11 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	unlockPass, err := e.lockPass(ctx, syncJobID)
 	if err != nil {
 		if ctx.Err() == nil {
-			log.Printf("[SyncEngine] Failed to lock sync pass for %s: %v", syncJobID, err)
+			slog.Error("failed to lock sync pass", "sync_job_id", syncJobID, "error", err)
 			if released, releaseErr := db.ReleaseUnstartedSyncPass(e.db, syncJobID, generation); releaseErr != nil {
-				log.Printf("[SyncEngine] Failed to release unstarted sync pass for %s: %v", syncJobID, releaseErr)
+				slog.Error("failed to release unstarted sync pass", "sync_job_id", syncJobID, "error", releaseErr)
 			} else if !released {
-				log.Printf("[SyncEngine] Sync pass %s changed state before lock failure recovery", syncJobID)
+				slog.Warn("sync pass changed state before lock failure recovery", "sync_job_id", syncJobID)
 			}
 		}
 		return
@@ -156,12 +156,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	// Only the engine's Start* methods can reach this private method.
 	job, err := db.GetSyncJob(e.db, syncJobID)
 	if err != nil {
-		log.Printf("[SyncEngine] Refusing pass for %s: failed to load claimed job: %v\n", syncJobID, err)
+		slog.Error("failed to load claimed sync job", "sync_job_id", syncJobID, "error", err)
 		return
 	}
 	indexCtx = storage.WithLocalUserScope(indexCtx, job.UserID)
 	if job.Status != "INDEXING" || job.RunGeneration != generation {
-		log.Printf("[SyncEngine] Refusing stale pass for %s: expected INDEXING generation %d, got %s generation %d\n", syncJobID, generation, job.Status, job.RunGeneration)
+		slog.Warn("refusing stale sync pass", "sync_job_id", syncJobID, "generation", generation, "status", job.Status, "run_generation", job.RunGeneration)
 		return
 	}
 
@@ -176,7 +176,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			if errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
 				e.failSync(syncJobID, generation, fmt.Sprintf("Indexing phase timed out while draining previous tasks: %v", err))
 			} else {
-				log.Printf("[SyncEngine] Drain interrupted for job %s: %v\n", syncJobID, err)
+				slog.Warn("sync pass drain interrupted", "sync_job_id", syncJobID, "error", err)
 			}
 			return
 		}
@@ -241,14 +241,35 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 	defer targetClient.Close()
 
-	// Connect to both providers
-	connCtx, connCancel := context.WithTimeout(ctx, 15*time.Second)
-	defer connCancel()
-	if ok, err := sourceClient.Connect(connCtx); !ok {
+	// Each provider gets its own connection budget; a slow source must not
+	// consume the target's deadline.
+	if err := func() error {
+		sourceConnCtx, sourceConnCancel := context.WithTimeout(indexCtx, 15*time.Second)
+		defer sourceConnCancel()
+		ok, err := sourceClient.Connect(sourceConnCtx)
+		if !ok {
+			if err == nil {
+				return errors.New("source provider rejected connection")
+			}
+			return err
+		}
+		return nil
+	}(); err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Source connection failed: %v", err))
 		return
 	}
-	if ok, err := targetClient.Connect(connCtx); !ok {
+	if err := func() error {
+		targetConnCtx, targetConnCancel := context.WithTimeout(indexCtx, 15*time.Second)
+		defer targetConnCancel()
+		ok, err := targetClient.Connect(targetConnCtx)
+		if !ok {
+			if err == nil {
+				return errors.New("target provider rejected connection")
+			}
+			return err
+		}
+		return nil
+	}(); err != nil {
 		e.failSync(syncJobID, generation, fmt.Sprintf("Target connection failed: %v", err))
 		return
 	}
@@ -280,11 +301,15 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 				prevTargetDirs[cPath] = true
 			}
 		} else {
+			stateHash := state.SourceHash
+			if state.Side == "target" {
+				stateHash = state.TargetHash
+			}
 			fs := fileState{
 				Path:         cPath,
 				Size:         state.Size,
 				LastModified: state.Mtime.Time,
-				Hash:         state.SourceHash,
+				Hash:         stateHash,
 				ETag:         state.ETag,
 			}
 			if state.Side == "source" {
@@ -298,7 +323,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 
 	// 6. Enumerate Source and Target files (using parallel worker pool + ETag skipping)
-	log.Printf("[SyncEngine] Listing source files for job %s...\n", syncJobID)
+	slog.Info("listing sync source", "sync_job_id", syncJobID)
 	var sourceStartPaths []string
 	if len(job.SelectedPaths) > 0 {
 		for _, sp := range job.SelectedPaths {
@@ -320,7 +345,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			return
 		}
 		if ctx.Err() != nil {
-			log.Printf("[SyncEngine] Source listing interrupted for job %s: %v\n", syncJobID, ctx.Err())
+			slog.Info("sync source listing interrupted", "sync_job_id", syncJobID)
 			return
 		}
 		e.failSync(syncJobID, generation, fmt.Sprintf("Source file listing failed: %v", err))
@@ -336,7 +361,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		return
 	}
 
-	log.Printf("[SyncEngine] Listing target files for job %s...\n", syncJobID)
+	slog.Info("listing sync target", "sync_job_id", syncJobID)
 	cleanTargetDir := cleanRelPath(job.TargetDir)
 	targetScanPaths := []string{cleanTargetDir}
 
@@ -347,7 +372,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			return
 		}
 		if ctx.Err() != nil {
-			log.Printf("[SyncEngine] Target listing interrupted for job %s: %v\n", syncJobID, ctx.Err())
+			slog.Info("sync target listing interrupted", "sync_job_id", syncJobID)
 			return
 		}
 		e.failSync(syncJobID, generation, fmt.Sprintf("Target file listing failed: %v", err))
@@ -360,7 +385,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		e.failSync(syncJobID, generation, fmt.Sprintf("Target file listing incomplete: %d traversal errors (first: %s)", len(tgtErrors), tgtErrors[0].ErrorMessage))
 		return
 	}
-	log.Printf("[SyncEngine] Job %s target raw files listed: %d (targetScanPaths=%v)\n", syncJobID, len(targetRawMap), targetScanPaths)
+	slog.Info("sync target listed", "sync_job_id", syncJobID, "file_count", len(targetRawMap))
 
 	// Map target paths to source-side relative paths and ensure cleanRelPath
 	targetMap := make(map[string]fileState)
@@ -394,7 +419,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 
 	// 7. Delta Calculation and Task Creation
-	log.Printf("[SyncEngine] Computing delta and enqueuing tasks for job %s...\n", syncJobID)
+	slog.Info("computing sync delta", "sync_job_id", syncJobID)
 	allKeys := make(map[string]bool)
 	for k := range sourceMap {
 		allKeys[k] = true
@@ -409,8 +434,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		allKeys[k] = true
 	}
 
-	log.Printf("[SyncEngine] Job %s delta breakdown: sourceMap=%d, targetMap=%d, prevSource=%d, prevTarget=%d, allKeys=%d, isFirstPass=%v\n",
-		syncJobID, len(sourceMap), len(targetMap), len(prevSource), len(prevTarget), len(allKeys), isFirstPass)
+	slog.Info("sync delta input", "sync_job_id", syncJobID, "source_files", len(sourceMap), "target_files", len(targetMap), "previous_source_files", len(prevSource), "previous_target_files", len(prevTarget), "paths", len(allKeys), "first_pass", isFirstPass)
 
 	type taskToCreate struct {
 		filePath     string
@@ -507,8 +531,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 						action:       "upload",
 					})
 				case "SKIP":
-					// Do nothing
-					log.Printf("[SyncEngine] Sync conflict for %s: skipping due to strategy SKIP\n", S)
+					// Do nothing.
 				case "RENAME":
 					// Rename target first, then upload source
 					needsRename := conflictNeedsRename(job.ConflictStrategy)
@@ -529,6 +552,10 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 						action:              "upload",
 						waitForConflictCopy: needsRename,
 					})
+				default:
+					// Creation validates this value, but a corrupt legacy row must
+					// not silently choose a destructive conflict action.
+					slog.Warn("ignoring conflict with unsupported strategy", "sync_job_id", syncJobID, "conflict_strategy", job.ConflictStrategy)
 				}
 			} else if hasSrc && (srcModified || (!hasTgt && !tgtDeleted)) {
 				// Present on source, and (modified OR missing from target and not deleted on target) -> upload to target
@@ -573,11 +600,6 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			}
 		}
 
-		if len(tasks) <= 5 && len(tasks) > 0 {
-			last := tasks[len(tasks)-1]
-			log.Printf("[SyncEngine] Delta task #%d: path=%s action=%s side=%s (hasSrc=%v, hasTgt=%v, srcSize=%d, tgtSize=%d, srcMtime=%v, tgtMtime=%v)\n",
-				len(tasks), last.filePath, last.action, last.side, hasSrc, hasTgt, srcFile.Size, tgtFile.Size, srcFile.LastModified, tgtFile.LastModified)
-		}
 	}
 
 	// Directory delta: create missing directories on target (or source for two-way).
@@ -662,20 +684,20 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 
 	totalCreatedTasks := len(renameTasks) + len(tasks)
-	log.Printf("[SyncEngine] Job %s: calculated %d tasks to run\n", syncJobID, totalCreatedTasks)
+	slog.Info("sync tasks calculated", "sync_job_id", syncJobID, "task_count", totalCreatedTasks)
 
 	if totalCreatedTasks == 0 {
 		// The baseline and lifecycle result must commit together. Otherwise a
 		// successful empty pass can lose deletion/conflict history.
-		upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, nil)
+		upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, prevSourceDirs, prevTargetDirs, nil)
 		finalized, err := db.FinalizeEmptySyncJobPassWithStates(e.db, job.ID, generation, "SUCCESS", nil, 0, 0, 0, 0, 0, upserts, deletes)
 		if err != nil {
-			log.Printf("[SyncEngine] Failed to persist and finalize empty sync pass for job %s: %v\n", syncJobID, err)
+			slog.Error("failed to finalize empty sync pass", "sync_job_id", syncJobID, "error", err)
 			e.failSync(syncJobID, generation, "Failed to persist sync state")
 			return
 		}
 		if !finalized {
-			log.Printf("[SyncEngine] Not finalizing empty sync pass for job %s; status changed during execution\n", syncJobID)
+			slog.Warn("empty sync pass status changed before finalization", "sync_job_id", syncJobID)
 			return
 		}
 		return
@@ -683,7 +705,9 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 
 	// Insert tasks into database — use bulk insert to reduce DB round-trips from
 	// N (one per task) to ceil(N/500) (one batch statement per 500 rows).
-	allTasksToEnqueue := append(renameTasks, tasks...)
+	allTasksToEnqueue := make([]taskToCreate, 0, len(renameTasks)+len(tasks))
+	allTasksToEnqueue = append(allTasksToEnqueue, renameTasks...)
+	allTasksToEnqueue = append(allTasksToEnqueue, tasks...)
 	dbTasks := make([]*db.Task, 0, len(allTasksToEnqueue))
 	var totalBytes int64
 	for _, tc := range allTasksToEnqueue {
@@ -717,22 +741,22 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	// Update totals
 	updated, err := db.UpdateSyncJobTotals(e.db, job.ID, generation, totalCreatedTasks, totalBytes)
 	if err != nil {
-		log.Printf("[SyncEngine] Failed to update totals for job %s: %v\n", syncJobID, err)
+		slog.Error("failed to update sync totals", "sync_job_id", syncJobID, "error", err)
 		return
 	}
 	if !updated {
-		log.Printf("[SyncEngine] Not updating totals for job %s; pass was superseded\n", syncJobID)
+		slog.Warn("sync pass superseded before totals update", "sync_job_id", syncJobID)
 		return
 	}
 
 	// Transition to RUNNING
 	running, err := db.TransitionSyncJobToRunning(e.db, job.ID, generation)
 	if err != nil {
-		log.Printf("[SyncEngine] Failed to set RUNNING status for job %s: %v\n", syncJobID, err)
+		slog.Error("failed to set sync job running", "sync_job_id", syncJobID, "error", err)
 		return
 	}
 	if !running {
-		log.Printf("[SyncEngine] Not starting task processing for job %s; status changed during indexing\n", syncJobID)
+		slog.Warn("sync job status changed during indexing", "sync_job_id", syncJobID)
 		return
 	}
 	// Keep the cross-instance lock while workers drain. Releasing it here would
@@ -748,6 +772,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
+SyncTaskPoll:
 	for {
 		select {
 		case <-ctx.Done():
@@ -760,43 +785,45 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 			// or prevent API shutdown.
 			drainCtx, drainCancel := context.WithTimeout(context.WithoutCancel(serverCtx), 30*time.Second)
 			if err := e.drainGenerationTasks(drainCtx, job.ID, generation); err != nil {
-				log.Printf("[SyncEngine] Timed out draining cancelled pass for job %s: %v", syncJobID, err)
+				slog.Warn("timed out draining cancelled sync pass", "sync_job_id", syncJobID, "error", err)
 			}
 			drainCancel()
-			log.Printf("[SyncEngine] Sync pass for job %s interrupted: %v\n", syncJobID, ctx.Err())
+			slog.Info("sync pass interrupted", "sync_job_id", syncJobID)
 			return
 		case <-ticker.C:
 			var openCount int
-			err := e.db.QueryRow(`
+			err := e.db.QueryRowContext(ctx, `
 				SELECT COUNT(*) FROM tasks 
 				WHERE sync_job_id = $1 AND pass_generation = $2
 				  AND (status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL))
 			`, job.ID, generation).Scan(&openCount)
 			if err != nil {
-				log.Printf("[SyncEngine] Error querying task progress for job %s: %v\n", syncJobID, err)
+				slog.Warn("failed to query sync task progress", "sync_job_id", syncJobID, "error", err)
 				continue
 			}
 
 			if openCount == 0 {
-				goto SyncTasksDone
+				break SyncTaskPoll
 			}
 		}
 	}
 
-SyncTasksDone:
-	log.Printf("[SyncEngine] All tasks finished for job %s. Checking verification requirements...\n", syncJobID)
+	slog.Info("sync tasks finished; checking verification", "sync_job_id", syncJobID)
 
 	var unverifiedCount int
-	_ = e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&unverifiedCount)
+	if err := e.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&unverifiedCount); err != nil {
+		e.failSync(syncJobID, generation, "Failed to determine checksum verification requirements")
+		return
+	}
 	if unverifiedCount > 0 {
-		log.Printf("[SyncEngine] Transitioning job %s to VERIFYING status (%d unverified tasks)...\n", syncJobID, unverifiedCount)
+		slog.Info("transitioning sync job to verification", "sync_job_id", syncJobID, "unverified_tasks", unverifiedCount)
 		verifying, err := db.TransitionSyncJobToVerifying(e.db, job.ID, generation)
 		if err != nil {
-			log.Printf("[SyncEngine] Failed to set VERIFYING status for job %s: %v\n", syncJobID, err)
+			slog.Error("failed to set sync job verifying", "sync_job_id", syncJobID, "error", err)
 			return
 		}
 		if !verifying {
-			log.Printf("[SyncEngine] Not verifying job %s; status changed during task completion\n", syncJobID)
+			slog.Warn("sync job status changed before verification", "sync_job_id", syncJobID)
 			return
 		}
 
@@ -818,7 +845,7 @@ SyncTasksDone:
 					}
 					var remaining int
 					if err := e.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2 AND status = 'COMPLETED' AND checksum_verified = FALSE`, job.ID, generation).Scan(&remaining); err == nil && remaining == 0 {
-						log.Printf("[SyncEngine] Verification completed for job %s\n", syncJobID)
+						slog.Info("sync verification completed", "sync_job_id", syncJobID)
 						verifying = false
 					}
 				}
@@ -831,45 +858,25 @@ SyncTasksDone:
 	// outcomes or update sync state for an interrupted pass.
 	currentJob, err := db.GetSyncJob(e.db, job.ID)
 	if err != nil {
-		log.Printf("[SyncEngine] Failed to read final status for job %s: %v\n", syncJobID, err)
+		slog.Error("failed to read final sync job status", "sync_job_id", syncJobID, "error", err)
 		return
 	}
 	if currentJob.RunGeneration != generation || (currentJob.Status != "RUNNING" && currentJob.Status != "VERIFYING") {
-		log.Printf("[SyncEngine] Stopping completion for job %s; current status is %s\n", syncJobID, currentJob.Status)
+		slog.Warn("stopping sync completion after status change", "sync_job_id", syncJobID, "status", currentJob.Status)
 		return
 	}
 
-	log.Printf("[SyncEngine] Writing outcomes for job %s...\n", syncJobID)
+	slog.Info("writing sync outcomes", "sync_job_id", syncJobID)
 
-	// 9. Process final statistics and state updates
-	var total, completed, skipped, failed int
-	query := `
-		SELECT 
-			COUNT(*) as total,
-			COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed,
-			COUNT(*) FILTER (WHERE status = 'SKIPPED') as skipped,
-			COUNT(*) FILTER (WHERE status = 'FAILED' OR status = 'CANCELLED') as failed
-		FROM tasks
-		WHERE sync_job_id = $1 AND pass_generation = $2
-	`
-	err = e.db.QueryRow(query, job.ID, generation).Scan(&total, &completed, &skipped, &failed)
+	// 9. The baseline must only advance from a complete task snapshot.
+	stats, err := e.readFinalTaskOutcomes(ctx, job.ID, generation)
 	if err != nil {
-		log.Printf("[SyncEngine] Error querying task statistics for job %s: %v\n", syncJobID, err)
-		// Fallback to defaults
+		e.failSync(syncJobID, generation, "Failed to read final task outcomes")
+		return
 	}
-
-	// Query task statuses to build success map for sync states
-	taskOutcomes := make(map[string]string) // filePath -> status (COMPLETED, SKIPPED, FAILED)
-	rows, err := e.db.Query(`SELECT file_path, status FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2`, job.ID, generation)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var fp, st string
-			if err := rows.Scan(&fp, &st); err == nil {
-				taskOutcomes[fp] = st
-			}
-		}
-	}
+	total, completed, skipped, failed := stats.total, stats.completed, stats.skipped, stats.failed
+	changedCount, deletedCount := stats.changed, stats.deleted
+	taskOutcomes := stats.outcomes
 
 	// Determine final outcome status
 	finalRunStatus := "SUCCESS"
@@ -886,39 +893,18 @@ SyncTasksDone:
 		}
 	}
 
-	// We count uploads/renames/conflict copies as changed files, and propagates as deleted
-	var changedCount, deletedCount int
-	taskRows, err := e.db.Query(`SELECT file_path, status, metadata FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2`, job.ID, generation)
-	if err == nil {
-		defer taskRows.Close()
-		for taskRows.Next() {
-			var fp, st string
-			var metaBytes []byte
-			if err := taskRows.Scan(&fp, &st, &metaBytes); err == nil && (st == "COMPLETED" || st == "SKIPPED") {
-				var meta map[string]interface{}
-				_ = json.Unmarshal(metaBytes, &meta)
-				action, _ := meta["action"].(string)
-				if action == "delete" {
-					deletedCount++
-				} else if action == "upload" || action == "download" || action == "conflict_copy" {
-					changedCount++
-				}
-			}
-		}
-	}
-
 	// Persist the durable delta baseline and return to IDLE in one transaction.
 	// The predicate excludes FAILED/PAUSED_*, so a concurrent task-worker
 	// failure is not overwritten.
-	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, taskOutcomes)
+	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, prevSourceDirs, prevTargetDirs, taskOutcomes)
 	finalized, err := db.FinalizeSyncJobPassWithStates(e.db, job.ID, generation, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed, upserts, deletes)
 	if err != nil {
-		log.Printf("[SyncEngine] Failed to persist and finalize job %s (outcome=%s total=%d processed=%d changed=%d deleted=%d failed=%d): %v\n", syncJobID, finalRunStatus, total, completed+skipped, changedCount, deletedCount, failed, err)
+		slog.Error("failed to finalize sync pass", "sync_job_id", syncJobID, "outcome", finalRunStatus, "total", total, "processed", completed+skipped, "changed", changedCount, "deleted", deletedCount, "failed", failed, "error", err)
 		e.failSync(syncJobID, generation, "Failed to persist sync state")
 		return
 	}
 	if !finalized {
-		log.Printf("[SyncEngine] Not finalizing job %s; status changed during execution\n", syncJobID)
+		slog.Warn("sync job status changed before finalization", "sync_job_id", syncJobID)
 		return
 	}
 
@@ -932,8 +918,7 @@ SyncTasksDone:
 		Target: job.ID,
 	})
 
-	log.Printf("[SyncEngine] Sync pass completed for job %s. Status: %s, Processed: %d, Changed: %d, Deleted: %d, Failed: %d\n",
-		syncJobID, finalRunStatus, completed+skipped, changedCount, deletedCount, failed)
+	slog.Info("sync pass completed", "sync_job_id", syncJobID, "status", finalRunStatus, "processed", completed+skipped, "changed", changedCount, "deleted", deletedCount, "failed", failed)
 }
 
 // drainRemainingTasks waits for any RUNNING tasks from a previous pass to reach
@@ -1009,14 +994,14 @@ func waitForNoRunningTasks(ctx context.Context, interval time.Duration, countRun
 
 func (e *Engine) failSync(id string, generation int, errMsg string) {
 	errMsg = sanitize.SanitizeError(errMsg)
-	log.Printf("[SyncEngine] Job %s failed pass: %s\n", id, errMsg)
+	slog.Error("sync pass failed", "sync_job_id", id, "error", errMsg)
 	failed, err := db.FailSyncJobPass(e.db, id, generation, errMsg)
 	if err != nil {
-		log.Printf("[SyncEngine] Failed to record failed pass for job %s: %v\n", id, err)
+		slog.Error("failed to record failed sync pass", "sync_job_id", id, "error", err)
 		return
 	}
 	if !failed {
-		log.Printf("[SyncEngine] Not recording failed pass for job %s; status changed during execution\n", id)
+		slog.Warn("sync job status changed before failure recording", "sync_job_id", id)
 		return
 	}
 	if ownerID, err := db.GetSyncJobOwnerID(e.db, id); err == nil {

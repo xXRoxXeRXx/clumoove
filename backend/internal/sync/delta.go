@@ -3,9 +3,10 @@ package sync
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"path"
 	"strings"
 	"sync"
@@ -17,6 +18,17 @@ import (
 	"backend/internal/sanitize"
 	"backend/internal/storage"
 )
+
+// taskToCreate is the provider-independent result of delta calculation.
+type taskToCreate struct {
+	filePath            string
+	fileSize            int64
+	sourceHash          string
+	resourceType        string
+	action              string
+	side                string // source or target
+	waitForConflictCopy bool
+}
 
 // cleanRelPath normalizes a relative path so that it always starts with a single leading slash
 // and has no trailing slash (unless it is the root "/").
@@ -38,6 +50,7 @@ func syncStateChanges(
 	sourceDirETags, targetDirETags map[string]string,
 	sourceDirMap, targetDirMap map[string]bool,
 	prevSourceDirETags, prevTargetDirETags map[string]string,
+	prevSourceDirs, prevTargetDirs map[string]bool,
 	taskOutcomes map[string]string,
 ) ([]*db.SyncState, []db.SyncStateDelete) {
 	allPaths := make(map[string]bool)
@@ -79,7 +92,6 @@ func syncStateChanges(
 				Size:       sourceFile.Size,
 				Mtime:      sql.NullTime{Time: sourceFile.LastModified, Valid: !sourceFile.LastModified.IsZero()},
 				SourceHash: sourceFile.Hash,
-				TargetHash: sourceFile.Hash,
 				ETag:       sourceFile.ETag,
 			})
 		} else {
@@ -94,7 +106,6 @@ func syncStateChanges(
 				RelPath:    cleanPath,
 				Size:       targetFile.Size,
 				Mtime:      sql.NullTime{Time: targetFile.LastModified, Valid: !targetFile.LastModified.IsZero()},
-				SourceHash: targetFile.Hash,
 				TargetHash: targetFile.Hash,
 				ETag:       targetFile.ETag,
 			})
@@ -156,7 +167,7 @@ func syncStateChanges(
 	// sync_state but no longer appear in the current scan (neither in dirMap
 	// nor dirETags) must be deleted to prevent unbounded table growth and
 	// spurious delete-propagation for already-removed directories.
-	for dirPath := range prevSourceDirETags {
+	for dirPath := range prevSourceDirs {
 		cdir := cleanRelPath(dirPath)
 		if !sourceDirMap[cdir] {
 			if _, hasETag := sourceDirETags[cdir]; !hasETag {
@@ -164,7 +175,7 @@ func syncStateChanges(
 			}
 		}
 	}
-	for dirPath := range prevTargetDirETags {
+	for dirPath := range prevTargetDirs {
 		cdir := cleanRelPath(dirPath)
 		if !targetDirMap[cdir] {
 			if _, hasETag := targetDirETags[cdir]; !hasETag {
@@ -176,7 +187,9 @@ func syncStateChanges(
 	return upserts, deletes
 }
 
-// listFiles traverses paths recursively using a parallel worker pool and hierarchical ETag folder skipping.
+// listFiles traverses paths recursively using a parallel worker pool. When a
+// directory ETag is unchanged, its previous subtree is retained without a
+// provider listing.
 func (e *Engine) listFiles(
 	ctx context.Context,
 	client storage.StorageProvider,
@@ -214,6 +227,27 @@ func (e *Engine) listFiles(
 		mu.Lock()
 		dirMap[cdir] = true
 		mu.Unlock()
+	}
+
+	copyPreviousSubtree := func(dirPath string) {
+		// prevFileStates is populated only from Size != -1 rows; directory
+		// entries live exclusively in prevDirETags.
+		cdir := cleanRelPath(dirPath)
+		prefix := cdir
+		if prefix != "/" {
+			prefix += "/"
+		}
+		for filePath, fs := range prevFileStates {
+			if cdir == "/" || filePath == cdir || strings.HasPrefix(filePath, prefix) {
+				addFile(fs)
+			}
+		}
+		for previousDir, etag := range prevDirETags {
+			if cdir == "/" || previousDir == cdir || strings.HasPrefix(previousDir, prefix) {
+				addDir(previousDir)
+				addDirETag(previousDir, etag)
+			}
+		}
 	}
 
 	// A directory whose contents could not be listed is not part of a
@@ -265,6 +299,10 @@ func (e *Engine) listFiles(
 			return
 		}
 		visited[cdir] = true
+		if etag != "" && prevDirETags[cdir] == etag {
+			copyPreviousSubtree(cdir)
+			return
+		}
 		pending = append(pending, listJob{dirPath: dirPath, etag: etag})
 	}
 
@@ -275,7 +313,7 @@ func (e *Engine) listFiles(
 		res, err := client.InspectResource(ctx, "files", startPath)
 		if err != nil {
 			if errors.Is(err, storage.ErrNotFound) {
-				log.Printf("[SyncEngine] start path %q not found on source (deleted/renamed), treating as empty\n", sanitize.SanitizeError(startPath))
+				slog.Debug("sync start path not found; treating as empty")
 				continue
 			}
 			addError(startPath, err.Error())
@@ -375,6 +413,12 @@ func isFileModified(curr fileState, prev db.SyncState, isSource bool) bool {
 	prevHash := prev.SourceHash
 	if !isSource {
 		prevHash = prev.TargetHash
+		// Older rows stored the target hash in source_hash. Preserve their
+		// change-detection behavior until the next successful reconciliation
+		// rewrites them with the side-correct field.
+		if prevHash == "" {
+			prevHash = prev.SourceHash
+		}
 	}
 
 	if curr.Hash != "" && prevHash != "" {
@@ -404,6 +448,57 @@ func isFileModified(curr fileState, prev db.SyncState, isSource bool) bool {
 	}
 
 	return false
+}
+
+type finalTaskStats struct {
+	total, completed, skipped, failed int
+	changed, deleted                  int
+	outcomes                          map[string]string
+}
+
+// readFinalTaskOutcomes collects statistics and the durable state outcome map
+// in one cancellable query, so finalization cannot observe mismatched task
+// snapshots.
+func (e *Engine) readFinalTaskOutcomes(ctx context.Context, jobID string, generation int) (finalTaskStats, error) {
+	stats := finalTaskStats{outcomes: make(map[string]string)}
+	rows, err := e.db.QueryContext(ctx, `SELECT file_path, status, metadata FROM tasks WHERE sync_job_id = $1 AND pass_generation = $2`, jobID, generation)
+	if err != nil {
+		return stats, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var filePath, status string
+		var metadata []byte
+		if err := rows.Scan(&filePath, &status, &metadata); err != nil {
+			return stats, err
+		}
+		stats.total++
+		stats.outcomes[filePath] = status
+		switch status {
+		case "COMPLETED":
+			stats.completed++
+		case "SKIPPED":
+			stats.skipped++
+		case "FAILED", "CANCELLED":
+			stats.failed++
+		}
+		if status != "COMPLETED" && status != "SKIPPED" {
+			continue
+		}
+		var meta struct {
+			Action string `json:"action"`
+		}
+		if json.Unmarshal(metadata, &meta) != nil {
+			continue
+		}
+		switch meta.Action {
+		case "delete":
+			stats.deleted++
+		case "upload", "download", "conflict_copy":
+			stats.changed++
+		}
+	}
+	return stats, rows.Err()
 }
 
 // isFileMatchingTarget determines whether a source file and a target file are identical in content/metadata.
@@ -507,7 +602,7 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 		if lockToken == "" || !claimed {
 			return "", fmt.Errorf("lock contention: unable to claim OAuth refresh lock for sync job %s (%s)", syncJobID, role)
 		}
-		defer e.queue.ReleaseOAuthLock(ctx, "sync", syncJobID, role, lockToken)
+		defer e.queue.ReleaseOAuthLock(context.Background(), "sync", syncJobID, role, lockToken)
 	}
 
 	// Re-fetch latest sync job details inside lock
@@ -559,7 +654,7 @@ func (e *Engine) ensureFreshToken(ctx context.Context, syncJobID string, job *db
 	expectedRefreshEnc := refreshTokenEnc
 	err = db.UpdateSyncJobOAuthTokens(e.db, syncJobID, role, newAccessEnc, newRefreshEnc, newExpiresAt, expectedRefreshEnc)
 	if errors.Is(err, db.ErrOAuthTokenConflict) {
-		log.Printf("[SyncEngine] Token update conflict for sync job %s (%s) — adopting winner token from DB\n", syncJobID, role)
+		slog.Info("sync OAuth token update conflicted; adopting stored winner", "sync_job_id", syncJobID, "role", role)
 		if latestJob, lerr := db.GetSyncJob(e.db, syncJobID); lerr == nil {
 			_, _, _, latestAccessEnc := tokenSet(latestJob)
 			if latestAccess, derr := crypto.DecryptWithDomain(latestAccessEnc, e.encryptionKey, crypto.DomainOAuthAccessToken); derr == nil {
