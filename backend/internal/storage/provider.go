@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"strings"
 	"time"
 )
@@ -45,6 +46,32 @@ var ErrUnsupportedResourceType = errors.New("resource type not supported by prov
 
 // ErrPathEscapesRoot is returned when a requested path escapes the storage root.
 var ErrPathEscapesRoot = errors.New("path escapes storage root")
+
+// validateStoragePath rejects traversal before providers normalize a remote
+// path. Silently collapsing ".." can make an invalid selection point at a
+// different resource than the caller requested.
+func validateStoragePath(value string) error {
+	for _, segment := range strings.Split(strings.ReplaceAll(value, "\\", "/"), "/") {
+		if segment == ".." {
+			return ErrPathEscapesRoot
+		}
+	}
+	return nil
+}
+
+// isConnectionFailure identifies errors that make a stateful provider session
+// unsafe to reuse. Protocol and permission errors leave a healthy session
+// intact, avoiding needless reconnect/login cycles while indexing.
+func isConnectionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
 
 // ErrPermanentTransfer identifies a provider response which cannot succeed on
 // retry (for example an unexportable Google document). Callers can fail the

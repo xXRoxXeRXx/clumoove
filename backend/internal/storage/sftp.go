@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -144,7 +144,9 @@ func (p *SFTPProvider) handleError(err error) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	p.cleanup()
+	if isConnectionFailure(err) {
+		p.cleanup()
+	}
 	return err
 }
 
@@ -347,7 +349,7 @@ func (p *SFTPProvider) Connect(ctx context.Context) (bool, error) {
 		if ctx != nil && ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		log.Printf("sftp connect failed: %v", err)
+		slog.ErrorContext(ctx, "storage provider connection failed", slog.String("provider", "sftp"), slog.String("operation", "connect"))
 		return false, fmt.Errorf("sftp connect: connection failed")
 	}
 	return true, nil
@@ -356,6 +358,9 @@ func (p *SFTPProvider) Connect(ctx context.Context) (bool, error) {
 func (p *SFTPProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+	if err := validateStoragePath(dirPath); err != nil {
+		return nil, err
 	}
 
 	cleanDirPath := p.cleanPath(dirPath)
@@ -397,6 +402,9 @@ func (p *SFTPProvider) GetDirectoryListing(ctx context.Context, resourceType, di
 func (p *SFTPProvider) InspectResource(ctx context.Context, resourceType, filePath string) (CloudResource, error) {
 	if resourceType != "files" {
 		return CloudResource{}, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return CloudResource{}, err
 	}
 
 	cleanPath := p.cleanPath(filePath)
@@ -461,6 +469,9 @@ func (p *SFTPProvider) StreamDownload(ctx context.Context, resourceType, filePat
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return nil, err
+	}
 
 	if err := p.lock(ctx); err != nil {
 		return nil, err
@@ -494,6 +505,9 @@ func (p *SFTPProvider) StreamDownload(ctx context.Context, resourceType, filePat
 func (p *SFTPProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
@@ -542,6 +556,9 @@ func (p *SFTPProvider) FileExists(ctx context.Context, resourceType, filePath st
 	if resourceType != "files" {
 		return false, 0, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return false, 0, err
+	}
 
 	cleanPath := p.cleanPath(filePath)
 	var info os.FileInfo
@@ -567,6 +584,9 @@ func (p *SFTPProvider) DeleteFile(ctx context.Context, resourceType, filePath st
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
+	}
 
 	cleanPath := p.cleanPath(filePath)
 	err := p.operation(ctx, func() error { return p.sftpClient.Remove(cleanPath) })
@@ -586,6 +606,12 @@ func (p *SFTPProvider) DeleteFile(ctx context.Context, resourceType, filePath st
 func (p *SFTPProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+	if err := validateStoragePath(oldPath); err != nil {
+		return err
+	}
+	if err := validateStoragePath(newPath); err != nil {
+		return err
 	}
 
 	cleanOld := p.cleanPath(oldPath)
@@ -611,15 +637,21 @@ func (p *SFTPProvider) GetFileHash(ctx context.Context, resourceType, filePath s
 	if resourceType != "files" {
 		return "", fmt.Errorf("resource type %s not supported by SFTP", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return "", err
+	}
 	if ctx != nil && ctx.Err() != nil {
 		return "", ctx.Err()
 	}
-	return "", fmt.Errorf("checksum not available")
+	return "", ErrChecksumNotAvailable
 }
 
 func (p *SFTPProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
 	}
 
 	if ctx != nil && ctx.Err() != nil {
@@ -633,11 +665,12 @@ func (p *SFTPProvider) CreateParentDirectories(ctx context.Context, resourceType
 	return p.CreateDirectory(ctx, resourceType, dir)
 }
 
-var globalSFTPCreatedDirs = newBoundedDirCache(5000)
-
 func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+	if err := validateStoragePath(dirPath); err != nil {
+		return err
 	}
 	if ctx != nil && ctx.Err() != nil {
 		return ctx.Err()
@@ -648,10 +681,6 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 		return nil
 	}
 
-	globalDirKey := p.Host + "|" + p.Username + "|" + cleanDirPath
-	if globalSFTPCreatedDirs.Contains(globalDirKey) {
-		return nil
-	}
 	err := p.operation(ctx, func() error { return p.sftpClient.MkdirAll(cleanDirPath) })
 	if err != nil {
 		if ctx != nil && ctx.Err() != nil {
@@ -660,13 +689,15 @@ func (p *SFTPProvider) CreateDirectory(ctx context.Context, resourceType, dirPat
 		return fmt.Errorf("sftp mkdirall failed: %w", err)
 	}
 
-	globalSFTPCreatedDirs.Add(globalDirKey)
 	return nil
 }
 
 func (p *SFTPProvider) ApplyMetadata(ctx context.Context, resourceType, filePath string, meta FileMetadata) error {
 	if resourceType != "files" || meta.ModifiedTime.IsZero() {
 		return nil
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
 	}
 	cleanPath := p.cleanPath(filePath)
 	if err := p.operation(ctx, func() error {

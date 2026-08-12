@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"os"
 	"testing"
@@ -14,7 +15,7 @@ func TestIsSMBAuthError(t *testing.T) {
 		expected bool
 	}{
 		{err: nil, expected: false},
-		{err: os.ErrPermission, expected: true},
+		{err: os.ErrPermission, expected: false}, // share access is not a login failure
 		{err: fmtError("The attempted logon is invalid. This is either due to a bad username or authentication information."), expected: true},
 		{err: fmtError("bad username or password"), expected: true},
 		{err: fmtError("permission denied"), expected: false}, // is NOT logon/bad username
@@ -122,6 +123,13 @@ func TestSMBDialerRequiresMessageSigning(t *testing.T) {
 	dialer := provider.dialer()
 	if !dialer.Negotiator.RequireMessageSigning {
 		t.Errorf("SMB dialer must require message signing")
+	}
+}
+
+func TestSMBGetFileHashRejectsTraversal(t *testing.T) {
+	p := &SMBProvider{}
+	if _, err := p.GetFileHash(context.Background(), "files", `folder\..\secret`); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("GetFileHash() error = %v, want ErrPathEscapesRoot", err)
 	}
 }
 

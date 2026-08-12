@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -21,6 +21,7 @@ import (
 	tmtypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 type S3Provider struct {
@@ -28,6 +29,8 @@ type S3Provider struct {
 	bucket     string
 	httpClient *http.Client
 }
+
+const s3UploadTargetParts int64 = 9000
 
 // Ensure S3Provider implements StorageProvider
 var _ StorageProvider = (*S3Provider)(nil)
@@ -133,13 +136,27 @@ func isS3AuthError(err error) bool {
 	if err == nil {
 		return false
 	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "403") ||
-		strings.Contains(errStr, "accessdenied") ||
-		strings.Contains(errStr, "invalidaccesskeyid") ||
-		strings.Contains(errStr, "signaturedoesnotmatch") ||
-		strings.Contains(errStr, "unauthorized") ||
-		strings.Contains(errStr, "401")
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "Unauthorized":
+			return true
+		}
+	}
+	var responseErr interface{ HTTPStatusCode() int }
+	return errors.As(err, &responseErr) && (responseErr.HTTPStatusCode() == http.StatusUnauthorized || responseErr.HTTPStatusCode() == http.StatusForbidden)
+}
+
+func isS3NotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var notFound *types.NotFound
+	if errors.As(err, &notFound) {
+		return true
+	}
+	var responseErr interface{ HTTPStatusCode() int }
+	return errors.As(err, &responseErr) && responseErr.HTTPStatusCode() == http.StatusNotFound
 }
 
 func (p *S3Provider) Close() error {
@@ -157,7 +174,7 @@ func (p *S3Provider) Connect(ctx context.Context) (bool, error) {
 		if isS3AuthError(err) {
 			return false, ErrAuth
 		}
-		log.Printf("S3 HeadBucket failed: %v", err)
+		slog.ErrorContext(ctx, "storage provider connection failed", slog.String("provider", "s3"), slog.String("operation", "head_bucket"))
 		return false, fmt.Errorf("failed to connect to S3 bucket %s", p.bucket)
 	}
 	return true, nil
@@ -187,7 +204,7 @@ func (p *S3Provider) GetDirectoryListing(ctx context.Context, resourceType, dirP
 			if isS3AuthError(err) {
 				return nil, ErrAuth
 			}
-			log.Printf("S3 ListObjectsV2 failed for path %q: %v", dirPath, err)
+			slog.ErrorContext(ctx, "storage provider operation failed", slog.String("provider", "s3"), slog.String("operation", "list_objects"))
 			return nil, fmt.Errorf("failed to list directory contents")
 		}
 
@@ -300,12 +317,25 @@ func (p *S3Provider) InspectResource(ctx context.Context, resourceType, filePath
 		}, nil
 	}
 
+	if isS3AuthError(err) {
+		return CloudResource{}, ErrAuth
+	}
+	if !isS3NotFoundError(err) {
+		return CloudResource{}, fmt.Errorf("s3 inspect object: %w", err)
+	}
+
 	listResp, errList := p.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 		Bucket:  aws.String(p.bucket),
 		Prefix:  aws.String(cleanPath + "/"),
 		MaxKeys: aws.Int32(1),
 	})
-	if errList == nil && ((listResp.KeyCount != nil && *listResp.KeyCount > 0) || len(listResp.Contents) > 0 || len(listResp.CommonPrefixes) > 0) {
+	if errList != nil {
+		if isS3AuthError(errList) {
+			return CloudResource{}, ErrAuth
+		}
+		return CloudResource{}, fmt.Errorf("s3 inspect directory: %w", errList)
+	}
+	if (listResp.KeyCount != nil && *listResp.KeyCount > 0) || len(listResp.Contents) > 0 || len(listResp.CommonPrefixes) > 0 {
 		return CloudResource{
 			Path:  "/" + cleanPath,
 			Name:  path.Base(cleanPath),
@@ -313,9 +343,6 @@ func (p *S3Provider) InspectResource(ctx context.Context, resourceType, filePath
 		}, nil
 	}
 
-	if isS3AuthError(err) {
-		return CloudResource{}, ErrAuth
-	}
 	return CloudResource{}, fmt.Errorf("s3 inspect: %w", ErrNotFound)
 }
 
@@ -349,7 +376,9 @@ func (p *S3Provider) StreamUpload(ctx context.Context, resourceType, filePath st
 	uploader := transfermanager.New(p.client, func(o *transfermanager.Options) {
 		partSize := int64(8 * 1024 * 1024) // 8MB default
 		if size > 0 {
-			calculated := size / 9000
+			// Keep uploads below S3's 10,000-part maximum while leaving room for
+			// a final partial part.
+			calculated := size / s3UploadTargetParts
 			if calculated > partSize {
 				partSize = calculated
 			}
@@ -393,8 +422,7 @@ func (p *S3Provider) FileExists(ctx context.Context, resourceType, filePath stri
 		Key:    aws.String(cleanPath),
 	})
 	if err != nil {
-		var nsk *types.NoSuchKey
-		if errors.As(err, &nsk) || strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NotFound") {
+		if isS3NotFoundError(err) {
 			return false, 0, nil
 		}
 		if isS3AuthError(err) {
@@ -421,8 +449,7 @@ func (p *S3Provider) DeleteFile(ctx context.Context, resourceType, filePath stri
 		Key:    aws.String(cleanPath),
 	})
 	if err != nil {
-		var nsk *types.NoSuchKey
-		if errors.As(err, &nsk) || strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NotFound") {
+		if isS3NotFoundError(err) {
 			return nil
 		}
 		if isS3AuthError(err) {
@@ -471,7 +498,7 @@ func (p *S3Provider) GetFileHash(ctx context.Context, resourceType, filePath str
 		}
 	}
 
-	return "", fmt.Errorf("checksum not available")
+	return "", ErrChecksumNotAvailable
 }
 
 // RenameFile copies oldPath to newPath, then deletes oldPath. It is not atomic:
@@ -502,7 +529,7 @@ func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newP
 	}
 
 	if size <= 5*1024*1024*1024 {
-		copySrc := url.PathEscape(p.bucket + "/" + oldKey)
+		copySrc := url.PathEscape(p.bucket) + "/" + url.PathEscape(oldKey)
 		_, err = p.client.CopyObject(ctx, &s3.CopyObjectInput{
 			Bucket:     aws.String(p.bucket),
 			CopySource: aws.String(copySrc),
@@ -556,6 +583,16 @@ func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, s
 		return err
 	}
 	uploadID := createResp.UploadId
+	abort := true
+	defer func() {
+		if abort {
+			abortCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_, _ = p.client.AbortMultipartUpload(abortCtx, &s3.AbortMultipartUploadInput{
+				Bucket: aws.String(p.bucket), Key: aws.String(dstKey), UploadId: uploadID,
+			})
+		}
+	}()
 
 	var partSize int64 = 5 * 1024 * 1024 * 1024
 	var partNumber int32 = 1
@@ -568,7 +605,7 @@ func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, s
 		}
 
 		copySourceRange := fmt.Sprintf("bytes=%d-%d", offset, end)
-		copySrc := url.PathEscape(p.bucket + "/" + srcKey)
+		copySrc := url.PathEscape(p.bucket) + "/" + url.PathEscape(srcKey)
 
 		partResp, err := p.client.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
 			Bucket:          aws.String(p.bucket),
@@ -579,11 +616,6 @@ func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, s
 			CopySourceRange: aws.String(copySourceRange),
 		})
 		if err != nil {
-			p.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
-				Bucket:   aws.String(p.bucket),
-				Key:      aws.String(dstKey),
-				UploadId: uploadID,
-			})
 			return err
 		}
 
@@ -602,6 +634,9 @@ func (p *S3Provider) multipartCopy(ctx context.Context, srcKey, dstKey string, s
 			Parts: completedParts,
 		},
 	})
+	if err == nil {
+		abort = false
+	}
 	return err
 }
 

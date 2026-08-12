@@ -208,6 +208,26 @@ func TestSFTPConnectReturnsCancelledContext(t *testing.T) {
 	}
 }
 
+func TestSFTPGetFileHashReturnsChecksumSentinel(t *testing.T) {
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", "pass")
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+	if _, err := p.GetFileHash(context.Background(), "files", "/file.txt"); !errors.Is(err, ErrChecksumNotAvailable) {
+		t.Fatalf("GetFileHash() error = %v, want ErrChecksumNotAvailable", err)
+	}
+}
+
+func TestSFTPGetFileHashRejectsTraversal(t *testing.T) {
+	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", "pass")
+	if err != nil {
+		t.Fatalf("failed to create provider: %v", err)
+	}
+	if _, err := p.GetFileHash(context.Background(), "files", `folder\..\secret`); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Fatalf("GetFileHash() error = %v, want ErrPathEscapesRoot", err)
+	}
+}
+
 func TestSFTPApplyMetadataReturnsConnectionFailure(t *testing.T) {
 	p, err := NewSFTPProvider("sftp://example.com/?host_key="+testSFTPHostKeyFingerprint, "user", "")
 	if err != nil {

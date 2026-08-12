@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -86,9 +86,6 @@ func isSMBAuthError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, os.ErrPermission) {
-		return true
-	}
 	errStr := strings.ToLower(err.Error())
 	return strings.Contains(errStr, "logon") ||
 		strings.Contains(errStr, "bad username") ||
@@ -97,7 +94,33 @@ func isSMBAuthError(err error) bool {
 		strings.Contains(errStr, "unauthorized")
 }
 
-// handleError resets the connection state on potential network/socket errors.
+func smbHandshakeDeadline(ctx context.Context) time.Time {
+	deadline := time.Now().Add(15 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
+}
+
+// closeSMBConnectionWhenDone interrupts go-smb2 operations, which otherwise
+// may wait indefinitely for a stalled server response. The caller holds p.mu,
+// so closing this captured connection cannot interrupt another provider call.
+func closeSMBConnectionWhenDone(ctx context.Context, conn net.Conn) func() {
+	if ctx == nil || ctx.Done() == nil || conn == nil {
+		return func() {}
+	}
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-stopped:
+		}
+	}()
+	return func() { close(stopped) }
+}
+
+// handleError resets the connection state only on network/socket errors.
 // Must be called with p.mu lock held.
 func (p *SMBProvider) handleError(err error) error {
 	if err == nil {
@@ -106,7 +129,9 @@ func (p *SMBProvider) handleError(err error) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	p.cleanup()
+	if isConnectionFailure(err) {
+		p.cleanup()
+	}
 	return err
 }
 
@@ -114,32 +139,78 @@ func (p *SMBProvider) ensureConnected(ctx context.Context) error {
 	if p.fs != nil {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	addr := net.JoinHostPort(p.Host, p.Port)
 	conn, err := egressDialer(p.Host)(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to host %s: %w", addr, err)
 	}
+	if err := conn.SetDeadline(smbHandshakeDeadline(ctx)); err != nil {
+		_ = conn.Close()
+		return fmt.Errorf("failed to set SMB connection deadline: %w", err)
+	}
+	stop := closeSMBConnectionWhenDone(ctx, conn)
 
 	dialer := p.dialer()
 
 	s, err := dialer.DialContext(ctx, conn)
 	if err != nil {
+		stop()
 		conn.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("failed to authenticate: %w", err)
 	}
 
 	fs, err := s.Mount(p.Share)
 	if err != nil {
+		stop()
 		s.Logoff()
 		conn.Close()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return fmt.Errorf("failed to mount share %s: %w", p.Share, err)
+	}
+	stop()
+	if ctx.Err() != nil {
+		_ = fs.Umount()
+		_ = s.Logoff()
+		_ = conn.Close()
+		return ctx.Err()
+	}
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		_ = fs.Umount()
+		_ = s.Logoff()
+		_ = conn.Close()
+		return fmt.Errorf("failed to clear SMB connection deadline: %w", err)
 	}
 
 	p.conn = conn
 	p.session = s
 	p.fs = fs
 	return nil
+}
+
+// operation executes one non-streaming SMB call while holding an exclusive
+// session lock. Closing the raw connection is the only reliable cancellation
+// mechanism provided by go-smb2 for a blocked receive.
+func (p *SMBProvider) operation(ctx context.Context, fn func(*smb2.Share) error) error {
+	if err := p.ensureConnected(ctx); err != nil {
+		return p.handleError(err)
+	}
+	stop := closeSMBConnectionWhenDone(ctx, p.conn)
+	err := fn(p.fs)
+	stop()
+	if ctx != nil && ctx.Err() != nil {
+		p.cleanup()
+		return ctx.Err()
+	}
+	return p.handleError(err)
 }
 
 func (p *SMBProvider) dialer() *smb2.Dialer {
@@ -187,19 +258,24 @@ func (p *SMBProvider) Connect(ctx context.Context) (bool, error) {
 		if isSMBAuthError(err) {
 			return false, fmt.Errorf("smb connect: %w", ErrAuth)
 		}
-		log.Printf("smb connect failed: %v", err)
+		slog.ErrorContext(ctx, "storage provider connection failed", slog.String("provider", "smb"), slog.String("operation", "connect"))
 		return false, fmt.Errorf("smb connect: connection failed")
 	}
 
 	// Verify by listing the share root
-	fsWithCtx := p.fs.WithContext(ctx)
-	_, err := fsWithCtx.ReadDir(".")
+	stop := closeSMBConnectionWhenDone(ctx, p.conn)
+	_, err := p.fs.WithContext(ctx).ReadDir(".")
+	stop()
+	if ctx != nil && ctx.Err() != nil {
+		p.cleanup()
+		return false, ctx.Err()
+	}
 	if err != nil {
 		p.cleanup()
 		if isSMBAuthError(err) {
 			return false, fmt.Errorf("smb connect: %w", ErrAuth)
 		}
-		log.Printf("smb read root failed: %v", err)
+		slog.ErrorContext(ctx, "storage provider operation failed", slog.String("provider", "smb"), slog.String("operation", "list_root"))
 		return false, fmt.Errorf("smb connect: failed to list share root")
 	}
 
@@ -210,19 +286,21 @@ func (p *SMBProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by SMB", resourceType)
 	}
+	if err := validateStoragePath(dirPath); err != nil {
+		return nil, err
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return nil, p.handleError(err)
-	}
-
 	cleanDirPath := p.cleanPath(dirPath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	infos, err := fsWithCtx.ReadDir(cleanDirPath)
+	var infos []os.FileInfo
+	err := p.operation(ctx, func(fs *smb2.Share) error {
+		var err error
+		infos, err = fs.WithContext(ctx).ReadDir(cleanDirPath)
+		return err
+	})
 	if err != nil {
-		return nil, p.handleError(fmt.Errorf("smb list directory failed: %w", err))
+		return nil, fmt.Errorf("smb list directory failed: %w", err)
 	}
 
 	var resources []CloudResource
@@ -251,22 +329,24 @@ func (p *SMBProvider) InspectResource(ctx context.Context, resourceType, filePat
 	if resourceType != "files" {
 		return CloudResource{}, fmt.Errorf("resource type %s not supported by SMB", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return CloudResource{}, err
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return CloudResource{}, p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	info, err := fsWithCtx.Stat(cleanPath)
+	var info os.FileInfo
+	err := p.operation(ctx, func(fs *smb2.Share) error {
+		var err error
+		info, err = fs.WithContext(ctx).Stat(cleanPath)
+		return err
+	})
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return CloudResource{}, fmt.Errorf("smb inspect: %w", ErrNotFound)
 		}
-		return CloudResource{}, p.handleError(fmt.Errorf("smb inspect resource failed: %w", err))
+		return CloudResource{}, fmt.Errorf("smb inspect resource failed: %w", err)
 	}
 
 	return CloudResource{
@@ -278,31 +358,80 @@ func (p *SMBProvider) InspectResource(ctx context.Context, resourceType, filePat
 	}, nil
 }
 
+type smbDownload struct {
+	file     *smb2.File
+	provider *SMBProvider
+	ctx      context.Context
+	stop     func()
+	once     sync.Once
+	err      error
+}
+
+func (r *smbDownload) Read(buf []byte) (int, error) {
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return 0, r.ctx.Err()
+	}
+	n, err := r.file.Read(buf)
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return n, r.ctx.Err()
+	}
+	return n, err
+}
+
+func (r *smbDownload) Close() error {
+	r.once.Do(func() {
+		r.stop()
+		r.err = r.file.Close()
+		if r.err != nil || (r.ctx != nil && r.ctx.Err() != nil) {
+			r.provider.cleanup()
+		}
+		r.provider.mu.Unlock()
+	})
+	return r.err
+}
+
 func (p *SMBProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
 	if resourceType != "files" {
 		return nil, fmt.Errorf("resource type %s not supported by SMB", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return nil, err
+	}
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if err := p.ensureConnected(ctx); err != nil {
-		return nil, p.handleError(err)
+		err = p.handleError(err)
+		p.mu.Unlock()
+		return nil, err
 	}
 
 	cleanPath := p.cleanPath(filePath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	file, err := fsWithCtx.Open(cleanPath)
+	stop := closeSMBConnectionWhenDone(ctx, p.conn)
+	file, err := p.fs.WithContext(ctx).Open(cleanPath)
 	if err != nil {
-		return nil, p.handleError(fmt.Errorf("smb open file failed: %w", err))
+		stop()
+		err = p.handleError(fmt.Errorf("smb open file failed: %w", err))
+		p.mu.Unlock()
+		return nil, err
 	}
-
-	return file, nil
+	if ctx != nil && ctx.Err() != nil {
+		stop()
+		_ = file.Close()
+		p.cleanup()
+		p.mu.Unlock()
+		return nil, ctx.Err()
+	}
+	// Keep the session locked until the reader closes. Providers are currently
+	// per task, but this also preserves stream validity if pooling is added.
+	return &smbDownload{file: file, provider: p, ctx: ctx, stop: stop}, nil
 }
 
 func (p *SMBProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
 	}
 
 	if err := p.CreateParentDirectories(ctx, resourceType, filePath); err != nil {
@@ -311,24 +440,18 @@ func (p *SMBProvider) StreamUpload(ctx context.Context, resourceType, filePath s
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	file, err := fsWithCtx.Create(cleanPath)
-	if err != nil {
-		return p.handleError(fmt.Errorf("smb create file failed: %w", err))
-	}
-	defer file.Close()
-
-	if _, err := io.Copy(file, stream); err != nil {
-		return p.handleError(fmt.Errorf("smb write file failed: %w", err))
-	}
-
-	return nil
+	return p.operation(ctx, func(fs *smb2.Share) error {
+		file, err := fs.WithContext(ctx).Create(cleanPath)
+		if err != nil {
+			return fmt.Errorf("smb create file failed: %w", err)
+		}
+		defer file.Close()
+		if _, err := io.Copy(file, stream); err != nil {
+			return fmt.Errorf("smb write file failed: %w", err)
+		}
+		return nil
+	})
 }
 
 func (p *SMBProvider) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
@@ -343,22 +466,24 @@ func (p *SMBProvider) FileExists(ctx context.Context, resourceType, filePath str
 	if resourceType != "files" {
 		return false, 0, fmt.Errorf("resource type %s not supported by SMB", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return false, 0, err
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return false, 0, p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	info, err := fsWithCtx.Stat(cleanPath)
+	var info os.FileInfo
+	err := p.operation(ctx, func(fs *smb2.Share) error {
+		var err error
+		info, err = fs.WithContext(ctx).Stat(cleanPath)
+		return err
+	})
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, 0, nil
 		}
-		return false, 0, p.handleError(fmt.Errorf("smb stat failed: %w", err))
+		return false, 0, fmt.Errorf("smb stat failed: %w", err)
 	}
 
 	return true, info.Size(), nil
@@ -368,22 +493,19 @@ func (p *SMBProvider) DeleteFile(ctx context.Context, resourceType, filePath str
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	err := fsWithCtx.Remove(cleanPath)
+	err := p.operation(ctx, func(fs *smb2.Share) error { return fs.WithContext(ctx).Remove(cleanPath) })
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return p.handleError(fmt.Errorf("smb remove failed: %w", err))
+		return fmt.Errorf("smb remove failed: %w", err)
 	}
 
 	return nil
@@ -393,20 +515,20 @@ func (p *SMBProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)
 	}
+	if err := validateStoragePath(oldPath); err != nil {
+		return err
+	}
+	if err := validateStoragePath(newPath); err != nil {
+		return err
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return p.handleError(err)
-	}
-
 	cleanOld := p.cleanPath(oldPath)
 	cleanNew := p.cleanPath(newPath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	err := fsWithCtx.Rename(cleanOld, cleanNew)
+	err := p.operation(ctx, func(fs *smb2.Share) error { return fs.WithContext(ctx).Rename(cleanOld, cleanNew) })
 	if err != nil {
-		return p.handleError(fmt.Errorf("smb rename failed: %w", err))
+		return fmt.Errorf("smb rename failed: %w", err)
 	}
 
 	return nil
@@ -419,12 +541,21 @@ func (p *SMBProvider) SupportsAtomicRename() bool {
 }
 
 func (p *SMBProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	if resourceType != "files" {
+		return "", fmt.Errorf("resource type %s not supported by SMB", resourceType)
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return "", err
+	}
 	return "", ErrChecksumNotAvailable
 }
 
 func (p *SMBProvider) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
 	}
 
 	dir := path.Dir(filePath)
@@ -435,11 +566,12 @@ func (p *SMBProvider) CreateParentDirectories(ctx context.Context, resourceType,
 	return p.CreateDirectory(ctx, resourceType, dir)
 }
 
-var globalSMBCreatedDirs = newBoundedDirCache(5000)
-
 func (p *SMBProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)
+	}
+	if err := validateStoragePath(dirPath); err != nil {
+		return err
 	}
 
 	cleanDirPath := p.cleanPath(dirPath)
@@ -447,25 +579,12 @@ func (p *SMBProvider) CreateDirectory(ctx context.Context, resourceType, dirPath
 		return nil
 	}
 
-	globalDirKey := p.Host + "|" + p.Share + "|" + cleanDirPath
-	if globalSMBCreatedDirs.Contains(globalDirKey) {
-		return nil
-	}
-
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return p.handleError(err)
-	}
-
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	err := fsWithCtx.MkdirAll(cleanDirPath, 0755)
+	err := p.operation(ctx, func(fs *smb2.Share) error { return fs.WithContext(ctx).MkdirAll(cleanDirPath, 0755) })
 	if err != nil {
-		return p.handleError(fmt.Errorf("smb mkdirall failed: %w", err))
+		return fmt.Errorf("smb mkdirall failed: %w", err)
 	}
-
-	globalSMBCreatedDirs.Add(globalDirKey)
 	return nil
 }
 
@@ -473,19 +592,18 @@ func (p *SMBProvider) ApplyMetadata(ctx context.Context, resourceType, filePath 
 	if resourceType != "files" || meta.ModifiedTime.IsZero() {
 		return nil
 	}
+	if err := validateStoragePath(filePath); err != nil {
+		return err
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.ensureConnected(ctx); err != nil {
-		return p.handleError(err)
-	}
-
 	cleanPath := p.cleanPath(filePath)
-	fsWithCtx := p.fs.WithContext(ctx)
-
-	err := fsWithCtx.Chtimes(cleanPath, time.Now(), meta.ModifiedTime)
+	err := p.operation(ctx, func(fs *smb2.Share) error {
+		return fs.WithContext(ctx).Chtimes(cleanPath, time.Now(), meta.ModifiedTime)
+	})
 	if err != nil {
-		return p.handleError(err)
+		return fmt.Errorf("smb apply metadata: %w", err)
 	}
 
 	return nil

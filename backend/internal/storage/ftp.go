@@ -44,6 +44,7 @@ type FTPProvider struct {
 	client        *ftp.ServerConn
 	dialContext   context.Context
 	controlDialed bool
+	controlConn   net.Conn
 }
 
 var _ StorageProvider = (*FTPProvider)(nil)
@@ -115,6 +116,7 @@ func (p *FTPProvider) cleanup() {
 		_ = p.client.Quit()
 		p.client = nil
 	}
+	p.controlConn = nil
 }
 
 func (p *FTPProvider) Close() error {
@@ -157,13 +159,31 @@ func (p *FTPProvider) dial(network, address string) (net.Conn, error) {
 	}
 	if p.mode == ftpImplicitTLS {
 		tlsConn := tls.Client(conn, p.tlsConfig)
+		if err := tlsConn.SetDeadline(ftpHandshakeDeadline(ctx)); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 		if err := tlsConn.HandshakeContext(ctx); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
+		p.controlConn = tlsConn
 		return tlsConn, nil
 	}
+	if err := conn.SetDeadline(ftpHandshakeDeadline(ctx)); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	p.controlConn = conn
 	return conn, nil
+}
+
+func ftpHandshakeDeadline(ctx context.Context) time.Time {
+	deadline := time.Now().Add(ftpTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		return ctxDeadline
+	}
+	return deadline
 }
 
 func (p *FTPProvider) ensureConnected(ctx context.Context) error {
@@ -192,7 +212,17 @@ func (p *FTPProvider) ensureConnected(ctx context.Context) error {
 	}
 	if err := client.Login(p.Username, p.Password); err != nil {
 		_ = client.Quit()
+		p.controlConn = nil
 		return err
+	}
+	if p.controlConn == nil {
+		_ = client.Quit()
+		return errors.New("FTPS control connection was not established")
+	}
+	if err := p.controlConn.SetDeadline(time.Time{}); err != nil {
+		_ = client.Quit()
+		p.controlConn = nil
+		return fmt.Errorf("clear FTPS control connection deadline: %w", err)
 	}
 	p.client = client
 	return nil
@@ -212,7 +242,9 @@ func (p *FTPProvider) handleError(err error) error {
 	if err == nil {
 		return nil
 	}
-	p.cleanup()
+	if isConnectionFailure(err) {
+		p.cleanup()
+	}
 	return err
 }
 

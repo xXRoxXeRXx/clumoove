@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 func TestNewS3ProviderValidURL(t *testing.T) {
@@ -69,9 +71,10 @@ func TestIsS3AuthError(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{errors.New("operation error S3: HeadBucket, https response error StatusCode: 403, RequestID: 123, api error AccessDenied: Access Denied"), true},
-		{errors.New("InvalidAccessKeyId: The AWS Access Key Id you provided does not exist"), true},
-		{errors.New("SignatureDoesNotMatch: The request signature we calculated does not match"), true},
+		{&types.AccessDenied{}, true},
+		{s3StatusError{status: 401}, true},
+		{s3StatusError{status: 403}, true},
+		{errors.New("dial tcp 10.0.0.1:4032: connect: connection refused"), false},
 		{errors.New("NoSuchKey: The specified key does not exist"), false},
 		{nil, false},
 	}
@@ -79,6 +82,23 @@ func TestIsS3AuthError(t *testing.T) {
 		if got := isS3AuthError(c.err); got != c.want {
 			t.Errorf("isS3AuthError(%v) = %v, want %v", c.err, got, c.want)
 		}
+	}
+}
+
+type s3StatusError struct{ status int }
+
+func (e s3StatusError) Error() string       { return "s3 response error" }
+func (e s3StatusError) HTTPStatusCode() int { return e.status }
+
+func TestIsS3NotFoundError(t *testing.T) {
+	if !isS3NotFoundError(&types.NotFound{}) {
+		t.Fatal("typed S3 NotFound must be recognized")
+	}
+	if !isS3NotFoundError(s3StatusError{status: 404}) {
+		t.Fatal("HTTP 404 must be recognized")
+	}
+	if isS3NotFoundError(errors.New("dial tcp 10.0.0.1:4040: connect: connection refused")) {
+		t.Fatal("a port number must not be treated as a not-found response")
 	}
 }
 
@@ -125,5 +145,11 @@ func TestS3ProviderNonFilesRejected(t *testing.T) {
 		if err := p.CreateDirectory(ctx, resourceType, "/dir"); err == nil {
 			t.Errorf("CreateDirectory: expected error for resourceType %q, got nil", resourceType)
 		}
+	}
+}
+
+func TestS3UploadTargetPartsLeavesMultipartHeadroom(t *testing.T) {
+	if s3UploadTargetParts >= 10000 {
+		t.Fatalf("s3UploadTargetParts = %d, must leave room below S3's 10,000-part limit", s3UploadTargetParts)
 	}
 }
