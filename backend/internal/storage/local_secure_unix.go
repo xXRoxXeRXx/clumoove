@@ -125,7 +125,7 @@ func (r *localRoot) directory(parts []string, create bool) (int, error) {
 	for _, part := range parts {
 		next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		if openErr != nil && create && openErr == unix.ENOENT {
-			if err := unix.Mkdirat(fd, part, 0o755); err != nil && err != unix.EEXIST {
+			if err := unix.Mkdirat(fd, part, 0o700); err != nil && err != unix.EEXIST {
 				unix.Close(fd)
 				return -1, err
 			}
@@ -291,5 +291,7 @@ func (r *localRoot) chtimes(parts []string, modTime time.Time) error {
 		unix.NsecToTimespec(time.Now().UnixNano()),
 		unix.NsecToTimespec(modTime.UnixNano()),
 	}
-	return unix.UtimesNanoAt(parent, parts[len(parts)-1], ts, 0)
+	// Do not follow a final-component symlink substituted after upload. All
+	// other local-provider operations use O_NOFOLLOW for the same reason.
+	return unix.UtimesNanoAt(parent, parts[len(parts)-1], ts, unix.AT_SYMLINK_NOFOLLOW)
 }

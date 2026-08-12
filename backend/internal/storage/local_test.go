@@ -748,3 +748,39 @@ func TestLocalApplyMetadata(t *testing.T) {
 		t.Errorf("LastModified = %v, want %v", res.LastModified, expectedTime)
 	}
 }
+
+func TestLocalApplyMetadataDoesNotFollowReplacedSymlink(t *testing.T) {
+	p := newTestLocalProvider(t)
+	ctx := context.Background()
+	if err := p.StreamUpload(ctx, "files", "file.txt", strings.NewReader("content"), int64(len("content"))); err != nil {
+		t.Fatalf("StreamUpload: %v", err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatalf("create outside file: %v", err)
+	}
+	originalTime := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(outside, originalTime, originalTime); err != nil {
+		t.Fatalf("set outside timestamps: %v", err)
+	}
+	localFile := filepath.Join(p.root, "file.txt")
+	if err := os.Remove(localFile); err != nil {
+		t.Fatalf("remove uploaded file: %v", err)
+	}
+	if err := os.Symlink(outside, localFile); err != nil {
+		t.Fatalf("replace uploaded file with symlink: %v", err)
+	}
+
+	updatedTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := p.ApplyMetadata(ctx, "files", "file.txt", FileMetadata{ModifiedTime: updatedTime}); err != nil {
+		t.Fatalf("ApplyMetadata: %v", err)
+	}
+	info, err := os.Stat(outside)
+	if err != nil {
+		t.Fatalf("stat outside file: %v", err)
+	}
+	if !info.ModTime().Equal(originalTime) {
+		t.Fatalf("outside mtime = %v, want unchanged %v", info.ModTime(), originalTime)
+	}
+}

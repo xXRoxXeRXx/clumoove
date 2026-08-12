@@ -168,15 +168,13 @@ func (p *SeafileProvider) getToken(ctx context.Context) (string, error) {
 	}
 	p.mu.RUnlock()
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.Token != "" {
-		return p.Token, nil
-	}
-
 	// If username is empty and password is provided, treat password as API token.
 	if p.Username == "" && p.Password != "" {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.Token != "" {
+			return p.Token, nil
+		}
 		p.Token = p.Password
 		return p.Token, nil
 	}
@@ -185,7 +183,9 @@ func (p *SeafileProvider) getToken(ctx context.Context) (string, error) {
 		seafileAccountTokens.Lock()
 		if token := seafileAccountTokens.tokens[key]; token != "" {
 			seafileAccountTokens.Unlock()
+			p.mu.Lock()
 			p.Token = token
+			p.mu.Unlock()
 			return token, nil
 		}
 		if retryAt := seafileAccountTokens.retryAfter[key]; retryAt.After(time.Now()) {
@@ -222,7 +222,9 @@ func (p *SeafileProvider) getToken(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		p.mu.Lock()
 		p.Token = token
+		p.mu.Unlock()
 		return token, nil
 	}
 }
@@ -796,6 +798,8 @@ func (p *SeafileProvider) StreamUploadChunked(ctx context.Context, resourceType,
 		return fmt.Errorf("seafile returned invalid resumable upload offset")
 	}
 	if uploaded.UploadedBytes > 0 {
+		// Source streams are not generally seekable, so resuming requires
+		// linearly consuming the already-uploaded prefix before continuing.
 		if _, err := io.CopyN(io.Discard, stream, uploaded.UploadedBytes); err != nil {
 			return fmt.Errorf("failed to advance source stream for seafile resumable upload: %w", err)
 		}

@@ -278,7 +278,7 @@ func (p *ImmichProvider) getAssetByID(ctx context.Context, assetID string) (immi
 	}
 	defer r.Body.Close()
 	if r.StatusCode == http.StatusNotFound {
-		return immichAsset{}, fmt.Errorf("asset not found")
+		return immichAsset{}, fmt.Errorf("immich asset: %w", ErrNotFound)
 	}
 	if r.StatusCode != http.StatusOK {
 		return immichAsset{}, immichStatus(r, "get asset")
@@ -345,15 +345,21 @@ func (p *ImmichProvider) StreamUpload(ctx context.Context, typ, filePath string,
 	}()
 	req, err := http.NewRequestWithContext(ctx, "POST", p.BaseURL+"/assets", pr)
 	if err != nil {
+		_ = pr.Close()
 		return err
 	}
 	req.Header.Set("x-api-key", p.APIKey)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	if checksum := UploadChecksum(ctx); strings.HasPrefix(checksum, "SHA1:") {
+		// This is an optional duplicate-detection hint. Immich v2 does not
+		// require the header, so correctness never depends on it being honored.
 		req.Header.Set("x-immich-checksum", strings.TrimPrefix(checksum, "SHA1:"))
 	}
 	r, err := p.HTTPClient.Do(req)
 	if err != nil {
+		// io.Pipe is unbuffered. Closing the read side releases the multipart
+		// writer goroutine (and any source stream it would otherwise retain).
+		_ = pr.Close()
 		return err
 	}
 	defer r.Body.Close()

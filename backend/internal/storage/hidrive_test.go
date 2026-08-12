@@ -115,6 +115,46 @@ func TestHiDriveProviderConnect(t *testing.T) {
 	}
 }
 
+func TestHiDriveChunkedUploadCleansPartialTargetAfterLaterChunkFailure(t *testing.T) {
+	const chunkSize = 50 * 1024 * 1024
+	var deleted bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/file":
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPatch && r.URL.Path == "/file":
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusInternalServerError)
+		case r.Method == http.MethodGet && r.URL.Path == "/meta":
+			_ = json.NewEncoder(w).Encode(hidriveMetaResponse{Path: "/partial.bin", Name: "partial.bin", Type: "file", Size: chunkSize})
+		case r.Method == http.MethodDelete && r.URL.Path == "/file":
+			if got := r.URL.Query().Get("path"); got != "/partial.bin" {
+				t.Errorf("cleanup path = %q, want /partial.bin", got)
+			}
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	p, err := NewHiDriveProvider("token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.BaseURL = server.URL
+	stream := io.MultiReader(bytes.NewReader(make([]byte, chunkSize)), strings.NewReader("x"))
+	err = p.StreamUploadChunked(context.Background(), "files", "/partial.bin", stream, chunkSize+1, nil)
+	if err == nil {
+		t.Fatal("StreamUploadChunked unexpectedly succeeded")
+	}
+	if !deleted {
+		t.Fatal("partial target was not deleted after later chunk failure")
+	}
+}
+
 func TestHiDriveProviderDirectoryListing(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/dir" {

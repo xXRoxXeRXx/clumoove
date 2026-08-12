@@ -91,6 +91,9 @@ func (p *MegaProvider) Connect(ctx context.Context) (bool, error) {
 		} else {
 			lastErr = err
 		}
+		// This attempt is being discarded, so release any idle connections it
+		// opened before retrying authentication with a fresh client.
+		httpClient.CloseIdleConnections()
 
 		if !isTransientMegaConnectError(lastErr) || attempt == megaConnectAttempts-1 {
 			break
@@ -493,7 +496,7 @@ func (p *MegaProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	source, _, err := p.lookup(oldPath)
+	source, oldClean, err := p.lookup(oldPath)
 	if err != nil {
 		return err
 	}
@@ -511,11 +514,34 @@ func (p *MegaProvider) RenameFile(ctx context.Context, resourceType, oldPath, ne
 		}
 		return fmt.Errorf("MEGA destination already exists")
 	}
+	newName := parts[len(parts)-1]
+	if path.Dir(oldClean) == path.Dir(clean) {
+		// The processor's atomic promotion is always in one directory. Avoid a
+		// redundant Move call so this remains a single MEGA rename operation.
+		if source.GetName() == newName {
+			return nil
+		}
+		if err := p.client.Rename(source, newName); err != nil {
+			return classifyMegaError(err)
+		}
+		return nil
+	}
+
+	originalParent, _, err := p.lookup(path.Dir(oldClean))
+	if err != nil {
+		return err
+	}
 	if err := p.client.Move(source, parent); err != nil {
 		return classifyMegaError(err)
 	}
-	if source.GetName() != parts[len(parts)-1] {
-		if err := p.client.Rename(source, parts[len(parts)-1]); err != nil {
+	if source.GetName() != newName {
+		if err := p.client.Rename(source, newName); err != nil {
+			// Cross-directory move+rename requires two API calls. Restore the
+			// original placement if the second call fails so callers never see a
+			// silently half-applied rename.
+			if rollbackErr := p.client.Move(source, originalParent); rollbackErr != nil {
+				return fmt.Errorf("MEGA rename failed after move: %w; rollback failed: %v", classifyMegaError(err), classifyMegaError(rollbackErr))
+			}
 			return classifyMegaError(err)
 		}
 	}
