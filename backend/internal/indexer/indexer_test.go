@@ -118,6 +118,42 @@ func TestIndexingAuditDetails(t *testing.T) {
 	}
 }
 
+func TestResolveIndexedFileSize(t *testing.T) {
+	workspaceResource := storage.CloudResource{
+		Path: "/document.docx",
+		Size: 0,
+		Metadata: storage.FileMetadata{CustomProps: map[string]string{
+			"google_workspace_export": "true",
+		}},
+	}
+
+	t.Run("uses listed size without workspace marker", func(t *testing.T) {
+		resource := storage.CloudResource{Path: "/report.txt", Size: 42}
+		size, err := resolveIndexedFileSize(context.Background(), indexFolderTestProvider{}, "files", resource.Path, resource)
+		if err != nil || size != 42 {
+			t.Fatalf("resolveIndexedFileSize() = %d, %v; want 42, nil", size, err)
+		}
+	})
+
+	t.Run("rejects workspace marker without resolver", func(t *testing.T) {
+		_, err := resolveIndexedFileSize(context.Background(), indexFolderTestProvider{}, "files", workspaceResource.Path, workspaceResource)
+		if err == nil {
+			t.Fatal("resolveIndexedFileSize() error = nil, want missing resolver error")
+		}
+	})
+
+	t.Run("uses optional resolver", func(t *testing.T) {
+		provider := &resolvingIndexFolderProvider{size: 123}
+		size, err := resolveIndexedFileSize(context.Background(), provider, "files", workspaceResource.Path, workspaceResource)
+		if err != nil || size != 123 {
+			t.Fatalf("resolveIndexedFileSize() = %d, %v; want 123, nil", size, err)
+		}
+		if provider.resourcePath != workspaceResource.Path {
+			t.Fatalf("resolver path = %q, want %q", provider.resourcePath, workspaceResource.Path)
+		}
+	})
+}
+
 func TestIndexFolderFlushesStagedCountersAfterCommit(t *testing.T) {
 	database, state := newBatchTestDB(t, false)
 	files, dirs, bytes := 0, 0, int64(0)
@@ -243,6 +279,18 @@ func TestIsImmichMedia(t *testing.T) {
 type indexFolderTestProvider struct {
 	listing   []storage.CloudResource
 	onListing func()
+}
+
+type resolvingIndexFolderProvider struct {
+	indexFolderTestProvider
+	size         int64
+	err          error
+	resourcePath string
+}
+
+func (p *resolvingIndexFolderProvider) ResolveResourceSize(_ context.Context, _ string, resourcePath string) (int64, error) {
+	p.resourcePath = resourcePath
+	return p.size, p.err
 }
 
 func (p indexFolderTestProvider) Close() error                          { return nil }

@@ -113,6 +113,65 @@ func TestDropboxContentHashIsTagged(t *testing.T) {
 	}
 }
 
+func TestEscapeAPIArgEncodesSupplementaryRunesAsUTF16Surrogates(t *testing.T) {
+	arg, err := escapeAPIArg(map[string]string{"path": "/reports/😀.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(arg, `\ud83d\ude00`) || strings.Contains(arg, `\u1f600`) {
+		t.Fatalf("escaped API argument = %q, want a UTF-16 surrogate pair", arg)
+	}
+	var decoded map[string]string
+	if err := json.Unmarshal([]byte(arg), &decoded); err != nil {
+		t.Fatalf("escaped API argument is invalid JSON: %v", err)
+	}
+	if decoded["path"] != "/reports/😀.txt" {
+		t.Fatalf("decoded path = %q", decoded["path"])
+	}
+}
+
+func TestDropboxDirectoryCacheDoesNotRetainAccessToken(t *testing.T) {
+	globalDropboxCreatedDirs = newBoundedDirCache(5000)
+	const token = "sensitive-dropbox-token"
+	p := &DropboxProvider{AccessToken: token, HTTPClient: &http.Client{Transport: mockRoundTripper{fn: func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+	}}}}
+	if err := p.CreateParentDirectories(context.Background(), "files", "/folder/file.txt"); err != nil {
+		t.Fatal(err)
+	}
+	globalDropboxCreatedDirs.mu.RLock()
+	defer globalDropboxCreatedDirs.mu.RUnlock()
+	for key := range globalDropboxCreatedDirs.m {
+		if strings.Contains(key, token) {
+			t.Fatalf("directory cache key retains the access token: %q", key)
+		}
+	}
+}
+
+func TestDropboxListingRetriesRateLimitsAndHonorsCancellation(t *testing.T) {
+	calls := 0
+	p := &DropboxProvider{HTTPClient: &http.Client{Transport: mockRoundTripper{fn: func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			header := make(http.Header)
+			header.Set("Retry-After", "0")
+			return &http.Response{StatusCode: http.StatusTooManyRequests, Body: io.NopCloser(strings.NewReader(`{}`)), Header: header}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"entries":[]}`)), Header: make(http.Header)}, nil
+	}}}}
+	if _, err := p.GetDirectoryListing(context.Background(), "files", "/"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("listing requests = %d, want 2", calls)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := dropboxWait(ctx, "", 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("dropboxWait cancellation error = %v", err)
+	}
+}
+
 type mockRoundTripper struct {
 	fn func(req *http.Request) (*http.Response, error)
 }

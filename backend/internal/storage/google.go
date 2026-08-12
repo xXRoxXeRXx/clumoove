@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/api/people/v1"
-	"sync"
 )
 
 type GoogleProvider struct {
@@ -24,7 +24,7 @@ type GoogleProvider struct {
 	calendarService *calendar.Service
 	peopleService   *people.Service
 	httpClient      *http.Client
-	pathCache       sync.Map // path string -> folderID string
+	pathCache       *boundedStringCache // path string -> folderID string
 }
 
 var _ StorageProvider = (*GoogleProvider)(nil)
@@ -37,12 +37,10 @@ func isGoogleAuthError(err error) bool {
 	if errors.As(err, &gErr) {
 		return gErr.Code == http.StatusUnauthorized || gErr.Code == http.StatusForbidden
 	}
-	errStr := strings.ToLower(err.Error())
-	return strings.Contains(errStr, "unauthorized") ||
-		strings.Contains(errStr, "invalid credentials") ||
-		strings.Contains(errStr, "invalid_grant") ||
-		strings.Contains(errStr, "401") ||
-		strings.Contains(errStr, "403")
+	// The OAuth library's invalid_grant is not wrapped in googleapi.Error.
+	// Avoid substring matching HTTP status values: an unrelated provider error
+	// can contain "401" or "forbidden" without being an expired credential.
+	return strings.Contains(strings.ToLower(err.Error()), "invalid_grant")
 }
 
 func isGooglePermanentTransferError(err error) bool {
@@ -120,6 +118,7 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 		calendarService: calendarSvc,
 		peopleService:   peopleSvc,
 		httpClient:      client,
+		pathCache:       newBoundedStringCache(5000),
 	}, nil
 }
 
@@ -187,6 +186,10 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 					}
 					size = 0 // Google Workspace files do not have a pre-determined export size
 				}
+				metadata := FileMetadata{Description: f.Description}
+				if _, ext := googleDocsExtension(f.MimeType); ext != "" {
+					metadata.CustomProps = map[string]string{"google_workspace_export": "true"}
+				}
 
 				fullPath := displayName
 				if dirPath == "/" || dirPath == "" {
@@ -202,9 +205,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 					IsDir:        isDir,
 					Hash:         googleMD5Hash(f.Md5Checksum),
 					LastModified: modTime,
-					Metadata: FileMetadata{
-						Description: f.Description,
-					},
+					Metadata:     metadata,
 				})
 			}
 			if result.NextPageToken == "" {
@@ -215,19 +216,30 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 
 	case "calendars":
 		if dirPath == "/" || dirPath == "" {
-			list, err := p.calendarService.CalendarList.List().Context(ctx).Do()
-			if err != nil {
-				return nil, wrapGoogleError("google calendar listing", err)
-			}
-			for _, c := range list.Items {
-				resources = append(resources, CloudResource{
-					Path:         "/" + c.Id,
-					Name:         c.Summary,
-					Size:         0,
-					IsDir:        true,
-					Hash:         c.Etag,
-					LastModified: time.Now(),
-				})
+			var pageToken string
+			for {
+				call := p.calendarService.CalendarList.List().MaxResults(250).Context(ctx)
+				if pageToken != "" {
+					call = call.PageToken(pageToken)
+				}
+				list, err := call.Do()
+				if err != nil {
+					return nil, wrapGoogleError("google calendar listing", err)
+				}
+				for _, c := range list.Items {
+					resources = append(resources, CloudResource{
+						Path:         "/" + c.Id,
+						Name:         c.Summary,
+						Size:         0,
+						IsDir:        true,
+						Hash:         c.Etag,
+						LastModified: time.Now(),
+					})
+				}
+				if list.NextPageToken == "" {
+					break
+				}
+				pageToken = list.NextPageToken
 			}
 		} else {
 			calendarID := strings.TrimPrefix(dirPath, "/")
@@ -331,6 +343,19 @@ func driveFolderQuery(parentID, name string) string {
 		parentID, escapeDriveQuery(name))
 }
 
+func (p *GoogleProvider) cachedPath(path string) (string, bool) {
+	if p.pathCache == nil {
+		return "", false
+	}
+	return p.pathCache.Get(path)
+}
+
+func (p *GoogleProvider) cachePath(path, id string) {
+	if p.pathCache != nil {
+		p.pathCache.Set(path, id)
+	}
+}
+
 func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (string, error) {
 	cleanPath := strings.Trim(path, "/")
 	if cleanPath == "" {
@@ -338,8 +363,8 @@ func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (str
 	}
 
 	// Try the entire path from cache first
-	if val, ok := p.pathCache.Load(cleanPath); ok {
-		return val.(string), nil
+	if val, ok := p.cachedPath(cleanPath); ok {
+		return val, nil
 	}
 
 	parts := strings.Split(cleanPath, "/")
@@ -357,8 +382,8 @@ func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (str
 		}
 
 		// Check if this segment path is already cached
-		if val, ok := p.pathCache.Load(currentPath); ok {
-			currentID = val.(string)
+		if val, ok := p.cachedPath(currentPath); ok {
+			currentID = val
 			continue
 		}
 
@@ -372,18 +397,16 @@ func (p *GoogleProvider) resolveDrivePath(ctx context.Context, path string) (str
 			return "", fmt.Errorf("google inspect: %w", ErrNotFound)
 		}
 		currentID = res.Files[0].Id
-		p.pathCache.Store(currentPath, currentID)
+		p.cachePath(currentPath, currentID)
 	}
 
 	return currentID, nil
 }
 
 func (p *GoogleProvider) resolveDriveFileID(ctx context.Context, filePath string) (string, error) {
-	lastSlash := strings.LastIndex(filePath, "/")
-	dirPath := filePath[:lastSlash]
-	fileName := filePath[lastSlash+1:]
-	if dirPath == "" {
-		dirPath = "/"
+	dirPath, fileName, err := driveParentAndName(filePath)
+	if err != nil {
+		return "", err
 	}
 	parentID, err := p.resolveDrivePath(ctx, dirPath)
 	if err != nil {
@@ -429,6 +452,19 @@ func (p *GoogleProvider) resolveDriveFileID(ctx context.Context, filePath string
 
 	// Fallback to the first item if no exact match was resolved
 	return res.Files[0].Id, nil
+}
+
+func driveParentAndName(filePath string) (string, string, error) {
+	clean := strings.TrimSuffix(strings.ReplaceAll(filePath, "\\", "/"), "/")
+	name := path.Base(clean)
+	if name == "." || name == "/" || name == "" {
+		return "", "", fmt.Errorf("invalid Google Drive file path: %q", filePath)
+	}
+	dir := path.Dir(clean)
+	if dir == "." || dir == "" {
+		dir = "/"
+	}
+	return dir, name, nil
 }
 
 func googleDocsExtension(mimeType string) (exportMIME, extension string) {
@@ -484,6 +520,10 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 
 		hashVal := googleMD5Hash(f.Md5Checksum)
 
+		metadata := FileMetadata{Description: f.Description}
+		if _, ext := googleDocsExtension(f.MimeType); ext != "" {
+			metadata.CustomProps = map[string]string{"google_workspace_export": "true"}
+		}
 		return CloudResource{
 			Path:         path,
 			Name:         displayName,
@@ -491,13 +531,43 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 			IsDir:        isDir,
 			Hash:         hashVal,
 			LastModified: modTime,
-			Metadata: FileMetadata{
-				Description: f.Description,
-			},
+			Metadata:     metadata,
 		}, nil
 	default:
 		return CloudResource{}, fmt.Errorf("InspectResource not implemented for %s", resourceType)
 	}
+}
+
+// ResolveResourceSize obtains the Content-Length of a Google Workspace export.
+// Drive listings intentionally omit export sizes, but treating them as zero
+// makes the processor reject every non-empty export after upload.
+func (p *GoogleProvider) ResolveResourceSize(ctx context.Context, resourceType, resourcePath string) (int64, error) {
+	if resourceType != "files" {
+		return 0, fmt.Errorf("resource size resolution is unsupported for %s", resourceType)
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	id, err := p.resolveDriveFileID(ctx, resourcePath)
+	if err != nil {
+		return 0, err
+	}
+	file, err := p.driveService.Files.Get(id).Fields("mimeType,size").Context(ctx).Do()
+	if err != nil {
+		return 0, wrapGoogleError("google drive size lookup", err)
+	}
+	exportMIME, _ := googleDocsExtension(file.MimeType)
+	if exportMIME == "" {
+		return file.Size, nil
+	}
+	response, err := p.driveService.Files.Export(id, exportMIME).Context(ctx).Download()
+	if err != nil {
+		return 0, wrapGoogleError("google drive export size lookup", err)
+	}
+	defer response.Body.Close()
+	if response.ContentLength < 0 {
+		return 0, fmt.Errorf("google export did not provide a content length")
+	}
+	return response.ContentLength, nil
 }
 
 func googleMD5Hash(value string) string {
@@ -584,11 +654,9 @@ func (p *GoogleProvider) StreamUploadChunked(ctx context.Context, resourceType, 
 			return err
 		}
 
-		lastSlash := strings.LastIndex(filePath, "/")
-		dirPath := filePath[:lastSlash]
-		fileName := filePath[lastSlash+1:]
-		if dirPath == "" {
-			dirPath = "/"
+		dirPath, fileName, err := driveParentAndName(filePath)
+		if err != nil {
+			return err
 		}
 
 		parentID, err := p.resolveDrivePath(ctx, dirPath)
@@ -709,14 +777,56 @@ func (p *GoogleProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 	if err != nil {
 		return err
 	}
-	lastSlash := strings.LastIndex(newPath, "/")
-	newName := newPath[lastSlash+1:]
+	oldDir, _, err := driveParentAndName(oldPath)
+	if err != nil {
+		return err
+	}
+	newDir, newName, err := driveParentAndName(newPath)
+	if err != nil {
+		return err
+	}
+	if err := p.CreateDirectory(ctx, resourceType, newDir); err != nil {
+		return err
+	}
+	oldParentID, err := p.resolveDrivePath(ctx, oldDir)
+	if err != nil {
+		return err
+	}
+	newParentID, err := p.resolveDrivePath(ctx, newDir)
+	if err != nil {
+		return err
+	}
+	if existingID, err := p.findExactDriveFileID(ctx, newParentID, newName); err != nil {
+		return err
+	} else if existingID != "" && existingID != id {
+		if err := p.driveService.Files.Delete(existingID).Context(ctx).Do(); err != nil {
+			return wrapGoogleError("google drive replace destination", err)
+		}
+	}
 
 	f := &drive.File{
 		Name: newName,
 	}
-	_, err = p.driveService.Files.Update(id, f).Context(ctx).Do()
+	call := p.driveService.Files.Update(id, f).Context(ctx)
+	if oldParentID != newParentID {
+		call = call.AddParents(newParentID).RemoveParents(oldParentID)
+	}
+	_, err = call.Do()
 	return wrapGoogleError("google drive rename", err)
+}
+
+func (p *GoogleProvider) findExactDriveFileID(ctx context.Context, parentID, name string) (string, error) {
+	query := fmt.Sprintf("'%s' in parents and name = '%s' and trashed = false", parentID, escapeDriveQuery(name))
+	result, err := p.driveService.Files.List().Q(query).Fields("files(id,name)").PageSize(1000).Context(ctx).Do()
+	if err != nil {
+		return "", wrapGoogleError("google drive destination lookup", err)
+	}
+	for _, file := range result.Files {
+		if file.Name == name {
+			return file.Id, nil
+		}
+	}
+	return "", nil
 }
 
 // SupportsAtomicRename is true: Google Drive supports file rename.
@@ -796,7 +906,7 @@ func (p *GoogleProvider) CreateDirectory(ctx context.Context, resourceType, dirP
 		} else {
 			currentID = res.Files[0].Id
 		}
-		p.pathCache.Store(currentPath, currentID)
+		p.cachePath(currentPath, currentID)
 	}
 	return nil
 }
@@ -1027,9 +1137,21 @@ func parseVCF(r io.Reader) (*people.Person, error) {
 
 		switch key {
 		case "FN":
-			person.Names = append(person.Names, &people.Name{
-				DisplayName: unescapeICSValue(value),
-			})
+			if len(person.Names) == 0 {
+				person.Names = append(person.Names, &people.Name{})
+			}
+			person.Names[0].DisplayName = unescapeICSValue(value)
+		case "N":
+			if len(person.Names) == 0 {
+				person.Names = append(person.Names, &people.Name{})
+			}
+			parts := strings.Split(value, ";")
+			if len(parts) > 0 {
+				person.Names[0].FamilyName = unescapeICSValue(parts[0])
+			}
+			if len(parts) > 1 {
+				person.Names[0].GivenName = unescapeICSValue(parts[1])
+			}
 		case "EMAIL":
 			person.EmailAddresses = append(person.EmailAddresses, &people.EmailAddress{
 				Value: value,

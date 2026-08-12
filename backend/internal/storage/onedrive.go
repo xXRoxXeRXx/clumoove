@@ -33,6 +33,10 @@ type OneDriveProvider struct {
 	// An empty string is cached for ordinary folders, preventing one Graph
 	// shortcut probe per indexed/downloaded file.
 	shortcutCache sync.Map
+	// confirmedDirectories caches directories created or inspected by this
+	// short-lived provider. It avoids a Graph GET for every parent component of
+	// every upload without retaining paths beyond the task lifetime.
+	confirmedDirectories sync.Map
 }
 
 // sharedShortcutResolutionCache shares only the resolved remote Graph item URL
@@ -109,9 +113,18 @@ func oneDriveEscapedPath(filePath string) (string, error) {
 	}
 	parts := strings.Split(strings.TrimPrefix(clean, "/"), "/")
 	for i, part := range parts {
-		parts[i] = url.PathEscape(part)
+		parts[i] = oneDriveEscapeSegment(part)
 	}
 	return strings.Join(parts, "/"), nil
+}
+
+func oneDriveEscapeSegment(segment string) string {
+	escaped := url.PathEscape(segment)
+	// Graph uses colon-delimited path addressing; net/url deliberately leaves
+	// ':' and brackets unescaped in path segments, but they are data here.
+	escaped = strings.ReplaceAll(escaped, ":", "%3A")
+	escaped = strings.ReplaceAll(escaped, "[", "%5B")
+	return strings.ReplaceAll(escaped, "]", "%5D")
 }
 
 func (p *OneDriveProvider) itemURL(filePath string) (string, error) {
@@ -154,7 +167,7 @@ func (p *OneDriveProvider) resourceURL(ctx context.Context, filePath string) (st
 		return remotePrefix, nil
 	}
 	for i, part := range parts[1:] {
-		parts[i+1] = url.PathEscape(part)
+		parts[i+1] = oneDriveEscapeSegment(part)
 	}
 	return remotePrefix + ":/" + strings.Join(parts[1:], "/") + ":", nil
 }
@@ -697,6 +710,8 @@ func (p *OneDriveProvider) CreateParentDirectories(ctx context.Context, resource
 }
 
 func (p *OneDriveProvider) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if err := oneDriveFilesOnly(resourceType); err != nil {
 		return err
 	}
@@ -707,11 +722,15 @@ func (p *OneDriveProvider) CreateDirectory(ctx context.Context, resourceType, di
 	current := ""
 	for _, component := range strings.Split(strings.TrimPrefix(clean, "/"), "/") {
 		current += "/" + component
+		if _, ok := p.confirmedDirectories.Load(current); ok {
+			continue
+		}
 		resource, inspectErr := p.InspectResource(ctx, resourceType, current)
 		if inspectErr == nil {
 			if !resource.IsDir {
 				return fmt.Errorf("onedrive path component %q is a file", current)
 			}
+			p.confirmedDirectories.Store(current, struct{}{})
 			continue
 		}
 		if !errors.Is(inspectErr, ErrNotFound) {
@@ -743,6 +762,7 @@ func (p *OneDriveProvider) CreateDirectory(ctx context.Context, resourceType, di
 			if !existing.IsDir {
 				return fmt.Errorf("onedrive path component %q is a file", current)
 			}
+			p.confirmedDirectories.Store(current, struct{}{})
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -750,11 +770,14 @@ func (p *OneDriveProvider) CreateDirectory(ctx context.Context, resourceType, di
 			return oneDriveError("create directory", resp.StatusCode)
 		}
 		resp.Body.Close()
+		p.confirmedDirectories.Store(current, struct{}{})
 	}
 	return nil
 }
 
 func (p *OneDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
 	if err := oneDriveFilesOnly(resourceType); err != nil {
 		return err
 	}

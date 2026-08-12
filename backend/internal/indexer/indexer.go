@@ -220,6 +220,12 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 			indexedPaths[key] = true
 			hashVal := res.Hash
 			meta := res.Metadata
+			fileSize, err := resolveIndexedFileSize(ctx, sourceClient, "files", p, res)
+			if err != nil {
+				indexErrors = append(indexErrors, db.IndexingErrorInput{Path: p, ResourceType: "files", ErrorMessage: "Unable to determine file size."})
+				logger.Debug("indexing_file_size_skipped", slog.String("path", p), observability.ErrorAttr(err, true), slog.String("error_kind", observability.ErrorKind(err)))
+				continue
+			}
 			if meta.ModifiedTime.IsZero() {
 				meta.ModifiedTime = res.LastModified
 			}
@@ -231,7 +237,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 				MigrationID:  migID,
 				ResourceType: "files",
 				FilePath:     p,
-				FileSize:     res.Size,
+				FileSize:     fileSize,
 				SourceHash:   sql.NullString{String: hashVal, Valid: hashVal != ""},
 				Status:       "PENDING",
 				Metadata:     metaJSON,
@@ -598,6 +604,12 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 				}
 				indexedPaths[key] = true
 				meta := file.Metadata
+				fileSize, err := resolveIndexedFileSize(ctx, client, resourceType, file.Path, file)
+				if err != nil {
+					*indexErrors = append(*indexErrors, db.IndexingErrorInput{Path: file.Path, ResourceType: resourceType, ErrorMessage: "Unable to determine file size."})
+					observability.Logger(ctx).Debug("indexing_file_size_skipped", slog.String("component", "indexer"), slog.String("path", file.Path), observability.ErrorAttr(err, true), slog.String("error_kind", observability.ErrorKind(err)))
+					continue
+				}
 				if meta.ModifiedTime.IsZero() {
 					meta.ModifiedTime = file.LastModified
 				}
@@ -609,14 +621,14 @@ func indexFolder(ctx context.Context, database *sql.DB, client storage.StoragePr
 					MigrationID:  migID,
 					ResourceType: resourceType,
 					FilePath:     file.Path,
-					FileSize:     file.Size,
+					FileSize:     fileSize,
 					SourceHash:   sql.NullString{String: file.Hash, Valid: file.Hash != ""},
 					Status:       "PENDING",
 					Metadata:     metaJSON,
 				}
 				taskBatch = append(taskBatch, task)
 				batchFiles++
-				batchBytes += file.Size
+				batchBytes += fileSize
 				if len(taskBatch) >= 500 {
 					if err := flushBatch(); err != nil {
 						return err
@@ -677,6 +689,17 @@ func isSameOrDescendantPath(candidate, parent string) bool {
 		return true
 	}
 	return strings.HasPrefix(candidate, strings.TrimSuffix(parent, "/")+"/")
+}
+
+func resolveIndexedFileSize(ctx context.Context, provider storage.StorageProvider, resourceType, resourcePath string, resource storage.CloudResource) (int64, error) {
+	if resource.Metadata.CustomProps == nil || resource.Metadata.CustomProps["google_workspace_export"] != "true" {
+		return resource.Size, nil
+	}
+	resolver, ok := provider.(storage.ResourceSizeResolver)
+	if !ok {
+		return 0, fmt.Errorf("provider does not resolve Google Workspace export sizes")
+	}
+	return resolver.ResolveResourceSize(ctx, resourceType, resourcePath)
 }
 
 // Immich accepts media formats supported by its current MIME registry, including

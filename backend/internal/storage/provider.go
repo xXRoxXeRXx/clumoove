@@ -113,6 +113,13 @@ type CloudResource struct {
 	Metadata     FileMetadata `json:"metadata"`
 }
 
+// ResourceSizeResolver is an optional capability for providers whose listing
+// metadata cannot report a transferable byte size. Indexers use it before
+// creating a task so the processor retains its exact-stream-size invariant.
+type ResourceSizeResolver interface {
+	ResolveResourceSize(ctx context.Context, resourceType, resourcePath string) (int64, error)
+}
+
 // IsPersonalVault reports whether a resource is OneDrive's special Personal
 // Vault. Its contents require an interactive unlock and cannot be transferred
 // by the background Microsoft Graph OAuth flow.

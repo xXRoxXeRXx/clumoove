@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 
@@ -93,9 +95,13 @@ func TestIsGoogleAuthError(t *testing.T) {
 		t.Errorf("expected isGoogleAuthError(gForbiddenErr) = true")
 	}
 
-	rawAuthErr := errors.New("oauth2: cannot fetch token: 401 Unauthorized")
-	if !isGoogleAuthError(rawAuthErr) {
-		t.Errorf("expected isGoogleAuthError(rawAuthErr) = true")
+	rawTransportErr := errors.New("request failed with status 401")
+	if isGoogleAuthError(rawTransportErr) {
+		t.Errorf("expected status text alone not to be classified as an authentication error")
+	}
+	rawOAuthErr := errors.New("oauth2: cannot fetch token: invalid_grant")
+	if !isGoogleAuthError(rawOAuthErr) {
+		t.Errorf("expected invalid_grant to be classified as an authentication error")
 	}
 
 	gNotFoundErr := &googleapi.Error{Code: http.StatusNotFound, Message: "Not Found"}
@@ -319,6 +325,120 @@ func TestGoogleDocsExtension(t *testing.T) {
 	mime, ext = googleDocsExtension("unknown/mime")
 	if ext != "" || mime != "" {
 		t.Errorf("expected empty for unknown mime, got mime=%s ext=%s", mime, ext)
+	}
+}
+
+func TestDriveParentAndNameAcceptsBarePaths(t *testing.T) {
+	for _, tt := range []struct {
+		path, wantDir, wantName string
+	}{
+		{"file.txt", "/", "file.txt"},
+		{"/file.txt", "/", "file.txt"},
+		{"/folder/file.txt", "/folder", "file.txt"},
+	} {
+		dir, name, err := driveParentAndName(tt.path)
+		if err != nil || dir != tt.wantDir || name != tt.wantName {
+			t.Fatalf("driveParentAndName(%q) = %q, %q, %v", tt.path, dir, name, err)
+		}
+	}
+}
+
+func TestGoogleCalendarListingPaginates(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Query().Get("pageToken") == "second" {
+			_, _ = io.WriteString(w, `{"items":[{"id":"two","summary":"Two"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"items":[{"id":"one","summary":"One"}],"nextPageToken":"second"}`)
+	}))
+	defer server.Close()
+	p := newGoogleTestProvider(t, server.URL+"/")
+	resources, err := p.GetDirectoryListing(context.Background(), "calendars", "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 || len(resources) != 2 || resources[1].Path != "/two" {
+		t.Fatalf("calendar resources = %#v, calls = %d", resources, calls)
+	}
+}
+
+func TestGoogleRenameMovesAcrossDirectoriesAndReplacesDestination(t *testing.T) {
+	var deletedID string
+	var updateQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletedID = path.Base(r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if r.Method == http.MethodPatch {
+			updateQuery = r.URL.RawQuery
+			_, _ = io.WriteString(w, `{"id":"old-id"}`)
+			return
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/files" {
+			http.NotFound(w, r)
+			return
+		}
+		query := r.URL.Query().Get("q")
+		switch {
+		case strings.Contains(query, "mimeType") && strings.Contains(query, "new-folder"):
+			_, _ = io.WriteString(w, `{"files":[{"id":"new-parent"}]}`)
+		case strings.Contains(query, "name = 'old.txt'"):
+			_, _ = io.WriteString(w, `{"files":[{"id":"old-id","name":"old.txt"}]}`)
+		case strings.Contains(query, "name = 'new.txt'"):
+			_, _ = io.WriteString(w, `{"files":[{"id":"existing-id","name":"new.txt"}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"files":[]}`)
+		}
+	}))
+	defer server.Close()
+	p := newGoogleTestProvider(t, server.URL+"/")
+	if err := p.RenameFile(context.Background(), "files", "/old.txt", "/new-folder/new.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if deletedID != "existing-id" {
+		t.Fatalf("replaced file = %q, want existing-id", deletedID)
+	}
+	if !strings.Contains(updateQuery, "addParents=new-parent") || !strings.Contains(updateQuery, "removeParents=root") {
+		t.Fatalf("rename query = %q, want destination and source parents", updateQuery)
+	}
+}
+
+func TestGoogleWorkspaceExportSizeUsesContentLength(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/files" && strings.Contains(r.URL.Query().Get("q"), "name = 'document'"):
+			_, _ = io.WriteString(w, `{"files":[{"id":"doc-id","name":"document","mimeType":"application/vnd.google-apps.document"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/doc-id":
+			_, _ = io.WriteString(w, `{"id":"doc-id","mimeType":"application/vnd.google-apps.document"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/doc-id/export":
+			w.Header().Set("Content-Length", "42")
+			_, _ = io.WriteString(w, strings.Repeat("x", 42))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	p := newGoogleTestProvider(t, server.URL+"/")
+	size, err := p.ResolveResourceSize(context.Background(), "files", "/document.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != 42 {
+		t.Fatalf("Google Workspace export size = %d, want 42", size)
+	}
+}
+
+func TestParseVCFPreservesStructuredName(t *testing.T) {
+	person, err := parseVCF(strings.NewReader("BEGIN:VCARD\r\nVERSION:3.0\r\nN:Doe;Jane;;;\r\nFN:Jane Doe\r\nEND:VCARD\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(person.Names) != 1 || person.Names[0].FamilyName != "Doe" || person.Names[0].GivenName != "Jane" || person.Names[0].DisplayName != "Jane Doe" {
+		t.Fatalf("parsed name = %#v", person.Names)
 	}
 }
 

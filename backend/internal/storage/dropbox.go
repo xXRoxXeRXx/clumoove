@@ -137,11 +137,85 @@ func escapeAPIArg(arg interface{}) (string, error) {
 	for _, r := range string(b) {
 		if r < 128 {
 			buf.WriteRune(r)
-		} else {
+		} else if r <= 0xffff {
 			buf.WriteString(fmt.Sprintf("\\u%04x", r))
+		} else {
+			// JSON's \u escapes encode UTF-16 code units, not Unicode code
+			// points. Escaping an emoji as \u1f600 would be parsed as U+1F60
+			// followed by a literal "0", corrupting the Dropbox path.
+			r -= 0x10000
+			buf.WriteString(fmt.Sprintf("\\u%04x\\u%04x", 0xd800+(r>>10), 0xdc00+(r&0x3ff)))
 		}
 	}
 	return buf.String(), nil
+}
+
+func dropboxRetryDelay(retryAfter string, attempt int) time.Duration {
+	if seconds, err := time.ParseDuration(retryAfter + "s"); err == nil && retryAfter != "" {
+		return seconds
+	}
+	if retryAt, err := http.ParseTime(retryAfter); err == nil {
+		if delay := time.Until(retryAt); delay > 0 {
+			return delay
+		}
+	}
+	delay := 10 * time.Second
+	for i := 0; i < attempt; i++ {
+		delay *= 3
+	}
+	return delay
+}
+
+func dropboxWait(ctx context.Context, retryAfter string, attempt int) error {
+	timer := time.NewTimer(dropboxRetryDelay(retryAfter, attempt))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// do retries requests whose body can safely be replayed. Dropbox rate limits
+// and transient server failures are common on large transfers; honoring
+// Retry-After prevents a worker from immediately consuming the next quota.
+func (p *DropboxProvider) do(ctx context.Context, req *http.Request) (*http.Response, error) {
+	replayable := req.Body == nil || req.GetBody != nil
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			if req.GetBody != nil {
+				body, err := req.GetBody()
+				if err != nil {
+					return nil, err
+				}
+				req.Body = body
+			}
+		}
+		resp, err := p.HTTPClient.Do(req)
+		if err == nil && (resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500) {
+			return resp, nil
+		}
+		if !replayable || attempt == 2 {
+			if err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}
+		retryAfter := ""
+		if err != nil {
+			lastErr = err
+		} else {
+			retryAfter = resp.Header.Get("Retry-After")
+			lastErr = fmt.Errorf("dropbox request failed with status: %d", resp.StatusCode)
+			resp.Body.Close()
+		}
+		if err := dropboxWait(ctx, retryAfter, attempt); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
 }
 
 func (p *DropboxProvider) newRequest(method, urlStr string, body io.Reader) (*http.Request, error) {
@@ -221,7 +295,7 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +348,7 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 		contReq.Header.Set("Content-Type", "application/json")
 		contReq = contReq.WithContext(ctx)
 
-		contResp, err := p.HTTPClient.Do(contReq)
+		contResp, err := p.do(ctx, contReq)
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +423,7 @@ func (p *DropboxProvider) InspectResource(ctx context.Context, resourceType, res
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return CloudResource{}, err
 	}
@@ -417,7 +491,7 @@ func (p *DropboxProvider) StreamDownload(ctx context.Context, resourceType, file
 	req.Header.Set("Dropbox-API-Arg", apiArg)
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +545,7 @@ func (p *DropboxProvider) StreamUpload(ctx context.Context, resourceType, filePa
 	}
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -568,7 +642,7 @@ func (p *DropboxProvider) startUploadSession(ctx context.Context, chunk []byte) 
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -592,45 +666,34 @@ func (p *DropboxProvider) startUploadSession(ctx context.Context, chunk []byte) 
 }
 
 func (p *DropboxProvider) appendUploadSessionWithRetry(ctx context.Context, sessionID string, offset int64, chunk []byte) error {
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		apiArg, err := escapeAPIArg(map[string]interface{}{
-			"close": false,
-			"cursor": map[string]interface{}{
-				"session_id": sessionID,
-				"offset":     offset,
-			},
-		})
-		if err != nil {
-			return err
-		}
-
-		req, err := p.newRequest("POST", "https://content.dropboxapi.com/2/files/upload_session/append_v2", bytes.NewReader(chunk))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Dropbox-API-Arg", apiArg)
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req = req.WithContext(ctx)
-
-		resp, err := p.HTTPClient.Do(req)
-		if err != nil {
-			lastErr = err
-			time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
-			continue
-		}
-		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			return nil
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("dropbox upload session append: %w", ErrAuth)
-		}
-		lastErr = fmt.Errorf("append session failed, status: %d", resp.StatusCode)
-		time.Sleep(time.Duration(attempt+1) * 2 * time.Second)
+	apiArg, err := escapeAPIArg(map[string]interface{}{
+		"close": false,
+		"cursor": map[string]interface{}{
+			"session_id": sessionID,
+			"offset":     offset,
+		},
+	})
+	if err != nil {
+		return err
 	}
-	return lastErr
+	req, err := p.newRequest("POST", "https://content.dropboxapi.com/2/files/upload_session/append_v2", bytes.NewReader(chunk))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Dropbox-API-Arg", apiArg)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp, err := p.do(ctx, req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("dropbox upload session append: %w", ErrAuth)
+	}
+	return fmt.Errorf("append session failed, status: %d", resp.StatusCode)
 }
 
 func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID string, offset int64, cleanPath string, chunk []byte) error {
@@ -670,7 +733,7 @@ func (p *DropboxProvider) finishUploadSession(ctx context.Context, sessionID str
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -712,7 +775,7 @@ func (p *DropboxProvider) FileExists(ctx context.Context, resourceType, filePath
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return false, 0, err
 	}
@@ -723,7 +786,7 @@ func (p *DropboxProvider) FileExists(ctx context.Context, resourceType, filePath
 		if err := json.NewDecoder(resp.Body).Decode(&entry); err == nil && entry.Tag == "file" {
 			return true, entry.Size, nil
 		}
-		return true, 0, nil
+		return false, 0, nil
 	}
 
 	if resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusNotFound {
@@ -766,7 +829,7 @@ func (p *DropboxProvider) DeleteFile(ctx context.Context, resourceType, filePath
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
 
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -817,7 +880,7 @@ func (p *DropboxProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(ctx)
-	resp, err := p.HTTPClient.Do(req)
+	resp, err := p.do(ctx, req)
 	if err != nil {
 		return err
 	}
@@ -875,13 +938,14 @@ func (p *DropboxProvider) CreateParentDirectories(ctx context.Context, resourceT
 		return nil
 	}
 
+	tokenDigest := sha256.Sum256([]byte(p.AccessToken))
 	currentDir := ""
 	for _, component := range strings.Split(strings.Trim(cleanDir, "/"), "/") {
 		if component == "" {
 			continue
 		}
 		currentDir += "/" + component
-		globalDirKey := p.AccessToken + "|" + currentDir
+		globalDirKey := fmt.Sprintf("%x|%s", tokenDigest, currentDir)
 		if globalDropboxCreatedDirs.Contains(globalDirKey) {
 			continue
 		}

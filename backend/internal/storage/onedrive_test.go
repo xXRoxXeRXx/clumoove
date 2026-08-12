@@ -36,6 +36,16 @@ func TestOneDrivePath(t *testing.T) {
 	}
 }
 
+func TestOneDriveEscapedPathEscapesGraphDelimiters(t *testing.T) {
+	got, err := oneDriveEscapedPath("/folder:[]/report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "folder%3A%5B%5D/report.txt" {
+		t.Fatalf("oneDriveEscapedPath = %q", got)
+	}
+}
+
 func TestOneDriveProviderListingPaginationAndEncoding(t *testing.T) {
 	var requests []string
 	var server *httptest.Server
@@ -324,6 +334,31 @@ func TestOneDriveProviderNestedUploadCreatesParents(t *testing.T) {
 	}
 	if len(requests) != 5 || !strings.HasPrefix(requests[0], "GET ") || !strings.HasPrefix(requests[1], "POST ") || !strings.HasPrefix(requests[4], "PUT ") {
 		t.Fatalf("expected parent creation followed by upload, got %v", requests)
+	}
+}
+
+func TestOneDriveProviderCachesConfirmedDirectories(t *testing.T) {
+	inspects := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "existing") {
+			inspects++
+			_, _ = io.WriteString(w, `{"id":"folder-id","folder":{}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	p := newOneDriveProvider("token", server.URL+"/v1.0/me/drive", server.Client())
+	if err := p.CreateDirectory(context.Background(), "files", "/existing"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreateDirectory(context.Background(), "files", "/existing"); err != nil {
+		t.Fatal(err)
+	}
+	// The first call probes once for a shared shortcut and once for the item;
+	// the second call must use the confirmed-directory cache.
+	if inspects != 2 {
+		t.Fatalf("directory inspections = %d, want 2", inspects)
 	}
 }
 
