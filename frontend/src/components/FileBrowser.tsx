@@ -1526,6 +1526,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             role="dialog"
             aria-modal="true"
             aria-labelledby={targetDialogTitleId}
+            tabIndex={-1}
             className="ui-card max-w-lg w-full max-h-[85vh] flex flex-col overflow-hidden text-left"
           >
             {/* Modal Header */}

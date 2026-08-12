@@ -333,8 +333,10 @@
       "computing": "Berechnung...",
       "done": "Fertig",
       "failed": "Fehlgeschlagen",
+      "cancelled": "Abgebrochen",
       "indexing": "Dateien werden erfasst...",
       "pending": "Warte auf Start...",
+      "verifying": "Integrität wird geprüft...",
       "waitingConn": "Warte auf Verbindung..."
     }
   },
@@ -635,6 +637,8 @@
     "OAUTH_ORIGIN_UNTRUSTED": "Diese Website-Adresse ist nicht freigegeben.",
     "OAUTH_GENERATION_FAILED": "Verbindung konnte nicht vorbereitet werden.",
     "OAUTH_EXCHANGE_FAILED": "Die Autorisierung konnte nicht abgeschlossen werden.",
+    "OAUTH_POPUP_BLOCKED": "Dein Browser hat das Autorisierungsfenster blockiert. Erlaube Pop-ups für diese Website und versuche es erneut.",
+    "OAUTH_CANCELLED": "Die Autorisierung wurde abgebrochen.",
     "SYNC_DIRECTION_INVALID": "Die gewählte Synchronisierungsrichtung ist ungültig.",
     "DISPLAY_NAME_REQUIRED": "Der Anzeigename ist ein Pflichtfeld.",
     "PASSWORD_MISMATCH": "Die neuen Passwörter stimmen nicht überein.",

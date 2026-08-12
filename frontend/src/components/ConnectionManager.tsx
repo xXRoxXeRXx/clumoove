@@ -297,9 +297,9 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
           .catch((err) => onError(err instanceof Error ? err.message : t('settings.connections.testFailed')))
           .finally(() => setBusy(false));
       },
-      onError: () => {
+      onError: (code) => {
         setBusy(false);
-        onError(t('settings.connections.testFailed'));
+        onError(translateApiError(code));
       },
     });
   };
@@ -459,8 +459,8 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
         updateField('oauthUser', msg.username || form.provider);
         updateField('oauthRefreshToken', msg.refreshToken || '');
       },
-      onError: () => {
-        onError(t('settings.connections.testFailed'));
+      onError: (code) => {
+        onError(translateApiError(code));
       },
     });
   };
@@ -588,7 +588,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
   return (
     <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-6 space-y-5">
         <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border-light)]">
           <h3 id={titleId} className="font-display font-semibold text-sm text-[var(--color-text-primary)]">
             {editing ? t('settings.connections.edit') : t('settings.connections.newProfile')}

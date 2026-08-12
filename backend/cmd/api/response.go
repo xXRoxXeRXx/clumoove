@@ -129,6 +129,8 @@ const (
 	ErrOauthOriginUntrusted         APIErrorCode = "OAUTH_ORIGIN_UNTRUSTED"
 	ErrOauthGenerationFailed        APIErrorCode = "OAUTH_GENERATION_FAILED"
 	ErrOauthExchangeFailed          APIErrorCode = "OAUTH_EXCHANGE_FAILED"
+	ErrOauthPopupBlocked            APIErrorCode = "OAUTH_POPUP_BLOCKED" // Frontend-emitted OAuth flow outcome.
+	ErrOauthCancelled               APIErrorCode = "OAUTH_CANCELLED"     // Frontend-emitted OAuth flow outcome.
 	ErrSyncDirectionInvalid         APIErrorCode = "SYNC_DIRECTION_INVALID"
 	ErrDisplayNameRequired          APIErrorCode = "DISPLAY_NAME_REQUIRED"
 	ErrPasswordMismatch             APIErrorCode = "PASSWORD_MISMATCH"

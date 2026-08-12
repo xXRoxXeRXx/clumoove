@@ -613,6 +613,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         className="ui-card w-full max-w-5xl p-6 bg-[var(--color-bg-primary)] border-[var(--color-border)] shadow-xl relative max-h-[90vh] overflow-y-auto text-left space-y-6"
       >
         {/* Header */}

@@ -179,7 +179,7 @@ export function AvatarCropper({ file, onCrop, onCancel }: AvatarCropperProps) {
 
   return (
     <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} className="ui-section-elevated max-w-sm w-full p-6 flex flex-col items-center">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={descriptionId} tabIndex={-1} className="ui-section-elevated max-w-sm w-full p-6 flex flex-col items-center">
         <h3 id={titleId} className="font-display font-extrabold text-lg text-[var(--color-text-primary)] mb-1">{t('settings.profilePicture')}</h3>
         <p id={descriptionId} className="text-xs text-[var(--color-text-muted)] font-mono tracking-wider mb-5 uppercase">{t('settings.avatarCropperTitle')}</p>
 

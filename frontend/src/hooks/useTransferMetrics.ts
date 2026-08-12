@@ -1,6 +1,8 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatDuration } from '../utils/format';
+
+const SPEED_WINDOW_MS = 15_000;
 
 export type TransferMetricsInput = {
   status: string;
@@ -21,6 +23,42 @@ export function useTransferMetrics() {
   const lastActiveTime = useRef(0);
   const prevStatusRef = useRef('');
 
+  const staticEtaForStatus = useCallback((status: string): string | undefined => {
+    switch (status) {
+      case 'COMPLETED':
+      case 'COMPLETED_WITH_ERRORS':
+        return t('dashboard.eta.done');
+      case 'FAILED':
+        return t('dashboard.eta.failed');
+      case 'CANCELLED':
+        return t('dashboard.eta.cancelled');
+      case 'INDEXING':
+        return t('dashboard.eta.indexing');
+      case 'PENDING':
+      case 'SCHEDULED':
+        return t('dashboard.eta.pending');
+      case 'VERIFYING':
+        return t('dashboard.eta.verifying');
+      case 'PAUSED':
+      case 'IDLE':
+        return '-';
+      case 'PAUSED_CONNECTION_LOSS':
+        return t('dashboard.eta.waitingConn');
+      default:
+        return undefined;
+    }
+  }, [t]);
+
+  // Static labels must update when the user changes language even if the job
+  // no longer emits progress updates.
+  useEffect(() => {
+    const staticEta = staticEtaForStatus(prevStatusRef.current);
+    if (staticEta !== undefined) {
+      setSpeed(0);
+      setEta(staticEta);
+    }
+  }, [staticEtaForStatus]);
+
   const reset = useCallback(() => {
     progressHistory.current = [];
     lastActiveSpeed.current = 0;
@@ -39,34 +77,10 @@ export function useTransferMetrics() {
       }
       prevStatusRef.current = data.status;
 
-      if (data.status === 'COMPLETED' || data.status === 'COMPLETED_WITH_ERRORS') {
+      const staticEta = staticEtaForStatus(data.status);
+      if (staticEta !== undefined) {
         setSpeed(0);
-        setEta(t('dashboard.eta.done'));
-        return;
-      }
-      if (data.status === 'FAILED') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.failed'));
-        return;
-      }
-      if (data.status === 'INDEXING') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.indexing'));
-        return;
-      }
-      if (data.status === 'PENDING') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.pending'));
-        return;
-      }
-      if (data.status === 'PAUSED' || data.status === 'IDLE') {
-        setSpeed(0);
-        setEta('-');
-        return;
-      }
-      if (data.status === 'PAUSED_CONNECTION_LOSS') {
-        setSpeed(0);
-        setEta(t('dashboard.eta.waitingConn'));
+        setEta(staticEta);
         return;
       }
 
@@ -76,7 +90,7 @@ export function useTransferMetrics() {
       const now = Date.now();
 
       progressHistory.current.push({ timestamp: now, bytes: liveBytes });
-      const windowLimit = now - 15000;
+      const windowLimit = now - SPEED_WINDOW_MS;
       progressHistory.current = progressHistory.current.filter((item) => item.timestamp >= windowLimit);
 
       if (progressHistory.current.length < 2) {
@@ -87,12 +101,21 @@ export function useTransferMetrics() {
 
       const oldest = progressHistory.current[0];
       const newest = progressHistory.current[progressHistory.current.length - 1];
+      const bytesDiff = newest.bytes - oldest.bytes;
+      if (bytesDiff < 0) {
+        progressHistory.current = [{ timestamp: now, bytes: liveBytes }];
+        lastActiveSpeed.current = 0;
+        lastActiveTime.current = 0;
+        setSpeed(0);
+        setEta(t('dashboard.eta.computing'));
+        return;
+      }
+
       const timeDiffSec = (newest.timestamp - oldest.timestamp) / 1000;
       if (timeDiffSec <= 0.5) {
         return;
       }
 
-      const bytesDiff = newest.bytes - oldest.bytes;
       let calculatedSpeed: number;
       if (bytesDiff > 0) {
         calculatedSpeed = bytesDiff / timeDiffSec;
@@ -100,7 +123,7 @@ export function useTransferMetrics() {
         lastActiveTime.current = now;
       } else {
         const timeSinceLastActive = now - lastActiveTime.current;
-        if (lastActiveSpeed.current > 0 && timeSinceLastActive < 15000) {
+        if (lastActiveSpeed.current > 0 && timeSinceLastActive < SPEED_WINDOW_MS) {
           calculatedSpeed = lastActiveSpeed.current;
         } else {
           calculatedSpeed = 0;
@@ -119,7 +142,7 @@ export function useTransferMetrics() {
         setEta(t('dashboard.eta.computing'));
       }
     },
-    [t],
+    [staticEtaForStatus, t],
   );
 
   return { speed, eta, updateMetrics, reset, prevStatusRef };

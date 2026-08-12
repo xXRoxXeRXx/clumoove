@@ -333,8 +333,10 @@
       "computing": "Calculating...",
       "done": "Finished",
       "failed": "Failed",
+      "cancelled": "Cancelled",
       "indexing": "Scanning files...",
       "pending": "Waiting to start...",
+      "verifying": "Verifying integrity...",
       "waitingConn": "Waiting for connection..."
     }
   },
@@ -635,6 +637,8 @@
     "OAUTH_ORIGIN_UNTRUSTED": "This website address is not authorized.",
     "OAUTH_GENERATION_FAILED": "Could not prepare the connection.",
     "OAUTH_EXCHANGE_FAILED": "Authorization could not be completed.",
+    "OAUTH_POPUP_BLOCKED": "Your browser blocked the authorization popup. Allow popups for this site and try again.",
+    "OAUTH_CANCELLED": "Authorization was cancelled.",
     "SYNC_DIRECTION_INVALID": "The selected sync direction is invalid.",
     "DISPLAY_NAME_REQUIRED": "Display name is a required field.",
     "PASSWORD_MISMATCH": "The new passwords do not match.",

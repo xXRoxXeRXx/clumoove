@@ -27,50 +27,74 @@ export function useOAuthPopup(apiUrl: string) {
 
       const width = 600;
       const height = 700;
-      const left = window.screen.width / 2 - width / 2;
-      const top = window.screen.height / 2 - height / 2;
-      const expectedOrigin = new URL(apiUrl, window.location.origin).origin;
+      const screenWithPosition = window.screen as Screen & { availLeft?: number; availTop?: number };
+      const left = (screenWithPosition.availLeft ?? 0) + (window.screen.availWidth - width) / 2;
+      const top = (screenWithPosition.availTop ?? 0) + (window.screen.availHeight - height) / 2;
+      const apiOrigin = new URL(apiUrl, window.location.origin);
+      const expectedOrigin = apiOrigin.origin;
+      const authorizationUrl = new URL('/api/oauth/auth', apiOrigin);
+      authorizationUrl.searchParams.set('provider', provider);
+      authorizationUrl.searchParams.set('purpose', purpose);
+      authorizationUrl.searchParams.set('origin', window.location.origin);
 
       const popup = window.open(
-        `${apiUrl}/api/oauth/auth?provider=${encodeURIComponent(provider)}&purpose=${encodeURIComponent(purpose)}&origin=${encodeURIComponent(window.location.origin)}`,
+        authorizationUrl.toString(),
         'OAuth',
         `width=${width},height=${height},left=${left},top=${top}`,
       );
 
-      const cleanup = listenForOAuthMessage(expectedOrigin, {
+      if (!popup) {
+        handlers.onError('OAUTH_POPUP_BLOCKED');
+        return;
+      }
+
+      let cleanup = () => {};
+      let checkClosedInterval = 0;
+      let disposed = false;
+      const dispose = () => {
+        if (disposed) return;
+        disposed = true;
+        clearInterval(checkClosedInterval);
+        cleanup();
+        if (cleanupRef.current === dispose) cleanupRef.current = null;
+      };
+
+      cleanup = listenForOAuthMessage(expectedOrigin, {
         expectedPurpose: purpose,
         expectedSource: popup,
         onSuccess: (msg) => {
           if (msg.provider !== provider) return;
+          dispose();
           handlers.onSuccess(msg);
-          cleanupRef.current = null;
         },
         onError: (msg) => {
+          dispose();
           handlers.onError(msg.error_code);
-          cleanupRef.current = null;
         },
       });
 
+      // If a future receiver delivers synchronously, remove the listener now
+      // that it has been returned instead of leaving a dead subscription.
+      if (disposed) {
+        cleanup();
+        return;
+      }
+
       // Also drop the listener if the user closes the popup manually.
-      const checkClosedInterval = setInterval(() => {
+      checkClosedInterval = window.setInterval(() => {
         let closed = false;
         try {
-          closed = !popup || popup.closed;
+          closed = popup.closed;
         } catch {
           // COOP may block popup.closed; postMessage remains primary signal.
         }
         if (closed) {
-          clearInterval(checkClosedInterval);
-          cleanup();
-          cleanupRef.current = null;
+          dispose();
+          handlers.onError('OAUTH_CANCELLED');
         }
       }, 1000);
 
-      const wrappedCleanup = () => {
-        clearInterval(checkClosedInterval);
-        cleanup();
-      };
-      cleanupRef.current = wrappedCleanup;
+      cleanupRef.current = dispose;
     },
     [apiUrl],
   );

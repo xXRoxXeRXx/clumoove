@@ -1,4 +1,4 @@
-import { useLayoutEffect, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type RefObject } from 'react';
 
 const FOCUSABLE = [
   'a[href]',
@@ -17,6 +17,14 @@ export function useFocusTrap(
   onEscape: () => void,
   enabled = true,
 ) {
+  const onEscapeRef = useRef(onEscape);
+
+  // Keep the global listener current without resetting focus whenever a
+  // parent passes a freshly-created callback on re-render.
+  useLayoutEffect(() => {
+    onEscapeRef.current = onEscape;
+  }, [onEscape]);
+
   useLayoutEffect(() => {
     if (!enabled) return;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -27,7 +35,7 @@ export function useFocusTrap(
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        onEscape();
+        onEscapeRef.current();
         return;
       }
       if (event.key !== 'Tab' || !containerRef.current) return;
@@ -36,6 +44,7 @@ export function useFocusTrap(
         .filter((element) => element.tabIndex !== -1 && !element.hasAttribute('disabled'));
       if (!focusable.length) {
         event.preventDefault();
+        containerRef.current.focus();
         return;
       }
 
@@ -58,5 +67,5 @@ export function useFocusTrap(
       document.body.style.overflow = previousOverflow;
       if (previousFocus && document.contains(previousFocus)) previousFocus.focus();
     };
-  }, [containerRef, initialFocusRef, onEscape, enabled]);
+  }, [containerRef, initialFocusRef, enabled]);
 }
