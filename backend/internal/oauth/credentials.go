@@ -147,6 +147,7 @@ func ConfiguredProviders() map[string]bool {
 	entry := get()
 	result := make(map[string]bool, len(providerNames))
 	for name := range providerNames {
+		// A nil snapshot map is safe to read and yields zero-value Credentials.
 		c := entry.data[name]
 		result[name] = c.ClientID != "" && c.ClientSecretEnc != ""
 	}

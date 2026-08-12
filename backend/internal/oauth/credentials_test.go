@@ -15,6 +15,7 @@ func TestCacheSingleLoadWithinTTL(t *testing.T) {
 			"google": {ClientID: "id", ClientSecretEnc: "enc"},
 		}, nil
 	}, testEncryptionKey)
+	defer Invalidate()
 
 	if _, err := clientID("google"); err != nil {
 		t.Fatalf("clientID: %v", err)
@@ -36,6 +37,7 @@ func TestInvalidateForcesReload(t *testing.T) {
 			"google": {ClientID: "id", ClientSecretEnc: "enc"},
 		}, nil
 	}, testEncryptionKey)
+	defer Invalidate()
 
 	if _, err := clientID("google"); err != nil {
 		t.Fatalf("clientID: %v", err)

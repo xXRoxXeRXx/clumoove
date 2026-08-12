@@ -346,6 +346,11 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_refresh_failed", slog.String("job_type", "migration"), slog.String("job_id", entry.MigrationID), slog.String("role", entry.Role), slog.String("provider", entry.Provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+					if !errors.Is(err, oauth.ErrRefreshTokenInvalid) {
+						// Transient provider failures (such as 429/5xx) remain eligible for
+						// the next rotation pass instead of failing an otherwise valid job.
+						return
+					}
 					// Provider error bodies can contain credential hints. Persist only a
 					// stable, non-sensitive failure reason.
 					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
@@ -418,6 +423,11 @@ func (s *APIServer) rotateExpiringOAuthTokens(ctx context.Context) {
 				cancel()
 				if err != nil {
 					logger.ErrorContext(ctx, "oauth_rotation_refresh_failed", slog.String("job_type", "sync"), slog.String("job_id", entry.SyncJobID), slog.String("role", entry.Role), slog.String("provider", entry.Provider), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+					if !errors.Is(err, oauth.ErrRefreshTokenInvalid) {
+						// Transient provider failures (such as 429/5xx) remain eligible for
+						// the next rotation pass instead of failing an otherwise valid job.
+						return
+					}
 					errMsg := fmt.Sprintf("OAuth token refresh failed (%s)", entry.Provider)
 					_ = db.UpdateSyncJobStatus(s.db, entry.SyncJobID, "FAILED", &errMsg)
 					return

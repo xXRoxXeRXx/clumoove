@@ -623,12 +623,14 @@ func (p *Processor) handleSyncTaskFailure(ctx context.Context, payload *queue.Pa
 		return
 	}
 
-	isPermanent := false
+	isPermanent := errors.Is(procErr, oauth.ErrRefreshTokenInvalid) ||
+		errors.Is(procErr, storage.ErrUnsupportedResourceType) ||
+		errors.Is(procErr, storage.ErrPathEscapesRoot)
 	errStr := procErr.Error()
-	if strings.Contains(errStr, "exportSizeLimitExceeded") ||
+	if !isPermanent && (strings.Contains(errStr, "exportSizeLimitExceeded") ||
 		strings.Contains(errStr, "badRequest") ||
 		strings.Contains(errStr, "notFound") ||
-		strings.Contains(errStr, "fileNotFound") {
+		strings.Contains(errStr, "fileNotFound")) {
 		isPermanent = true
 	}
 

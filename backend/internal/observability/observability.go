@@ -172,6 +172,9 @@ func ErrorKind(err error) string {
 	if errors.Is(err, sql.ErrNoRows) {
 		return "not_found"
 	}
+	if kind := errorKindFromTypedError(err); kind != "" {
+		return kind
+	}
 	if kind := errorKindFromHTTP(err); kind != "" {
 		return kind
 	}
@@ -190,6 +193,17 @@ func ErrorKind(err error) string {
 		return "network"
 	}
 	return "internal"
+}
+
+// errorKindFromTypedError lets packages expose a stable operational category
+// without requiring observability to import their error sentinels.
+func errorKindFromTypedError(err error) string {
+	type errorKinder interface{ ErrorKind() string }
+	var ek errorKinder
+	if errors.As(err, &ek) {
+		return ek.ErrorKind()
+	}
+	return ""
 }
 
 // httpStatusFromError extracts an HTTP status previously attached to the error

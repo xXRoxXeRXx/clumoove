@@ -1355,7 +1355,8 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 	}
 
 	// Check if error is permanent / non-retryable
-	isPermanent := errors.Is(procErr, storage.ErrUnsupportedResourceType) ||
+	isPermanent := errors.Is(procErr, oauth.ErrRefreshTokenInvalid) ||
+		errors.Is(procErr, storage.ErrUnsupportedResourceType) ||
 		errors.Is(procErr, storage.ErrPathEscapesRoot)
 	errStr := procErr.Error()
 	if !isPermanent && (strings.Contains(errStr, "exportSizeLimitExceeded") ||

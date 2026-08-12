@@ -3,30 +3,37 @@ package oauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
 
+const maxOAuthResponseBodyBytes int64 = 1 << 20
+
 type ProviderConfig struct {
-	AuthURL  string
-	TokenURL string
-	Scopes   []string
+	AuthURL     string
+	TokenURL    string
+	UserInfoURL string
+	Scopes      []string
 }
 
-// configs holds the static endpoints and scopes for each provider. Client
+// providerConfigs holds the static endpoints and scopes for each provider. Client
 // identity (ID/secret) is no longer embedded here; it is loaded at runtime from
 // the instance_oauth_providers table via the process cache.
-var configs = map[string]ProviderConfig{
+var providerConfigs = map[string]ProviderConfig{
 	"dropbox": {
-		AuthURL:  "https://www.dropbox.com/oauth2/authorize",
-		TokenURL: "https://api.dropboxapi.com/oauth2/token",
+		AuthURL:     "https://www.dropbox.com/oauth2/authorize",
+		TokenURL:    "https://api.dropboxapi.com/oauth2/token",
+		UserInfoURL: "https://api.dropboxapi.com/2/users/get_current_account",
 	},
 	"google": {
-		AuthURL:  "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL: "https://oauth2.googleapis.com/token",
+		AuthURL:     "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL:    "https://oauth2.googleapis.com/token",
+		UserInfoURL: "https://www.googleapis.com/oauth2/v2/userinfo",
 		Scopes: []string{
 			"https://www.googleapis.com/auth/drive",
 			"https://www.googleapis.com/auth/calendar",
@@ -36,29 +43,41 @@ var configs = map[string]ProviderConfig{
 		},
 	},
 	"onedrive": {
-		AuthURL:  "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
-		TokenURL: "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+		AuthURL:     "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize",
+		TokenURL:    "https://login.microsoftonline.com/consumers/oauth2/v2.0/token",
+		UserInfoURL: "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName,id",
 		// Files.ReadWrite.All is required to access files shared with the user;
 		// Files.ReadWrite alone is insufficient for remote OneDrive items.
 		Scopes: []string{"openid", "profile", "offline_access", "User.Read", "Files.ReadWrite.All"},
 	},
-	// Note: HiDrive OAuth requires comma-separated scopes ("admin,rw"), joined as single string.
+	// HiDrive treats "admin,rw" as one comma-separated scope string.
 	"hidrive": {
-		AuthURL:  "https://my.hidrive.com/client/authorize",
-		TokenURL: "https://my.hidrive.com/oauth2/token",
-		Scopes:   []string{"admin,rw"},
+		AuthURL:     "https://my.hidrive.com/client/authorize",
+		TokenURL:    "https://my.hidrive.com/oauth2/token",
+		UserInfoURL: "https://api.hidrive.strato.com/2.1/user/me?fields=account,alias",
+		Scopes:      []string{"admin,rw"},
 	},
 }
 
-var httpClient = &http.Client{
+// oauthClient keeps transport and endpoint dependencies together so tests can
+// use isolated clients without mutating package state. The default client and
+// providerConfigs are immutable after package initialization.
+type oauthClient struct {
+	httpClient *http.Client
+	configs    map[string]ProviderConfig
+}
+
+func newOAuthClient(httpClient *http.Client, configs map[string]ProviderConfig) *oauthClient {
+	return &oauthClient{httpClient: httpClient, configs: configs}
+}
+
+var defaultOAuthClient = newOAuthClient(&http.Client{
 	Timeout: 15 * time.Second,
 	Transport: &http.Transport{
 		IdleConnTimeout: 30 * time.Second,
 		MaxIdleConns:    10,
 	},
-}
-
-var oneDriveUserInfoURL = "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName,id"
+}, providerConfigs)
 
 var providerNames = map[string]struct{}{
 	"dropbox":  {},
@@ -74,7 +93,11 @@ func IsProvider(provider string) bool {
 }
 
 func GetAuthURL(provider, redirectURI, state string) (string, error) {
-	config, ok := configs[provider]
+	return defaultOAuthClient.getAuthURL(provider, redirectURI, state)
+}
+
+func (c *oauthClient) getAuthURL(provider, redirectURI, state string) (string, error) {
+	config, ok := c.configs[provider]
 	if !ok {
 		return "", fmt.Errorf("unknown provider: %s", provider)
 	}
@@ -114,7 +137,11 @@ type TokenResponse struct {
 }
 
 func ExchangeCode(ctx context.Context, provider, code, redirectURI string) (*TokenResponse, error) {
-	config, ok := configs[provider]
+	return defaultOAuthClient.exchangeCode(ctx, provider, code, redirectURI)
+}
+
+func (c *oauthClient) exchangeCode(ctx context.Context, provider, code, redirectURI string) (*TokenResponse, error) {
+	config, ok := c.configs[provider]
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
@@ -140,26 +167,18 @@ func ExchangeCode(ctx context.Context, provider, code, redirectURI string) (*Tok
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var errResp struct {
-			ErrorDescription string `json:"error_description"`
-			Error            string `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&errResp)
-		if errResp.ErrorDescription != "" {
-			return nil, fmt.Errorf("token exchange failed: %s", errResp.ErrorDescription)
-		}
 		return nil, fmt.Errorf("token exchange failed with status: %d", resp.StatusCode)
 	}
 
 	var tr TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+	if err := decodeOAuthResponse(resp.Body, &tr); err != nil {
 		return nil, err
 	}
 
@@ -167,16 +186,25 @@ func ExchangeCode(ctx context.Context, provider, code, redirectURI string) (*Tok
 }
 
 func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
+	return defaultOAuthClient.getUserInfo(ctx, provider, token)
+}
+
+func (c *oauthClient) getUserInfo(ctx context.Context, provider, token string) (string, error) {
+	config, ok := c.configs[provider]
+	if !ok {
+		return "OAuth User", nil
+	}
+
 	switch provider {
 	case "dropbox":
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.dropboxapi.com/2/users/get_current_account", bytesReaderNull())
+		req, err := http.NewRequestWithContext(ctx, "POST", config.UserInfoURL, strings.NewReader("null"))
 		if err != nil {
 			return "", err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Content-Type", "application/json")
 
-		resp, err := httpClient.Do(req)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return "", err
 		}
@@ -192,7 +220,7 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 			} `json:"name"`
 			Email string `json:"email"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		if err := decodeOAuthResponse(resp.Body, &info); err != nil {
 			return "", err
 		}
 
@@ -201,13 +229,13 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 		}
 		return info.Email, nil
 	case "google":
-		req, err := http.NewRequestWithContext(ctx, "GET", "https://www.googleapis.com/oauth2/v2/userinfo", nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", config.UserInfoURL, nil)
 		if err != nil {
 			return "", err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
-		resp, err := httpClient.Do(req)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return "", err
 		}
@@ -221,7 +249,7 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 			Name  string `json:"name"`
 			Email string `json:"email"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		if err := decodeOAuthResponse(resp.Body, &info); err != nil {
 			return "", err
 		}
 
@@ -230,13 +258,13 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 		}
 		return info.Email, nil
 	case "hidrive":
-		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.hidrive.strato.com/2.1/user/me?fields=account,alias", nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", config.UserInfoURL, nil)
 		if err != nil {
 			return "", err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 
-		resp, err := httpClient.Do(req)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return "", err
 		}
@@ -250,7 +278,7 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 			Account string `json:"account"`
 			Alias   string `json:"alias"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		if err := decodeOAuthResponse(resp.Body, &info); err != nil {
 			return "", err
 		}
 
@@ -262,12 +290,12 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 		}
 		return "HiDrive User", nil
 	case "onedrive":
-		req, err := http.NewRequestWithContext(ctx, "GET", oneDriveUserInfoURL, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", config.UserInfoURL, nil)
 		if err != nil {
 			return "", err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
-		resp, err := httpClient.Do(req)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return "", err
 		}
@@ -281,7 +309,7 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 			UserPrincipalName string `json:"userPrincipalName"`
 			ID                string `json:"id"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		if err := decodeOAuthResponse(resp.Body, &info); err != nil {
 			return "", err
 		}
 		for _, value := range []string{info.DisplayName, info.Mail, info.UserPrincipalName, info.ID} {
@@ -299,7 +327,55 @@ func GetUserInfo(ctx context.Context, provider, token string) (string, error) {
 // If the provider does not return a new refresh token (e.g. Google), the original
 // refresh token is preserved in the returned TokenResponse.
 func RefreshToken(ctx context.Context, provider, refreshToken string) (*TokenResponse, error) {
-	config, ok := configs[provider]
+	return defaultOAuthClient.refreshToken(ctx, provider, refreshToken)
+}
+
+// ErrRefreshTokenInvalid indicates that the OAuth provider rejected credentials
+// needed to refresh a token. Callers must treat it as permanent, not retryable.
+var ErrRefreshTokenInvalid = errors.New("oauth: refresh token invalid or revoked")
+
+// refreshError intentionally keeps provider error details out of Error(), so
+// callers may log it safely. Its internal code is used only for classification.
+type refreshError struct {
+	status int
+	code   string
+}
+
+func (e *refreshError) Error() string {
+	return fmt.Sprintf("token refresh failed with status: %d", e.status)
+}
+
+func (e *refreshError) Unwrap() error {
+	if e.status == http.StatusUnauthorized || (e.status == http.StatusBadRequest && isInvalidRefreshCode(e.code)) {
+		return ErrRefreshTokenInvalid
+	}
+	return nil
+}
+
+// ErrorKind supplies the stable observability category without exposing the
+// provider's error code. Other HTTP failures fall through to HTTPStatus.
+func (e *refreshError) ErrorKind() string {
+	if errors.Is(e, ErrRefreshTokenInvalid) {
+		return "authentication"
+	}
+	return ""
+}
+
+// HTTPStatus lets generic observability preserve the status-derived category
+// for transient provider errors such as 429 and 5xx.
+func (e *refreshError) HTTPStatus() int { return e.status }
+
+func isInvalidRefreshCode(code string) bool {
+	switch strings.ToLower(code) {
+	case "invalid_grant", "invalid_client", "invalid_token", "unauthorized_client":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *oauthClient) refreshToken(ctx context.Context, provider, refreshToken string) (*TokenResponse, error) {
+	config, ok := c.configs[provider]
 	if !ok {
 		return nil, fmt.Errorf("unknown provider: %s", provider)
 	}
@@ -324,7 +400,7 @@ func RefreshToken(ctx context.Context, provider, refreshToken string) (*TokenRes
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := httpClient.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -333,12 +409,20 @@ func RefreshToken(ctx context.Context, provider, refreshToken string) (*TokenRes
 	if resp.StatusCode != http.StatusOK {
 		// OAuth error bodies are controlled by an external provider and can include
 		// credential hints. Do not surface their contents to callers, logs, or the
-		// persisted migration status.
-		return nil, fmt.Errorf("token refresh failed with status: %d", resp.StatusCode)
+		// persisted migration status. Read only the standard error code to classify
+		// an invalid refresh credential as permanent.
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		// If the bounded decode fails, leave code empty and classify this as
+		// retryable. A malformed or oversized provider error must not turn into a
+		// terminal migration failure based on an untrusted response body.
+		_ = decodeOAuthResponse(resp.Body, &errResp)
+		return nil, &refreshError{status: resp.StatusCode, code: errResp.Error}
 	}
 
 	var tr TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+	if err := decodeOAuthResponse(resp.Body, &tr); err != nil {
 		return nil, err
 	}
 
@@ -355,7 +439,6 @@ func RefreshToken(ctx context.Context, provider, refreshToken string) (*TokenRes
 	return &tr, nil
 }
 
-// bytesReaderNull returns an io.Reader containing "null" to satisfy Dropbox's JSON body requirement.
-func bytesReaderNull() *strings.Reader {
-	return strings.NewReader("null")
+func decodeOAuthResponse(body io.Reader, destination any) error {
+	return json.NewDecoder(io.LimitReader(body, maxOAuthResponseBodyBytes)).Decode(destination)
 }
