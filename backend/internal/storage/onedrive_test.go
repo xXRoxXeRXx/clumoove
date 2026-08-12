@@ -294,6 +294,14 @@ func TestQuickXorHasherStreamingAndEmptyValue(t *testing.T) {
 	}
 }
 
+func TestQuickXorHasherMatchesMicrosoftKnownVector(t *testing.T) {
+	h := NewQuickXorHasher()
+	_, _ = h.Write([]byte{0x4a})
+	if got, want := base64.StdEncoding.EncodeToString(h.Sum(nil)), "SgAAAAAAAAAAAAAAAQAAAAAAAAA="; got != want {
+		t.Fatalf("QuickXor hash = %q, want %q", got, want)
+	}
+}
+
 func TestOneDriveProviderNestedUploadCreatesParents(t *testing.T) {
 	var requests []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

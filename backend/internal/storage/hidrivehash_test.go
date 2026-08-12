@@ -20,6 +20,16 @@ func TestHiDriveHasherDocumentationVector(t *testing.T) {
 	}
 }
 
+func TestHiDriveHasherEmptyAndZeroBlock(t *testing.T) {
+	for _, data := range [][]byte{nil, make([]byte, hiDriveHashBlockSize)} {
+		h := NewHiDriveHasher()
+		_, _ = h.Write(data)
+		if got, want := hex.EncodeToString(h.Sum(nil)), strings.Repeat("00", sha1.Size); got != want {
+			t.Fatalf("HiDrive hash = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestHiDriveHasherFinalizesCarryLevelsAddedDuringSum(t *testing.T) {
 	// 255 full L1 slots plus one incomplete L0 slot. Finalising that slot
 	// fills L1 and creates L2, which Sum must also visit.

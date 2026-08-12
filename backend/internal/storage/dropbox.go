@@ -246,7 +246,7 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 			Name:  entry.Name,
 			IsDir: entry.Tag == "folder",
 			Size:  entry.Size,
-			Hash:  entry.ContentHash,
+			Hash:  dropboxContentHash(entry.ContentHash),
 		}
 		if entry.ServerModified != "" {
 			if t, err := time.Parse(time.RFC3339, entry.ServerModified); err == nil {
@@ -301,7 +301,7 @@ func (p *DropboxProvider) GetDirectoryListing(ctx context.Context, resourceType,
 				Name:  entry.Name,
 				IsDir: entry.Tag == "folder",
 				Size:  entry.Size,
-				Hash:  entry.ContentHash,
+				Hash:  dropboxContentHash(entry.ContentHash),
 			}
 			if entry.ServerModified != "" {
 				if t, err := time.Parse(time.RFC3339, entry.ServerModified); err == nil {
@@ -388,7 +388,7 @@ func (p *DropboxProvider) InspectResource(ctx context.Context, resourceType, res
 		Name:  entry.Name,
 		IsDir: entry.Tag == "folder",
 		Size:  entry.Size,
-		Hash:  entry.ContentHash,
+		Hash:  dropboxContentHash(entry.ContentHash),
 	}
 	if entry.ServerModified != "" {
 		if t, err := time.Parse(time.RFC3339, entry.ServerModified); err == nil {
@@ -851,7 +851,14 @@ func (p *DropboxProvider) GetFileHash(ctx context.Context, resourceType, filePat
 	if res.Hash == "" {
 		return "", fmt.Errorf("hash not found in Dropbox metadata")
 	}
-	return "DROPBOX:" + res.Hash, nil
+	return res.Hash, nil
+}
+
+func dropboxContentHash(contentHash string) string {
+	if contentHash == "" {
+		return ""
+	}
+	return "DROPBOX:" + contentHash
 }
 
 var globalDropboxCreatedDirs = newBoundedDirCache(5000)

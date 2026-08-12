@@ -229,7 +229,7 @@ func (p *davProvider) Connect(ctx context.Context) (bool, error) {
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return false, err
 	}
@@ -271,7 +271,7 @@ func (p *davProvider) InspectResource(ctx context.Context, resourceType, resourc
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return CloudResource{}, err
 	}
@@ -364,7 +364,7 @@ func (p *davProvider) GetDirectoryListing(ctx context.Context, resourceType, dir
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -1010,7 +1010,7 @@ func (p *davProvider) GetFileHash(ctx context.Context, resourceType, filePath st
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		if fallbackETag != "" {
 			return fallbackETag, nil
@@ -1122,7 +1122,7 @@ func (p *davProvider) FileExists(ctx context.Context, resourceType, filePath str
 	</d:prop>
 </d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return false, 0, err
 	}
@@ -1290,7 +1290,7 @@ func (p *davProvider) ApplyMetadata(ctx context.Context, resourceType, filePath 
 type nextcloudPaths struct{}
 
 func (nextcloudPaths) resourceURL(baseURL, username, resourceType, endpointPath string) string {
-	cleanPath := strings.TrimPrefix(endpointPath, "/")
+	cleanPath := cleanDAVEndpointPath(endpointPath)
 	escapedPath := escapeDAVPath(cleanPath)
 	escapedUser := escapeDAVPath(username)
 
@@ -1305,7 +1305,7 @@ func (nextcloudPaths) resourceURL(baseURL, username, resourceType, endpointPath 
 }
 
 func (nextcloudPaths) uploadsURL(baseURL, username, endpointPath string) string {
-	cleanPath := strings.TrimPrefix(endpointPath, "/")
+	cleanPath := cleanDAVEndpointPath(endpointPath)
 	escapedPath := escapeDAVPath(cleanPath)
 	escapedUser := escapeDAVPath(username)
 	return fmt.Sprintf("%s/uploads/%s/%s", baseURL, escapedUser, escapedPath)

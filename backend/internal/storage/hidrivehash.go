@@ -70,10 +70,10 @@ func (h *HiDriveHasher) add(level int, node [sha1.Size]byte) {
 		}
 		l := &h.levels[level]
 		if node != ([sha1.Size]byte{}) {
-			input := make([]byte, sha1.Size+1)
-			copy(input, node[:])
+			var input [sha1.Size + 1]byte
+			copy(input[:], node[:])
 			input[sha1.Size] = byte(l.count)
-			addHiDriveModulo(&l.sum, sha1.Sum(input))
+			addHiDriveModulo(&l.sum, sha1.Sum(input[:]))
 		}
 		l.count++
 		h.last = node

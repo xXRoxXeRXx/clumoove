@@ -16,6 +16,17 @@ import (
 // retries cannot run forever.
 const maxListAttempts = 3
 
+var propfindRetryWait = func(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 // listingTimeout returns the per-request timeout for a single WebDAV/Nextcloud
 // PROPFIND directory listing. Configurable via WEBDAV_LISTING_TIMEOUT_SECONDS
 // (default 120s) so genuinely large folders are not killed prematurely.
@@ -53,6 +64,14 @@ func doPropfind(ctx context.Context, client *http.Client, req *http.Request) (*h
 	for attempt := 0; attempt < maxListAttempts; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, listingTimeout())
 		attemptReq := req.Clone(attemptCtx)
+		if req.GetBody != nil {
+			body, err := req.GetBody()
+			if err != nil {
+				cancel()
+				return nil, err
+			}
+			attemptReq.Body = body
+		}
 
 		resp, err := client.Do(attemptReq)
 		if err != nil {
@@ -61,10 +80,8 @@ func doPropfind(ctx context.Context, client *http.Client, req *http.Request) (*h
 				// Transient timeout: retry unless we've exhausted attempts or the
 				// overall indexing context has been cancelled/shutdown.
 				if attempt < maxListAttempts-1 && ctx.Err() == nil {
-					select {
-					case <-ctx.Done():
-						return nil, ctx.Err()
-					case <-time.After(backoff):
+					if err := propfindRetryWait(ctx, backoff); err != nil {
+						return nil, err
 					}
 					backoff *= 2
 					continue

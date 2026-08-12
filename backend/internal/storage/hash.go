@@ -1,15 +1,15 @@
 package storage
 
-import (
-	"regexp"
-	"strings"
-)
-
-var hexRegexp = regexp.MustCompile("^[0-9a-fA-F]+$")
+import "strings"
 
 // ParseHashString normalizes hashes obtained from any storage provider.
 func ParseHashString(hashStr string) (string, string) {
-	hashStr = strings.Trim(hashStr, "\"")
+	if strings.HasPrefix(hashStr, "\"") || strings.HasSuffix(hashStr, "\"") {
+		if len(hashStr) < 2 || hashStr[0] != '"' || hashStr[len(hashStr)-1] != '"' {
+			return "UNKNOWN", hashStr
+		}
+		hashStr = hashStr[1 : len(hashStr)-1]
+	}
 	parts := strings.SplitN(hashStr, ":", 2)
 	if len(parts) == 2 {
 		algo := strings.ToUpper(parts[0])
@@ -32,15 +32,5 @@ func ParseHashString(hashStr string) (string, string) {
 		return algo, hashValue
 	}
 
-	if hexRegexp.MatchString(hashStr) {
-		switch len(hashStr) {
-		case 32:
-			return "MD5", strings.ToLower(hashStr)
-		case 40:
-			return "SHA1", strings.ToLower(hashStr)
-		case 64:
-			return "SHA256", strings.ToLower(hashStr)
-		}
-	}
 	return "UNKNOWN", hashStr
 }

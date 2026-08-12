@@ -200,7 +200,7 @@ func (p *GoogleProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 					Name:         displayName,
 					Size:         size,
 					IsDir:        isDir,
-					Hash:         f.Md5Checksum,
+					Hash:         googleMD5Hash(f.Md5Checksum),
 					LastModified: modTime,
 					Metadata: FileMetadata{
 						Description: f.Description,
@@ -482,10 +482,7 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 			size = 0 // Google Workspace files do not have a pre-determined export size
 		}
 
-		hashVal := f.Md5Checksum
-		if hashVal != "" && !strings.HasPrefix(strings.ToUpper(hashVal), "MD5:") {
-			hashVal = "MD5:" + hashVal
-		}
+		hashVal := googleMD5Hash(f.Md5Checksum)
 
 		return CloudResource{
 			Path:         path,
@@ -501,6 +498,15 @@ func (p *GoogleProvider) InspectResource(ctx context.Context, resourceType, path
 	default:
 		return CloudResource{}, fmt.Errorf("InspectResource not implemented for %s", resourceType)
 	}
+}
+
+func googleMD5Hash(value string) string {
+	// InspectResource may receive a normalized value from a caller, while the
+	// Drive listing API returns a raw MD5 checksum.
+	if value == "" || strings.HasPrefix(strings.ToUpper(value), "MD5:") {
+		return value
+	}
+	return "MD5:" + value
 }
 
 func (p *GoogleProvider) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {

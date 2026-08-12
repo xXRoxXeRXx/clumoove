@@ -50,3 +50,12 @@ func TestNextcloudPathsResourceURLEncodesSubDelims(t *testing.T) {
 		t.Errorf("uploadsURL = %s, want %s", gotUpload, wantUpload)
 	}
 }
+
+func TestNextcloudPathsNormalizesEndpointPaths(t *testing.T) {
+	np := nextcloudPaths{}
+	got := np.resourceURL("https://cloud.example/remote.php/dav", "user", "files", "/folder//child/../file.txt")
+	want := "https://cloud.example/remote.php/dav/files/user/folder/file.txt"
+	if got != want {
+		t.Errorf("resourceURL = %s, want %s", got, want)
+	}
+}

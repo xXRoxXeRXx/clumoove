@@ -121,7 +121,7 @@ func (p *WebDAVProvider) Connect(ctx context.Context) (bool, error) {
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return false, err
 	}
@@ -163,7 +163,7 @@ func (p *WebDAVProvider) InspectResource(ctx context.Context, resourceType, reso
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return CloudResource{}, err
 	}
@@ -241,7 +241,7 @@ func (p *WebDAVProvider) GetDirectoryListing(ctx context.Context, resourceType, 
 			</d:prop>
 		</d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +465,7 @@ func (p *WebDAVProvider) FileExists(ctx context.Context, resourceType, filePath 
 	</d:prop>
 </d:propfind>`)
 
-	req, err := p.newRequest("PROPFIND", u, bytes.NewBuffer(body))
+	req, err := p.newRequest("PROPFIND", u, bytes.NewReader(body))
 	if err != nil {
 		return false, 0, err
 	}

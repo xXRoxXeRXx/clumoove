@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"path"
 	"strings"
 )
 
@@ -17,7 +18,7 @@ import (
 func escapeDAVPath(p string) string {
 	const hex = "0123456789ABCDEF"
 	var b strings.Builder
-	b.Grow(len(p))
+	b.Grow(3 * len(p))
 	for i := 0; i < len(p); i++ {
 		c := p[i]
 		if isUnreserved(c) || c == '/' {
@@ -29,6 +30,13 @@ func escapeDAVPath(p string) string {
 		}
 	}
 	return b.String()
+}
+
+// cleanDAVEndpointPath normalizes a server-reported resource path before it is
+// embedded below a provider-specific DAV namespace. The leading slash keeps
+// path.Clean from allowing parent components to escape that namespace.
+func cleanDAVEndpointPath(endpointPath string) string {
+	return strings.TrimPrefix(path.Clean("/"+endpointPath), "/")
 }
 
 // isUnreserved reports whether c is an RFC 3986 unreserved character

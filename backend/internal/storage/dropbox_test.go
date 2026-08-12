@@ -104,6 +104,15 @@ func TestDropboxHasherMultiBlock(t *testing.T) {
 	}
 }
 
+func TestDropboxContentHashIsTagged(t *testing.T) {
+	if got, want := dropboxContentHash("abcdef"), "DROPBOX:abcdef"; got != want {
+		t.Fatalf("dropboxContentHash() = %q, want %q", got, want)
+	}
+	if got := dropboxContentHash(""); got != "" {
+		t.Fatalf("dropboxContentHash(empty) = %q, want empty", got)
+	}
+}
+
 type mockRoundTripper struct {
 	fn func(req *http.Request) (*http.Response, error)
 }

@@ -32,6 +32,9 @@ func (c *boundedDirCache) Contains(key string) bool {
 func (c *boundedDirCache) Add(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.m[key] {
+		return
+	}
 	if len(c.m) >= c.maxCap {
 		c.m = make(map[string]bool, 1024)
 	}

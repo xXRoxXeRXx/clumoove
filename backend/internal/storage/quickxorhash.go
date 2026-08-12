@@ -32,9 +32,6 @@ func (h *QuickXorHasher) Write(p []byte) (int, error) {
 
 func (h *QuickXorHasher) Sum(b []byte) []byte {
 	out := h.data
-	for i := 0; i < len(out)/2; i++ {
-		out[i], out[len(out)-1-i] = out[len(out)-1-i], out[i]
-	}
 	for i := 0; i < 8; i++ {
 		out[12+i] ^= byte(uint64(h.length) >> (8 * i))
 	}
