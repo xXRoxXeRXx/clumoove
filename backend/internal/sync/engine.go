@@ -217,12 +217,12 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	}
 
 	// 4. Create storage provider clients
-	sourceCtx, err := megasecret.WithSession(indexCtx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, e.encryptionKey)
+	sourceCtx, err := megasecret.WithMegaSession(indexCtx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, e.encryptionKey)
 	if err != nil {
 		e.failSync(syncJobID, generation, "Failed to decrypt source connection session.")
 		return
 	}
-	targetCtx, err := megasecret.WithSession(indexCtx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, e.encryptionKey)
+	targetCtx, err := megasecret.WithMegaSession(indexCtx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, e.encryptionKey)
 	if err != nil {
 		e.failSync(syncJobID, generation, "Failed to decrypt target connection session.")
 		return

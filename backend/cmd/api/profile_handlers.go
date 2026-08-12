@@ -11,6 +11,7 @@ import (
 	"backend/internal/auth"
 	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/megasecret"
 	"backend/internal/oauth"
 	"backend/internal/storage"
 )
@@ -99,17 +100,12 @@ func (s *APIServer) loadProfile(r *http.Request, profileID string, base profileC
 		}
 	}
 	megaSession := base.MegaSession
-	if p.MegaSessionIDEncrypted != "" || p.MegaMasterKeyEncrypted != "" {
-		if p.MegaSessionIDEncrypted == "" || p.MegaMasterKeyEncrypted == "" {
-			return base, errors.New("incomplete MEGA session")
+	if provider == "mega" && (p.MegaSessionIDEncrypted != "" || p.MegaMasterKeyEncrypted != "") {
+		decoded, err := megasecret.DecodeMegaSession(p.MegaSessionIDEncrypted, p.MegaMasterKeyEncrypted, s.encryptionKey)
+		if err != nil {
+			return base, err
 		}
-		id, idErr := crypto.DecryptWithDomain(p.MegaSessionIDEncrypted, s.encryptionKey, crypto.DomainMegaSessionID)
-		keyText, keyErr := crypto.DecryptWithDomain(p.MegaMasterKeyEncrypted, s.encryptionKey, crypto.DomainMegaMasterKey)
-		key, decodeErr := base64.StdEncoding.DecodeString(keyText)
-		if idErr != nil || keyErr != nil || decodeErr != nil || id == "" || len(key) == 0 {
-			return base, errors.New("invalid encrypted MEGA session")
-		}
-		megaSession = storage.MegaSession{ID: id, MasterKey: key}
+		megaSession = decoded
 	}
 
 	isOAuth := oauth.IsProvider(p.Provider)
@@ -508,16 +504,10 @@ func (s *APIServer) handleTestProfile(w http.ResponseWriter, r *http.Request) {
 		password = tok.AccessToken
 	}
 
-	providerCtx := r.Context()
-	if p.Provider == "mega" && p.MegaSessionIDEncrypted != "" && p.MegaMasterKeyEncrypted != "" {
-		sessionID, idErr := crypto.DecryptWithDomain(p.MegaSessionIDEncrypted, s.encryptionKey, crypto.DomainMegaSessionID)
-		keyText, keyErr := crypto.DecryptWithDomain(p.MegaMasterKeyEncrypted, s.encryptionKey, crypto.DomainMegaMasterKey)
-		masterKey, decodeErr := base64.StdEncoding.DecodeString(keyText)
-		if idErr != nil || keyErr != nil || decodeErr != nil {
-			writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
-			return
-		}
-		providerCtx = storage.WithMegaSession(providerCtx, storage.MegaSession{ID: sessionID, MasterKey: masterKey})
+	providerCtx, sessionErr := megasecret.WithMegaSession(r.Context(), p.Provider, p.MegaSessionIDEncrypted, p.MegaMasterKeyEncrypted, s.encryptionKey)
+	if sessionErr != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{"success": false, "error_code": ErrEncryptionFailed})
+		return
 	}
 	client, err := storage.NewProvider(providerCtx, p.Provider, p.URL, p.Username, password)
 	if err != nil {

@@ -107,7 +107,7 @@ func (idx *Indexer) Start(serverCtx context.Context, migID string) {
 		}
 	}
 
-	sourceCtx, err := megasecret.WithSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, idx.encryptionKey)
+	sourceCtx, err := megasecret.WithMegaSession(ctx, mig.SourceProvider, mig.SourceMegaSessionIDEncrypted, mig.SourceMegaMasterKeyEncrypted, idx.encryptionKey)
 	if err != nil {
 		logger.Error("indexing_source_session_decrypt_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		failMigration(ctx, idx.db, migID, "Failed to decrypt source connection session.")

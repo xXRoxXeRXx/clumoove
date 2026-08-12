@@ -101,11 +101,11 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 		return fmt.Errorf("failed to refresh target OAuth token: %w", err)
 	}
 
-	sourceCtx, err := megasecret.WithSession(ctx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, p.secretKey)
+	sourceCtx, err := megasecret.WithMegaSession(ctx, job.SourceProvider, job.SourceMegaSessionIDEncrypted, job.SourceMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt source MEGA session: %w", err)
 	}
-	targetCtx, err := megasecret.WithSession(ctx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, p.secretKey)
+	targetCtx, err := megasecret.WithMegaSession(ctx, job.TargetProvider, job.TargetMegaSessionIDEncrypted, job.TargetMegaMasterKeyEncrypted, p.secretKey)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt target MEGA session: %w", err)
 	}
