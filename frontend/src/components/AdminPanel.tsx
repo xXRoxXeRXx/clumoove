@@ -56,6 +56,8 @@ export function AdminPanel({ apiUrl, token, user, onBack }: AdminPanelProps) {
     setMessage({ text: translateApiError(errorCode), type: 'error' });
   }, [translateApiError]);
 
+  if (user?.role !== 'ADMIN') return null;
+
   const tabs = [
     ['users', UsersIcon, 'admin.tabs.users'],
     ['migrations', Activity, 'admin.tabs.migrations'],
@@ -156,6 +158,16 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
 
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ email: '', display_name: '', password: '', role: 'USER', must_change_password: true });
+  const isMountedRef = useRef(false);
+  const loadGenerationRef = useRef(0);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      loadGenerationRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     const tmr = setTimeout(() => {
@@ -165,11 +177,13 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
     return () => clearTimeout(tmr);
   }, [qInput]);
 
-  const load = async () => {
+  const load = useCallback(async (requestGeneration: number) => {
+    if (!isMountedRef.current) return;
     setLoading(true);
     const res = await adminApi.listUsers(apiUrl, token, {
       page, limit: LIMIT, role: roleFilter || undefined, active: activeFilter || undefined, q: q || undefined,
     });
+    if (!isMountedRef.current || requestGeneration !== loadGenerationRef.current) return;
     setLoading(false);
     if (res.ok) {
       setUsers(res.data?.users ?? []);
@@ -177,31 +191,23 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
     } else {
       onError(res.errorCode);
     }
-  };
+  }, [activeFilter, apiUrl, onError, page, q, roleFilter, token]);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      const res = await adminApi.listUsers(apiUrl, token, {
-        page, limit: LIMIT, role: roleFilter || undefined, active: activeFilter || undefined, q: q || undefined,
-      });
-      setLoading(false);
-      if (res.ok && !cancelled) {
-        setUsers(res.data?.users ?? []);
-        setTotal(res.data?.total ?? 0);
-      } else if (!cancelled) {
-        onError(res.errorCode);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [apiUrl, token, page, roleFilter, activeFilter, q, onError]);
+    const requestGeneration = ++loadGenerationRef.current;
+    const timeoutId = window.setTimeout(() => { void load(requestGeneration); }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+      loadGenerationRef.current += 1;
+    };
+  }, [load]);
 
   const act = async <T,>(fn: () => Promise<ApiResult<T>>, successKey: string) => {
     const res = await fn();
     if (res.ok) {
       onMessage({ text: t(successKey), type: 'success' });
-      load();
+      const requestGeneration = ++loadGenerationRef.current;
+      void load(requestGeneration);
     } else {
       onError(res.errorCode);
     }
@@ -221,7 +227,8 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
       onMessage({ text: t('admin.users.created'), type: 'success' });
       setShowCreate(false);
       setForm({ email: '', display_name: '', password: '', role: 'USER', must_change_password: true });
-      load();
+      const requestGeneration = ++loadGenerationRef.current;
+      void load(requestGeneration);
     } else {
       onError(res.errorCode);
     }
@@ -305,18 +312,18 @@ function UsersTab({ apiUrl, token, currentUserID, onMessage, onError }: {
                 <td data-label={t('migrations.actions')} className="px-3 py-2">
                   <div className="flex justify-end gap-1.5">
                     {u.active ? (
-                      <button type="button" aria-label={t('admin.users.suspend')} onClick={() => act(() => adminApi.suspendUser(apiUrl, token, u.id!), 'admin.users.suspendedOk')}
+                      <button type="button" aria-label={t('admin.users.suspend')} title={t('admin.users.suspend')} onClick={() => act(() => adminApi.suspendUser(apiUrl, token, u.id!), 'admin.users.suspendedOk')}
                         className="ui-button-secondary p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Ban className="w-3.5 h-3.5" /></button>
                     ) : (
-                      <button type="button" aria-label={t('admin.users.reactivate')} onClick={() => act(() => adminApi.reactivateUser(apiUrl, token, u.id!), 'admin.users.reactivatedOk')}
+                      <button type="button" aria-label={t('admin.users.reactivate')} title={t('admin.users.reactivate')} onClick={() => act(() => adminApi.reactivateUser(apiUrl, token, u.id!), 'admin.users.reactivatedOk')}
                         className="ui-button-secondary p-1.5 text-[var(--color-success-text)] hover:bg-[var(--color-success-bg)]"><CheckCircle2 className="w-3.5 h-3.5" /></button>
                     )}
-                    <button type="button" aria-label={t('admin.users.toggleRole')} onClick={() => act(() => adminApi.updateRole(apiUrl, token, u.id!, u.role === 'ADMIN' ? 'USER' : 'ADMIN'), 'admin.users.roleChanged')}
+                    <button type="button" aria-label={t('admin.users.toggleRole')} title={t('admin.users.toggleRole')} onClick={() => act(() => adminApi.updateRole(apiUrl, token, u.id!, u.role === 'ADMIN' ? 'USER' : 'ADMIN'), 'admin.users.roleChanged')}
                       className="ui-button-secondary p-1.5">
                       {u.role === 'ADMIN' ? <ShieldOff className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
                     </button>
                     {u.id !== currentUserID && (
-                      <button type="button" aria-label={t('admin.users.delete')} onClick={() => { void (async () => { if (await confirm({ message: t('admin.users.deleteConfirm') })) act(() => adminApi.deleteUser(apiUrl, token, u.id!), 'admin.users.deletedOk'); })(); }}
+                      <button type="button" aria-label={t('admin.users.delete')} title={t('admin.users.delete')} onClick={() => { void (async () => { if (await confirm({ message: t('admin.users.deleteConfirm') })) act(() => adminApi.deleteUser(apiUrl, token, u.id!), 'admin.users.deletedOk'); })(); }}
                         className="ui-button-secondary p-1.5 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)]"><Trash2 className="w-3.5 h-3.5" /></button>
                     )}
                   </div>
@@ -458,10 +465,12 @@ function StatsTab({ apiUrl, token }: { apiUrl: string; token: string }) {
   const [stats, setStats] = useState<AdminStats | null>(null);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    void (async () => {
       const res = await adminApi.stats(apiUrl, token);
-      if (res.ok) setStats(res.data ?? null);
+      if (res.ok && !cancelled) setStats(res.data ?? null);
     })();
+    return () => { cancelled = true; };
   }, [apiUrl, token]);
 
   if (!stats) return <div className="flex justify-center py-8"><LoadingIndicator label={t('common.loading')} /></div>;
@@ -583,7 +592,7 @@ function AuditTab({ apiUrl, token, formatDateTime }: {
           className={selectCls} />
         <input type="date" aria-label={t('admin.audit.when')} value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }}
           className={selectCls} />
-        <button type="button" aria-label={t('common.refresh')} onClick={() => { setPage(1); }} className="ui-button-secondary p-1.5"><RefreshCw className="w-3.5 h-3.5" /></button>
+        <button type="button" aria-label={t('common.refresh')} title={t('common.refresh')} onClick={() => { setPage(1); }} className="ui-button-secondary p-1.5"><RefreshCw className="w-3.5 h-3.5" /></button>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
@@ -631,6 +640,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
   const translateApiError = useApiError();
 
   const [registrationsEnabled, setRegistrationsEnabled] = useState<boolean>(false);
+  const [registrationsLoaded, setRegistrationsLoaded] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -639,16 +649,33 @@ function SystemTab({ apiUrl, token, onMessage }: {
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch(`${apiUrl}/api/settings`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled) setRegistrationsEnabled(data.registrations_enabled === 'true');
-      })
-      .catch((err) => {
-        logger.error('Failed to fetch settings', err);
-      });
-    return () => { cancelled = true; };
-  }, [apiUrl]);
+    const timeoutId = window.setTimeout(() => {
+      setRegistrationsLoaded(false);
+      void (async () => {
+        try {
+          const res = await apiFetch(`${apiUrl}/api/settings`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({})) as { error_code?: string };
+            throw new Error(translateApiError(body.error_code));
+          }
+          const data = await res.json();
+          if (cancelled) return;
+          setRegistrationsEnabled(data.registrations_enabled === 'true');
+          setRegistrationsLoaded(true);
+        } catch (err) {
+          if (cancelled) return;
+          logger.error('Failed to fetch settings', err);
+          setMessage({ text: err instanceof Error ? err.message : translateApiError(), type: 'error' });
+        }
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [apiUrl, token, translateApiError]);
 
   const loadOAuth = useCallback(async () => {
     setOAuthLoading(true);
@@ -711,7 +738,7 @@ function SystemTab({ apiUrl, token, onMessage }: {
             </div>
             <Toggle
               checked={registrationsEnabled}
-              disabled={loading}
+              disabled={loading || !registrationsLoaded}
               onChange={handleToggleRegistrations}
               label={t('settings.allowRegistrations')}
             />
@@ -868,8 +895,29 @@ function SMTPSettingsCard({ apiUrl, token, onMessage }: { apiUrl: string; token:
     setConfigured(true); setPasswordSet(true); setForm((current) => ({ ...current, smtp_password: '' }));
     onMessage({ text: t('admin.system.smtp.saved'), type: 'success' });
   };
-  const test = async () => { setSaving(true); const result = await adminApi.testSMTP(apiUrl, token); setSaving(false); onMessage(result.ok ? { text: t('admin.system.smtp.testSent'), type: 'success' } : { text: translateApiError(result.errorCode), type: 'error' }); };
-  const remove = async () => { if (!await confirm({ message: t('admin.system.smtp.removeConfirm'), confirmLabel: t('admin.system.smtp.remove') })) return; setSaving(true); const result = await adminApi.deleteSMTP(apiUrl, token); setSaving(false); if (!result.ok) { onMessage({ text: translateApiError(result.errorCode), type: 'error' }); return; } setConfigured(false); setPasswordSet(false); setForm({ smtp_host: '', smtp_port: '587', smtp_username: '', smtp_password: '', smtp_from_email: '', smtp_from_name: '', smtp_encryption: 'starttls' }); onMessage({ text: t('admin.system.smtp.removed'), type: 'success' }); };
+  const test = async () => {
+    setSaving(true);
+    const result = await adminApi.testSMTP(apiUrl, token);
+    setSaving(false);
+    onMessage(result.ok
+      ? { text: t('admin.system.smtp.testSent'), type: 'success' }
+      : { text: translateApiError(result.errorCode), type: 'error' });
+  };
+
+  const remove = async () => {
+    if (!await confirm({ message: t('admin.system.smtp.removeConfirm'), confirmLabel: t('admin.system.smtp.remove') })) return;
+    setSaving(true);
+    const result = await adminApi.deleteSMTP(apiUrl, token);
+    setSaving(false);
+    if (!result.ok) {
+      onMessage({ text: translateApiError(result.errorCode), type: 'error' });
+      return;
+    }
+    setConfigured(false);
+    setPasswordSet(false);
+    setForm({ smtp_host: '', smtp_port: '587', smtp_username: '', smtp_password: '', smtp_from_email: '', smtp_from_name: '', smtp_encryption: 'starttls' });
+    onMessage({ text: t('admin.system.smtp.removed'), type: 'success' });
+  };
 
   return (
     <SectionCard icon={Mail} title={t('admin.system.smtp.title')}>

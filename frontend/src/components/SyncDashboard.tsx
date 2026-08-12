@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { SyncJob } from '../types';
 import { useTranslation } from 'react-i18next';
-import { useFormat, formatBytes, formatDuration } from '../utils/format';
+import { useFormat, formatDuration } from '../utils/format';
 import { useApiError } from '../utils/apiError';
 import { useToast } from '../contexts/useToast';
 import { useTransferMetrics } from '../hooks/useTransferMetrics';
@@ -10,6 +10,7 @@ import { ApiDisplayError, apiErrorMessage, apiFetch, apiJson, apiResponseError }
 import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
+import { isAuthFailureError } from '../utils/authFailure';
 import { ErrorOverview } from './ErrorOverview';
 import { TransferDetailHeader } from './TransferDetailHeader';
 import { TransferProgress } from './TransferProgress';
@@ -47,11 +48,18 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
   const bandwidthDraggingRef = useRef<boolean>(false);
 
   const { t } = useTranslation();
-  const { formatDateTime } = useFormat();
+  const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
   const toast = useToast();
   const { openOAuthPopup } = useOAuthPopup(apiUrl);
   const { speed, eta, updateMetrics } = useTransferMetrics();
+  const tRef = useRef(t);
+  const translateApiErrorRef = useRef(translateApiError);
+
+  useEffect(() => {
+    tRef.current = t;
+    translateApiErrorRef.current = translateApiError;
+  }, [t, translateApiError]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -85,12 +93,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       });
       if (result.ok === false) {
         toast(apiErrorMessage(result, translateApiError, t('dashboard.threadsFailed')), 'error');
-        if (job?.threads) setThreads(job.threads);
+        if (job?.threads !== undefined) setThreads(job.threads);
       }
     } catch (err) {
       logger.error('Failed to update sync thread count', err);
       toast(t('dashboard.threadsFailed'), 'error');
-      if (job?.threads) setThreads(job.threads);
+      if (job?.threads !== undefined) setThreads(job.threads);
     } finally {
       setThreadsLoading(false);
     }
@@ -128,7 +136,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           signal: snapshotController.signal,
         });
         if (result.ok === false) {
-          throw new Error(apiErrorMessage(result, translateApiError, t('sync.loadFailed')));
+          throw new Error(apiErrorMessage(result, translateApiErrorRef.current, tRef.current('sync.loadFailed')));
         }
         const data = result.data;
         if (!cancelled && !hasStreamData) {
@@ -138,7 +146,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         }
       } catch (err: unknown) {
         if (!cancelled && !hasStreamData) {
-          setError(err instanceof Error ? err.message : t('sync.loadFailed'));
+          setError(err instanceof Error ? err.message : tRef.current('sync.loadFailed'));
           setLoading(false);
         }
       }
@@ -179,7 +187,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       snapshotController.abort();
       streamController.abort();
     };
-  }, [apiUrl, syncId, token, t, translateApiError, updateMetrics]);
+  }, [apiUrl, syncId, token, updateMetrics]);
 
   const handleTriggerStart = async () => {
     setActionLoading(true);
@@ -374,12 +382,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
             {canStart && (
               <button
-                onClick={job.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(job.error_message || '') ? handleReauth : handleTriggerStart}
+                onClick={job.status === 'FAILED' && isAuthFailureError(job.error_message) ? handleReauth : handleTriggerStart}
                 disabled={actionLoading}
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {actionLoading && `${t('common.loading')} `}
-                {job.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(job.error_message || '') ? t('settings.connections.reauthenticate') : t('sync.syncNow')}
+                {job.status === 'FAILED' && isAuthFailureError(job.error_message) ? t('settings.connections.reauthenticate') : t('sync.syncNow')}
               </button>
             )}
           </>
@@ -499,12 +507,13 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
             {/* Integrated Threads Slider */}
             <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2 mt-auto">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                <label htmlFor="sync-threads" className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.threads')}
                 </label>
                 <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">{threads}</span>
               </div>
               <input
+                id="sync-threads"
                 type="range"
                 min={1}
                 max={16}
@@ -531,7 +540,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
 
             <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                <label htmlFor="sync-bandwidth-limit" className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.bandwidthLimit')}
                 </label>
                 <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">
@@ -539,6 +548,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
                 </span>
               </div>
               <input
+                id="sync-bandwidth-limit"
                 type="range"
                 min={0}
                 max={BANDWIDTH_OPTIONS.length - 1}
@@ -587,21 +597,9 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           apiUrl={apiUrl}
           token={token}
           onClose={() => setIsEditing(false)}
-          onSuccess={async () => {
+          onSuccess={() => {
             setIsEditing(false);
             toast(t('sync.scopeUpdated'));
-            try {
-              const result = await apiJson<SyncJob>(`${apiUrl}/api/sync/${syncId}`, {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              if (result.ok === false) {
-                throw new Error(apiErrorMessage(result, translateApiError, t('sync.loadFailed')));
-              }
-              setJob(result.data);
-            } catch (err) {
-              logger.error('Failed to re-fetch sync job details after edit', err);
-              toast(err instanceof Error ? err.message : t('sync.loadFailed'), 'error');
-            }
           }}
         />
       )}

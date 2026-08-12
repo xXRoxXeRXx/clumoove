@@ -16,6 +16,10 @@ type ErrorBoundaryState = { failed: boolean };
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { failed: false };
 
+  private reset = (): void => {
+    this.setState({ failed: false });
+  };
+
   static getDerivedStateFromError(): ErrorBoundaryState {
     return { failed: true };
   }
@@ -38,6 +42,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <section className="ui-card max-w-md space-y-4 p-6 text-center" role="alert" aria-live="assertive">
           <h1 className="text-xl font-semibold">{i18n.t('errorBoundary.title')}</h1>
           <p className="text-[var(--color-text-secondary)]">{i18n.t('errorBoundary.description')}</p>
+          <button className="ui-button-secondary px-4 py-2" type="button" onClick={this.reset}>
+            {i18n.t('common.retry')}
+          </button>
           <button className="ui-button-primary px-4 py-2" type="button" onClick={() => window.location.reload()}>
             {i18n.t('errorBoundary.reload')}
           </button>

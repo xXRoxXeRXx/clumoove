@@ -454,6 +454,7 @@
     "backupCodesHint": "Save these backup codes in a safe place. Each code can only be used once.",
     "copyCodes": "Copy codes",
     "copied": "Backup codes copied to clipboard.",
+    "copyFailed": "Could not copy backup codes to the clipboard.",
     "qrInvalid": "Error generating security code (invalid QR image).",
     "confirmCode": "Confirm code",
     "activate": "Activate",
@@ -909,4 +910,3 @@
     "listView": "List View"
   }
 }
-

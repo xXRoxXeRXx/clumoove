@@ -58,10 +58,15 @@ export function MigrationsDashboard({
   const syncSnapshotAbortRef = useRef<AbortController | null>(null);
 
   const { t } = useTranslation();
-  const { formatBytes, formatDateTime } = useFormat();
+  const { formatBytes, formatDateTime, formatPercent } = useFormat();
   const translateApiError = useApiError();
   const confirm = useConfirm();
   const toast = useToast();
+  const tRef = useRef(t);
+
+  useEffect(() => {
+    tRef.current = t;
+  }, [t]);
 
   const fetchSyncJobs = useCallback(async function fetchSyncJobs(signal: AbortSignal, snapshotGeneration: number): Promise<void> {
     function acceptsSnapshot(): boolean {
@@ -122,6 +127,7 @@ export function MigrationsDashboard({
   // Load both lists immediately instead of waiting for the initial SSE frames.
   // The streams remain responsible for live updates after this first snapshot.
   useEffect(() => {
+    const isInitialLoad = snapshotGenerationRef.current === 0;
     snapshotGenerationRef.current += 1;
     migrationSnapshotAbortRef.current?.abort();
     syncSnapshotAbortRef.current?.abort();
@@ -129,6 +135,15 @@ export function MigrationsDashboard({
     syncSnapshotAbortRef.current = null;
     hasMigrationStreamDataRef.current = false;
     hasSyncStreamDataRef.current = false;
+    if (isInitialLoad) return;
+
+    const resetTimeoutId = window.setTimeout(() => {
+      setLoading(true);
+      setSyncLoading(true);
+      setError('');
+      setSyncError('');
+    }, 0);
+    return () => window.clearTimeout(resetTimeoutId);
   }, [apiUrl, token]);
 
   useEffect(() => {
@@ -177,19 +192,19 @@ export function MigrationsDashboard({
               /* ignore malformed frame */
             }
           } else if (event === 'error') {
-            setError(t('migrations.connectionError'));
+            setError(tRef.current('migrations.connectionError'));
             setLoading(false);
           }
         },
         onError: () => {
           if (snapshotGeneration !== snapshotGenerationRef.current) return;
-          setError(t('migrations.connectionError'));
+          setError(tRef.current('migrations.connectionError'));
           setLoading(false);
         },
       },
     });
     return () => controller.abort();
-  }, [apiUrl, token, t]);
+  }, [apiUrl, token]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -216,13 +231,13 @@ export function MigrationsDashboard({
         },
         onError: () => {
           if (snapshotGeneration !== snapshotGenerationRef.current) return;
-          setSyncError(t('sync.loadFailed'));
+          setSyncError(tRef.current('sync.loadFailed'));
           setSyncLoading(false);
         },
       },
     });
     return () => controller.abort();
-  }, [apiUrl, token, t]);
+  }, [apiUrl, token]);
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -458,7 +473,7 @@ export function MigrationsDashboard({
           <div className="flex flex-col text-left">
             <span className="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-wider">{t('migrations.successRate')}</span>
             <span className="font-display font-extrabold text-lg text-[var(--color-text-primary)] leading-tight mt-0.5">
-              {successRate}%
+              {formatPercent(successRate)}
             </span>
           </div>
         </div>
@@ -720,7 +735,7 @@ export function MigrationsDashboard({
                           })()}
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
-                            disabled={deleteLoading === mig.id || mig.status === 'RUNNING' || mig.status === 'INDEXING'}
+                            disabled={deleteLoading === mig.id || !isDeletableMigration(mig.status)}
                             className="ui-button-secondary p-2 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
                             aria-label={t('migrations.deleteMigration')}
                             title={t('migrations.deleteMigration')}

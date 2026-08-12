@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { apiFetch } from '../utils/apiClient';
@@ -35,11 +35,13 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState(false);
+  const requestGenerationRef = useRef(0);
   const { t } = useTranslation();
   const { formatDateTime, formatNumber } = useFormat();
 
   useEffect(() => {
     let cancelled = false;
+    const requestGeneration = ++requestGenerationRef.current;
     void apiFetch(`${endpoint}?limit=${PAGE_SIZE}&offset=0`, {
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -48,40 +50,46 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
         return response.json() as Promise<ErrorListResponse>;
       })
       .then((data) => {
-        if (cancelled) return;
+        if (cancelled || requestGeneration !== requestGenerationRef.current) return;
         setItems(data.errors);
         setTotal(data.total);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && requestGeneration === requestGenerationRef.current) {
           setItems([]);
           setTotal(0);
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && requestGeneration === requestGenerationRef.current) setLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      requestGenerationRef.current += 1;
+    };
   }, [endpoint, token, refreshKey]);
 
   const loadMore = async () => {
+    const requestGeneration = requestGenerationRef.current;
     setLoadingMore(true);
     setLoadMoreError(false);
     try {
       const response = await apiFetch(`${endpoint}?limit=${PAGE_SIZE}&offset=${items.length}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      if (requestGeneration !== requestGenerationRef.current) return;
       if (!response.ok) {
         setLoadMoreError(true);
         return;
       }
       const data = await response.json() as ErrorListResponse;
+      if (requestGeneration !== requestGenerationRef.current) return;
       setItems((current) => [...current, ...data.errors]);
       setTotal(data.total);
     } catch {
-      setLoadMoreError(true);
+      if (requestGeneration === requestGenerationRef.current) setLoadMoreError(true);
     } finally {
-      setLoadingMore(false);
+      if (requestGeneration === requestGenerationRef.current) setLoadingMore(false);
     }
   };
 
@@ -106,7 +114,7 @@ export function ErrorOverview({ endpoint, token, refreshKey, onDownloadReport }:
               {t('sync.downloadReport')}
             </button>
           )}
-          <span className="ui-card border-[var(--color-error-border)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
+          <span aria-live="polite" className="ui-card border-[var(--color-error-border)] px-2.5 py-1 text-xs font-bold text-[var(--color-error-text)] font-mono">
             {formatNumber(total)}
           </span>
         </div>

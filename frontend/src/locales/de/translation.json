@@ -454,6 +454,7 @@
     "backupCodesHint": "Speichere diese Notfall-Codes an einem sicheren Ort. Jeder Code funktioniert genau einmal.",
     "copyCodes": "Codes kopieren",
     "copied": "Notfall-Codes in die Zwischenablage kopiert.",
+    "copyFailed": "Notfall-Codes konnten nicht in die Zwischenablage kopiert werden.",
     "qrInvalid": "Fehler beim Erstellen des Sicherheitscodes (QR-Bild fehlerhaft).",
     "confirmCode": "Code bestätigen",
     "activate": "Aktivieren",
@@ -909,4 +910,3 @@
     "listView": "Listenansicht"
   }
 }
-

@@ -17,6 +17,7 @@ import { ActiveTransfersPanel, TransferStatusPanel } from './TransferRunSummary'
 import { connectSseLoop } from '../utils/sse';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import { logger } from '../utils/logger';
+import { isAuthFailureError } from '../utils/authFailure';
 import {
   QueueListIcon,
   SignalIcon,
@@ -124,7 +125,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
         },
       });
       if (!response.ok) {
-        throw new Error(t('dashboard.downloadFailed'));
+        const body = (await response.json().catch(() => ({}))) as { error_code?: string };
+        throw new Error(translateApiError(body.error_code));
       }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -137,7 +139,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       window.URL.revokeObjectURL(url);
     } catch (err) {
       logger.error('Failed to download migration report', err);
-      toast(t('dashboard.downloadFailed'), 'error');
+      toast(err instanceof Error ? err.message : t('dashboard.downloadFailed'), 'error');
     }
   };
 
@@ -215,10 +217,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
   };
 
   const handleRetryFailed = async () => {
-    const authFailed = data?.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(data.error_message || '');
-    const role = data?.source_provider && ['dropbox', 'google', 'onedrive', 'hidrive'].includes(data.source_provider) ? 'source' : 'target';
+    const oauthProviders = ['dropbox', 'google', 'onedrive', 'hidrive'];
+    const authFailed = data?.status === 'FAILED' && isAuthFailureError(data.error_message);
+    const role = data?.source_provider && oauthProviders.includes(data.source_provider) ? 'source' : 'target';
     const provider = role === 'source' ? data?.source_provider : data?.target_provider;
-    if (authFailed && provider) {
+    if (authFailed && provider && oauthProviders.includes(provider)) {
       setControlLoading('retry');
       openOAuthPopup(provider, `migration-reauth-${migrationId}-${role}`, {
         onSuccess: async (msg) => {
@@ -341,7 +344,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       isMounted = false;
       controller.abort();
     };
-  }, [migrationId, apiUrl, token, reconnectNonce, resetMetrics, updateMetrics, prevStatusRef]);
+  // prevStatusRef is stable, so it is intentionally omitted.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [migrationId, apiUrl, token, reconnectNonce, resetMetrics, updateMetrics]);
 
   if (serverUnreachable) {
     return (
@@ -413,7 +418,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 className="ui-button-primary flex items-center gap-2 px-4 py-2 text-xs font-bold hover:opacity-90 disabled:opacity-50"
               >
                 {controlLoading === 'retry' && `${t('common.loading')} `}
-                {data.status === 'FAILED' && /authentication failed|oauth token refresh failed/i.test(data.error_message || '') ? t('settings.connections.reauthenticate') : t('dashboard.retryFailed')}
+                {data.status === 'FAILED' && isAuthFailureError(data.error_message) ? t('settings.connections.reauthenticate') : t('dashboard.retryFailed')}
               </button>
             )}
           </>
@@ -479,7 +484,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
             <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                <label htmlFor="migration-bandwidth-limit" className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.bandwidthLimit')}
                 </label>
                 <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">
@@ -487,6 +492,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
                 </span>
               </div>
               <input
+                id="migration-bandwidth-limit"
                 type="range"
                 min={0}
                 max={BANDWIDTH_OPTIONS.length - 1}
@@ -521,12 +527,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
 
             <div className="ui-card p-3.5 bg-[var(--color-bg-primary)] space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
+                <label htmlFor="migration-threads" className="text-[11px] font-semibold text-[var(--color-text-secondary)]">
                   {t('dashboard.threads')}
                 </label>
                 <span className="text-[11px] font-bold text-[var(--color-text-primary)] font-mono">{threads}</span>
               </div>
               <input
+                id="migration-threads"
                 type="range"
                 min={1}
                 max={16}
@@ -560,7 +567,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           onDownloadReport={data.failed_files > 0 ? handleDownloadReport : undefined}
         />
 
-        {typeof data.error_message === 'string' && data.error_message.trim() !== '' && (
+        {data.error_message.trim() !== '' && (
           <div className="ui-card p-4 bg-[var(--color-error-bg)] border-[var(--color-error-border)] text-xs font-mono text-[var(--color-error-text)] flex items-start gap-2">
             <span>{data.error_message}</span>
           </div>

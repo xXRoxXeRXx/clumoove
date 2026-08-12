@@ -251,14 +251,14 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
     return () => { cancelled = true; };
   }, [apiUrl, token]);
 
-	const handleEmailNotificationToggle = async (enabled: boolean) => {
-		setSmtpLoading(true);
-		try {
-			const res = await apiFetch(`${apiUrl}/api/settings/notifications`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'email', enabled }) });
-			if (!res.ok) { const body = await res.json().catch(() => ({})) as ApiErrBody; throw new Error(translateApiError(body.error_code)); }
-			setSmtpNotify(enabled);
-		} catch (err) { setSmtpMessage({ text: (err as Error).message, type: 'error' }); } finally { setSmtpLoading(false); }
-	};
+  const handleEmailNotificationToggle = async (enabled: boolean) => {
+    setSmtpLoading(true);
+    try {
+      const res = await apiFetch(`${apiUrl}/api/settings/notifications`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ type: 'email', enabled }) });
+      if (!res.ok) { const body = await res.json().catch(() => ({})) as ApiErrBody; throw new Error(translateApiError(body.error_code)); }
+      setSmtpNotify(enabled);
+    } catch (err) { setSmtpMessage({ text: (err as Error).message, type: 'error' }); } finally { setSmtpLoading(false); }
+  };
 
 
   const savePushChannel = async (type: PushChannel, test = false) => {
@@ -458,11 +458,11 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           onClick={onBack}
           className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           {t('settings.back')}
         </button>
         <div className="flex items-center gap-2">
-          <Settings className="w-5 h-5 text-[var(--color-text-primary)]" />
+          <Settings className="w-5 h-5 text-[var(--color-text-primary)]" aria-hidden="true" />
           <h1 className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('settings.title')}</h1>
         </div>
       </div>
@@ -492,7 +492,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
             }`}
           >
-            <Icon className="w-4 h-4" />
+            <Icon className="w-4 h-4" aria-hidden="true" />
             {t(label)}
           </button>
         ))}
@@ -510,7 +510,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
 
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <User className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <User className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className={sectionTitleCls}>{t('settings.profile')}</h3>
             </div>
 
@@ -522,11 +522,11 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   <img
                     src={userAvatar}
                     alt={t('settings.avatarAlt')}
-                    className="w-20 h-20 shrink-0 rounded-full object-cover border border-[var(--color-border)] shadow-xs"
+                    className="w-20 h-20 shrink-0 rounded-full object-cover border border-[var(--color-border)]"
                   />
                 ) : (
                   <div className="w-20 h-20 shrink-0 bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)] rounded-full flex items-center justify-center border border-[var(--color-border)]">
-                    <User className="w-10 h-10" />
+                    <User className="w-10 h-10" aria-hidden="true" />
                   </div>
                 )}
                 {avatarLoading && (
@@ -542,7 +542,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 </p>
                 <div className="flex flex-wrap gap-2.5">
                   <label className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-sm font-medium cursor-pointer hover:bg-[var(--color-bg-tertiary)]">
-                    <Upload className="w-3.5 h-3.5" />
+                    <Upload className="w-3.5 h-3.5" aria-hidden="true" />
                     <span>{t('settings.selectImage')}</span>
                     <input
                       type="file"
@@ -558,7 +558,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                       disabled={avatarLoading}
                       className="ui-button-secondary flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-[var(--color-error-border)] text-[var(--color-error-text)] cursor-pointer hover:bg-[var(--color-error-bg)] disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                       {t('settings.delete')}
                     </button>
                   )}
@@ -598,12 +598,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     if (res.ok) {
                       setNewEmail('');
                       setEmailChangeMessage({ text: t('settings.messages.emailSent'), type: 'success' });
-                    } else if (res.status === 409) {
-                      setEmailChangeMessage({ text: t('settings.messages.emailInUse'), type: 'error' });
-                    } else if (res.status === 400) {
-                      setEmailChangeMessage({ text: t('settings.messages.emailInvalid'), type: 'error' });
                     } else {
-                      setEmailChangeMessage({ text: t('settings.messages.emailFailed'), type: 'error' });
+                      const body = await res.json().catch(() => ({})) as ApiErrBody;
+                      setEmailChangeMessage({ text: translateApiError(body.error_code), type: 'error' });
                     }
                   } catch {
                     setEmailChangeMessage({ text: t('settings.messages.emailConnectionError'), type: 'error' });
@@ -631,7 +628,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                   </label>
                   <div className="relative group">
                     <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-[var(--color-text-muted)] group-focus-within:text-[var(--color-text-primary)] transition-colors">
-                      <Mail className="w-4 h-4" />
+                      <Mail className="w-4 h-4" aria-hidden="true" />
                     </span>
                     <input
                       type="email"
@@ -705,7 +702,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
         <div className="space-y-6">
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Lock className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <Lock className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className={sectionTitleCls}>{t('settings.changePassword')}</h3>
             </div>
 
@@ -733,7 +730,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     aria-label={showCurrentPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
-                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showCurrentPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                   </button>
                 </div>
               </div>
@@ -759,7 +756,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     aria-label={showNewPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
-                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showNewPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                   </button>
                 </div>
               </div>
@@ -785,7 +782,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     aria-label={showConfirmPassword ? t('auth.hidePassword') : t('auth.showPassword')}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
                   >
-                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    {showConfirmPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                   </button>
                 </div>
               </div>
@@ -804,7 +801,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
           <div className={cardCls}>
             <div className="flex items-center justify-between gap-2 pb-3 border-b border-[var(--color-border-light)]">
               <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" />
+                <ShieldCheck className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden="true" />
                 <h3 className={sectionTitleCls}>{t('settings.twoFactor')}</h3>
               </div>
               {totpStatusLoading ? (
@@ -832,7 +829,17 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 </div>
                 <button
                   type="button"
-                  onClick={() => { navigator.clipboard?.writeText(backupCodes.join('\n')).catch(() => {}); setTotpMessage({ text: t('settings.copied'), type: 'success' }); }}
+                  onClick={() => {
+                    void (async () => {
+                      try {
+                        if (!navigator.clipboard) throw new Error('Clipboard unavailable');
+                        await navigator.clipboard.writeText(backupCodes.join('\n'));
+                        setTotpMessage({ text: t('settings.copied'), type: 'success' });
+                      } catch {
+                        setTotpMessage({ text: t('settings.copyFailed'), type: 'error' });
+                      }
+                    })();
+                  }}
                   className={`w-full ${primaryBtnCls}`}
                 >
                   {t('settings.copyCodes')}
@@ -907,7 +914,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                 <button
                   type="submit"
                   disabled={disableLoading || !disableCode.trim()}
-                  className="w-full bg-[var(--color-error-bg)] text-[var(--color-error-text)] border border-[var(--color-error-border)] hover:shadow-md py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
+                  className="w-full bg-[var(--color-error-bg)] text-[var(--color-error-text)] border border-[var(--color-error-border)] py-2.5 rounded-xl text-xs font-bold font-mono transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider cursor-pointer"
                 >
                   {disableLoading ? t('settings.deactivating') : t('settings.deactivate')}
                 </button>
@@ -935,9 +942,9 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
       {/* Appearance Tab */}
       {tab === 'appearance' && (
         <div className="grid md:grid-cols-2 gap-6">
-			<div className={cardCls}>
+          <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Palette className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <Palette className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className={sectionTitleCls}>{t('settings.appearance')}</h3>
             </div>
 
@@ -957,7 +964,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
                 }`}
               >
-                <Sun className={`w-6 h-6 ${preference === 'light' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} />
+                <Sun className={`w-6 h-6 ${preference === 'light' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} aria-hidden="true" />
                 <span className={`text-xs font-bold font-mono ${preference === 'light' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                   {t('settings.light')}
                 </span>
@@ -974,7 +981,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
                 }`}
               >
-                <Moon className={`w-6 h-6 ${preference === 'dark' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} />
+                <Moon className={`w-6 h-6 ${preference === 'dark' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} aria-hidden="true" />
                 <span className={`text-xs font-bold font-mono ${preference === 'dark' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                   {t('settings.dark')}
                 </span>
@@ -991,7 +998,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
                     : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/50 hover:border-[var(--color-border)] hover:bg-[var(--color-bg-tertiary)]'
                 }`}
               >
-                <Monitor className={`w-6 h-6 ${preference === 'auto' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} />
+                <Monitor className={`w-6 h-6 ${preference === 'auto' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`} aria-hidden="true" />
                 <span className={`text-xs font-bold font-mono ${preference === 'auto' ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}>
                   {t('settings.auto')}
                 </span>
@@ -1015,7 +1022,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
               <div className="flex items-center justify-between gap-4">
                 <div>
                   <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-[var(--color-text-muted)]" />
+                    <Mail className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden="true" />
                     <h3 className={sectionTitleCls}>{t('settings.emailNotifications')}</h3>
                   </div>
                   <p className="mt-2 text-xs text-[var(--color-text-muted)]">{t('settings.smtpNotifyHint')}</p>
@@ -1053,7 +1060,7 @@ export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localS
         <div className="grid md:grid-cols-2 gap-6">
           <div className={cardCls}>
             <div className="flex items-center gap-2 pb-3 border-b border-[var(--color-border-light)]">
-              <Info className="w-4 h-4 text-[var(--color-text-muted)]" />
+              <Info className="w-4 h-4 text-[var(--color-text-muted)]" aria-hidden="true" />
               <h3 className={sectionTitleCls}>{t('settings.about')}</h3>
             </div>
             <div className="flex items-center justify-between">
