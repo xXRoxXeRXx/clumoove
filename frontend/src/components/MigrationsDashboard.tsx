@@ -241,7 +241,7 @@ export function MigrationsDashboard({
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('migrations.deleteFailed')));
       setMigrations((prev) => prev.filter((m) => m.id !== id));
     } catch (err: unknown) {
-      toast(err instanceof Error ? err.message : t('migrations.deleteError'));
+      toast(err instanceof Error ? err.message : t('migrations.deleteError'), 'error');
     } finally {
       setDeleteLoading(null);
     }
@@ -310,7 +310,7 @@ export function MigrationsDashboard({
     }
 
     if (failCount > 0) {
-      toast(firstErrorCode ? translateApiError(firstErrorCode) : t('migrations.deleteError'));
+      toast(firstErrorCode ? translateApiError(firstErrorCode) : t('migrations.deleteError'), 'error');
     }
 
     setDeleteAllLoading(false);
@@ -330,7 +330,7 @@ export function MigrationsDashboard({
         ? { ...item, status: action === 'pause' ? 'PAUSED' : 'RUNNING' }
         : item));
     } catch (err) {
-      toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }));
+      toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }), 'error');
     } finally {
       setControlLoading(null);
     }
@@ -812,7 +812,7 @@ function SyncList({
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('sync.deleteFailed')));
       setSyncJobs((prev) => prev.filter((j) => j.id !== id));
     } catch (err: unknown) {
-      toast(err instanceof Error ? err.message : t('sync.deleteFailed'));
+      toast(err instanceof Error ? err.message : t('sync.deleteFailed'), 'error');
     } finally {
       setDeleteLoading(null);
     }
@@ -880,7 +880,7 @@ function SyncList({
     }
 
     if (failCount > 0) {
-      toast(firstErrorCode ? translateApiError(firstErrorCode) : t('sync.deleteFailed'));
+      toast(firstErrorCode ? translateApiError(firstErrorCode) : t('sync.deleteFailed'), 'error');
     }
 
     setDeleteAllLoading(false);
@@ -902,7 +902,7 @@ function SyncList({
           : item));
       }
     } catch (err) {
-      toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }));
+      toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }), 'error');
     } finally {
       setControlLoading(null);
     }

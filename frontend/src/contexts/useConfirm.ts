@@ -1,7 +1,7 @@
 import { useContext } from 'react';
 import { ConfirmationContext } from './ConfirmationContext';
 
-function useConfirmationContext() {
+export function useConfirmationContext() {
   const context = useContext(ConfirmationContext);
   if (context === undefined) {
     throw new Error('useConfirm must be used within a ConfirmationProvider');

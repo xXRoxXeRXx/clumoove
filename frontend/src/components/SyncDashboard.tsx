@@ -84,12 +84,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         body: JSON.stringify({ threads: value }),
       });
       if (result.ok === false) {
-        toast(apiErrorMessage(result, translateApiError, t('dashboard.threadsFailed')));
+        toast(apiErrorMessage(result, translateApiError, t('dashboard.threadsFailed')), 'error');
         if (job?.threads) setThreads(job.threads);
       }
     } catch (err) {
       logger.error('Failed to update sync thread count', err);
-      toast(t('dashboard.threadsFailed'));
+      toast(t('dashboard.threadsFailed'), 'error');
       if (job?.threads) setThreads(job.threads);
     } finally {
       setThreadsLoading(false);
@@ -105,12 +105,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         body: JSON.stringify({ limit_mbps: value }),
       });
       if (result.ok === false) {
-        toast(apiErrorMessage(result, translateApiError, t('dashboard.bandwidthFailed')));
+        toast(apiErrorMessage(result, translateApiError, t('dashboard.bandwidthFailed')), 'error');
         setBandwidthLimit(job?.bandwidth_limit_mbps ?? 0);
       }
     } catch (err) {
       logger.error('Failed to update sync bandwidth limit', err);
-      toast(t('dashboard.bandwidthFailed'));
+      toast(t('dashboard.bandwidthFailed'), 'error');
       setBandwidthLimit(job?.bandwidth_limit_mbps ?? 0);
     } finally {
       setBandwidthLoading(false);
@@ -192,7 +192,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         throw new Error(apiErrorMessage(result, translateApiError, t('sync.startFailed')));
       }
     } catch (err: unknown) {
-      toast(err instanceof Error ? err.message : t('sync.startFailed'));
+      toast(err instanceof Error ? err.message : t('sync.startFailed'), 'error');
     } finally {
       setActionLoading(false);
     }
@@ -226,12 +226,12 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           }
           await handleTriggerStart();
         } catch (err) {
-          toast(err instanceof Error ? err.message : t('sync.startFailed'));
+          toast(err instanceof Error ? err.message : t('sync.startFailed'), 'error');
         } finally {
           setActionLoading(false);
         }
       },
-      onError: (code) => { toast(translateApiError(code)); setActionLoading(false); },
+      onError: (code) => { toast(translateApiError(code), 'error'); setActionLoading(false); },
     });
   };
 
@@ -246,7 +246,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         throw new Error(apiErrorMessage(result, translateApiError, t('sync.pauseFailed')));
       }
     } catch (err: unknown) {
-      toast(err instanceof Error ? err.message : t('sync.pauseFailed'));
+      toast(err instanceof Error ? err.message : t('sync.pauseFailed'), 'error');
     }
 
     finally {
@@ -265,7 +265,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
         throw new Error(apiErrorMessage(result, translateApiError, t('sync.resumeFailed')));
       }
     } catch (err: unknown) {
-      toast(err instanceof Error ? err.message : t('sync.resumeFailed'));
+      toast(err instanceof Error ? err.message : t('sync.resumeFailed'), 'error');
     }
     finally {
       setActionLoading(false);
@@ -295,7 +295,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
       window.URL.revokeObjectURL(url);
     } catch (err) {
       logger.error('Failed to download sync report', err);
-      toast(err instanceof ApiDisplayError ? err.message : t('dashboard.downloadFailed'));
+      toast(err instanceof ApiDisplayError ? err.message : t('dashboard.downloadFailed'), 'error');
     }
   };
 
@@ -600,7 +600,7 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
               setJob(result.data);
             } catch (err) {
               logger.error('Failed to re-fetch sync job details after edit', err);
-              toast(err instanceof Error ? err.message : t('sync.loadFailed'));
+              toast(err instanceof Error ? err.message : t('sync.loadFailed'), 'error');
             }
           }}
         />

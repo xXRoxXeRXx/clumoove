@@ -17,6 +17,10 @@ export interface ConfirmOptions {
   cancelLabel?: string;
 }
 
+/**
+ * Opens a confirmation dialog. Each returned promise resolves exactly once:
+ * `true` when confirmed, or `false` when dismissed, replaced, or unmounted.
+ */
 export type ConfirmFn = (options: ConfirmOptions) => Promise<boolean>;
 
 interface ConfirmationContextValue {
@@ -36,6 +40,7 @@ interface DialogState {
 
 export function ConfirmationProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
+  const tRef = useRef(t);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const resolverRef = useRef<((value: boolean) => void) | null>(null);
 
@@ -69,12 +74,16 @@ export function ConfirmationProvider({ children }: { children: ReactNode }) {
       resolverRef.current?.(false);
       resolverRef.current = resolve;
       setDialog({
-        title: options.title ?? t('common.confirmTitle'),
+        title: options.title ?? tRef.current('common.confirmTitle'),
         message: options.message,
         confirmLabel: options.confirmLabel,
         cancelLabel: options.cancelLabel,
       });
     });
+  }, []);
+
+  useEffect(() => {
+    tRef.current = t;
   }, [t]);
 
   const handleConfirm = useCallback(() => close(true), [close]);

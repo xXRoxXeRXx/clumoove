@@ -1,25 +1,50 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
-import { ToastContext, type ToastItem, type ToastType } from './toastContextCore';
-
-let toastSeq = 0;
+import { ToastContext, type ToastItem, type ToastType } from './ToastContextCore';
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
+  const seqRef = useRef(0);
+  const timersRef = useRef(new Map<number, ReturnType<typeof window.setTimeout>>());
 
   const dismiss = useCallback((id: number) => {
     setItems((prev) => prev.filter((t) => t.id !== id));
+    const timer = timersRef.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
   }, []);
 
-  const toast = useCallback((text: string, type: ToastType = 'error') => {
-    const id = ++toastSeq;
-    setItems((prev) => [...prev.slice(-4), { id, text, type }]);
-    window.setTimeout(() => dismiss(id), 4500);
+  const toast = useCallback((text: string, type: ToastType = 'info') => {
+    const id = ++seqRef.current;
+    setItems((prev) => {
+      const removed = prev.slice(0, -4);
+      for (const item of removed) {
+        const timer = timersRef.current.get(item.id);
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          timersRef.current.delete(item.id);
+        }
+      }
+      return [...prev.slice(-4), { id, text, type }];
+    });
+    const timer = window.setTimeout(() => dismiss(id), 4500);
+    timersRef.current.set(id, timer);
   }, [dismiss]);
+
+  useEffect(() => () => {
+    for (const timer of timersRef.current.values()) {
+      window.clearTimeout(timer);
+    }
+    timersRef.current.clear();
+  }, []);
 
   const value = useMemo(() => ({ toast }), [toast]);
 
@@ -28,7 +53,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div
         className="fixed bottom-4 right-4 z-[var(--layer-toast)] flex flex-col gap-2 max-w-sm w-[min(100%-2rem,24rem)] pointer-events-none"
-        aria-live="off"
       >
         {items.map((item) => {
           const styles =

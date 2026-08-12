@@ -174,6 +174,6 @@ describe('SyncDashboard initial snapshot ordering', () => {
       await Promise.resolve();
     });
 
-    expect(toast).toHaveBeenCalledWith(i18n.t('dashboard.downloadFailed'));
+    expect(toast).toHaveBeenCalledWith(i18n.t('dashboard.downloadFailed'), 'error');
   });
 });

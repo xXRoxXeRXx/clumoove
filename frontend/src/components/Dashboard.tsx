@@ -137,7 +137,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       window.URL.revokeObjectURL(url);
     } catch (err) {
       logger.error('Failed to download migration report', err);
-      toast(t('dashboard.downloadFailed'));
+      toast(t('dashboard.downloadFailed'), 'error');
     }
   };
 
@@ -162,7 +162,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       // Status is reflected by the migration SSE stream.
     } catch (err) {
       logger.error(`Failed to ${action} migration`, err);
-      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }), 'error');
     } finally {
       setControlLoading(null);
     }
@@ -185,7 +185,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
     } catch (err) {
       logger.error('Failed to update migration bandwidth limit', err);
-      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }), 'error');
     } finally {
       setBandwidthLoading(false);
     }
@@ -208,7 +208,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
     } catch (err) {
       logger.error('Failed to update migration thread count', err);
-      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }), 'error');
     } finally {
       setThreadsLoading(false);
     }
@@ -226,8 +226,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
             const response = await apiFetch(`${apiUrl}/api/migration/${migrationId}/reauth`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ role, access_token: msg.token, refresh_token: msg.refreshToken, expires_in: msg.expiresIn }) });
             if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(translateApiError(body.error_code)); }
             setReconnectNonce((n) => n + 1);
-          } catch (err) { toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action: 'reauth' })); } finally { setControlLoading(null); }
-        }, onError: (code) => { toast(translateApiError(code)); setControlLoading(null); },
+          } catch (err) { toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action: 'reauth' }), 'error'); } finally { setControlLoading(null); }
+        }, onError: (code) => { toast(translateApiError(code), 'error'); setControlLoading(null); },
       });
       return;
     }
@@ -254,7 +254,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
       }
     } catch (err) {
       logger.error('Failed to retry migration tasks', err);
-      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }));
+      toast(t('dashboard.actionFailed', { msg: err instanceof Error ? err.message : String(err) }), 'error');
     } finally {
       setControlLoading(null);
     }
