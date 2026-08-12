@@ -37,7 +37,7 @@ var _ StorageProvider = (*SMBProvider)(nil)
 func NewSMBProvider(rawURL, username, password string) (*SMBProvider, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid SMB URL: %w", err)
+		return nil, fmt.Errorf("invalid SMB URL")
 	}
 
 	if u.Scheme != "smb" {

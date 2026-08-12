@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -11,6 +12,15 @@ func TestIsValidProvider(t *testing.T) {
 	for _, p := range ValidProviders {
 		if !IsValidProvider(p) {
 			t.Errorf("IsValidProvider(%q) = false, want true", p)
+		}
+	}
+	validProviderSet := make(map[string]struct{}, len(ValidProviders))
+	for _, providerType := range ValidProviders {
+		validProviderSet[providerType] = struct{}{}
+	}
+	for providerType := range providerRegistry {
+		if _, ok := validProviderSet[providerType]; !ok {
+			t.Errorf("providerRegistry entry %q is missing from ValidProviders", providerType)
 		}
 	}
 	invalid := []string{"", "NEXTCLOUD", "Dropbox", "s3 "}
@@ -46,14 +56,20 @@ func TestNewProviderRejectsUnsupported(t *testing.T) {
 }
 
 func TestNewProviderSanitizesCredentialsInURL(t *testing.T) {
-	// nextcloud/webdav pull creds out of the URL userinfo and strip them so they
-	// don't leak into url.Error later. The provider should be constructed without error.
+	// Host-based providers pull credentials out of URL userinfo and strip them
+	// before downstream parsing. FTPS is intentionally excluded because its URL
+	// contract rejects userinfo.
 	cases := []struct {
 		typ string
 		url string
 	}{
 		{"nextcloud", "https://user:pass@10.0.0.5/remote.php/dav"},
+		{"opencloud", "https://user:pass@10.0.0.5/remote.php/dav"},
 		{"webdav", "https://user:pass@192.168.1.10/dav"},
+		{"smb", "smb://user:pass@10.0.0.5/share"},
+		{"sftp", "sftp://user:pass@10.0.0.5/?host_key=SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+		{"immich", "https://user:pass@10.0.0.5"},
+		{"seafile", "https://user:pass@10.0.0.5"},
 	}
 	for _, c := range cases {
 		p, err := NewProvider(context.Background(), c.typ, c.url, "", "")
@@ -67,10 +83,46 @@ func TestNewProviderSanitizesCredentialsInURL(t *testing.T) {
 	}
 }
 
+func TestNewProviderDoesNotExposeURLCredentialsInErrors(t *testing.T) {
+	const secret = "super-secret-password"
+	// The invalid percent escape forces url.Parse to fail while preserving the
+	// userinfo-shaped input that must never be included in the returned error.
+	malformedURL := "sftp://user:" + secret + "%@example.com"
+	for _, providerType := range []string{"nextcloud", "sftp", "smb"} {
+		_, err := NewProvider(context.Background(), providerType, malformedURL, "", "")
+		if err == nil {
+			t.Errorf("%s: expected malformed URL error", providerType)
+			continue
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: error leaked URL credentials: %v", providerType, err)
+		}
+	}
+	for _, constructor := range []func(string, string, string) error{
+		func(rawURL, username, password string) error {
+			_, err := NewSFTPProvider(rawURL, username, password)
+			return err
+		},
+		func(rawURL, username, password string) error {
+			_, err := NewSMBProvider(rawURL, username, password)
+			return err
+		},
+	} {
+		err := constructor(malformedURL, "", "")
+		if err == nil || strings.Contains(err.Error(), secret) {
+			t.Errorf("direct constructor leaked URL credentials: %v", err)
+		}
+	}
+	_, err := NewProvider(context.Background(), "ftp", "ftps://user:"+secret+"@10.0.0.5", "", "")
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Errorf("FTPS userinfo error leaked URL credentials: %v", err)
+	}
+}
+
 func TestNewProviderSSRFBlockedByDefault(t *testing.T) {
 	// Loopback must always be blocked regardless of MIGRATION_BLOCK_PRIVATE.
-	blockPrivateEgress = false
-	defer func() { blockPrivateEgress = false }()
+	blockPrivateEgress.Store(false)
+	defer blockPrivateEgress.Store(false)
 
 	cases := []struct {
 		typ string

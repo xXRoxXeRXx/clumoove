@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `backend/internal/storage` package defines the unified `StorageProvider` interface and contains concrete client implementations for all supported storage backends (Nextcloud, WebDAV, OpenCloud, Dropbox, Google Drive, OneDrive, HiDrive, SMB, S3, SFTP, FTPS, Local, Immich, and Seafile).
+The `backend/internal/storage` package defines the unified `StorageProvider` interface and contains concrete client implementations for all supported storage backends (Nextcloud, OpenCloud, WebDAV, Dropbox, Google Drive, OneDrive, HiDrive, SMB, S3, SFTP, FTPS, MagentaCLOUD, Local, Immich, Seafile, and MEGA).
 
 ---
 
@@ -35,12 +35,11 @@ type StorageProvider interface {
 ## Architecture Rules & Guidelines
 
 1. **Required Interface**: `StorageProvider` is non-optional. All methods must be implemented by concrete provider structs and unit test mocks.
-2. **SSRF Guarding**: All network-connected providers MUST validate egress URLs using `validateEgressURL` and execute HTTP requests via `NewEgressHTTPClient` or custom transports with `egressDialer`.
+2. **SSRF Guarding**: `providerRegistry.RequiresEgressValidation` is the source of truth for user-configured providers that require egress validation. Those providers MUST validate URLs using `validateEgressURL` and execute HTTP requests via `NewEgressHTTPClient` or custom transports with `egressDialer`.
 3. **Data Integrity & Hashes**:
    - Return native cryptographic hashes (`SHA-1`, `MD5`, `SHA-256`, `QuickXor`, etc.) via `GetFileHash`.
    - Implement `VerificationMode()` returning `VerificationCryptographicHash` when hash verification is available, or `VerificationSizeOnly` otherwise.
 4. **Provider Factory Registration**:
-   - Register provider type strings in `ValidProviders` in `factory.go`.
-   - Add static metadata to `providerRegistry`.
+   - Add static metadata to `providerRegistry` (the validation source of truth) and keep `ValidProviders` in parity for API/UI ordering.
    - Add switch cases in `NewProvider`.
 5. **Zero-Disk Retention**: File transfers must be streamed through RAM buffers without writing intermediate data to local disk.

@@ -193,9 +193,15 @@ func ValidateProviderURL(providerType, urlStr string) error {
 }
 
 func NewProvider(ctx context.Context, providerType, urlStr, username, password string) (StorageProvider, error) {
-	// Sanitize URL credentials to prevent leakage in url.Error (Finding 2)
-	if providerType == "nextcloud" || providerType == "webdav" || providerType == "opencloud" {
+	// URL userinfo is accepted only for host-based providers that use the
+	// explicit username/password fields. Extract and remove it before any
+	// downstream parser can include the URL in an error. FTPS deliberately
+	// rejects URL userinfo as part of its strict connection URL contract.
+	if meta, exists := providerRegistry[providerType]; exists && meta.RequiresEgressValidation {
 		if parsed, err := url.Parse(urlStr); err == nil && parsed.User != nil {
+			if providerType == "ftp" {
+				return nil, fmt.Errorf("FTPS URL must not contain userinfo")
+			}
 			if username == "" {
 				username = parsed.User.Username()
 			}
@@ -254,6 +260,8 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	case "seafile":
 		return NewSeafileProvider(urlStr, username, password)
 	case "mega":
+		// A missing scoped session is normal for a first MEGA connection; the
+		// provider authenticates and establishes one when Connect is called.
 		session, _ := MegaSessionFromContext(ctx)
 		return NewMegaProvider(username, password, session), nil
 	default:

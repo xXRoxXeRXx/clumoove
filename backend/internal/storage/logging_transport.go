@@ -70,11 +70,9 @@ func hostCategoryFromURL(hostname string) string {
 		}
 		return "public"
 	}
-	// DNS names cannot be reliably categorised without resolution; treat them as
-	// "public" since they are user-provided provider endpoints reachable over
-	// the internet by default. Loopback/private hostnames are uncommon for
-	// configured providers and would already pass SSRF validation.
-	return "public"
+	// DNS names cannot be reliably categorised without resolution. Do not label
+	// an unresolved private infrastructure name as public in operational logs.
+	return "hostname"
 }
 
 var _ http.RoundTripper = (*loggingTransport)(nil)

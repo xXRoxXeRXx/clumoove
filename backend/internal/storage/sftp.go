@@ -49,7 +49,7 @@ func sftpHandshakeDeadline(ctx context.Context, now time.Time) time.Time {
 func NewSFTPProvider(rawURL, username, password string) (*SFTPProvider, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("invalid SFTP URL: %w", err)
+		return nil, fmt.Errorf("invalid SFTP URL")
 	}
 
 	if u.Scheme != "sftp" {

@@ -118,7 +118,9 @@ type VerificationMode string
 const (
 	VerificationCryptographicHash VerificationMode = "cryptographic_hash"
 	VerificationSizeOnly          VerificationMode = "size_only"
-	VerificationNone              VerificationMode = "none"
+	// VerificationNone is reserved for future targets that cannot provide an
+	// independent post-transfer verification signal.
+	VerificationNone VerificationMode = "none"
 )
 
 type transferMetadataContextKey struct{}
@@ -216,8 +218,9 @@ type StorageProvider interface {
 	InspectResource(ctx context.Context, resourceType, path string) (CloudResource, error)
 	StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error)
 	StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error
-	// StreamUploadChunked reports progress through progressChan (which may be nil) but must not close it;
-	// the caller owns the channel lifecycle.
+	// StreamUploadChunked reports best-effort progress through progressChan
+	// (which may be nil) but must not close it; the caller owns the channel
+	// lifecycle. A full channel must never stall the transfer.
 	StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error
 	FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error)
 	DeleteFile(ctx context.Context, resourceType, filePath string) error
@@ -237,8 +240,9 @@ type StorageProvider interface {
 	VerificationMode() VerificationMode
 }
 
-// ProgressReader wraps an io.Reader and emits the number of bytes read
-// to ProgressChan. It is shared across storage providers for upload progress tracking.
+// ProgressReader wraps an io.Reader and emits best-effort byte counts to
+// ProgressChan. A slow or absent consumer drops an update rather than
+// back-pressuring the transfer stream.
 type ProgressReader struct {
 	Reader       io.Reader
 	ProgressChan chan<- int64
@@ -247,7 +251,10 @@ type ProgressReader struct {
 func (pr *ProgressReader) Read(p []byte) (int, error) {
 	n, err := pr.Reader.Read(p)
 	if n > 0 && pr.ProgressChan != nil {
-		pr.ProgressChan <- int64(n)
+		select {
+		case pr.ProgressChan <- int64(n):
+		default:
+		}
 	}
 	return n, err
 }

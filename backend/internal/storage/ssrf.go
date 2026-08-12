@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,8 +19,12 @@ import (
 // permitted. What is always blocked (the highest-value SSRF targets) is
 // loopback and link-local — the latter includes the cloud instance metadata
 // endpoint 169.254.169.254.
-var blockPrivateEgress = os.Getenv("MIGRATION_BLOCK_PRIVATE") == "1" ||
-	strings.EqualFold(os.Getenv("MIGRATION_BLOCK_PRIVATE"), "true")
+var blockPrivateEgress atomic.Bool
+
+func init() {
+	blockPrivateEgress.Store(os.Getenv("MIGRATION_BLOCK_PRIVATE") == "1" ||
+		strings.EqualFold(os.Getenv("MIGRATION_BLOCK_PRIVATE"), "true"))
+}
 
 // resolveEgressIPsForDial is replaceable by package tests so they can exercise
 // a full HTTP request across a DNS-rebinding boundary without depending on DNS.
@@ -35,19 +40,33 @@ var resolveEgressIPsForDial = resolveEgressIPs
 // re-validates the address immediately before each dial — closing the
 // DNS-rebinding (TOCTOU) window that construction-time-only validation leaves open.
 func validateEgressURL(rawURL string) error {
-	return validateEgressURLContext(context.Background(), rawURL)
+	parsed, err := parseEgressURL(rawURL)
+	if err != nil {
+		return err
+	}
+	return checkHostEgress(context.Background(), parsed.Hostname())
 }
 
 func validateEgressURLContext(ctx context.Context, rawURL string) error {
+	parsed, err := parseEgressURL(rawURL)
+	if err != nil {
+		return err
+	}
+	return checkHostEgress(ctx, parsed.Hostname())
+}
+
+// parseEgressURL deliberately never wraps url.Parse errors. url.Error can
+// retain the original URL, including userinfo, and storage-layer errors must
+// not expose credentials to callers that later log or map them.
+func parseEgressURL(rawURL string) (*url.URL, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid provider URL: %w", err)
+		return nil, fmt.Errorf("invalid provider URL")
 	}
-	host := parsed.Hostname()
-	if host == "" {
-		return fmt.Errorf("provider URL has no host")
+	if parsed.Hostname() == "" {
+		return nil, fmt.Errorf("provider URL has no host")
 	}
-	return checkHostEgress(ctx, host)
+	return parsed, nil
 }
 
 // validateEgressHost is like validateEgressURL but takes a host/endpoint
@@ -65,10 +84,16 @@ func validateEgressHostContext(ctx context.Context, host string) error {
 	return checkHostEgress(ctx, host)
 }
 
-// ValidateEgressHost is the exported entry point for the egress policy. See
-// validateEgressHost.
+// ValidateEgressHostContext is the exported, cancellation-aware entry point
+// for the egress policy.
+func ValidateEgressHostContext(ctx context.Context, host string) error {
+	return validateEgressHostContext(ctx, host)
+}
+
+// ValidateEgressHost is the compatibility entry point for callers without a
+// request context. New callers should use ValidateEgressHostContext.
 func ValidateEgressHost(host string) error {
-	return validateEgressHost(host)
+	return ValidateEgressHostContext(context.Background(), host)
 }
 
 // NewEgressHTTPClient returns an HTTP client that validates the requested URL
@@ -77,15 +102,22 @@ func ValidateEgressHost(host string) error {
 // not be able to select a second egress destination via a response header.
 // It is intended for user-configured webhook-style endpoints.
 func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
-	if err := validateEgressURL(rawURL); err != nil {
+	u, err := parseEgressURL(rawURL)
+	if err != nil {
 		return nil, err
 	}
-	u, _ := url.Parse(rawURL)
+	if err := checkHostEgress(context.Background(), u.Hostname()); err != nil {
+		return nil, err
+	}
 	base, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		base = &http.Transport{}
 	}
 	transport := base.Clone()
+	// Provider transports intentionally do not honor environment proxies: a
+	// proxy dial target cannot be host-pinned by egressDialer. Disable inherited
+	// ProxyFromEnvironment so this client matches the other provider clients.
+	transport.Proxy = nil
 	transport.DialContext = egressDialer(u.Hostname())
 	return &http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: rejectEgressRedirect}, nil
 }
@@ -97,15 +129,19 @@ func NewEgressHTTPClient(rawURL string) (*http.Client, error) {
 // bounded by the transport defaults and the server must produce its response
 // headers within five minutes after the request body has been sent.
 func NewEgressStreamingHTTPClient(rawURL string) (*http.Client, error) {
-	if err := validateEgressURL(rawURL); err != nil {
+	u, err := parseEgressURL(rawURL)
+	if err != nil {
 		return nil, err
 	}
-	u, _ := url.Parse(rawURL)
+	if err := checkHostEgress(context.Background(), u.Hostname()); err != nil {
+		return nil, err
+	}
 	base, ok := http.DefaultTransport.(*http.Transport)
 	if !ok {
 		base = &http.Transport{}
 	}
 	transport := base.Clone()
+	transport.Proxy = nil
 	transport.DialContext = egressDialer(u.Hostname())
 	transport.ResponseHeaderTimeout = 5 * time.Minute
 	return &http.Client{Transport: transport, Timeout: 0, CheckRedirect: rejectEgressRedirect}, nil
@@ -195,37 +231,23 @@ func egressDialer(configuredHost string) func(ctx context.Context, network, addr
 
 func sortIPsIPv4First(ips []net.IP) {
 	sort.SliceStable(ips, func(i, j int) bool {
-		ip4_i := ips[i].To4() != nil
-		ip4_j := ips[j].To4() != nil
-		if ip4_i && !ip4_j {
-			return true
-		}
-		return false
+		return ips[i].To4() != nil && ips[j].To4() == nil
 	})
 }
 
-// resolveEgressIPs resolves both IPv4 (A) and IPv6 (AAAA) records for a hostname,
-// placing IPv4 addresses first to ensure reliable dual-stack fallback on environments
-// where IPv6 routing may be unavailable.
+// resolveEgressIPs resolves a hostname with the caller's context, placing IPv4
+// addresses first to ensure reliable dual-stack fallback on environments where
+// IPv6 routing may be unavailable.
 func resolveEgressIPs(ctx context.Context, host string) ([]net.IP, error) {
-	var ips []net.IP
-
-	// 1. Explicitly resolve IPv4 addresses first
-	ip4s, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
-	if err == nil {
-		ips = append(ips, ip4s...)
+	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
 	}
-
-	// 2. Resolve IPv6 addresses second
-	ip6s, err := net.DefaultResolver.LookupIP(ctx, "ip6", host)
-	if err == nil {
-		ips = append(ips, ip6s...)
+	ips := make([]net.IP, 0, len(addresses))
+	for _, address := range addresses {
+		ips = append(ips, address.IP)
 	}
-
-	if len(ips) == 0 {
-		// Fallback to standard LookupIP if explicit resolution yielded no records
-		return net.LookupIP(host)
-	}
+	sortIPsIPv4First(ips)
 	return ips, nil
 }
 
@@ -267,7 +289,7 @@ func isBlockedIP(ip net.IP) (bool, string) {
 	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return true, "link-local"
 	}
-	if blockPrivateEgress && ip.IsPrivate() {
+	if blockPrivateEgress.Load() && ip.IsPrivate() {
 		return true, "private"
 	}
 	return false, ""

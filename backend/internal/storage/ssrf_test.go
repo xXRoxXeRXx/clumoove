@@ -10,8 +10,8 @@ import (
 )
 
 func TestValidateEgressURL(t *testing.T) {
-	blockPrivateEgress = false
-	defer func() { blockPrivateEgress = false }()
+	blockPrivateEgress.Store(false)
+	defer blockPrivateEgress.Store(false)
 
 	// RFC1918/ULA are permitted by default (this tool migrates between
 	// self-hosted/internal servers); loopback and link-local are always blocked.
@@ -42,8 +42,8 @@ func TestValidateEgressURL(t *testing.T) {
 }
 
 func TestValidateEgressHostBlockPrivate(t *testing.T) {
-	blockPrivateEgress = true
-	defer func() { blockPrivateEgress = false }()
+	blockPrivateEgress.Store(true)
+	defer blockPrivateEgress.Store(false)
 
 	if err := validateEgressHost("10.0.0.5"); err == nil {
 		t.Errorf("expected private IP 10.0.0.5 to be blocked when MIGRATION_BLOCK_PRIVATE is set")
@@ -183,7 +183,32 @@ func TestEgressStreamingHTTPClientAllowsLongTransfers(t *testing.T) {
 	if transport.ResponseHeaderTimeout != 5*time.Minute {
 		t.Fatalf("expected 5 minute response-header timeout, got %s", transport.ResponseHeaderTimeout)
 	}
+	if transport.Proxy != nil {
+		t.Fatal("streaming client must not inherit ProxyFromEnvironment")
+	}
 	if err := client.CheckRedirect(nil, nil); !errors.Is(err, http.ErrUseLastResponse) {
 		t.Fatalf("streaming client follows redirects: %v", err)
+	}
+}
+
+func TestEgressHTTPClientDoesNotUseEnvironmentProxy(t *testing.T) {
+	client, err := NewEgressHTTPClient("https://8.8.8.8/webhook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("expected *http.Transport, got %T", client.Transport)
+	}
+	if transport.Proxy != nil {
+		t.Fatal("egress client must not inherit ProxyFromEnvironment")
+	}
+}
+
+func TestResolveEgressIPsHonorsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := resolveEgressIPs(ctx, "example.com"); err == nil {
+		t.Fatal("expected canceled DNS lookup to fail")
 	}
 }
