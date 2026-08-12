@@ -4,24 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"backend/internal/storage"
 )
 
-// mockProviderWithErrors reuses the existing mockProvider but layers
-// deterministic FileExists errors on top, to exercise the error path in
-// ResolveCollision without redeclaring the shared mock.
+// mockProviderWithErrors layers a deterministic listing error on the shared
+// mock so ResolveCollision's target-directory lookup error is covered.
 type mockProviderWithErrors struct {
 	*mockProvider
-	existsErr map[string]error
+	listingErr error
 }
 
-func (m *mockProviderWithErrors) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
-	if e, ok := m.existsErr[filePath]; ok && e != nil {
-		return false, 0, e
+func (m *mockProviderWithErrors) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error) {
+	if m.listingErr != nil {
+		return nil, m.listingErr
 	}
-	return m.mockProvider.FileExists(ctx, resourceType, filePath)
+	return m.mockProvider.GetDirectoryListing(ctx, resourceType, dirPath)
 }
 
 func TestResolveCollision_ExhaustedAfter100(t *testing.T) {
@@ -40,16 +41,57 @@ func TestResolveCollision_ExhaustedAfter100(t *testing.T) {
 	}
 }
 
-func TestResolveCollision_FileExistsError(t *testing.T) {
+func TestResolveCollision_DirectoryListingError(t *testing.T) {
 	base := &mockProvider{files: map[string][]storage.CloudResource{}}
 	mock := &mockProviderWithErrors{
 		mockProvider: base,
-		existsErr: map[string]error{
-			"/target/report_1.pdf": errors.New("boom"),
-		},
+		listingErr:   errors.New("boom"),
 	}
 	_, err := ResolveCollision(context.Background(), mock, "files", "/target", "report.pdf", "s3")
 	if err == nil {
-		t.Errorf("expected error when FileExists returns error, got nil")
+		t.Errorf("expected error when GetDirectoryListing returns error, got nil")
 	}
+}
+
+func TestResolveCollision_ConstrainsLongCandidateAndListsOnce(t *testing.T) {
+	base := &mockProvider{files: map[string][]storage.CloudResource{"/target": {}}}
+	mock := &countingListingProvider{mockProvider: base}
+
+	resolved, err := ResolveCollision(context.Background(), mock, "files", "/target", strings.Repeat("a", 251)+".txt", "smb")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if utf8.RuneCountInString(resolved) > 255 {
+		t.Errorf("candidate exceeds filename limit: %d runes", utf8.RuneCountInString(resolved))
+	}
+	if !strings.HasSuffix(resolved, "_1.txt") {
+		t.Errorf("expected collision suffix and extension to be preserved, got %q", resolved)
+	}
+	if mock.listingCalls != 1 {
+		t.Errorf("expected one directory listing, got %d", mock.listingCalls)
+	}
+}
+
+func TestResolveCollision_UsesUnicodeCaseFolding(t *testing.T) {
+	mock := &mockProvider{files: map[string][]storage.CloudResource{
+		"/target": {{Path: "/target/aς_1.txt", Name: "aς_1.txt"}},
+	}}
+
+	resolved, err := ResolveCollision(context.Background(), mock, "files", "/target", "aσ.txt", "dropbox")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved != "aσ_2.txt" {
+		t.Errorf("expected Unicode case-folded collision to use _2, got %q", resolved)
+	}
+}
+
+type countingListingProvider struct {
+	*mockProvider
+	listingCalls int
+}
+
+func (m *countingListingProvider) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error) {
+	m.listingCalls++
+	return m.mockProvider.GetDirectoryListing(ctx, resourceType, dirPath)
 }

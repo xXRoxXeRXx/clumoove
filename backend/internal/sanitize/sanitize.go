@@ -7,8 +7,8 @@ import (
 	"unicode/utf8"
 )
 
-var credURLRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s:@]+@`)
-var credQueryRe = regexp.MustCompile(`(?i)((?:base_url|access_token|token)=)[^&\s]+`)
+var credURLRe = regexp.MustCompile(`(?i)([a-z][a-z0-9+.\-]*://)[^/\s@?#]+@`)
+var credQueryRe = regexp.MustCompile(`(?i)(\b(?:base_url|access_token|token|api_key|apikey|key|secret|password|passwd|pwd|client_secret|refresh_token|auth|signature)=)[^&\s]+`)
 
 // SanitizeError redacts credentials from any URLs embedded in an error message.
 // It strips user:pass userinfo and credential-bearing query values.
@@ -38,9 +38,13 @@ var providerForbiddenChars = map[string][]rune{
 	"dropbox":      {'/'},
 	"google":       {'/'},
 	"nextcloud":    {'/'},
+	"opencloud":    {'/'},
 	"magentacloud": {'/'},
 	"webdav":       {'/'},
 	"sftp":         {'/'},
+	"ftp":          {'/'},
+	"hidrive":      {'/'},
+	"local":        {'/'},
 	"seafile":      {'/'},
 	"mega":         {'/'},
 }
@@ -72,8 +76,13 @@ func GetMaxPathLength(provider string) int {
 	return 4096
 }
 
-// IsPathTooLong reports whether path exceeds targetProvider's maximum allowed path length.
+// IsPathTooLong reports whether path exceeds targetProvider's maximum allowed
+// path length. OneDrive specifies its 400-character limit in Unicode
+// characters, while HiDrive's ext4-derived limit is measured in UTF-8 bytes.
 func IsPathTooLong(path string, targetProvider string) bool {
+	if targetProvider == "onedrive" {
+		return utf8.RuneCountInString(path) > GetMaxPathLength(targetProvider)
+	}
 	return len(path) > GetMaxPathLength(targetProvider)
 }
 
@@ -150,12 +159,9 @@ func SanitizeFilename(name string, targetProvider string) SanitizeResult {
 		}
 	}
 
-	maxLen := 255
-	if ml, ok := providerMaxLength[targetProvider]; ok {
-		maxLen = ml
-	}
-	if utf8.RuneCountInString(result.SanitizedName) > maxLen {
-		result.SanitizedName = truncatePreserveExt(result.SanitizedName, maxLen)
+	maxLen := getMaxFilenameLength(targetProvider)
+	if filenameLength(result.SanitizedName, targetProvider) > maxLen {
+		result.SanitizedName = truncatePreserveExt(result.SanitizedName, maxLen, targetProvider)
 		result.Changed = true
 		result.Reasons = append(result.Reasons, "length_truncated")
 	}
@@ -167,6 +173,41 @@ func SanitizeFilename(name string, targetProvider string) SanitizeResult {
 	}
 
 	return result
+}
+
+func getMaxFilenameLength(provider string) int {
+	if maxLength, ok := providerMaxLength[provider]; ok {
+		return maxLength
+	}
+	return 255
+}
+
+func filenameLength(name, provider string) int {
+	if provider == "hidrive" {
+		return len(name)
+	}
+	return utf8.RuneCountInString(name)
+}
+
+func truncateFilename(name string, maxLen int, provider string) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if provider != "hidrive" {
+		runes := []rune(name)
+		if len(runes) > maxLen {
+			runes = runes[:maxLen]
+		}
+		return string(runes)
+	}
+	if len(name) <= maxLen {
+		return name
+	}
+	end := maxLen
+	for end > 0 && end < len(name) && !utf8.RuneStart(name[end]) {
+		end--
+	}
+	return name[:end]
 }
 
 func replaceForbidden(name string, forbidden []rune) string {
@@ -185,12 +226,21 @@ func replaceForbidden(name string, forbidden []rune) string {
 func replaceUnicodeSymbols(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))
+	replacedSymbol := false
 	for _, r := range name {
 		if unicode.Is(unicode.So, r) {
 			b.WriteRune('_')
+			replacedSymbol = true
+			continue
+		}
+		// Emoji variation selectors and zero-width joiners only have meaning
+		// with a preceding symbol. Keeping them after that symbol is replaced
+		// leaves invalid-looking filename fragments on some Seafile servers.
+		if replacedSymbol && (unicode.Is(unicode.Mn, r) || unicode.Is(unicode.Cf, r)) {
 			continue
 		}
 		b.WriteRune(r)
+		replacedSymbol = false
 	}
 	return b.String()
 }
@@ -235,7 +285,11 @@ func trimWindowsTrailing(name string) string {
 	return trimmed
 }
 
-func truncatePreserveExt(name string, maxLen int) string {
+func truncatePreserveExt(name string, maxLen int, provider string) string {
+	if maxLen <= 0 {
+		return ""
+	}
+
 	ext := ""
 	base := name
 	if idx := strings.LastIndex(name, "."); idx > 0 {
@@ -243,15 +297,11 @@ func truncatePreserveExt(name string, maxLen int) string {
 		base = name[:idx]
 	}
 
-	extLen := utf8.RuneCountInString(ext)
-	availableBase := maxLen - extLen
-	if availableBase < 1 {
-		availableBase = 1
+	extLen := filenameLength(ext, provider)
+	if extLen >= maxLen {
+		return truncateFilename(name, maxLen, provider)
 	}
 
-	runes := []rune(base)
-	if len(runes) > availableBase {
-		runes = runes[:availableBase]
-	}
-	return string(runes) + ext
+	availableBase := maxLen - extLen
+	return truncateFilename(base, availableBase, provider) + ext
 }

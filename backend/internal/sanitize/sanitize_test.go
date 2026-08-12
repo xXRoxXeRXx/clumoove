@@ -147,8 +147,8 @@ func TestSanitizeFilename_ReservedNames(t *testing.T) {
 func TestSanitizeFilename_LengthTruncation(t *testing.T) {
 	longName := strings.Repeat("a", 252) + ".pdf"
 	result := SanitizeFilename(longName, "smb")
-	if len(result.SanitizedName) > 255 {
-		t.Errorf("expected length <= 255, got %d", len(result.SanitizedName))
+	if utf8.RuneCountInString(result.SanitizedName) > 255 {
+		t.Errorf("expected length <= 255 runes, got %d", utf8.RuneCountInString(result.SanitizedName))
 	}
 	if !strings.HasSuffix(result.SanitizedName, ".pdf") {
 		t.Error("expected extension .pdf to be preserved")
@@ -165,7 +165,7 @@ func TestSanitizeFilename_HiDriveLengthTruncation(t *testing.T) {
 	longName := strings.Repeat("a", 252) + ".pdf" // 256 chars total
 	result := SanitizeFilename(longName, "hidrive")
 	if len(result.SanitizedName) > 255 {
-		t.Errorf("expected HiDrive filename length <= 255, got %d", len(result.SanitizedName))
+		t.Errorf("expected HiDrive filename length <= 255 bytes, got %d", len(result.SanitizedName))
 	}
 	if !strings.HasSuffix(result.SanitizedName, ".pdf") {
 		t.Error("expected extension .pdf to be preserved")
@@ -181,6 +181,24 @@ func TestSanitizeFilename_HiDriveLengthTruncation(t *testing.T) {
 	}
 	if IsPathTooLong(strings.Repeat("a", 1020), "hidrive") {
 		t.Error("expected IsPathTooLong=false for 1020 chars on hidrive")
+	}
+	unicodeName := SanitizeFilename(strings.Repeat("é", 255), "hidrive")
+	if len(unicodeName.SanitizedName) > 255 {
+		t.Errorf("expected HiDrive Unicode filename length <= 255 bytes, got %d", len(unicodeName.SanitizedName))
+	}
+	if !unicodeName.Changed || !containsReason(unicodeName.Reasons, "length_truncated") {
+		t.Errorf("expected HiDrive Unicode name to be truncated, got %+v", unicodeName)
+	}
+}
+
+func TestSanitizeFilename_LongExtensionIsBounded(t *testing.T) {
+	longName := "a" + strings.Repeat(".x", 200)
+	result := SanitizeFilename(longName, "smb")
+	if got := utf8.RuneCountInString(result.SanitizedName); got > 255 {
+		t.Errorf("expected length <= 255 runes, got %d", got)
+	}
+	if !result.Changed || !containsReason(result.Reasons, "length_truncated") {
+		t.Errorf("expected long extension to be truncated, got %+v", result)
 	}
 }
 
@@ -207,6 +225,12 @@ func TestOneDriveLimitsAndCaseSensitivity(t *testing.T) {
 	}
 	if !IsCaseInsensitive("onedrive") {
 		t.Error("onedrive should be case-insensitive")
+	}
+	if IsPathTooLong(strings.Repeat("é", 300), "onedrive") {
+		t.Error("expected 300 Unicode characters to fit in OneDrive's 400-character limit")
+	}
+	if !IsPathTooLong(strings.Repeat("é", 401), "onedrive") {
+		t.Error("expected 401 Unicode characters to exceed OneDrive's 400-character limit")
 	}
 }
 
@@ -312,6 +336,41 @@ func TestGetForbiddenChars(t *testing.T) {
 	s3Chars := GetForbiddenChars("s3")
 	if s3Chars != nil {
 		t.Errorf("expected nil for s3, got %v", s3Chars)
+	}
+
+	for _, provider := range []string{"opencloud", "hidrive", "local", "ftp"} {
+		chars := GetForbiddenChars(provider)
+		if len(chars) != 1 || chars[0] != '/' {
+			t.Errorf("expected [/] for %s, got %v", provider, chars)
+		}
+	}
+}
+
+func TestSanitizeFilename_SeafileEmojiSequence(t *testing.T) {
+	result := SanitizeFilename("copyright\u00a9\ufe0f-family\U0001f468\u200d\U0001f469\u200d\U0001f467", "seafile")
+	if result.SanitizedName != "copyright_-family___" {
+		t.Errorf("expected symbols and their selectors to be replaced, got %q", result.SanitizedName)
+	}
+	if strings.ContainsRune(result.SanitizedName, '\ufe0f') || strings.ContainsRune(result.SanitizedName, '\u200d') {
+		t.Errorf("expected no orphaned emoji selectors, got %q", result.SanitizedName)
+	}
+}
+
+func TestSanitizeErrorRedactsCredentialsWithoutCorruptingOtherParameters(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"https://bearer-token@example.test/path", "https://***:***@example.test/path"},
+		{"https://user%3Apass@example.test/path", "https://***:***@example.test/path"},
+		{"https://files.example?owner=a@b", "https://files.example?owner=a@b"},
+		{"request failed: https://example.test/?api_key=secret-value&mytoken=preserve", "request failed: https://example.test/?api_key=***&mytoken=preserve"},
+		{"https://example.test/?client_secret=a&refresh_token=b&signature=c", "https://example.test/?client_secret=***&refresh_token=***&signature=***"},
+	}
+	for _, test := range tests {
+		if got := SanitizeError(test.input); got != test.want {
+			t.Errorf("SanitizeError(%q) = %q, want %q", test.input, got, test.want)
+		}
 	}
 }
 

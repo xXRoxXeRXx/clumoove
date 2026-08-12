@@ -3,10 +3,13 @@ package sanitize
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"backend/internal/storage"
 )
+
+const maxRenameAttempts = 100
 
 func ResolveCollision(ctx context.Context, client storage.StorageProvider, resourceType, dirPath, fileName string, targetProvider string) (string, error) {
 	ext := ""
@@ -16,30 +19,56 @@ func ResolveCollision(ctx context.Context, client storage.StorageProvider, resou
 		base = fileName[:idx]
 	}
 
-	for counter := 1; counter <= 100; counter++ {
-		candidate := fmt.Sprintf("%s_%d%s", base, counter, ext)
-		candidatePath := dirPath + "/" + candidate
+	listing, err := client.GetDirectoryListing(ctx, resourceType, dirPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to list target directory for collision resolution: %w", err)
+	}
 
-		exists, _, err := client.FileExists(ctx, resourceType, candidatePath)
-		if err != nil {
-			return "", fmt.Errorf("failed to check existence of collision candidate: %w", err)
+	existing := make(map[string]struct{}, len(listing))
+	for _, resource := range listing {
+		name := resource.Name
+		if name == "" {
+			name = path.Base(resource.Path)
 		}
-		if exists {
+		existing[name] = struct{}{}
+	}
+
+	for counter := 1; counter <= maxRenameAttempts; counter++ {
+		candidate := collisionCandidate(base, ext, counter, targetProvider)
+		candidate = SanitizeFilename(candidate, targetProvider).SanitizedName
+		if _, exists := existing[candidate]; exists {
 			continue
 		}
-
-		if IsCaseInsensitive(targetProvider) {
-			collision, err := CheckCaseCollision(ctx, client, resourceType, dirPath, candidate)
-			if err != nil {
-				return "", fmt.Errorf("failed to check case collision for collision candidate: %w", err)
-			}
-			if collision != "" {
-				continue
-			}
+		if IsCaseInsensitive(targetProvider) && hasCaseInsensitiveCollision(listing, candidate) {
+			continue
 		}
 
 		return candidate, nil
 	}
 
-	return "", fmt.Errorf("failed to resolve collision after 100 attempts")
+	return "", fmt.Errorf("failed to resolve collision after %d attempts", maxRenameAttempts)
+}
+
+func hasCaseInsensitiveCollision(listing []storage.CloudResource, candidate string) bool {
+	for _, resource := range listing {
+		name := resource.Name
+		if name == "" {
+			name = path.Base(resource.Path)
+		}
+		if strings.EqualFold(name, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func collisionCandidate(base, ext string, counter int, targetProvider string) string {
+	maxLen := getMaxFilenameLength(targetProvider)
+	suffix := fmt.Sprintf("_%d%s", counter, ext)
+	if filenameLength(suffix, targetProvider) >= maxLen {
+		return truncateFilename(suffix, maxLen, targetProvider)
+	}
+
+	availableBase := maxLen - filenameLength(suffix, targetProvider)
+	return truncateFilename(base, availableBase, targetProvider) + suffix
 }
