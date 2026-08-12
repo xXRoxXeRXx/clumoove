@@ -658,6 +658,8 @@
     "SMTP_TEST_FAILED": "Test failed. Please check your email settings.",
     "NOTIFICATION_CHANNEL_INVALID": "Invalid notification channel.",
     "NOTIFICATION_CONFIG_INCOMPLETE": "Please complete the notification channel configuration.",
+    "NOTIFICATION_URL_INVALID": "Enter a valid notification endpoint URL.",
+    "NOTIFICATION_PRIORITY_INVALID": "Notification priority must be a number from 1 to 5.",
     "NOTIFICATION_TEST_FAILED": "Notification test failed. Please check the channel configuration.",
     "NOTIFICATION_DECRYPT_FAILED": "Saved notification credentials could not be decrypted.",
     "NOTIFICATION_URL_BLOCKED": "The notification endpoint is not allowed.",

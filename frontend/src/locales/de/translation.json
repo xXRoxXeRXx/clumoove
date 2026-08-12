@@ -658,6 +658,8 @@
     "SMTP_TEST_FAILED": "Test fehlgeschlagen. Bitte überprüfe deine E-Mail-Einstellungen.",
     "NOTIFICATION_CHANNEL_INVALID": "Ungültiger Benachrichtigungskanal.",
     "NOTIFICATION_CONFIG_INCOMPLETE": "Bitte vervollständige die Konfiguration des Benachrichtigungskanals.",
+    "NOTIFICATION_URL_INVALID": "Gib eine gültige URL für den Benachrichtigungsendpunkt ein.",
+    "NOTIFICATION_PRIORITY_INVALID": "Die Benachrichtigungspriorität muss eine Zahl von 1 bis 5 sein.",
     "NOTIFICATION_TEST_FAILED": "Benachrichtigungstest fehlgeschlagen. Bitte überprüfe die Konfiguration.",
     "NOTIFICATION_DECRYPT_FAILED": "Gespeicherte Benachrichtigungszugangsdaten konnten nicht entschlüsselt werden.",
     "NOTIFICATION_URL_BLOCKED": "Der Benachrichtigungsendpunkt ist nicht zulässig.",

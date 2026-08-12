@@ -134,6 +134,19 @@ func TestSendMailRejectsUnsupportedEncryption(t *testing.T) {
 	}
 }
 
+func TestSendMailContextHonorsCancellation(t *testing.T) {
+	withSMTPResolver(t, func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := SendMailContext(ctx, SMTPConfig{Host: "smtp.example", Port: "587", Encryption: "starttls"}, "recipient@example.com", "subject", "body")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("SendMailContext() error = %v, want context.Canceled", err)
+	}
+}
+
 func withSMTPResolver(t *testing.T, resolver func(context.Context, string) ([]net.IP, error)) {
 	t.Helper()
 	resolveSMTPIPsTestMu.Lock()

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -21,7 +22,33 @@ import (
 
 type Config map[string]any
 
-var ErrURLBlocked = errors.New("notification URL blocked")
+var (
+	ErrIncomplete      = errors.New("notification config incomplete")
+	ErrInvalidChannel  = errors.New("invalid notification channel")
+	ErrInvalidURL      = errors.New("invalid notification URL")
+	ErrInvalidPriority = errors.New("invalid ntfy priority")
+	ErrInvalidPayload  = errors.New("invalid notification payload")
+	ErrURLBlocked      = errors.New("notification URL blocked")
+)
+
+// newEgressHTTPClient is replaceable by package tests. Production delivery
+// always uses storage's DNS-rebinding-safe egress client.
+var newEgressHTTPClient = storage.NewEgressHTTPClient
+
+type notificationPayload struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Processed int64  `json:"processed"`
+	Total     int64  `json:"total"`
+	Failed    int64  `json:"failed"`
+	Skipped   int64  `json:"skipped"`
+}
+
+type validatedConfig struct {
+	endpoint     string
+	ntfyPriority string
+}
 
 func sanitizeSMTPValue(value string) string {
 	return strings.NewReplacer("\r", "", "\n", "", "\x00", "").Replace(strings.TrimSpace(value))
@@ -37,7 +64,7 @@ func sanitizeSMTPAddressValue(value string) string {
 
 func smtpConfig(cfg Config) email.SMTPConfig {
 	port := sanitizeSMTPValue(fmt.Sprint(cfg["smtp_port"]))
-	if port == "" || port == "<nil>" {
+	if port == "" || port == "<nil>" || port == "0" {
 		port = "587"
 	}
 	return email.SMTPConfig{
@@ -54,61 +81,87 @@ func smtpConfig(cfg Config) email.SMTPConfig {
 	}
 }
 
+// Validate checks a user-supplied channel configuration before it is saved.
 func Validate(typ string, cfg Config) error {
+	validated, err := validateConfig(typ, cfg)
+	if err != nil || validated.endpoint == "" {
+		return err
+	}
+	if _, err := newEgressHTTPClient(validated.endpoint); err != nil {
+		return fmt.Errorf("%w: %v", ErrURLBlocked, err)
+	}
+	return nil
+}
+
+func validateConfig(typ string, cfg Config) (validatedConfig, error) {
 	required := func(keys ...string) bool {
-		for _, k := range keys {
-			if strings.TrimSpace(fmt.Sprint(cfg[k])) == "" || fmt.Sprint(cfg[k]) == "<nil>" {
+		for _, key := range keys {
+			value := fmt.Sprint(cfg[key])
+			if strings.TrimSpace(value) == "" || value == "<nil>" {
 				return false
 			}
 		}
 		return true
 	}
-	validURL := func(k string) error {
-		raw := strings.TrimSpace(fmt.Sprint(cfg[k]))
-		u, err := url.Parse(raw)
-		if err != nil || u.Hostname() == "" || (u.Scheme != "https" && u.Scheme != "http") {
-			return fmt.Errorf("invalid URL")
+	validURL := func(key string) (string, error) {
+		raw := strings.TrimSpace(fmt.Sprint(cfg[key]))
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+			return "", ErrInvalidURL
 		}
-		_, err = storage.NewEgressHTTPClient(raw)
-		if err != nil {
-			return fmt.Errorf("%w: %v", ErrURLBlocked, err)
-		}
-		return nil
+		// Plain HTTP remains supported for self-hosted gotify/ntfy instances on
+		// trusted LANs. The egress client still blocks unsafe destinations.
+		return raw, nil
 	}
+
 	switch typ {
 	case "email":
 		// Email is a preference-only channel. Its empty config is valid because
 		// the worker loads and validates the instance mailer at send time.
-		return nil
+		return validatedConfig{}, nil
 	case "gotify":
 		if !required("url", "token") {
-			return fmt.Errorf("incomplete")
+			return validatedConfig{}, ErrIncomplete
 		}
-		return validURL("url")
+		endpoint, err := validURL("url")
+		return validatedConfig{endpoint: endpoint}, err
 	case "ntfy":
 		if !required("url", "topic") {
-			return fmt.Errorf("incomplete")
+			return validatedConfig{}, ErrIncomplete
 		}
-		return validURL("url")
+		priority, err := ntfyPriority(cfg)
+		if err != nil {
+			return validatedConfig{}, err
+		}
+		endpoint, err := validURL("url")
+		return validatedConfig{endpoint: endpoint, ntfyPriority: priority}, err
 	case "telegram":
 		if !required("bot_token", "chat_id") {
-			return fmt.Errorf("incomplete")
+			return validatedConfig{}, ErrIncomplete
 		}
+		return validatedConfig{}, nil
 	case "discord":
 		if !required("webhook_url") {
-			return fmt.Errorf("incomplete")
+			return validatedConfig{}, ErrIncomplete
 		}
-		return validURL("webhook_url")
+		endpoint, err := validURL("webhook_url")
+		return validatedConfig{endpoint: endpoint}, err
 	default:
-		return fmt.Errorf("invalid channel")
+		return validatedConfig{}, ErrInvalidChannel
 	}
-	return nil
 }
 
-func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, recipient, language string) error {
-	if err := Validate(typ, cfg); err != nil {
+func Send(ctx context.Context, typ string, cfg Config, rawPayload json.RawMessage, recipient, language string) error {
+	validated, err := validateConfig(typ, cfg)
+	if err != nil {
 		return err
 	}
+	endpoint := validated.endpoint
+	payload, err := decodePayload(rawPayload)
+	if err != nil {
+		return err
+	}
+
 	text := formatLocalized(payload, language)
 	if typ == "discord" {
 		text = truncate(text, 2000)
@@ -118,55 +171,53 @@ func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, 
 	}
 	if typ == "email" {
 		smtpCfg := smtpConfig(cfg)
-		var p map[string]any
-		_ = json.Unmarshal(payload, &p)
-		return email.SendMail(smtpCfg, recipient, notificationSubject(language), email.BuildNotificationEmailLocalized(fmt.Sprint(p["kind"]), fmt.Sprint(p["name"]), fmt.Sprint(p["status"]), fmt.Sprint(p["processed"]), fmt.Sprint(p["total"]), fmt.Sprint(p["failed"]), fmt.Sprint(p["skipped"]), language))
+		return email.SendMailContext(ctx, smtpCfg, recipient, notificationSubject(language), email.BuildNotificationEmailLocalized(payload.Kind, payload.Name, payload.Status, strconv.FormatInt(payload.Processed, 10), strconv.FormatInt(payload.Total, 10), strconv.FormatInt(payload.Failed, 10), strconv.FormatInt(payload.Skipped, 10), language))
 	}
-	var endpoint string
+
 	var body any
 	headers := map[string]string{"Content-Type": "application/json"}
 	switch typ {
 	case "gotify":
-		endpoint = strings.TrimRight(fmt.Sprint(cfg["url"]), "/") + "/message"
+		endpoint = strings.TrimRight(endpoint, "/") + "/message"
 		body = map[string]any{"message": text, "title": notificationSubject(language)}
 		headers["X-Gotify-Key"] = fmt.Sprint(cfg["token"])
 	case "ntfy":
-		endpoint = strings.TrimRight(fmt.Sprint(cfg["url"]), "/") + "/" + url.PathEscape(fmt.Sprint(cfg["topic"]))
+		endpoint = strings.TrimRight(endpoint, "/") + "/" + url.PathEscape(fmt.Sprint(cfg["topic"]))
 		body = text
 		headers["Content-Type"] = "text/plain; charset=utf-8"
 		headers["Title"] = notificationSubject(language)
-		if t := fmt.Sprint(cfg["token"]); t != "" && t != "<nil>" {
-			headers["Authorization"] = "Bearer " + t
+		if token := fmt.Sprint(cfg["token"]); token != "" && token != "<nil>" {
+			headers["Authorization"] = "Bearer " + token
 		}
-		if p := fmt.Sprint(cfg["priority"]); p != "" && p != "<nil>" {
-			headers["Priority"] = p
+		if validated.ntfyPriority != "" {
+			headers["Priority"] = validated.ntfyPriority
 		}
 	case "telegram":
-		endpoint = "https://api.telegram.org/bot" + fmt.Sprint(cfg["bot_token"]) + "/sendMessage"
+		endpoint = "https://api.telegram.org/bot" + url.PathEscape(fmt.Sprint(cfg["bot_token"])) + "/sendMessage"
 		body = map[string]any{"chat_id": fmt.Sprint(cfg["chat_id"]), "text": text}
 	case "discord":
-		endpoint = fmt.Sprint(cfg["webhook_url"])
 		body = map[string]any{"content": text}
 	}
-	client, err := storage.NewEgressHTTPClient(endpoint)
+
+	client, err := newEgressHTTPClient(endpoint)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrURLBlocked, err)
 	}
-	var raw []byte
+	var requestBody []byte
 	if typ == "ntfy" {
-		raw = []byte(body.(string))
+		requestBody = []byte(body.(string))
 	} else {
-		raw, err = json.Marshal(body)
+		requestBody, err = json.Marshal(body)
 		if err != nil {
 			return err
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(requestBody))
 	if err != nil {
 		return err
 	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	for key, value := range headers {
+		req.Header.Set(key, value)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -174,28 +225,40 @@ func Send(ctx context.Context, typ string, cfg Config, payload json.RawMessage, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("remote status %s", strconv.Itoa(resp.StatusCode))
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return fmt.Errorf("%s: remote status %d", typ, resp.StatusCode)
 	}
 	return nil
 }
 
-func format(payload json.RawMessage) string {
-	var p map[string]any
-	_ = json.Unmarshal(payload, &p)
-	return fmt.Sprintf("%s %s\nStatus: %v\nVerarbeitet: %v / %v\nFehler: %v\nÜbersprungen: %v", p["kind"], p["name"], p["status"], p["processed"], p["total"], p["failed"], p["skipped"])
+func ntfyPriority(cfg Config) (string, error) {
+	value := strings.TrimSpace(fmt.Sprint(cfg["priority"]))
+	if value == "" || value == "<nil>" {
+		return "", nil
+	}
+	priority, err := strconv.Atoi(value)
+	if err != nil || priority < 1 || priority > 5 {
+		return "", ErrInvalidPriority
+	}
+	return strconv.Itoa(priority), nil
 }
 
-func formatEnglish(payload json.RawMessage) string {
-	var p map[string]any
-	_ = json.Unmarshal(payload, &p)
-	return fmt.Sprintf("%s %s\nStatus: %v\nProcessed: %v / %v\nFailed: %v\nSkipped: %v", p["kind"], p["name"], p["status"], p["processed"], p["total"], p["failed"], p["skipped"])
+func decodePayload(raw json.RawMessage) (notificationPayload, error) {
+	var payload notificationPayload
+	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return notificationPayload{}, ErrInvalidPayload
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return notificationPayload{}, fmt.Errorf("%w: %v", ErrInvalidPayload, err)
+	}
+	if payload.Kind == "" || payload.Status == "" {
+		return notificationPayload{}, ErrInvalidPayload
+	}
+	return payload, nil
 }
 
-func formatLocalized(payload json.RawMessage, language string) string {
-	var p map[string]any
-	_ = json.Unmarshal(payload, &p)
-	kind := fmt.Sprint(p["kind"])
-	return fmt.Sprintf("%s %v\n%s: %v\n%s: %v / %v\n%s: %v\n%s: %v", i18n.T(language, "delivery.notification.kind."+kind), p["name"], i18n.T(language, "delivery.notification.status"), p["status"], i18n.T(language, "delivery.notification.processed"), p["processed"], p["total"], i18n.T(language, "delivery.notification.failed"), p["failed"], i18n.T(language, "delivery.notification.skipped"), p["skipped"])
+func formatLocalized(payload notificationPayload, language string) string {
+	return fmt.Sprintf("%s %s\n%s: %s\n%s: %d / %d\n%s: %d\n%s: %d", i18n.T(language, "delivery.notification.kind."+payload.Kind), payload.Name, i18n.T(language, "delivery.notification.status"), payload.Status, i18n.T(language, "delivery.notification.processed"), payload.Processed, payload.Total, i18n.T(language, "delivery.notification.failed"), payload.Failed, i18n.T(language, "delivery.notification.skipped"), payload.Skipped)
 }
 
 func notificationSubject(language string) string {
@@ -203,7 +266,7 @@ func notificationSubject(language string) string {
 }
 
 func truncate(value string, max int) string {
-	if utf8.RuneCountInString(value) <= max {
+	if max < 3 || utf8.RuneCountInString(value) <= max {
 		return value
 	}
 	runes := []rune(value)

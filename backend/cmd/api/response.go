@@ -155,6 +155,8 @@ const (
 	ErrOauthSecretRequired          APIErrorCode = "OAUTH_SECRET_REQUIRED"
 	ErrNotificationChannelInvalid   APIErrorCode = "NOTIFICATION_CHANNEL_INVALID"
 	ErrNotificationConfigIncomplete APIErrorCode = "NOTIFICATION_CONFIG_INCOMPLETE"
+	ErrNotificationURLInvalid       APIErrorCode = "NOTIFICATION_URL_INVALID"
+	ErrNotificationPriorityInvalid  APIErrorCode = "NOTIFICATION_PRIORITY_INVALID"
 	ErrNotificationTestFailed       APIErrorCode = "NOTIFICATION_TEST_FAILED"
 	ErrNotificationDecryptFailed    APIErrorCode = "NOTIFICATION_DECRYPT_FAILED"
 	ErrNotificationURLBlocked       APIErrorCode = "NOTIFICATION_URL_BLOCKED"

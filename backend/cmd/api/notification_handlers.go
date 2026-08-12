@@ -60,6 +60,15 @@ func notificationErrorCode(err error) APIErrorCode {
 	if errors.Is(err, notify.ErrURLBlocked) {
 		return ErrNotificationURLBlocked
 	}
+	if errors.Is(err, notify.ErrInvalidChannel) {
+		return ErrNotificationChannelInvalid
+	}
+	if errors.Is(err, notify.ErrInvalidURL) {
+		return ErrNotificationURLInvalid
+	}
+	if errors.Is(err, notify.ErrInvalidPriority) {
+		return ErrNotificationPriorityInvalid
+	}
 	return ErrNotificationConfigIncomplete
 }
 func toString(v any) string {

@@ -95,7 +95,16 @@ func isAllowedSMTPIP(ip net.IP) bool {
 }
 
 func SendMail(cfg SMTPConfig, to, subject, htmlBody string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), smtpOperationTimeout)
+	return SendMailContext(context.Background(), cfg, to, subject, htmlBody)
+}
+
+// SendMailContext sends one message while respecting caller cancellation and
+// retaining the package's bounded SMTP operation timeout.
+func SendMailContext(ctx context.Context, cfg SMTPConfig, to, subject, htmlBody string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, smtpOperationTimeout)
 	defer cancel()
 
 	if err := validateSMTPPort(cfg.Port); err != nil {
