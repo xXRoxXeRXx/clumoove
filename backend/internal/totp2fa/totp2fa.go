@@ -44,22 +44,22 @@ func GenerateProvisioning(userEmail string) (secretBase32, otpauthURI, qrPNGData
 		return "", "", "", err
 	}
 
-	img, err := qr.Encode(key.URL(), qr.H, qr.Auto)
+	qrImage, err := qr.Encode(key.URL(), qr.H, qr.Auto)
 	if err != nil {
 		return "", "", "", err
 	}
 
-	scaledImg, err := barcode.Scale(img, 512, 512)
+	scaledQRImage, err := barcode.Scale(qrImage, 512, 512)
 	if err != nil {
 		return "", "", "", err
 	}
 
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, scaledImg); err != nil {
+	var pngBuffer bytes.Buffer
+	if err := png.Encode(&pngBuffer, scaledQRImage); err != nil {
 		return "", "", "", err
 	}
 
-	return key.Secret(), key.URL(), "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+	return key.Secret(), key.URL(), "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBuffer.Bytes()), nil
 }
 
 // Validate checks a user-submitted TOTP code against the base32 secret.
@@ -131,18 +131,18 @@ func VerifyBackupCode(hashes []string, code string) int {
 	return -1
 }
 
-// randomCode returns a cryptographically random string of length n over
+// randomCode returns a cryptographically random string of the given length over
 // backupCodeAlphabet using rejection-free uniform sampling (crypto/rand + big.Int),
 // avoiding the modulo bias of naive byte-mod-len selection.
-func randomCode(n int) (string, error) {
+func randomCode(length int) (string, error) {
 	max := big.NewInt(int64(len(backupCodeAlphabet)))
-	b := make([]byte, n)
-	for i := range b {
-		idx, err := rand.Int(rand.Reader, max)
+	code := make([]byte, length)
+	for index := range code {
+		alphabetIndex, err := rand.Int(rand.Reader, max)
 		if err != nil {
 			return "", err
 		}
-		b[i] = backupCodeAlphabet[idx.Int64()]
+		code[index] = backupCodeAlphabet[alphabetIndex.Int64()]
 	}
-	return string(b), nil
+	return string(code), nil
 }
