@@ -359,6 +359,81 @@ func TestKoofrProviderCreateFolderAcceptsConflictAfterRace(t *testing.T) {
 	}
 }
 
+func TestKoofrProviderCreatesNestedDirectoriesWithSpecialCharsAndEmojis(t *testing.T) {
+	var createdFolders []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/mounts":
+			_, _ = w.Write([]byte(`[{"id":"primary","isPrimary":true}]`))
+		case "/api/v2/mounts/primary/files/info":
+			// Koofr returns 400 Bad Request when an ancestor does not exist
+			w.WriteHeader(http.StatusBadRequest)
+		case "/api/v2/mounts/primary/files/folder":
+			var req struct {
+				Name string `json:"name"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			parent := r.URL.Query().Get("path")
+			createdFolders = append(createdFolders, parent+":"+req.Name)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	}))
+	defer server.Close()
+	p := newTestKoofrProvider(server)
+	if ok, err := p.Connect(context.Background()); !ok || err != nil {
+		t.Fatal(err)
+	}
+
+	targetDir := "/Notizen/🚀 Internal Projects & Campaign Planning/.attachments.82373"
+	if err := p.CreateDirectory(context.Background(), "files", targetDir); err != nil {
+		t.Fatalf("CreateDirectory(%q) = %v", targetDir, err)
+	}
+
+	wantFolders := []string{
+		"/:Notizen",
+		"/Notizen:🚀 Internal Projects & Campaign Planning",
+		"/Notizen/🚀 Internal Projects & Campaign Planning:.attachments.82373",
+	}
+	if len(createdFolders) != len(wantFolders) {
+		t.Fatalf("createdFolders = %v, want %v", createdFolders, wantFolders)
+	}
+	for i, want := range wantFolders {
+		if createdFolders[i] != want {
+			t.Errorf("createdFolders[%d] = %q, want %q", i, createdFolders[i], want)
+		}
+	}
+}
+
+func TestKoofrProviderFileExistsHandlesBadRequestAsNotFound(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/mounts":
+			_, _ = w.Write([]byte(`[{"id":"primary","isPrimary":true}]`))
+		case "/api/v2/mounts/primary/files/info":
+			w.WriteHeader(http.StatusBadRequest)
+		default:
+			t.Errorf("unexpected request %s", r.URL)
+		}
+	}))
+	defer server.Close()
+	p := newTestKoofrProvider(server)
+	if ok, err := p.Connect(context.Background()); !ok || err != nil {
+		t.Fatal(err)
+	}
+
+	exists, size, err := p.FileExists(context.Background(), "files", "/NonExistentDir/file.txt")
+	if err != nil {
+		t.Fatalf("FileExists() error = %v, want nil", err)
+	}
+	if exists || size != 0 {
+		t.Fatalf("FileExists() = %t, %d, want false, 0", exists, size)
+	}
+}
+
 func TestKoofrProviderPreservesBackslashesAndUploadMetadata(t *testing.T) {
 	modified := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

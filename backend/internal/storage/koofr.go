@@ -303,7 +303,15 @@ func (p *KoofrProvider) CreateDirectory(ctx context.Context, resourceType, dirPa
 	if err != nil {
 		return err
 	}
-	return p.createFolder(ctx, path.Dir(dirPath), path.Base(dirPath))
+	parts := strings.Split(strings.TrimPrefix(dirPath, "/"), "/")
+	current := "/"
+	for _, name := range parts {
+		if err := p.createFolder(ctx, current, name); err != nil {
+			return err
+		}
+		current = path.Join(current, name)
+	}
+	return nil
 }
 
 func (p *KoofrProvider) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
@@ -354,11 +362,14 @@ func (p *KoofrProvider) fileInfo(ctx context.Context, filePath string) (koofrFil
 	if err != nil {
 		return koofrFileInfo{}, err
 	}
-	resp, err := p.do(req, http.StatusOK)
+	resp, err := p.do(req, http.StatusOK, http.StatusNotFound, http.StatusBadRequest)
 	if err != nil {
 		return koofrFileInfo{}, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusBadRequest {
+		return koofrFileInfo{}, ErrNotFound
+	}
 	var info koofrFileInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
 		return koofrFileInfo{}, fmt.Errorf("decode koofr file info: %w", err)
@@ -449,10 +460,15 @@ func (p *KoofrProvider) createFolder(ctx context.Context, parent, name string) e
 	}
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusConflict {
 		info, err := p.fileInfo(ctx, fullPath)
-		if err == nil && info.Type == "dir" {
-			globalKoofrCreatedDirs.Add(cacheKey)
-			return nil
+		if err == nil {
+			if info.Type == "dir" {
+				globalKoofrCreatedDirs.Add(cacheKey)
+				return nil
+			}
+			return fmt.Errorf("koofr path %q exists and is not a directory", fullPath)
 		}
+		globalKoofrCreatedDirs.Add(cacheKey)
+		return nil
 	}
 	return koofrHTTPError(resp.StatusCode)
 }
