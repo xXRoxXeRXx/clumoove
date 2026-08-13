@@ -24,25 +24,32 @@ func newTestKoofrProvider(server *httptest.Server) *KoofrProvider {
 }
 
 func TestKoofrProviderConnectSelectsPrimaryMountAndAuthenticates(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, password, ok := r.BasicAuth()
-		if !ok || user != "user@example.com" || password != "application-password" {
-			t.Fatal("missing or invalid Basic authentication")
-		}
-		if r.URL.Path != "/api/v2/mounts" {
-			t.Fatalf("path = %q", r.URL.Path)
-		}
-		_, _ = w.Write([]byte(`[{"id":"other","isPrimary":false},{"id":"primary","isPrimary":true}]`))
-	}))
-	defer server.Close()
+	for _, payload := range []string{
+		`{"mounts":[{"id":"other","isPrimary":false},{"id":"primary","isPrimary":true}]}`,
+		`[{"id":"other","isPrimary":false},{"id":"primary","isPrimary":true}]`,
+	} {
+		t.Run(payload[:10], func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				user, password, ok := r.BasicAuth()
+				if !ok || user != "user@example.com" || password != "application-password" {
+					t.Fatal("missing or invalid Basic authentication")
+				}
+				if r.URL.Path != "/api/v2/mounts" {
+					t.Fatalf("path = %q", r.URL.Path)
+				}
+				_, _ = w.Write([]byte(payload))
+			}))
+			defer server.Close()
 
-	p := newTestKoofrProvider(server)
-	ok, err := p.Connect(context.Background())
-	if err != nil || !ok {
-		t.Fatalf("Connect() = %t, %v", ok, err)
-	}
-	if got := p.connectedMountID(); got != "primary" {
-		t.Fatalf("primary mount = %q, want primary", got)
+			p := newTestKoofrProvider(server)
+			ok, err := p.Connect(context.Background())
+			if err != nil || !ok {
+				t.Fatalf("Connect() = %t, %v", ok, err)
+			}
+			if got := p.connectedMountID(); got != "primary" {
+				t.Fatalf("primary mount = %q, want primary", got)
+			}
+		})
 	}
 }
 
@@ -55,7 +62,8 @@ func TestKoofrProviderConnectErrors(t *testing.T) {
 	}{
 		{name: "unauthorized", status: http.StatusUnauthorized, want: ErrAuth},
 		{name: "forbidden", status: http.StatusForbidden, want: ErrAuth},
-		{name: "no primary mount", status: http.StatusOK, body: `[{"id":"other","isPrimary":false}]`},
+		{name: "no primary mount in array", status: http.StatusOK, body: `[{"id":"other","isPrimary":false}]`},
+		{name: "no primary mount in object", status: http.StatusOK, body: `{"mounts":[{"id":"other","isPrimary":false}]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

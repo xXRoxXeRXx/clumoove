@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,10 @@ var ErrKoofrPrimaryMountNotFound = errors.New("koofr primary mount not found")
 type koofrMount struct {
 	ID        string `json:"id"`
 	IsPrimary bool   `json:"isPrimary"`
+}
+
+type koofrMountList struct {
+	Mounts []koofrMount `json:"mounts"`
 }
 
 type koofrFileInfo struct {
@@ -94,9 +99,23 @@ func (p *KoofrProvider) Connect(ctx context.Context) (bool, error) {
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, fmt.Errorf("read koofr mounts: %w", err)
+	}
+
 	var mounts []koofrMount
-	if err := json.NewDecoder(resp.Body).Decode(&mounts); err != nil {
-		return false, fmt.Errorf("decode koofr mounts: %w", err)
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		var list koofrMountList
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return false, fmt.Errorf("decode koofr mounts: %w", err)
+		}
+		mounts = list.Mounts
+	} else {
+		if err := json.Unmarshal(trimmed, &mounts); err != nil {
+			return false, fmt.Errorf("decode koofr mounts: %w", err)
+		}
 	}
 	for _, mount := range mounts {
 		if mount.IsPrimary && mount.ID != "" {
