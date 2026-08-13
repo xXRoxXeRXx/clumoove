@@ -9,6 +9,7 @@ import { apiFetch } from '../utils/apiClient';
 import { ProfileSelect } from './connect/ProfileSelect';
 import { SaveProfileRow } from './connect/SaveProfileRow';
 import { ProviderSelector } from './connect/ProviderSelector';
+import { FixedCredentialsFields } from './connect/FixedCredentialsFields';
 import { buildFtpUrl, type FtpTlsMode } from '../utils/providerUrls';
 
 type ConnectResponse = { success: boolean; files?: CloudFile[]; error_code?: string };
@@ -164,7 +165,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${sourceSftpHost}:${sourceSftpPort}?host_key=${encodeURIComponent(sourceSftpHostKey.trim())}`
     : sourceProvider === 'ftp'
     ? buildFtpUrl(sourceFtpHost, sourceFtpPort, sourceFtpTlsMode)
-    : sourceProvider === 'magentacloud' || sourceProvider === 'local' || sourceProvider === 'mega'
+    : sourceProvider === 'magentacloud' || sourceProvider === 'koofr' || sourceProvider === 'local' || sourceProvider === 'mega'
     ? ''
     : (isOAuthProvider(sourceProvider) ? (sourceProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${sourceProvider}.com`) : sourceUrl));
 
@@ -177,7 +178,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     ? `sftp://${targetSftpHost}:${targetSftpPort}?host_key=${encodeURIComponent(targetSftpHostKey.trim())}`
     : targetProvider === 'ftp'
     ? buildFtpUrl(targetFtpHost, targetFtpPort, targetFtpTlsMode)
-    : targetProvider === 'magentacloud' || targetProvider === 'local' || targetProvider === 'mega'
+    : targetProvider === 'magentacloud' || targetProvider === 'koofr' || targetProvider === 'local' || targetProvider === 'mega'
     ? ''
     : (isOAuthProvider(targetProvider) ? (targetProvider === 'onedrive' ? 'oauth://onedrive' : `https://api.${targetProvider}.com`) : targetUrl));
   // Build the final credentials for the source side (reuses shared URL/user/pass logic).
@@ -353,8 +354,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     }
 
-    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local' && sourceProvider !== 'mega';
-    const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'local' && targetProvider !== 'mega';
+    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'koofr' && sourceProvider !== 'local' && sourceProvider !== 'mega';
+    const targetUrlRequired = targetProvider !== 'magentacloud' && targetProvider !== 'koofr' && targetProvider !== 'local' && targetProvider !== 'mega';
 
     if (
       (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
@@ -489,7 +490,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
       }
     }
 
-    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'local' && sourceProvider !== 'mega';
+    const sourceUrlRequired = sourceProvider !== 'magentacloud' && sourceProvider !== 'koofr' && sourceProvider !== 'local' && sourceProvider !== 'mega';
     if (
       (sourceUrlRequired && !sourceProfileSelected && !finalSourceUrl) ||
       (sourceProvider !== 'local' && sourceProvider !== 'immich' && !sourceProfileSelected && !finalSourceUser) ||
@@ -640,6 +641,7 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
     { id: 'seafile', name: 'Seafile' },
     { id: 'webdav', name: 'WebDAV' },
     { id: 'magentacloud', name: 'MagentaCLOUD' },
+    { id: 'koofr', name: 'Koofr' },
     { id: 'smb', name: 'SMB/CIFS' },
     { id: 's3', name: 'S3' },
     { id: 'sftp', name: 'SFTP' },
@@ -1148,43 +1150,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
                   </div>
                 </>
-              ) : sourceProvider === 'magentacloud' ? (
-                <>
-                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('connect.magentacloudInfo')}</p>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label htmlFor="source-magentacloud-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
-                    <input
-                      id="source-magentacloud-username"
-                      type="text"
-                      autoComplete="section-source username"
-                      name="source_username"
-                      placeholder={t('connect.usernamePlaceholder')}
-                      value={sourceUser}
-                      onChange={(e) => setSourceUser(e.target.value)}
-                      className={formInputClass}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label htmlFor="source-magentacloud-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
-                    <input
-                      id="source-magentacloud-password"
-                      type="password"
-                      autoComplete="section-source current-password"
-                      name="source_password"
-                      placeholder="•••• •••• •••• ••••"
-                      value={sourcePass}
-                      onChange={(e) => setSourcePass(e.target.value)}
-                      className={formInputClass}
-                      required
-                    />
-                  </div>
-                </>
+              ) : sourceProvider === 'magentacloud' || sourceProvider === 'koofr' ? (
+                <FixedCredentialsFields provider={sourceProvider} editing={false} username={sourceUser} password={sourcePass} onUsernameChange={setSourceUser} onPasswordChange={setSourcePass} usernameId={`source-${sourceProvider}-username`} passwordId={`source-${sourceProvider}-password`} usernameName="source_username" passwordName="source_password" inputClassName={formInputClass} labelClassName="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2" fieldClassName="space-y-1" />
               ) : (
                 <div className="py-2 space-y-1">
                   <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">
@@ -1698,43 +1665,8 @@ export const ConnectForm: React.FC<ConnectFormProps> = ({ onConnectSuccess, apiU
                     <p className="text-xs font-sans leading-relaxed">{t('connect.localInfo')}</p>
                   </div>
                 </>
-              ) : targetProvider === 'magentacloud' ? (
-                <>
-                  <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-                    <p className="text-xs font-sans leading-relaxed">{t('connect.magentacloudInfo')}</p>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label htmlFor="target-magentacloud-username" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono">{t('connect.username')}</label>
-                    <input
-                      id="target-magentacloud-username"
-                      type="text"
-                      autoComplete="section-target username"
-                      name="target_username"
-                      placeholder={t('connect.usernamePlaceholder')}
-                      value={targetUser}
-                      onChange={(e) => setTargetUser(e.target.value)}
-                      className={formInputClass}
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label htmlFor="target-magentacloud-password" className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">{t('connect.appPasswordLabel')}</label>
-                    <input
-                      id="target-magentacloud-password"
-                      type="password"
-                      autoComplete="section-target current-password"
-                      name="target_password"
-                      placeholder="•••• •••• •••• ••••"
-                      value={targetPass}
-                      onChange={(e) => setTargetPass(e.target.value)}
-                      className={formInputClass}
-                      required
-                    />
-                  </div>
-                </>
+              ) : targetProvider === 'magentacloud' || targetProvider === 'koofr' ? (
+                <FixedCredentialsFields provider={targetProvider} editing={false} username={targetUser} password={targetPass} onUsernameChange={setTargetUser} onPasswordChange={setTargetPass} usernameId={`target-${targetProvider}-username`} passwordId={`target-${targetProvider}-password`} usernameName="target_username" passwordName="target_password" inputClassName={formInputClass} labelClassName="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2" fieldClassName="space-y-1" />
               ) : (
                 <div className="py-2 space-y-1">
                   <p className="block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2">

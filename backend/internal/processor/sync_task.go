@@ -356,7 +356,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 	if srcProvider == "dropbox" {
 		sourceAlgo = "DROPBOX"
-	} else if srcProvider == "google" {
+	} else if srcProvider == "google" || srcProvider == "koofr" {
 		sourceAlgo = "MD5"
 	} else if srcProvider == "onedrive" {
 		sourceAlgo = "QUICKXOR"
@@ -383,7 +383,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	} else if tgtProvider == "s3" {
 		targetAlgo = "SHA256"
 		targetHasher = sha256.New()
-	} else if tgtProvider == "google" {
+	} else if tgtProvider == "google" || tgtProvider == "koofr" {
 		targetAlgo = "MD5"
 		targetHasher = md5.New()
 	} else if tgtProvider == "hidrive" {
@@ -479,6 +479,9 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	sizedReader := newExpectedSizeReader(throttledDownloadStream, task.FileSize)
 	hashingReader := io.TeeReader(sizedReader, activeWriter)
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, transferDeadline)
+	if srcRes, err := srcClient.InspectResource(ctx, task.ResourceType, srcPath); err == nil && !srcRes.LastModified.IsZero() {
+		uploadCtx = storage.WithTransferMetadata(uploadCtx, storage.FileMetadata{ModifiedTime: srcRes.LastModified})
+	}
 	if sourceHashStr != "" && sourceAlgo != "ETAG" {
 		uploadCtx = storage.WithUploadChecksum(uploadCtx, fmt.Sprintf("%s:%s", sourceAlgo, sourceHashStr))
 	}

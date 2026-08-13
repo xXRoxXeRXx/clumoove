@@ -38,7 +38,7 @@ func TestProviderSupportsResourceType(t *testing.T) {
 	if !ProviderSupportsResourceType("google", "calendars") || !ProviderSupportsResourceType("google", "contacts") {
 		t.Errorf("expected google to support calendars and contacts")
 	}
-	for _, p := range []string{"local", "webdav", "s3", "sftp", "ftp", "smb", "dropbox", "onedrive", "hidrive", "immich", "magentacloud"} {
+	for _, p := range []string{"local", "webdav", "s3", "sftp", "ftp", "smb", "dropbox", "onedrive", "hidrive", "immich", "magentacloud", "koofr"} {
 		if !ProviderSupportsResourceType(p, "files") {
 			t.Errorf("expected %s to support files", p)
 		}
@@ -188,6 +188,7 @@ func TestProviderRegistryCapabilitiesMatchRuntime(t *testing.T) {
 		"sftp":         &SFTPProvider{},
 		"ftp":          &FTPProvider{},
 		"magentacloud": &MagentacloudProvider{davProvider: &davProvider{}},
+		"koofr":        &KoofrProvider{},
 		"local":        &LocalProvider{},
 		"immich":       &ImmichProvider{},
 		"seafile":      &SeafileProvider{},
@@ -230,6 +231,7 @@ func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
 		"sftp":         {"sftp://1.1.1.1/?host_key=SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "user", "secret", &SFTPProvider{}},
 		"ftp":          {"ftps://1.1.1.1", "user", "secret", &FTPProvider{}},
 		"magentacloud": {"", "user", "secret", &MagentacloudProvider{}},
+		"koofr":        {"", "user", "secret", &KoofrProvider{}},
 		"local":        {"", "", "", &LocalProvider{}},
 		"immich":       {"https://1.1.1.1", "", "key", &ImmichProvider{}},
 		"seafile":      {"https://1.1.1.1", "user", "secret", &SeafileProvider{}},
@@ -272,9 +274,12 @@ func TestNewProviderOAuthProviders(t *testing.T) {
 	if p, err := NewProvider(context.Background(), "hidrive", "", "u", "oauth-token"); err != nil || p == nil {
 		t.Errorf("hidrive: got p=%v err=%v", p, err)
 	}
-	// magentacloud ignores url.
+	// Fixed-endpoint providers ignore url.
 	if p, err := NewProvider(context.Background(), "magentacloud", "", "u", "p"); err != nil || p == nil {
 		t.Errorf("magentacloud: got p=%v err=%v", p, err)
+	}
+	if p, err := NewProvider(context.Background(), "koofr", "", "u", "p"); err != nil || p == nil {
+		t.Errorf("koofr: got p=%v err=%v", p, err)
 	}
 }
 

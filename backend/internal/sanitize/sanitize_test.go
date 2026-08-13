@@ -78,6 +78,13 @@ func TestSanitizeFilename_ForbiddenChars(t *testing.T) {
 			reason:   "forbidden_char",
 		},
 		{
+			name:     "Koofr slash and backslash",
+			input:    `folder\\report/final.txt`,
+			provider: "koofr",
+			expected: "folder__report_final.txt",
+			reason:   "forbidden_char",
+		},
+		{
 			name:     "Seafile emoji",
 			input:    "🚀 Internal Projects & Campaign Planning",
 			provider: "seafile",
@@ -306,6 +313,9 @@ func TestIsCaseInsensitive(t *testing.T) {
 	if !IsCaseInsensitive("smb") {
 		t.Error("smb should be case-insensitive")
 	}
+	if !IsCaseInsensitive("koofr") {
+		t.Error("koofr should be case-insensitive")
+	}
 	if IsCaseInsensitive("nextcloud") {
 		t.Error("nextcloud should be case-sensitive")
 	}
@@ -331,6 +341,10 @@ func TestGetForbiddenChars(t *testing.T) {
 	megaChars := GetForbiddenChars("mega")
 	if len(megaChars) != 1 || megaChars[0] != '/' {
 		t.Errorf("expected [/] for mega, got %v", megaChars)
+	}
+	koofrChars := GetForbiddenChars("koofr")
+	if len(koofrChars) != 2 || koofrChars[0] != '\\' || koofrChars[1] != '/' {
+		t.Errorf("expected [\\\\ /] for koofr, got %v", koofrChars)
 	}
 
 	s3Chars := GetForbiddenChars("s3")

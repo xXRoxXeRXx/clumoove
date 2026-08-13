@@ -47,6 +47,7 @@ var providerForbiddenChars = map[string][]rune{
 	"local":        {'/'},
 	"seafile":      {'/'},
 	"mega":         {'/'},
+	"koofr":        {'\\', '/'},
 }
 
 var providerMaxLength = map[string]int{
@@ -93,6 +94,7 @@ var caseInsensitiveProviders = map[string]bool{
 	"google":   true,
 	"smb":      true,
 	"onedrive": true,
+	"koofr":    true,
 }
 
 func IsCaseInsensitive(provider string) bool {

@@ -67,6 +67,9 @@ export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className 
     case 'magentacloud':
       return <SiDeutschetelekom className={iconCls} aria-hidden="true" />;
 
+    case 'koofr':
+      return <CloudIcon className={iconCls} aria-hidden="true" />;
+
     case 'hidrive':
       return <CloudIcon className={iconCls} aria-hidden="true" />;
 

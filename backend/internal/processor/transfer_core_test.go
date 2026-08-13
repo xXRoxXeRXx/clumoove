@@ -6,7 +6,9 @@ import (
 	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +97,41 @@ func TestRunTransferCoreRejectsTruncatedDownload(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("runTransferCore() accepted a truncated source stream")
+	}
+}
+
+func TestTransferHashersUseMD5ForKoofr(t *testing.T) {
+	algorithm, expected, sourceHasher := transferSourceHasher("koofr", "MD5:ABCDEF")
+	if algorithm != "MD5" || expected != "abcdef" {
+		t.Fatalf("transferSourceHasher(koofr) = (%q, %q), want MD5 and normalized hash", algorithm, expected)
+	}
+	if got := fmt.Sprintf("%T", sourceHasher); !strings.Contains(got, "md5") {
+		t.Fatalf("source hasher type = %s, want MD5", got)
+	}
+
+	targetAlgorithm, targetHasher := transferTargetHasher("koofr")
+	if targetAlgorithm != "MD5" || !strings.Contains(fmt.Sprintf("%T", targetHasher), "md5") {
+		t.Fatalf("transferTargetHasher(koofr) = (%q, %T), want MD5", targetAlgorithm, targetHasher)
+	}
+}
+
+func TestTransferHashersHandleKoofrMixedAlgorithms(t *testing.T) {
+	sourceAlgorithm, _, sourceHasher := transferSourceHasher("koofr", "MD5:abcdef")
+	targetAlgorithm, targetHasher := transferTargetHasher("nextcloud")
+	if sourceAlgorithm != "MD5" || targetAlgorithm != "SHA1" {
+		t.Fatalf("koofr -> nextcloud algorithms = %s -> %s", sourceAlgorithm, targetAlgorithm)
+	}
+	if !strings.Contains(fmt.Sprintf("%T", sourceHasher), "md5") || !strings.Contains(fmt.Sprintf("%T", targetHasher), "sha1") {
+		t.Fatalf("koofr -> nextcloud hashers = %T -> %T", sourceHasher, targetHasher)
+	}
+
+	sourceAlgorithm, _, sourceHasher = transferSourceHasher("nextcloud", "")
+	targetAlgorithm, targetHasher = transferTargetHasher("koofr")
+	if sourceAlgorithm != "SHA1" || targetAlgorithm != "MD5" {
+		t.Fatalf("nextcloud -> koofr algorithms = %s -> %s", sourceAlgorithm, targetAlgorithm)
+	}
+	if !strings.Contains(fmt.Sprintf("%T", sourceHasher), "sha1") || !strings.Contains(fmt.Sprintf("%T", targetHasher), "md5") {
+		t.Fatalf("nextcloud -> koofr hashers = %T -> %T", sourceHasher, targetHasher)
 	}
 }
 

@@ -35,7 +35,7 @@ type StorageProvider interface {
 > provider, add this method alongside the others.
 >
 > - Return `true` only when the provider can atomically promote a staged `<path>.tmp` upload to `<path>`.
-> - Return `false` when that promotion is not atomic (including S3 and Seafile) or unsupported (Immich).
+> - Return `false` when that promotion is not atomic (including S3, Seafile, and Koofr) or unsupported (Immich).
 >   The processor then uploads directly to the final path. `false` does not imply that the provider lacks
 >   every rename or delete operation.
 
@@ -95,6 +95,7 @@ time, description, tags, etc.) after a successful upload.
 | `nextcloud` | `nextcloud.go` | WebDAV + OC extensions | user/pass | files, calendars (CalDAV), contacts (CardDAV) |
 | `opencloud` | `opencloud.go` | WebDAV (`dav/spaces/`) + TUS 1.0.0 | user/pass or Bearer token | files only |
 | `magentacloud` | `magentacloud.go` | WebDAV (fixed endpoint `https://magentacloud.de/remote.php/webdav`) | user/pass | files only |
+| `koofr` | `koofr.go` | Koofr API (fixed public endpoint `https://app.koofr.net`) | email/username + application password | files only |
 | `webdav` | `webdav.go` (+ `propfind.go`) | generic WebDAV | user/pass | files |
 | `dropbox` | `dropbox.go` | Dropbox API v2 | OAuth2 (access token in `password` field) | files |
 | `google` | `google.go` | Drive API v3 / Calendar / People | OAuth2 | files, calendars, contacts |
@@ -122,6 +123,7 @@ For Seafile username/password connections, workers share an in-memory account-to
 | :------- | :--- | :---- |
 | Dropbox | `cryptographic_hash` | Dropbox content hash |
 | Google Drive | `cryptographic_hash` | MD5 |
+| Koofr | `cryptographic_hash` | API `hash`, normalized as `MD5:<lowercase-hex>` |
 | OneDrive | `cryptographic_hash` | QuickXor |
 | HiDrive | `cryptographic_hash` | HiDrive `chash` |
 | Local | `cryptographic_hash` | SHA-1 |
@@ -131,6 +133,8 @@ For Seafile username/password connections, workers share an in-memory account-to
 | SMB, SFTP, FTPS | `size_only` | No portable target-hash API |
 | Immich | `cryptographic_hash` | Asset `checksum` (Base64 SHA-1, normalized to `SHA1:<lowercase-hex>`) |
 | MEGA | `size_only` | No comparable target-hash API |
+
+Koofr uses only `https://app.koofr.net`; self-hosted, white-label, compatible-service endpoints, and mount selection are intentionally unsupported. `Connect` resolves the account's primary mount. It rejects redirects, streams multipart uploads without disk buffering, treats names case-insensitively, sanitizes slash and backslash in target names, and uploads directly to the final name for `OVERWRITE` because move is not documented as atomic.
 
 ---
 
@@ -259,15 +263,15 @@ New Immich uploads persist the returned target asset ID in task metadata. Verifi
 1. For `nextcloud`/`webdav`, extracts credentials embedded in the URL (`user:pass@host`) and strips them
    from the URL before use (prevents leakage in `url.Error`).
 2. For `nextcloud`/`webdav`/`smb`/`sftp`/`ftp`/`immich`, runs `validateEgressURL` (SSRF guard).
-3. Switches on the whitelisted provider type and returns the concrete client. `magentacloud` ignores
-   the URL (uses its fixed endpoint). `google`, `dropbox`, `onedrive`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
+3. Switches on the whitelisted provider type and returns the concrete client. `magentacloud` and `koofr` ignore
+   the URL (use fixed endpoints). `koofr` authenticates with Basic Auth using its email/username and application password. `google`, `dropbox`, `onedrive`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
 
 ### OneDrive Personal
 
 `onedrive` uses fixed Microsoft Graph endpoints and the `consumers` OAuth authority, so it supports personal accounts and files only. Shared folders exposed as shortcuts in the user's root are supported: Clumoove resolves the shortcut's remote drive and item identity before listing, inspecting, or downloading descendants. Personal Vault is identified by Graph's `specialFolder.name = vault` facet and is excluded from selection/indexing because its interactive unlock cannot be performed by a background OAuth job. SharePoint, organizational accounts, calendars, and contacts are intentionally excluded. Graph `eTag` values are retained for sync change detection. When Graph exposes a file's non-cryptographic QuickXor hash, Clumoove calculates the same algorithm while streaming and uses it for provider-specific verification; unavailable hashes still fall back to size verification. Target filenames follow OneDrive's Windows-style forbidden-character, reserved-name, trailing-punctuation, 255-character segment, 400-character path, and case-insensitive rules.
 
 Provider URL normalization: `normalizeProviderURL` substitutes the constant MagentaCLOUD URL when the
-provider is `magentacloud` (the frontend sends an empty URL).
+provider is `magentacloud`. Koofr's factory owns its constant public endpoint, so the frontend sends an empty URL for both fixed-endpoint providers.
 
 ---
 

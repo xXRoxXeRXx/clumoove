@@ -60,7 +60,7 @@ func transferSourceHasher(provider, sourceHash string) (string, string, hash.Has
 	switch provider {
 	case "dropbox":
 		algo = "DROPBOX"
-	case "google":
+	case "google", "koofr":
 		algo = "MD5"
 	case "onedrive":
 		algo = "QUICKXOR"
@@ -85,7 +85,7 @@ func transferTargetHasher(provider string) (string, hash.Hash) {
 		return "DROPBOX", storage.NewDropboxHasher()
 	case "s3":
 		return "SHA256", sha256.New()
-	case "google":
+	case "google", "koofr":
 		return "MD5", md5.New()
 	case "hidrive":
 		return "HIDRIVE", storage.NewHiDriveHasher()

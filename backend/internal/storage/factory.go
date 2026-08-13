@@ -22,7 +22,7 @@ func localUserID(ctx context.Context) string {
 // ValidProviders is the ordered list used by API/UI consumers. Keep it in
 // parity with providerRegistry, which is the source used for validation.
 var ValidProviders = []string{
-	"nextcloud", "opencloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "ftp", "magentacloud", "local", "immich", "seafile", "mega",
+	"nextcloud", "opencloud", "webdav", "dropbox", "google", "onedrive", "hidrive", "smb", "s3", "sftp", "ftp", "magentacloud", "koofr", "local", "immich", "seafile", "mega",
 }
 
 // IsValidProvider reports whether p is a supported storage provider.
@@ -124,6 +124,12 @@ var providerRegistry = map[string]ProviderMetadata{
 		RequiresHost:           false,
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   true, VerificationMode: VerificationSizeOnly,
+	},
+	"koofr": {
+		Type:                   "koofr",
+		RequiresHost:           false,
+		SupportedResourceTypes: map[string]bool{"files": true},
+		SupportsAtomicRename:   false, VerificationMode: VerificationCryptographicHash,
 	},
 	"local": {
 		Type:                   "local",
@@ -232,6 +238,9 @@ func NewProvider(ctx context.Context, providerType, urlStr, username, password s
 	case "magentacloud":
 		// MagentaCLOUD has a fixed public WebDAV endpoint, so urlStr is ignored.
 		return NewMagentacloudProvider(username, password)
+	case "koofr":
+		// Koofr has a fixed public endpoint, so urlStr is ignored.
+		return NewKoofrProvider(username, password)
 	case "webdav":
 		return NewWebDAVProvider(urlStr, username, password)
 	case "dropbox":

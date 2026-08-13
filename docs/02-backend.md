@@ -274,7 +274,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 See [Storage Providers](./05-storage-providers.md) for the full interface and provider list.
 `NewProvider` (factory) whitelists provider types, strips credentials from WebDAV/Nextcloud URLs,
 applies SSRF egress validation for `nextcloud`/`opencloud`/`webdav`/`smb`/`sftp`/`ftp`/`immich`/`seafile`, and returns the concrete
-implementation. `magentacloud` uses a fixed endpoint (URL ignored).
+implementation. `magentacloud` and `koofr` use fixed endpoints (URL ignored). Koofr selects its primary mount during connection, accepts only an email/username plus application password, is files-only, and uses its MD5 response hash for cryptographic verification.
 
 `ftp` is a files-only FTPS provider. It accepts only explicit FTPS
 (`ftp://host:21?tls=explicit`) and implicit FTPS (`ftps://host:990`); cleartext FTP, URL userinfo,

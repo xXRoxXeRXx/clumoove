@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { ExclamationCircleIcon as AlertCircle, ArrowPathIcon as RefreshCw } from '@heroicons/react/24/outline';
 import { isOAuthProvider, type ProviderId } from '../../types';
 import type { FtpTlsMode } from '../../utils/providerUrls';
+import { FixedCredentialsFields as SharedFixedCredentialsFields, type FixedCredentialsProvider } from './FixedCredentialsFields';
 
 const inputCls = 'ui-input w-full px-3 py-2 text-sm font-sans';
 const labelCls = 'block text-[10px] font-bold text-[var(--color-text-muted)] uppercase tracking-widest font-mono mb-2';
@@ -78,8 +79,8 @@ export function ProviderFields(props: ProviderFieldsProps) {
   if (provider === 'immich') {
     return <ImmichFields {...props} />;
   }
-  if (provider === 'magentacloud') {
-    return <MagentaCloudFields {...props} />;
+  if (provider === 'magentacloud' || provider === 'koofr') {
+    return <FixedCredentialsProviderFields {...props} provider={provider} />;
   }
   if (provider === 'mega') {
     return <MegaFields {...props} />;
@@ -447,38 +448,27 @@ export function ImmichFields({
   );
 }
 
-export function MagentaCloudFields({
+function FixedCredentialsProviderFields({
+  provider,
   editing,
   username, onUsernameChange,
   password, onPasswordChange,
   ids,
-}: ProviderFieldsProps) {
-  const { t } = useTranslation();
+}: ProviderFieldsProps & { provider: FixedCredentialsProvider }) {
   return (
-    <>
-      <div className="ui-alert ui-alert-info p-4 flex items-start gap-2">
-        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-        <p className="text-xs font-sans leading-relaxed">{t('connect.magentacloudInfo')}</p>
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor={ids.usernameId} className={labelCls}>{t('connect.username')}</label>
-        <input id={ids.usernameId} type="text" autoComplete="username" required value={username} onChange={(e) => onUsernameChange(e.target.value)} className={inputCls} placeholder={t('connect.usernamePlaceholder')} />
-      </div>
-      <div className="space-y-1.5">
-        <label htmlFor={ids.passwordId} className={labelCls}>{t('connect.appPasswordLabel')}</label>
-        <input
-          id={ids.passwordId}
-          type="password"
-          value={password}
-          onChange={(e) => onPasswordChange(e.target.value)}
-          className={inputCls}
-          autoComplete={passwordAutoComplete(editing)}
-          placeholder={editing ? `•••• (${t('settings.smtpPasswordUnchanged')})` : '•••• •••• •••• ••••'}
-          required={!editing}
-        />
-        {editing && <p className="text-[10px] text-[var(--color-text-muted)] font-sans">{t('settings.connections.saveProfileHint')}</p>}
-      </div>
-    </>
+    <SharedFixedCredentialsFields
+      provider={provider}
+      editing={editing}
+      username={username}
+      password={password}
+      onUsernameChange={onUsernameChange}
+      onPasswordChange={onPasswordChange}
+      usernameId={ids.usernameId}
+      passwordId={ids.passwordId}
+      inputClassName={inputCls}
+      labelClassName={labelCls}
+      fieldClassName="space-y-1.5"
+    />
   );
 }
 

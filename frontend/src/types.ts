@@ -15,6 +15,7 @@ export type Provider =
   | 'dropbox'
   | 'webdav'
   | 'magentacloud'
+  | 'koofr'
   | 'google'
   | 'onedrive'
   | 'hidrive'

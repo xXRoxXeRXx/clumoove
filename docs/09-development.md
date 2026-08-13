@@ -95,7 +95,7 @@ File-scoped commands referenced in `AGENTS.md`:
 - Every provider implements `StorageProvider` (`storage/provider.go`) and is registered in
   `factory.go`.
 - Valid provider values are whitelisted: `nextcloud`, `opencloud`, `webdav`, `dropbox`, `google`, `onedrive`, `hidrive`, `smb`, `s3`,
-  `sftp`, `ftp`, `magentacloud`, `local`, `immich`, `seafile`, `mega`. Never pass unvalidated provider strings to `NewProvider`.
+  `sftp`, `ftp`, `magentacloud`, `koofr`, `local`, `immich`, `seafile`, `mega`. Never pass unvalidated provider strings to `NewProvider`.
 - `ftp` is files-only FTPS. Accept only explicit `ftp://host:21?tls=explicit` or implicit `ftps://host:990`; reject
   cleartext FTP and URL userinfo. Use system-CA hostname/SNI validation only, without insecure or custom-CA options.
   Control and passive data connections must use the SSRF-safe egress dialer; prefer EPSV and pin PASV data connections
@@ -105,7 +105,8 @@ File-scoped commands referenced in `AGENTS.md`:
   conflict.
 - `mega` is a files-only personal Cloud Drive provider. It authenticates with email/password over forced HTTPS;
   reusable session ID and master-key material are stored encrypted, MFA is unsupported, same-name siblings
-  are rejected as ambiguous, and verification is `size_only`.
+   are rejected as ambiguous, and verification is `size_only`.
+- `koofr` is a files-only, fixed-public-endpoint provider. It authenticates with email/username plus an application password, selects only the primary mount, uses MD5 verification, is case-insensitive, and does not claim atomic rename.
 - Nextcloud, OpenCloud, WebDAV, Immich, Seafile, and custom S3 endpoints must reject plaintext HTTP and require HTTPS.
 
 ### Transfer and recovery tests

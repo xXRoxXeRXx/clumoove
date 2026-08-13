@@ -90,6 +90,22 @@ func (c *boundedDirCache) Add(key string) {
 	c.order = append(c.order, key)
 }
 
+func (c *boundedDirCache) Remove(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	position, exists := c.index[key]
+	if !exists {
+		return
+	}
+	delete(c.m, key)
+	delete(c.index, key)
+	copy(c.order[position:], c.order[position+1:])
+	c.order = c.order[:len(c.order)-1]
+	for i := position; i < len(c.order); i++ {
+		c.index[c.order[i]] = i
+	}
+}
+
 func (c *boundedDirCache) touch(key string) {
 	position := c.index[key]
 	if position == len(c.order)-1 {

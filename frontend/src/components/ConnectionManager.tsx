@@ -178,6 +178,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
       { id: 'seafile', name: 'Seafile' },
       { id: 'webdav', name: 'WebDAV' },
       { id: 'magentacloud', name: 'MagentaCLOUD' },
+      { id: 'koofr', name: 'Koofr' },
       { id: 'smb', name: 'SMB/CIFS' },
       { id: 's3', name: 'S3' },
       { id: 'sftp', name: 'SFTP' },
@@ -590,7 +591,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
       finalUrl = form.url;
       finalUsername = '';
       finalPassword = form.password;
-    } else if (form.provider === 'magentacloud' || form.provider === 'local') {
+    } else if (form.provider === 'magentacloud' || form.provider === 'koofr' || form.provider === 'local') {
       finalUrl = '';
       finalUsername = form.provider === 'local' ? '' : form.username;
     } else if (isOAuth) {
