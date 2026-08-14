@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"runtime"
 )
 
 type localUserContextKey struct{}
@@ -160,6 +161,47 @@ var providerRegistry = map[string]ProviderMetadata{
 		SupportedResourceTypes: map[string]bool{"files": true},
 		SupportsAtomicRename:   true, VerificationMode: VerificationSizeOnly,
 	},
+}
+
+// managerCapabilityRegistry is deliberately independent from the storage
+// interface. The first file-manager release exposes only read behavior that is
+// already covered by provider contracts; mutations remain false until each
+// provider has manager-specific tests and semantics.
+var managerCapabilityRegistry = map[string]ManagerCapabilities{
+	// Google is the first provider with dedicated, ID-based manager contracts
+	// and native cursor paging. Other providers remain disabled until their
+	// manager-specific implementations and tests exist; migration primitives
+	// are deliberately not a manager capability signal.
+	"nextcloud":    {},
+	"opencloud":    {},
+	"webdav":       {},
+	"dropbox":      {},
+	"google":       {Browse: true, NativePagination: true, Download: true},
+	"onedrive":     {},
+	"hidrive":      {},
+	"smb":          {},
+	"s3":           {},
+	"sftp":         {},
+	"ftp":          {},
+	"magentacloud": {},
+	"koofr":        {},
+	"local":        {},
+	"immich":       {},
+	"seafile":      {},
+	"mega":         {},
+}
+
+// ManagerCapabilitiesFor returns static capabilities after applying runtime
+// platform restrictions. It returns false for unknown providers.
+func ManagerCapabilitiesFor(providerType string) ManagerCapabilities {
+	capabilities, ok := managerCapabilityRegistry[providerType]
+	if !ok {
+		return ManagerCapabilities{}
+	}
+	if providerType == "local" && runtime.GOOS == "windows" {
+		return ManagerCapabilities{}
+	}
+	return capabilities
 }
 
 // ProviderSupportsResourceType reports whether providerType supports the given resourceType.

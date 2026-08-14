@@ -19,6 +19,18 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 
 Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migration starts default an omitted strategy to `SKIP`; sync creation defaults it to `OVERWRITE`. Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Immich endpoints use a server URL and API key supplied in the password field; no username is required. MEGA endpoints use an email address in the username field and a password, with no provider URL; reusable MEGA session material is persisted encrypted after connection. MEGA supports files only, excludes accounts requiring MFA, and verifies transfers by target existence and size. Koofr uses its fixed public endpoint with an email/username and application password, no provider URL, its primary mount only, and MD5-based verification.
 
+## Cloud File Manager (Phase 1)
+
+| Route | Protection | Purpose |
+|---|---|---|
+| `GET /files/profiles/{profileID}/capabilities` | JWT | Returns profile and explicit manager capabilities. |
+| `POST /files/profiles/{profileID}/entries:list` | JWT | Lists `files` with optional opaque `parent_ref`, sealed cursor, and a maximum limit of 200. |
+| `POST /files/profiles/{profileID}/entries:resolve` | JWT | Resolves a stored path to sealed breadcrumbs, returning the nearest existing parent when necessary. |
+| `POST /files/profiles/{profileID}/download-tickets` | JWT | Creates a single-use, 60-second download ticket from an opaque file ref. |
+| `GET /files/download/{ticket}` | ticket | Streams an attachment without a JWT or remote path in the URL. |
+
+The file manager returns normal HTTP errors. Its `FILES_*` error codes are localized by the frontend. Enabled providers must implement manager-native pagination; no unbounded migration listing is reused for interactive browsing.
+
 ---
 
 ## 1. Authentication

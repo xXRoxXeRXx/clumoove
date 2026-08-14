@@ -9,7 +9,7 @@ import { StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
 import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
-import { ArrowPathIcon, CalendarDaysIcon, PauseIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, CalendarDaysIcon, FolderOpenIcon, PauseIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { ProgressBar } from './ProgressBar';
 
 interface MigrationsDashboardProps {
@@ -19,9 +19,22 @@ interface MigrationsDashboardProps {
   onStartNewMigration: () => void;
   onSelectActiveMigration: (id: string) => void;
   onSelectActiveSync?: (id: string) => void;
+  onOpenFileManager?: (profileId: string, path: string) => void;
 }
 
 type DashboardTab = 'migrations' | 'sync';
+
+function commonParentPath(paths: string[] | undefined): string {
+  if (!paths?.length) return '/';
+  const parents = paths.map((value) => value.split('/').filter(Boolean).slice(0, -1));
+  const shared = [...parents[0]];
+  for (const candidate of parents.slice(1)) {
+    let index = 0;
+    while (index < shared.length && index < candidate.length && shared[index] === candidate[index]) index++;
+    shared.length = index;
+  }
+  return shared.length ? `/${shared.join('/')}` : '/';
+}
 
 export function MigrationsDashboard({
   apiUrl,
@@ -30,6 +43,7 @@ export function MigrationsDashboard({
   onStartNewMigration,
   onSelectActiveMigration,
   onSelectActiveSync,
+  onOpenFileManager,
 }: MigrationsDashboardProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('migrations');
   const [migrations, setMigrations] = useState<Migration[]>([]);
@@ -581,6 +595,7 @@ export function MigrationsDashboard({
                 setSyncJobs={setSyncJobs}
                 onSelectActiveSync={onSelectActiveSync}
                 onStartNewSync={onStartNewMigration}
+                onOpenFileManager={onOpenFileManager}
               />
             );
           }
@@ -733,6 +748,28 @@ export function MigrationsDashboard({
                           </button>
                             );
                           })()}
+                          {mig.source_profile_id && onOpenFileManager && (
+                            <button
+                              type="button"
+                              onClick={(event) => { event.stopPropagation(); onOpenFileManager(mig.source_profile_id!, commonParentPath(mig.selected_paths)); }}
+                              className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                              aria-label={t('files.openSource')}
+                              title={t('files.openSource')}
+                            >
+                              <FolderOpenIcon className="size-4" aria-hidden="true" />
+                            </button>
+                          )}
+                          {mig.target_profile_id && onOpenFileManager && (
+                            <button
+                              type="button"
+                              onClick={(event) => { event.stopPropagation(); onOpenFileManager(mig.target_profile_id!, mig.target_dir || '/'); }}
+                              className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                              aria-label={t('files.openTarget')}
+                              title={t('files.openTarget')}
+                            >
+                              <FolderOpenIcon className="size-4" aria-hidden="true" />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
                             disabled={deleteLoading === mig.id || !isDeletableMigration(mig.status)}
@@ -791,6 +828,7 @@ function SyncList({
   setSyncJobs,
   onSelectActiveSync,
   onStartNewSync,
+  onOpenFileManager,
 }: {
   apiUrl: string;
   token: string;
@@ -802,6 +840,7 @@ function SyncList({
   setSyncJobs: React.Dispatch<React.SetStateAction<SyncJob[]>>;
   onSelectActiveSync?: (id: string) => void;
   onStartNewSync: () => void;
+  onOpenFileManager?: (profileId: string, path: string) => void;
 }) {
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null);
   const [deleteAllLoading, setDeleteAllLoading] = useState<boolean>(false);
@@ -1051,6 +1090,28 @@ function SyncList({
                   </button>
                     );
                   })()}
+                  {job.source_profile_id && onOpenFileManager && (
+                    <button
+                      type="button"
+                      onClick={(event) => { event.stopPropagation(); onOpenFileManager(job.source_profile_id!, commonParentPath(job.selected_paths)); }}
+                      className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                      aria-label={t('files.openSource')}
+                      title={t('files.openSource')}
+                    >
+                      <FolderOpenIcon className="size-4" aria-hidden="true" />
+                    </button>
+                  )}
+                  {job.target_profile_id && onOpenFileManager && (
+                    <button
+                      type="button"
+                      onClick={(event) => { event.stopPropagation(); onOpenFileManager(job.target_profile_id!, job.target_dir || '/'); }}
+                      className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                      aria-label={t('files.openTarget')}
+                      title={t('files.openTarget')}
+                    >
+                      <FolderOpenIcon className="size-4" aria-hidden="true" />
+                    </button>
+                  )}
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
                     disabled={deleteLoading === job.id}

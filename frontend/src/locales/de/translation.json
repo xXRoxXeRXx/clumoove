@@ -48,7 +48,9 @@
     "settings": "Einstellungen",
     "admin": "Verwaltung",
     "logout": "Abmelden",
-    "overview": "Zur Übersicht"
+    "overview": "Zur Übersicht",
+    "files": "Dateien",
+    "primary": "Hauptnavigation"
   },
   "language": {
     "select": "Sprache auswählen"
@@ -588,6 +590,28 @@
     "failed": "Die E-Mail-Änderung ist fehlgeschlagen.",
     "networkError": "Verbindung zum Server fehlgeschlagen."
   },
+  "files": {
+    "title": "Dateien",
+    "subtitle": "Durchsuche die Dateien einer gespeicherten Verbindung.",
+    "profiles": "Verbindungen",
+    "manageProfiles": "Verbindungen verwalten",
+    "noProfiles": "Es sind keine gespeicherten Verbindungen verfügbar.",
+    "selectProfile": "Wähle eine Verbindung, um ihre Dateien zu durchsuchen.",
+    "breadcrumb": "Aktueller Ordner",
+    "refresh": "Dateien aktualisieren",
+    "up": "Zum übergeordneten Ordner",
+    "listUnavailable": "Das Durchsuchen wird von dieser Verbindung nicht unterstützt.",
+    "emptyDirectory": "Dieser Ordner ist leer.",
+    "name": "Name",
+    "size": "Größe",
+    "modified": "Geändert",
+    "actions": "Aktionen",
+    "directory": "Ordner",
+    "download": "{{name}} herunterladen",
+    "openSource": "Quelle im Dateimanager öffnen",
+    "openTarget": "Ziel im Dateimanager öffnen",
+    "pathFallback": "Der gespeicherte Ordner ist nicht mehr verfügbar. Der nächste vorhandene übergeordnete Ordner wurde geöffnet."
+  },
   "status": {
     "completed": "ABGESCHLOSSEN",
     "completedWithErrors": "ABGESCHLOSSEN MIT FEHLERN",
@@ -715,7 +739,22 @@
     "IMMICH_CONFLICT_STRATEGY_INVALID": "Immich verwendet eine eigene Duplikaterkennung und erfordert Überspringen.",
     "OAUTH_PROVIDER_UNKNOWN": "Der ausgewählte OAuth-Anbieter wird nicht unterstützt.",
     "OAUTH_CONFIG_INCOMPLETE": "Client-ID und Secret müssen gültig und innerhalb der erlaubten Länge sein.",
-    "OAUTH_SECRET_REQUIRED": "Ein Client-Secret ist beim erstmaligen Einrichten eines Anbieters erforderlich."
+    "OAUTH_SECRET_REQUIRED": "Ein Client-Secret ist beim erstmaligen Einrichten eines Anbieters erforderlich.",
+    "FILES_INVALID_REF": "Die ausgewählte Dateireferenz ist ungültig.",
+    "FILES_INVALID_CURSOR": "Die Verzeichnisseite ist nicht mehr gültig. Aktualisiere den Ordner.",
+    "FILES_DIRECTORY_CHANGED": "Das Verzeichnis wurde während des Ladens geändert. Aktualisiere den Ordner.",
+    "FILES_DIRECTORY_TOO_LARGE": "Dieses Verzeichnis enthält zu viele Einträge zum sicheren Durchsuchen.",
+    "FILES_UNSUPPORTED_OPERATION": "Dieser Vorgang wird von der ausgewählten Verbindung nicht unterstützt.",
+    "FILES_ROOT_MUTATION_FORBIDDEN": "Die Verbindungswurzel kann nicht geändert werden.",
+    "FILES_DIRECTORY_NOT_EMPTY": "Das Verzeichnis ist nicht leer.",
+    "FILES_CONFLICT": "Dieser Vorgang steht im Konflikt mit einem vorhandenen Eintrag.",
+    "FILES_NOT_FOUND": "Der angeforderte Eintrag wurde nicht gefunden.",
+    "FILES_PATH_AMBIGUOUS": "Der angeforderte Pfad ist mehrdeutig.",
+    "FILES_UPLOAD_LENGTH_REQUIRED": "Die Upload-Größe muss bekannt sein.",
+    "FILES_UPLOAD_SIZE_MISMATCH": "Die Upload-Größe stimmt nicht mit der angegebenen Größe überein.",
+    "FILES_STREAM_LIMIT_REACHED": "Es sind bereits zu viele Dateiströme aktiv.",
+    "FILES_DOWNLOAD_TICKET_INVALID": "Dieser Download-Link ist ungültig oder abgelaufen.",
+    "FILES_PROVIDER_UNAVAILABLE": "Die gespeicherte Verbindung ist derzeit nicht verfügbar."
   },
   "admin": {
     "title": "Verwaltung",

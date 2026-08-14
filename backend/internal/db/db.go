@@ -606,12 +606,29 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (connection_profiles MEGA sessions): %v\n", err)
 			}
+			// connection_profiles is initialized after migrations. Keep these foreign
+			// keys here so fresh bootstraps and legacy upgrades both see the referenced
+			// table before the constraints are added.
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS source_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL, ADD COLUMN IF NOT EXISTS target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL`)
+			if err != nil {
+				log.Printf("Failed schema migration (migration profile references): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_source_profile_id ON migrations(source_profile_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_migrations_source_profile_id): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_migrations_target_profile_id ON migrations(target_profile_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_migrations_target_profile_id): %v\n", err)
+			}
 
 			// Keep this bootstrap DDL in sync with db/schema.sql. It must precede
 			// the tasks.sync_job_id foreign key below.
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sync_jobs (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 				user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				source_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
+				target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
 				source_url TEXT NOT NULL,
 				source_username TEXT NOT NULL,
 				source_password_encrypted TEXT NOT NULL,
@@ -671,6 +688,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (sync_jobs MEGA sessions): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS source_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL, ADD COLUMN IF NOT EXISTS target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync job profile references): %v\n", err)
+			}
 
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_user_id ON sync_jobs(user_id)`)
 			if err != nil {
@@ -683,6 +704,14 @@ func InitDB(connStr string) (*sql.DB, error) {
 				releaseLock()
 				db.Close()
 				return nil, fmt.Errorf("schema migration idx_sync_jobs_status: %w", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_source_profile_id ON sync_jobs(source_profile_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_sync_jobs_source_profile_id): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_jobs_target_profile_id ON sync_jobs(target_profile_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_sync_jobs_target_profile_id): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS sync_state (

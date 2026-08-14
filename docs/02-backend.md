@@ -6,6 +6,10 @@ internal packages. It is written in Go 1.25 and uses the standard library `net/h
 
 Immich is a files-only, one-time-migration provider. Its API key is stored as the encrypted password, URLs use the normal SSRF-safe transport, and API handlers reject calendars, contacts, non-`SKIP` target conflicts, and sync-job creation involving Immich.
 
+## Cloud File Manager (Phase 1)
+
+`cmd/api/file_profile_resolver.go` resolves an owned saved profile fail-closed, decrypts its credentials with the field-domain AAD, refreshes expiring OAuth access tokens, scopes Local access to the JWT user, and constructs the provider through `storage.NewProvider`. `file_handlers.go` seals user/profile-bound references and native cursors with independent crypto domains, resolves stored quick-link paths to sealed breadcrumbs, and issues Redis-backed one-time download tickets. The manager capability registry is intentionally separate from `StorageProvider`; only providers with dedicated manager contracts are enabled.
+
 ---
 
 ## 1. Entrypoints

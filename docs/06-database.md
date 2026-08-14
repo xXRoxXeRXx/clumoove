@@ -15,6 +15,8 @@ job's `interval_minutes`.
 Adding the `ftp` provider requires no schema migration: existing provider, endpoint, username, and
 encrypted-password fields persist its FTPS connection details.
 
+Migration and sync job rows have nullable `source_profile_id` and `target_profile_id` foreign keys to `connection_profiles(id)` with `ON DELETE SET NULL` and indexes. They are not backfilled: encrypted credential snapshots remain the execution source of truth after a profile is changed or deleted.
+
 > **Rule:** Any schema change must be added to `db/schema.sql` **and** as an inline statement inside
 > `InitDB()` for automatic migration on startup.
 

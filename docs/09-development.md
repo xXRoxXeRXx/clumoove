@@ -2,6 +2,10 @@
 
 Guidance for working on Clumoove locally without Docker, plus code-quality tooling and conventions.
 
+## Cloud File Manager Tests
+
+File-manager changes require handler coverage for ownership, sealed-reference/cursor replay, pagination limits, tickets, and stream slots. Run `go test ./...` and `go vet ./...` in `backend`; run `npm test`, `npx tsc --noEmit --project tsconfig.app.json`, `npx eslint src`, and `npm run build` in `frontend`.
+
 ---
 
 ## 1. Local Setup (no Docker)

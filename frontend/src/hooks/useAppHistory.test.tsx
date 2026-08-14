@@ -12,8 +12,8 @@ type HistoryOptions = {
 };
 
 function HistoryHarness({ options }: { options: HistoryOptions }) {
-  const { step, migrationId, syncId } = useAppHistory(options);
-  return <output data-migration={migrationId} data-step={step} data-sync={syncId} />;
+  const { step, migrationId, syncId, profileId } = useAppHistory(options);
+  return <output data-migration={migrationId} data-profile={profileId} data-step={step} data-sync={syncId} />;
 }
 
 describe('useAppHistory', () => {
@@ -49,5 +49,13 @@ describe('useAppHistory', () => {
       emailChangeToken: 'email-token',
       hasStoredSession: true,
     })).toMatchObject({ step: 'confirm-email', migrationId: '', syncId: '' });
+  });
+
+  it('restores the file manager and its selected profile from the URL', () => {
+    expect(initialNavigationFor('?view=files&profile=profile-123', {
+      resetToken: null,
+      emailChangeToken: null,
+      hasStoredSession: true,
+    })).toMatchObject({ step: 'files', migrationId: '', syncId: '', profileId: 'profile-123' });
   });
 });

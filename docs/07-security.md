@@ -3,6 +3,10 @@
 Clumoove is built for handling third-party credentials and cross-service data movement, so security is
 defense-in-depth. This document summarizes the controls; see linked sections for implementation detail.
 
+## Cloud File Manager
+
+File-manager routes accept only owned saved profile IDs. Item references and pagination cursors are AES-GCM sealed with dedicated domains and bind user ID, profile ID, resource type, item kind, and provider locator; cross-user, cross-profile, and tampered values are rejected. Download URLs hold only a cryptographically random, Redis-backed ticket with a 60-second TTL and atomic single use. Four download stream leases per user are enforced in Redis, fail closed on Redis errors, renew both their member and key TTL while streaming, and are released after streaming. Paths, item names, opaque references, tickets, and credentials are excluded from normal logs and audit details.
+
 ---
 
 ## 1. Key Segregation

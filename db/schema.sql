@@ -288,6 +288,16 @@ CREATE TABLE IF NOT EXISTS connection_profiles (
 
 CREATE INDEX IF NOT EXISTS idx_conn_profiles_user ON connection_profiles(user_id);
 
+-- Profile references are nullable so profiles can be removed without deleting
+-- the jobs that originally used them. This follows connection_profiles because
+-- migrations is declared earlier in this bootstrap schema.
+ALTER TABLE migrations
+    ADD COLUMN IF NOT EXISTS source_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_migrations_source_profile_id ON migrations(source_profile_id);
+CREATE INDEX IF NOT EXISTS idx_migrations_target_profile_id ON migrations(target_profile_id);
+
 CREATE OR REPLACE TRIGGER update_connection_profiles_updated_at
     BEFORE UPDATE ON connection_profiles
     FOR EACH ROW
@@ -301,6 +311,8 @@ CREATE OR REPLACE TRIGGER update_connection_profiles_updated_at
 CREATE TABLE IF NOT EXISTS sync_jobs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
+    target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
     source_url TEXT NOT NULL,
     source_username TEXT NOT NULL,
     source_password_encrypted TEXT NOT NULL,
@@ -348,6 +360,8 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_sync_jobs_user_id ON sync_jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_sync_jobs_status ON sync_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_source_profile_id ON sync_jobs(source_profile_id);
+CREATE INDEX IF NOT EXISTS idx_sync_jobs_target_profile_id ON sync_jobs(target_profile_id);
 
 CREATE OR REPLACE TRIGGER update_sync_jobs_updated_at
     BEFORE UPDATE ON sync_jobs

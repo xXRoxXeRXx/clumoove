@@ -212,6 +212,19 @@ func TestProviderRegistryCapabilitiesMatchRuntime(t *testing.T) {
 	}
 }
 
+func TestManagerCapabilityRegistryMatchesProviders(t *testing.T) {
+	for _, providerType := range ValidProviders {
+		if _, ok := managerCapabilityRegistry[providerType]; !ok {
+			t.Errorf("%s is missing manager capabilities", providerType)
+		}
+	}
+	for providerType := range managerCapabilityRegistry {
+		if !IsValidProvider(providerType) {
+			t.Errorf("manager capabilities registered for unsupported provider %s", providerType)
+		}
+	}
+}
+
 func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
 	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
 	ctx := WithLocalUserScope(context.Background(), "factory-test-user")

@@ -10,6 +10,7 @@ import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { AdminPanel } from './components/AdminPanel';
+import { FileManager } from './components/FileManager/FileManager';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConfirmationProvider } from './contexts/ConfirmationContext';
@@ -22,6 +23,8 @@ import { logger } from './utils/logger';
 import { configuredApiOrigin } from './utils/runtimeConfig';
 import { useAppHistory } from './hooks/useAppHistory';
 import { safeAvatarUrl } from './utils/avatar';
+import { FolderIcon, HomeIcon } from '@heroicons/react/24/outline';
+import { resolveFilePath, type FileBreadcrumb } from './api/files';
 
 function getApiUrl(): string {
   // Production nginx injects a validated runtime origin before this bundle
@@ -115,6 +118,7 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
   const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
+  const [fileStart, setFileStart] = useState<{ profileId: string; breadcrumbs: FileBreadcrumb[]; fallback: boolean } | null>(null);
   const clearCreationState = useCallback(() => {
     setCredentials(null);
     setInitialFiles([]);
@@ -123,8 +127,10 @@ function App() {
     step,
     migrationId,
     syncId,
+    profileId,
     initialMigrationId,
     initialSyncId,
+    initialProfileId,
     replaceNav,
     navigate,
     goToOverview,
@@ -275,6 +281,11 @@ function App() {
               } else {
                 replaceNav('history', '');
               }
+            } else if (initialProfileId) {
+              const profileRes = await apiFetch(`${API_URL}/api/profiles/${initialProfileId}`, {
+                headers: { 'Authorization': `Bearer ${data.access_token}` },
+              });
+              replaceNav(profileRes.ok ? 'files' : 'history', profileRes.ok ? initialProfileId : '');
             } else {
               replaceNav('history', '');
             }
@@ -295,7 +306,7 @@ function App() {
       .finally(() => {
         setIsValidating(false);
       });
-  }, [emailChangeTokenFromUrl, i18n, initialMigrationId, initialSyncId, replaceNav, resetTokenFromUrl]);
+  }, [emailChangeTokenFromUrl, i18n, initialMigrationId, initialProfileId, initialSyncId, replaceNav, resetTokenFromUrl]);
 
   // 2. Silent JWT refresh (every 14 minutes)
   useEffect(() => {
@@ -368,6 +379,24 @@ function App() {
     goToOverview();
   };
 
+  const openFileManagerAtPath = useCallback(async (nextProfileId: string, path: string) => {
+    const result = await resolveFilePath(API_URL, token, nextProfileId, path);
+    if (result.ok) {
+      setFileStart({ profileId: nextProfileId, breadcrumbs: result.data.breadcrumbs, fallback: result.data.fallback });
+    } else {
+      // A deleted/moved quick-link target should not prevent opening the
+      // manager. The resolve handler normally returns the nearest ancestor;
+      // this path is only for a transient request failure.
+      setFileStart(null);
+    }
+    navigate('files', nextProfileId);
+  }, [navigate, token]);
+
+  const openFileManagerRoot = useCallback((nextProfileId = '') => {
+    setFileStart(null);
+    navigate('files', nextProfileId);
+  }, [navigate]);
+
   const handleBack = () => {
     clearCreationState();
     goBack();
@@ -390,7 +419,7 @@ function App() {
     <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] flex flex-col font-sans relative">
       
       <header className="sticky top-0 z-[var(--layer-sticky)] border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
-          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
+          <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
           <div className="min-w-0">
             {step !== 'login' ? (
             <button
@@ -408,9 +437,34 @@ function App() {
                 Clumoove
               </div>
             )}
-          </div>
+            </div>
 
-          {/* User Section in Header */}
+            {user && (
+              <nav className="ml-auto flex items-center gap-1" aria-label={t('nav.primary')}>
+                <button
+                  type="button"
+                  onClick={goToOverview}
+                  aria-current={step === 'history' ? 'page' : undefined}
+                  aria-label={t('nav.overview')}
+                  className={`ui-icon-button gap-2 px-2 py-2 text-sm hover:bg-[var(--color-hover)] sm:px-3 ${step === 'history' ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}
+                >
+                  <HomeIcon className="h-4 w-4" aria-hidden="true" />
+                  <span className="hidden sm:inline">{t('nav.overview')}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openFileManagerRoot(profileId)}
+                  aria-current={step === 'files' ? 'page' : undefined}
+                  aria-label={t('nav.files')}
+                  className={`ui-icon-button gap-2 px-2 py-2 text-sm hover:bg-[var(--color-hover)] sm:px-3 ${step === 'files' ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}
+                >
+                  <FolderIcon className="h-4 w-4" aria-hidden="true" />
+                  <span className="hidden sm:inline">{t('nav.files')}</span>
+                </button>
+              </nav>
+            )}
+
+           {/* User Section in Header */}
           {user && (
             <div className="relative" ref={userMenuRef}>
               <button
@@ -502,7 +556,7 @@ function App() {
       </header>
 
       <main ref={mainRef} className={`mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'connect' ? 'justify-start' : 'justify-center'}`}>
-        <div key={`${step}:${migrationId}:${syncId}`} className="ui-view-enter w-full">
+        <div key={`${step}:${migrationId}:${syncId}:${profileId}`} className="ui-view-enter w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />
           )}
@@ -535,6 +589,19 @@ function App() {
               onSelectActiveSync={(id) => {
                 navigate('syncdetail', id);
               }}
+              onOpenFileManager={(id, path) => void openFileManagerAtPath(id, path)}
+            />
+          )}
+
+          {step === 'files' && (
+            <FileManager
+              apiUrl={API_URL}
+              token={token}
+              profileId={profileId}
+              initialBreadcrumbs={fileStart?.profileId === profileId ? fileStart.breadcrumbs : undefined}
+              initialPathFallback={fileStart?.profileId === profileId && fileStart.fallback}
+              onProfileChange={openFileManagerRoot}
+              onOpenManager={() => navigate('settings')}
             />
           )}
 

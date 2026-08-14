@@ -48,7 +48,9 @@
     "settings": "Settings",
     "admin": "Admin",
     "logout": "Log out",
-    "overview": "Go to overview"
+    "overview": "Go to overview",
+    "files": "Files",
+    "primary": "Primary navigation"
   },
   "language": {
     "select": "Select language"
@@ -588,6 +590,28 @@
     "failed": "Email address update failed.",
     "networkError": "Could not connect to the server."
   },
+  "files": {
+    "title": "Files",
+    "subtitle": "Browse the files available through a saved connection.",
+    "profiles": "Connections",
+    "manageProfiles": "Manage connections",
+    "noProfiles": "No saved connections are available.",
+    "selectProfile": "Select a connection to browse its files.",
+    "breadcrumb": "Current folder",
+    "refresh": "Refresh files",
+    "up": "Go to parent folder",
+    "listUnavailable": "Browsing is not supported by this connection.",
+    "emptyDirectory": "This folder is empty.",
+    "name": "Name",
+    "size": "Size",
+    "modified": "Modified",
+    "actions": "Actions",
+    "directory": "Folder",
+    "download": "Download {{name}}",
+    "openSource": "Open source in file manager",
+    "openTarget": "Open target in file manager",
+    "pathFallback": "The saved folder is no longer available. Opened its nearest available parent instead."
+  },
   "status": {
     "completed": "COMPLETED",
     "completedWithErrors": "COMPLETED WITH ERRORS",
@@ -715,7 +739,22 @@
     "IMMICH_CONFLICT_STRATEGY_INVALID": "Immich uses native duplicate detection and requires Skip.",
     "OAUTH_PROVIDER_UNKNOWN": "The selected OAuth provider is not supported.",
     "OAUTH_CONFIG_INCOMPLETE": "Client ID and secret must be valid and within the allowed length.",
-    "OAUTH_SECRET_REQUIRED": "A client secret is required the first time a provider is configured."
+    "OAUTH_SECRET_REQUIRED": "A client secret is required the first time a provider is configured.",
+    "FILES_INVALID_REF": "The selected file reference is invalid.",
+    "FILES_INVALID_CURSOR": "The directory page is no longer valid. Refresh the folder.",
+    "FILES_DIRECTORY_CHANGED": "The directory changed while it was being loaded. Refresh the folder.",
+    "FILES_DIRECTORY_TOO_LARGE": "This directory contains too many entries to browse safely.",
+    "FILES_UNSUPPORTED_OPERATION": "This operation is not supported by the selected connection.",
+    "FILES_ROOT_MUTATION_FORBIDDEN": "The connection root cannot be changed.",
+    "FILES_DIRECTORY_NOT_EMPTY": "The directory is not empty.",
+    "FILES_CONFLICT": "This operation conflicts with an existing item.",
+    "FILES_NOT_FOUND": "The requested item was not found.",
+    "FILES_PATH_AMBIGUOUS": "The requested path is ambiguous.",
+    "FILES_UPLOAD_LENGTH_REQUIRED": "The upload size must be known.",
+    "FILES_UPLOAD_SIZE_MISMATCH": "The upload size did not match the declared size.",
+    "FILES_STREAM_LIMIT_REACHED": "Too many file streams are already active.",
+    "FILES_DOWNLOAD_TICKET_INVALID": "This download link is invalid or has expired.",
+    "FILES_PROVIDER_UNAVAILABLE": "The saved connection is currently unavailable."
   },
   "admin": {
     "title": "Administration",

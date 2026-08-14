@@ -96,8 +96,8 @@ func TestCORSMiddlewareExposesRequestID(t *testing.T) {
 
 	corsMiddleware(http.NotFoundHandler()).ServeHTTP(rec, req)
 
-	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID" {
-		t.Fatalf("Access-Control-Expose-Headers = %q, want X-Request-ID", got)
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); got != "X-Request-ID, Content-Disposition, Content-Length" {
+		t.Fatalf("Access-Control-Expose-Headers = %q, want download response headers", got)
 	}
 }
 

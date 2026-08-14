@@ -280,6 +280,15 @@ func main() {
 	mux.Handle("DELETE /api/profiles/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteProfile)))
 	mux.Handle("POST /api/profiles/{id}/test", jwtMiddleware(http.HandlerFunc(server.handleTestProfile)))
 
+	// Profile-bound cloud file manager. All management endpoints use saved
+	// profile IDs only; the ticket consumer authenticates with a short-lived,
+	// single-use Redis ticket rather than a JWT in the download URL.
+	mux.Handle("GET /api/files/profiles/{profileID}/capabilities", jwtMiddleware(http.HandlerFunc(server.handleFileCapabilities)))
+	mux.Handle("POST /api/files/profiles/{profileID}/entries:list", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesList)))
+	mux.Handle("POST /api/files/profiles/{profileID}/entries:resolve", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesResolve)))
+	mux.Handle("POST /api/files/profiles/{profileID}/download-tickets", jwtMiddleware(http.HandlerFunc(server.handleFileDownloadTicket)))
+	mux.HandleFunc("GET /api/files/download/{ticket}", server.handleFileDownload)
+
 	// Administrative routes require both a current JWT and the ADMIN role.
 	mux.Handle("POST /api/admin/users", adminRouteMiddleware(http.HandlerFunc(server.handleAdminCreateUser)))
 	mux.Handle("POST /api/admin/users/{id}/suspend", adminRouteMiddleware(http.HandlerFunc(server.handleAdminSuspendUser)))

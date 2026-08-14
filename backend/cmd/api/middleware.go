@@ -87,11 +87,11 @@ func corsMiddleware(next http.Handler) http.Handler {
 			// receive no CORS metadata.
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Content-Disposition, Content-Length")
 		}
 		if origin != "" {
 			w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Cookie")
+			w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Cookie, X-Clumoove-Parent-Ref, X-Clumoove-File-Name, X-Clumoove-Conflict-Strategy")
 		}
 
 		if r.Method == "OPTIONS" {

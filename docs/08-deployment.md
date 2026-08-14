@@ -3,6 +3,10 @@
 This document covers running Clumoove with Docker Compose (development and production), environment
 configuration, scaling, and routine operational tasks.
 
+## Cloud File Manager Streams
+
+Downloads are streamed without API buffering. The frontend proxy must keep buffering disabled for the API download route and allow a sufficiently long read/send timeout. Any external reverse proxy can still impose its own body-size or timeout limit; this must be configured separately when uploads are introduced.
+
 ---
 
 ## 1. Prerequisites

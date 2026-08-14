@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useApiError } from '../utils/apiError';
 import { useConfirm } from '../contexts/useConfirm';
 import { apiFetch } from '../utils/apiClient';
+import { listConnectionProfiles, type ConnectionProfilePublic } from '../api/profiles';
 import { MessageBanner, type MessageState } from './MessageBanner';
 import { LoadingIndicator } from './LoadingIndicator';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -31,19 +32,6 @@ export interface ConnectionManagerProps {
   token: string;
   localStorageEnabled?: boolean;
   oauthProviders?: Record<string, boolean>;
-}
-
-export interface ProfilePublic {
-  id: string;
-  name: string;
-  provider: string;
-  url?: string;
-  username?: string;
-  has_password: boolean;
-  token_expires_at?: string | null;
-  oauth_user?: string;
-  created_at: string;
-  updated_at: string;
 }
 
 const primaryBtnCls = 'ui-button-primary py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50';
@@ -85,23 +73,19 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
   const confirm = useConfirm();
   const { create: createRequestController, release: releaseRequestController } = useRequestAbortController();
 
-  const [profiles, setProfiles] = useState<ProfilePublic[]>([]);
+  const [profiles, setProfiles] = useState<ConnectionProfilePublic[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [message, setMessage] = useState<MessageState>(null);
-  const [editing, setEditing] = useState<ProfilePublic | null>(null);
+  const [editing, setEditing] = useState<ConnectionProfilePublic | null>(null);
   const [creating, setCreating] = useState<boolean>(false);
 
   const loadProfiles = useCallback(() => {
     const controller = createRequestController();
-    void apiFetch(`${apiUrl}/api/profiles`, {
-      headers: { 'Authorization': `Bearer ${token}` },
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('profiles request failed');
-        const data = await response.json() as { profiles?: ProfilePublic[] };
+    void listConnectionProfiles(apiUrl, token, controller.signal)
+      .then((result) => {
+        if (result.ok === false) throw new Error('profiles request failed');
         if (!controller.signal.aborted) {
-          setProfiles(data.profiles ?? []);
+          setProfiles(result.data.profiles ?? []);
           setLoading(false);
         }
       })
@@ -118,7 +102,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     loadProfiles();
   }, [loadProfiles]);
 
-  const handleDelete = async (p: ProfilePublic) => {
+  const handleDelete = async (p: ConnectionProfilePublic) => {
     const ok = await confirm({ message: t('settings.connections.deleteConfirm') });
     if (!ok) return;
     setMessage(null);
@@ -146,7 +130,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
     }
   };
 
-  const handleTest = async (p: ProfilePublic) => {
+  const handleTest = async (p: ConnectionProfilePublic) => {
     setMessage(null);
     const controller = createRequestController();
     try {
@@ -312,7 +296,7 @@ export function ConnectionManager({ apiUrl, token, localStorageEnabled = false, 
 // ReauthorizeButton opens the provider OAuth popup and, on success, writes the
 // new refresh token to the existing profile via PUT.
 function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: {
-  apiUrl: string; token: string; profile: ProfilePublic;
+  apiUrl: string; token: string; profile: ConnectionProfilePublic;
   onReauthorized: () => void; onError: (msg: string) => void;
 }) {
   const { t } = useTranslation();
@@ -380,7 +364,7 @@ interface ProfileEditorProps {
   apiUrl: string;
   token: string;
   providerOptions: { id: ProviderId; name: string }[];
-  editing: ProfilePublic | null;
+  editing: ConnectionProfilePublic | null;
   onClose: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
@@ -411,7 +395,7 @@ interface FormState {
   ftpTlsMode: FtpTlsMode;
 }
 
-function initFormState(editing: ProfilePublic | null): FormState {
+function initFormState(editing: ConnectionProfilePublic | null): FormState {
   const provider = (editing?.provider as ProviderId) || 'nextcloud';
   const smb = parseSmbUrl(provider === 'smb' ? editing?.url || '' : '');
   const s3 = parseS3Url(provider === 's3' ? editing?.url || '' : '');
@@ -591,7 +575,7 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
       finalUrl = form.url;
       finalUsername = '';
       finalPassword = form.password;
-    } else if (form.provider === 'magentacloud' || form.provider === 'koofr' || form.provider === 'local') {
+    } else if (form.provider === 'magentacloud' || form.provider === 'koofr' || form.provider === 'local' || form.provider === 'mega') {
       finalUrl = '';
       finalUsername = form.provider === 'local' ? '' : form.username;
     } else if (isOAuth) {

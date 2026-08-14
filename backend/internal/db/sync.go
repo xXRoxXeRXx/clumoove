@@ -15,6 +15,8 @@ import (
 type SyncJob struct {
 	ID                           string         `json:"id"`
 	UserID                       string         `json:"user_id"`
+	SourceProfileID              sql.NullString `json:"source_profile_id,omitempty"`
+	TargetProfileID              sql.NullString `json:"target_profile_id,omitempty"`
 	SourceURL                    string         `json:"source_url"`
 	SourceUsername               string         `json:"source_username"`
 	SourcePasswordEncrypted      string         `json:"-"`
@@ -67,6 +69,8 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 	type alias SyncJob
 	aux := struct {
 		*alias
+		SourceProfileID      *string `json:"source_profile_id"`
+		TargetProfileID      *string `json:"target_profile_id"`
 		LastRunStatus        string  `json:"last_run_status,omitempty"`
 		ErrorMessage         string  `json:"error_message,omitempty"`
 		LastRunAt            *string `json:"last_run_at,omitempty"`
@@ -74,7 +78,9 @@ func (s SyncJob) MarshalJSON() ([]byte, error) {
 		SourceTokenExpiresAt *string `json:"source_token_expires_at,omitempty"`
 		TargetTokenExpiresAt *string `json:"target_token_expires_at,omitempty"`
 	}{
-		alias: (*alias)(&s),
+		alias:           (*alias)(&s),
+		SourceProfileID: nullStringPtr(s.SourceProfileID),
+		TargetProfileID: nullStringPtr(s.TargetProfileID),
 	}
 	if s.LastRunStatus.Valid {
 		aux.LastRunStatus = s.LastRunStatus.String
@@ -129,14 +135,14 @@ const (
 
 const createSyncJobQuery = `
 		INSERT INTO sync_jobs (
-			user_id, source_url, source_username, source_password_encrypted,
+			user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
 			source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
 			target_url, target_username, target_password_encrypted,
 			target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
 			source_provider, target_provider, direction, conflict_strategy,
 			delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 			selected_paths
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -152,7 +158,7 @@ func CreateSyncJob(db *sql.DB, s *SyncJob) (string, error) {
 func insertSyncJob(ctx context.Context, database queryExecerContext, s *SyncJob) error {
 	return database.QueryRowContext(ctx,
 		createSyncJobQuery,
-		s.UserID, s.SourceURL, s.SourceUsername, s.SourcePasswordEncrypted,
+		s.UserID, s.SourceProfileID, s.TargetProfileID, s.SourceURL, s.SourceUsername, s.SourcePasswordEncrypted,
 		s.SourceRefreshTokenEncrypted, s.SourceTokenExpiresAt, s.SourceMegaSessionIDEncrypted, s.SourceMegaMasterKeyEncrypted,
 		s.TargetURL, s.TargetUsername, s.TargetPasswordEncrypted,
 		s.TargetRefreshTokenEncrypted, s.TargetTokenExpiresAt, s.TargetMegaSessionIDEncrypted, s.TargetMegaMasterKeyEncrypted,
@@ -213,7 +219,7 @@ func GetSyncJob(db *sql.DB, id string) (*SyncJob, error) {
 // GetSyncJobContext retrieves a sync job while honoring caller cancellation.
 func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, error) {
 	query := `
-		SELECT id, user_id, source_url, source_username, source_password_encrypted,
+		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
 		       target_url, target_username, target_password_encrypted,
 		       target_refresh_token_encrypted, target_token_expires_at, COALESCE(target_mega_session_id_encrypted, ''), COALESCE(target_mega_master_key_encrypted, ''),
@@ -227,7 +233,7 @@ func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, er
 	`
 	var s SyncJob
 	err := db.QueryRowContext(ctx, query, id).Scan(
-		&s.ID, &s.UserID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
+		&s.ID, &s.UserID, &s.SourceProfileID, &s.TargetProfileID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
 		&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt, &s.SourceMegaSessionIDEncrypted, &s.SourceMegaMasterKeyEncrypted,
 		&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
 		&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt, &s.TargetMegaSessionIDEncrypted, &s.TargetMegaMasterKeyEncrypted,
@@ -264,7 +270,7 @@ func GetSyncJobsForUser(db *sql.DB, userID string) ([]SyncJob, error) {
 // GetSyncJobsForUserContext lists sync jobs while honoring caller cancellation.
 func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]SyncJob, error) {
 	query := `
-		SELECT id, user_id, source_url, source_username, source_provider,
+		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
@@ -285,7 +291,7 @@ func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) (
 	for rows.Next() {
 		var s SyncJob
 		err := rows.Scan(
-			&s.ID, &s.UserID, &s.SourceURL, &s.SourceUsername, &s.SourceProvider,
+			&s.ID, &s.UserID, &s.SourceProfileID, &s.TargetProfileID, &s.SourceURL, &s.SourceUsername, &s.SourceProvider,
 			&s.TargetURL, &s.TargetUsername, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.TargetDir,
 			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
@@ -820,7 +826,7 @@ func FailSyncJobPass(db *sql.DB, id string, generation int, errMsg string) (bool
 // ListActiveSyncJobs lists sync jobs that are active (running or indexing) or enabled (idle)
 func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
 	query := `
-		SELECT id, user_id, source_url, source_username, source_password_encrypted,
+		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
 		       source_refresh_token_encrypted, source_token_expires_at,
 		       target_url, target_username, target_password_encrypted,
 		       target_refresh_token_encrypted, target_token_expires_at,
@@ -842,7 +848,7 @@ func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
 	for rows.Next() {
 		var s SyncJob
 		err := rows.Scan(
-			&s.ID, &s.UserID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
+			&s.ID, &s.UserID, &s.SourceProfileID, &s.TargetProfileID, &s.SourceURL, &s.SourceUsername, &s.SourcePasswordEncrypted,
 			&s.SourceRefreshTokenEncrypted, &s.SourceTokenExpiresAt,
 			&s.TargetURL, &s.TargetUsername, &s.TargetPasswordEncrypted,
 			&s.TargetRefreshTokenEncrypted, &s.TargetTokenExpiresAt,
@@ -1426,7 +1432,7 @@ func ListAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListPar
 	}
 
 	query := `
-		SELECT s.id, s.user_id, s.source_url, s.source_username, s.source_provider,
+		SELECT s.id, s.user_id, s.source_profile_id, s.target_profile_id, s.source_url, s.source_username, s.source_provider,
 		       s.target_url, s.target_username, s.target_provider, s.direction, s.conflict_strategy,
 		       s.delete_propagation, s.interval_minutes, s.threads, s.status, s.target_dir,
 		       s.selected_paths, s.last_run_at, s.last_run_status, s.error_message,
@@ -1447,7 +1453,7 @@ func ListAllSyncJobsContext(ctx context.Context, database *sql.DB, p SyncListPar
 	for rows.Next() {
 		var v AdminSyncView
 		if err := rows.Scan(
-			&v.ID, &v.UserID, &v.SourceURL, &v.SourceUsername, &v.SourceProvider,
+			&v.ID, &v.UserID, &v.SourceProfileID, &v.TargetProfileID, &v.SourceURL, &v.SourceUsername, &v.SourceProvider,
 			&v.TargetURL, &v.TargetUsername, &v.TargetProvider, &v.Direction, &v.ConflictStrategy,
 			&v.DeletePropagation, &v.IntervalMinutes, &v.Threads, &v.Status, &v.TargetDir,
 			&v.SelectedPaths, &v.LastRunAt, &v.LastRunStatus, &v.ErrorMessage,

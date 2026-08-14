@@ -267,9 +267,7 @@ func (s *APIServer) handleCreateProfile(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.writeAudit(r, db.AuditMigrationCreated, id, userID, map[string]interface{}{
-		"action": "PROFILE_CREATED",
-	})
+	s.writeAudit(r, db.AuditProfileCreated, id, userID, nil)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"success": true, "id": id})
 }
 
@@ -413,6 +411,7 @@ func (s *APIServer) handleUpdateConnectionProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
+	s.writeAudit(r, db.AuditProfileUpdated, id, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
@@ -441,9 +440,7 @@ func (s *APIServer) handleDeleteProfile(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	s.writeAudit(r, db.AuditMigrationDeleted, id, userID, map[string]interface{}{
-		"action": "PROFILE_DELETED",
-	})
+	s.writeAudit(r, db.AuditProfileDeleted, id, userID, nil)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 

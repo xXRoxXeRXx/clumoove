@@ -194,6 +194,23 @@ const (
 	ErrProfileURLRequired     APIErrorCode = "PROFILE_URL_REQUIRED"
 	ErrImmichSyncUnsupported  APIErrorCode = "IMMICH_SYNC_UNSUPPORTED"
 	ErrImmichConflictStrategy APIErrorCode = "IMMICH_CONFLICT_STRATEGY_INVALID"
+
+	// Cloud file manager
+	ErrFilesInvalidRef            APIErrorCode = "FILES_INVALID_REF"
+	ErrFilesInvalidCursor         APIErrorCode = "FILES_INVALID_CURSOR"
+	ErrFilesDirectoryChanged      APIErrorCode = "FILES_DIRECTORY_CHANGED"
+	ErrFilesDirectoryTooLarge     APIErrorCode = "FILES_DIRECTORY_TOO_LARGE"
+	ErrFilesUnsupportedOperation  APIErrorCode = "FILES_UNSUPPORTED_OPERATION"
+	ErrFilesRootMutationForbidden APIErrorCode = "FILES_ROOT_MUTATION_FORBIDDEN"
+	ErrFilesDirectoryNotEmpty     APIErrorCode = "FILES_DIRECTORY_NOT_EMPTY"
+	ErrFilesConflict              APIErrorCode = "FILES_CONFLICT"
+	ErrFilesNotFound              APIErrorCode = "FILES_NOT_FOUND"
+	ErrFilesPathAmbiguous         APIErrorCode = "FILES_PATH_AMBIGUOUS"
+	ErrFilesUploadLengthRequired  APIErrorCode = "FILES_UPLOAD_LENGTH_REQUIRED"
+	ErrFilesUploadSizeMismatch    APIErrorCode = "FILES_UPLOAD_SIZE_MISMATCH"
+	ErrFilesStreamLimitReached    APIErrorCode = "FILES_STREAM_LIMIT_REACHED"
+	ErrFilesDownloadTicketInvalid APIErrorCode = "FILES_DOWNLOAD_TICKET_INVALID"
+	ErrFilesProviderUnavailable   APIErrorCode = "FILES_PROVIDER_UNAVAILABLE"
 )
 
 // writeError emits a structured error response carrying only a machine-readable

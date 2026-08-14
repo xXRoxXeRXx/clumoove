@@ -88,6 +88,8 @@ export interface Migration {
   target_provider: string;
   target_url: string | null;
   target_dir?: string;
+  source_profile_id?: string | null;
+  target_profile_id?: string | null;
   selected_paths?: string[];
   processed_files: number;
   total_files: number;
@@ -113,6 +115,8 @@ export interface SyncJob {
   target_url: string | null;
   target_username?: string | null;
   target_dir?: string;
+  source_profile_id?: string | null;
+  target_profile_id?: string | null;
   selected_paths?: string[];
   total_files: number;
   total_bytes?: number;

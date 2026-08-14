@@ -28,6 +28,10 @@ const (
 	DomainSMTPPassword       = "clumoove:smtp-password"
 	DomainOAuthClientSecret  = "clumoove:oauth-client-secret"
 	DomainNotificationConfig = "clumoove:notification-config"
+	// DomainFileManagerReference and DomainFileManagerCursor bind opaque file
+	// manager state to a dedicated, stable envelope domain.
+	DomainFileManagerReference = "clumoove:file-manager-reference"
+	DomainFileManagerCursor    = "clumoove:file-manager-cursor"
 )
 
 var (

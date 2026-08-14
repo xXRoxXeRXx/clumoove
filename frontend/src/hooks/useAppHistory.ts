@@ -10,18 +10,21 @@ export type AppStep =
   | 'admin'
   | 'reset-password'
   | 'confirm-email'
-  | 'syncdetail';
+  | 'syncdetail'
+  | 'files';
 
 type NavigationState = {
   step: AppStep;
   migrationId: string;
   syncId: string;
+  profileId: string;
 };
 
 type HistoryEntry = {
   step?: AppStep;
   migration?: string;
   sync?: string;
+  profile?: string;
 };
 
 type UseAppHistoryOptions = {
@@ -33,12 +36,15 @@ type UseAppHistoryOptions = {
 
 function stateForStep(step: AppStep, id = ''): NavigationState {
   if (step === 'dashboard') {
-    return { step, migrationId: id, syncId: '' };
+    return { step, migrationId: id, syncId: '', profileId: '' };
   }
   if (step === 'syncdetail') {
-    return { step, migrationId: '', syncId: id };
+    return { step, migrationId: '', syncId: id, profileId: '' };
   }
-  return { step, migrationId: '', syncId: '' };
+  if (step === 'files') {
+    return { step, migrationId: '', syncId: '', profileId: id };
+  }
+  return { step, migrationId: '', syncId: '', profileId: '' };
 }
 
 export function initialNavigationFor(
@@ -52,6 +58,8 @@ export function initialNavigationFor(
   const params = new URLSearchParams(search);
   const migrationId = params.get('migration') ?? '';
   const syncId = params.get('sync') ?? '';
+  const profileId = params.get('profile') ?? '';
+  if (params.get('view') === 'files') return stateForStep('files', profileId);
   if (migrationId) return stateForStep('dashboard', migrationId);
   if (syncId) return stateForStep('syncdetail', syncId);
   return stateForStep('history');
@@ -65,6 +73,9 @@ function navigationFromHistory(entry: HistoryEntry, search: string): NavigationS
   if (entry.step === 'syncdetail') {
     return stateForStep('syncdetail', entry.sync ?? params.get('sync') ?? '');
   }
+  if (entry.step === 'files') {
+    return stateForStep('files', entry.profile ?? params.get('profile') ?? '');
+  }
   return stateForStep(entry.step ?? 'login');
 }
 
@@ -73,6 +84,8 @@ function writeHistory(nextStep: AppStep, id: string, replace: boolean): void {
   const state: HistoryEntry = { step: nextStep };
   url.searchParams.delete('migration');
   url.searchParams.delete('sync');
+  url.searchParams.delete('view');
+  url.searchParams.delete('profile');
 
   if (nextStep === 'dashboard' && id) {
     url.searchParams.set('migration', id);
@@ -80,6 +93,12 @@ function writeHistory(nextStep: AppStep, id: string, replace: boolean): void {
   } else if (nextStep === 'syncdetail' && id) {
     url.searchParams.set('sync', id);
     state.sync = id;
+  } else if (nextStep === 'files') {
+    url.searchParams.set('view', 'files');
+    if (id) {
+      url.searchParams.set('profile', id);
+      state.profile = id;
+    }
   }
 
   if (replace) {
@@ -111,8 +130,8 @@ export function useAppHistory(options: UseAppHistoryOptions) {
   // source of truth. This preserves authenticated migration and sync deep links
   // until silent session validation confirms them.
   useEffect(() => {
-    const { step, migrationId, syncId } = initialNavigation;
-    writeHistory(step, migrationId || syncId, true);
+    const { step, migrationId, syncId, profileId } = initialNavigation;
+    writeHistory(step, migrationId || syncId || profileId, true);
   }, [initialNavigation]);
 
   useEffect(() => {
@@ -143,11 +162,13 @@ export function useAppHistory(options: UseAppHistoryOptions) {
       const activeId = nextStep === 'dashboard'
         ? navigation.migrationId
         : nextStep === 'syncdetail'
-          ? navigation.syncId
-          : '';
+        ? navigation.syncId
+          : nextStep === 'files'
+            ? navigation.profileId
+            : '';
       applyHistory(nextStep, id ?? activeId, false);
     },
-    [applyHistory, navigation.migrationId, navigation.syncId],
+    [applyHistory, navigation.migrationId, navigation.profileId, navigation.syncId],
   );
 
   const goToOverview = useCallback(() => {
@@ -162,6 +183,7 @@ export function useAppHistory(options: UseAppHistoryOptions) {
     ...navigation,
     initialMigrationId: initialNavigation.migrationId,
     initialSyncId: initialNavigation.syncId,
+    initialProfileId: initialNavigation.profileId,
     replaceNav,
     navigate,
     goToOverview,

@@ -7,6 +7,10 @@ strings are localized with `i18next` + `react-i18next` + `i18next-browser-langua
 
 The connection wizard has an Immich branch with server URL and API-key fields (no username), a least-privilege permission hint, `/Timeline` default selection, album browsing/creation, native-duplicate `SKIP`, and migration-only mode. Sync is unavailable whenever either endpoint is Immich.
 
+## Cloud File Manager (Phase 1)
+
+`FileManager` uses saved profile IDs, opaque server references, paginated listings, breadcrumbs, and ticketed downloads. `useAppHistory` persists only `?view=files&profile=<uuid>`; remote paths, names, and item references remain out of the URL. Unsupported write actions remain unavailable until their backend capability exists.
+
 ---
 
 ## 1. Tech Stack

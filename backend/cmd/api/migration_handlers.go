@@ -1047,6 +1047,8 @@ func (s *APIServer) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	m := &db.Migration{
 		UserID:                       sql.NullString{String: userID, Valid: userID != ""},
+		SourceProfileID:              sql.NullString{String: req.SourceProfileID, Valid: req.SourceProfileID != ""},
+		TargetProfileID:              sql.NullString{String: req.TargetProfileID, Valid: req.TargetProfileID != ""},
 		SourceURL:                    req.SourceURL,
 		SourceUsername:               req.SourceUsername,
 		SourcePasswordEncrypted:      sourcePassEnc,

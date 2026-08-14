@@ -40,6 +40,8 @@ type MigrationResourceStats struct {
 type Migration struct {
 	ID                           string                  `json:"id"`
 	UserID                       sql.NullString          `json:"user_id,omitempty"`
+	SourceProfileID              sql.NullString          `json:"source_profile_id,omitempty"`
+	TargetProfileID              sql.NullString          `json:"target_profile_id,omitempty"`
 	SourceURL                    string                  `json:"source_url"`
 	SourceUsername               string                  `json:"source_username"`
 	SourcePasswordEncrypted      string                  `json:"-"`
@@ -93,12 +95,16 @@ func (m Migration) MarshalJSON() ([]byte, error) {
 	type Alias Migration
 	return json.Marshal(&struct {
 		Alias
-		UserID       *string `json:"user_id"`
-		ErrorMessage *string `json:"error_message"`
+		UserID          *string `json:"user_id"`
+		SourceProfileID *string `json:"source_profile_id"`
+		TargetProfileID *string `json:"target_profile_id"`
+		ErrorMessage    *string `json:"error_message"`
 	}{
-		Alias:        Alias(m),
-		UserID:       nullStringPtr(m.UserID),
-		ErrorMessage: nullStringPtr(m.ErrorMessage),
+		Alias:           Alias(m),
+		UserID:          nullStringPtr(m.UserID),
+		SourceProfileID: nullStringPtr(m.SourceProfileID),
+		TargetProfileID: nullStringPtr(m.TargetProfileID),
+		ErrorMessage:    nullStringPtr(m.ErrorMessage),
 	})
 }
 
@@ -149,13 +155,13 @@ type PendingEmailNotification struct {
 
 const createMigrationQuery = `
 		INSERT INTO migrations (
-			user_id, source_url, source_username, source_password_encrypted, source_provider,
+			user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted, source_provider,
 			source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
 			target_url, target_username, target_password_encrypted, target_provider,
 			target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted,
 			status, conflict_strategy, target_dir, threads, bandwidth_limit_mbps,
 			picker_session_id, selected_paths, selected_calendars, selected_contacts
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -169,7 +175,7 @@ func CreateMigration(db *sql.DB, m *Migration) (string, error) {
 func insertMigration(ctx context.Context, database queryExecerContext, m *Migration) error {
 	return database.QueryRowContext(ctx,
 		createMigrationQuery,
-		m.UserID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted, m.SourceProvider,
+		m.UserID, m.SourceProfileID, m.TargetProfileID, m.SourceURL, m.SourceUsername, m.SourcePasswordEncrypted, m.SourceProvider,
 		m.SourceRefreshTokenEncrypted, m.SourceTokenExpiresAt, m.SourceMegaSessionIDEncrypted, m.SourceMegaMasterKeyEncrypted,
 		m.TargetURL, m.TargetUsername, m.TargetPasswordEncrypted, m.TargetProvider,
 		m.TargetRefreshTokenEncrypted, m.TargetTokenExpiresAt, m.TargetMegaSessionIDEncrypted, m.TargetMegaMasterKeyEncrypted,
@@ -225,7 +231,7 @@ func GetMigration(db *sql.DB, id string) (*Migration, error) {
 // GetMigrationContext retrieves a migration while honoring caller cancellation.
 func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration, error) {
 	query := `
-		SELECT id, user_id, source_url, source_username, source_password_encrypted, source_provider,
+		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted, source_provider,
 		       source_refresh_token_encrypted, source_token_expires_at, COALESCE(source_mega_session_id_encrypted, ''), COALESCE(source_mega_master_key_encrypted, ''),
 		       target_url, target_username, target_password_encrypted, target_provider,
 		       target_refresh_token_encrypted, target_token_expires_at, COALESCE(target_mega_session_id_encrypted, ''), COALESCE(target_mega_master_key_encrypted, ''),
@@ -237,7 +243,7 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 	`
 	var m Migration
 	err := db.QueryRowContext(ctx, query, id).Scan(
-		&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted, &m.SourceProvider,
+		&m.ID, &m.UserID, &m.SourceProfileID, &m.TargetProfileID, &m.SourceURL, &m.SourceUsername, &m.SourcePasswordEncrypted, &m.SourceProvider,
 		&m.SourceRefreshTokenEncrypted, &m.SourceTokenExpiresAt, &m.SourceMegaSessionIDEncrypted, &m.SourceMegaMasterKeyEncrypted,
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,
 		&m.TargetRefreshTokenEncrypted, &m.TargetTokenExpiresAt, &m.TargetMegaSessionIDEncrypted, &m.TargetMegaMasterKeyEncrypted,
@@ -259,7 +265,7 @@ func GetMigrationsForUser(db *sql.DB, userID string) ([]Migration, error) {
 // GetMigrationsForUserContext lists migrations while honoring caller cancellation.
 func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string) ([]Migration, error) {
 	query := `
-		SELECT id, user_id, source_url, source_username, source_provider,
+		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, status,
 		       conflict_strategy, total_files, total_bytes, processed_files,
 		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
@@ -278,7 +284,7 @@ func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string)
 	for rows.Next() {
 		var m Migration
 		err := rows.Scan(
-			&m.ID, &m.UserID, &m.SourceURL, &m.SourceUsername, &m.SourceProvider,
+			&m.ID, &m.UserID, &m.SourceProfileID, &m.TargetProfileID, &m.SourceURL, &m.SourceUsername, &m.SourceProvider,
 			&m.TargetURL, &m.TargetUsername, &m.TargetProvider, &m.Status,
 			&m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
 			&m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
@@ -308,7 +314,7 @@ func ListAllMigrationsContext(ctx context.Context, database *sql.DB, p Migration
 		offset = 0
 	}
 	query := `
-		SELECT m.id, m.user_id, m.source_url, m.source_username, m.source_provider, m.target_url,
+		SELECT m.id, m.user_id, m.source_profile_id, m.target_profile_id, m.source_url, m.source_username, m.source_provider, m.target_url,
 		       m.target_username, m.target_provider, m.target_dir, m.status, m.conflict_strategy,
 		       m.total_files, m.total_bytes, m.processed_files, m.processed_bytes, m.skipped_files,
 		       m.failed_files, m.error_message, m.created_at, m.updated_at, m.threads,
@@ -331,7 +337,7 @@ func ListAllMigrationsContext(ctx context.Context, database *sql.DB, p Migration
 		var uid sql.NullString
 		var errMsg sql.NullString
 		if err := rows.Scan(
-			&v.ID, &uid, &v.SourceURL, &v.SourceUsername, &v.SourceProvider, &v.TargetURL,
+			&v.ID, &uid, &v.SourceProfileID, &v.TargetProfileID, &v.SourceURL, &v.SourceUsername, &v.SourceProvider, &v.TargetURL,
 			&v.TargetUsername, &v.TargetProvider, &v.TargetDir, &v.Status, &v.ConflictStrategy,
 			&v.TotalFiles, &v.TotalBytes, &v.ProcessedFiles, &v.ProcessedBytes, &v.SkippedFiles,
 			&v.FailedFiles, &errMsg, &v.CreatedAt, &v.UpdatedAt, &v.Threads,
