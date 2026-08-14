@@ -164,31 +164,29 @@ var providerRegistry = map[string]ProviderMetadata{
 }
 
 // managerCapabilityRegistry is deliberately independent from the storage
-// interface. The first file-manager release exposes only read behavior that is
-// already covered by provider contracts; mutations remain false until each
-// provider has manager-specific tests and semantics.
+// interface. Phase 1 exposes the existing, tested read operations for every
+// files provider. Mutations remain false until each provider has
+// manager-specific tests and semantics.
 var managerCapabilityRegistry = map[string]ManagerCapabilities{
-	// Google is the first provider with dedicated, ID-based manager contracts
-	// and native cursor paging. Other providers remain disabled until their
-	// manager-specific implementations and tests exist; migration primitives
-	// are deliberately not a manager capability signal.
-	"nextcloud":    {},
-	"opencloud":    {},
-	"webdav":       {},
-	"dropbox":      {},
+	// Google adds dedicated, ID-based manager contracts and native cursor
+	// paging. The remaining providers use the bounded path-based read adapter.
+	"nextcloud":    {Browse: true, Download: true},
+	"opencloud":    {Browse: true, Download: true},
+	"webdav":       {Browse: true, Download: true},
+	"dropbox":      {Browse: true, Download: true},
 	"google":       {Browse: true, NativePagination: true, Download: true},
-	"onedrive":     {},
-	"hidrive":      {},
-	"smb":          {},
-	"s3":           {},
-	"sftp":         {},
-	"ftp":          {},
-	"magentacloud": {},
-	"koofr":        {},
-	"local":        {},
-	"immich":       {},
-	"seafile":      {},
-	"mega":         {},
+	"onedrive":     {Browse: true, Download: true},
+	"hidrive":      {Browse: true, Download: true},
+	"smb":          {Browse: true, Download: true},
+	"s3":           {Browse: true, Download: true},
+	"sftp":         {Browse: true, Download: true},
+	"ftp":          {Browse: true, Download: true},
+	"magentacloud": {Browse: true, Download: true},
+	"koofr":        {Browse: true, Download: true},
+	"local":        {Browse: true, Download: true},
+	"immich":       {Browse: true, Download: true},
+	"seafile":      {Browse: true, Download: true},
+	"mega":         {Browse: true, Download: true},
 }
 
 // ManagerCapabilitiesFor returns static capabilities after applying runtime

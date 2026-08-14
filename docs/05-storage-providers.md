@@ -6,7 +6,7 @@ in `NewProvider` (`factory.go`). Only whitelisted provider strings may reach `Ne
 
 ## Cloud File Manager Capabilities
 
-`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. Google Drive currently exposes browse/download through ID-based `ManagerLister` and `ManagerDownloader` contracts with native cursor pagination; all other providers remain disabled until provider-specific manager tests establish their semantics. Mutations, copy, range download, and thumbnails remain disabled.
+`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. Every files provider exposes Phase-1 browse/download through the bounded read adapter. Google Drive additionally uses ID-based `ManagerLister` and `ManagerDownloader` contracts with native cursor pagination, so duplicate sibling names cannot select the wrong item. Mutations, copy, range download, and thumbnails remain disabled.
 
 ---
 

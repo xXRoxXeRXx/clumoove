@@ -103,7 +103,13 @@ func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID st
 		return nil, errFileProviderUnavailable
 	}
 	connectCtx, cancel := context.WithTimeout(providerCtx, 30*time.Second)
-	connected, connectErr := provider.Connect(connectCtx)
+	connected := false
+	var connectErr error
+	if managerConnector, ok := provider.(storage.ManagerConnector); ok {
+		connected, connectErr = managerConnector.ConnectManager(connectCtx)
+	} else {
+		connected, connectErr = provider.Connect(connectCtx)
+	}
 	cancel()
 	if connectErr != nil || !connected {
 		_ = provider.Close()

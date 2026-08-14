@@ -225,6 +225,18 @@ func TestManagerCapabilityRegistryMatchesProviders(t *testing.T) {
 	}
 }
 
+func TestManagerReadCapabilitiesCoverEveryFilesProvider(t *testing.T) {
+	for _, providerType := range ValidProviders {
+		if providerType == "local" && runtime.GOOS == "windows" {
+			continue
+		}
+		capabilities := ManagerCapabilitiesFor(providerType)
+		if !capabilities.Browse || !capabilities.Download {
+			t.Errorf("%s read capabilities = %#v, want browse and download", providerType, capabilities)
+		}
+	}
+}
+
 func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
 	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
 	ctx := WithLocalUserScope(context.Background(), "factory-test-user")

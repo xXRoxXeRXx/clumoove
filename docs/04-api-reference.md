@@ -29,7 +29,7 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | `POST /files/profiles/{profileID}/download-tickets` | JWT | Creates a single-use, 60-second download ticket from an opaque file ref. |
 | `GET /files/download/{ticket}` | ticket | Streams an attachment without a JWT or remote path in the URL. |
 
-The file manager returns normal HTTP errors. Its `FILES_*` error codes are localized by the frontend. Enabled providers must implement manager-native pagination; no unbounded migration listing is reused for interactive browsing.
+The file manager returns normal HTTP errors. Its `FILES_*` error codes are localized by the frontend. Google Drive uses native pagination; other files providers use deterministic, emulated paging with a 10,000-entry safety limit and return `FILES_DIRECTORY_CHANGED` if a folder changes between pages.
 
 ---
 

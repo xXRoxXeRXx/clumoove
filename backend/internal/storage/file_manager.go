@@ -77,6 +77,14 @@ type ManagerDownloader interface {
 	DownloadManager(ctx context.Context, locator ManagerLocator) (ManagerDownload, error)
 }
 
+// ManagerConnector performs the smallest connection check needed by the file
+// manager. OAuth providers that expose files independently from calendars or
+// contacts must not reject a files-only manager request for missing unrelated
+// scopes.
+type ManagerConnector interface {
+	ConnectManager(ctx context.Context) (bool, error)
+}
+
 // ManagerPathResolver resolves a server-provided path to stable manager
 // locators. It is intentionally separate from listing: path-based resolution
 // is unsafe for providers that permit ambiguous sibling names unless the

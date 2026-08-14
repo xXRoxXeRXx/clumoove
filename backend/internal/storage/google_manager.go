@@ -47,6 +47,16 @@ func (p *GoogleProvider) ListManager(ctx context.Context, locator ManagerLocator
 	return ManagerPage{Items: items, NextCursor: page.NextPageToken}, nil
 }
 
+// ConnectManager verifies only Drive access. The generic provider connection
+// also probes Calendar and People, which is appropriate for migrations that
+// use those resource types but incorrectly rejects files-only manager access.
+func (p *GoogleProvider) ConnectManager(ctx context.Context) (bool, error) {
+	if _, err := p.driveService.About.Get().Fields("user").Context(ctx).Do(); err != nil {
+		return false, wrapGoogleError("google drive manager connect", err)
+	}
+	return true, nil
+}
+
 // DownloadManager addresses the selected Drive file directly by its immutable
 // file ID, including for duplicate sibling names and Workspace exports.
 func (p *GoogleProvider) DownloadManager(ctx context.Context, locator ManagerLocator) (ManagerDownload, error) {

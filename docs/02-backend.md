@@ -8,7 +8,7 @@ Immich is a files-only, one-time-migration provider. Its API key is stored as th
 
 ## Cloud File Manager (Phase 1)
 
-`cmd/api/file_profile_resolver.go` resolves an owned saved profile fail-closed, decrypts its credentials with the field-domain AAD, refreshes expiring OAuth access tokens, scopes Local access to the JWT user, and constructs the provider through `storage.NewProvider`. `file_handlers.go` seals user/profile-bound references and native cursors with independent crypto domains, resolves stored quick-link paths to sealed breadcrumbs, and issues Redis-backed one-time download tickets. The manager capability registry is intentionally separate from `StorageProvider`; only providers with dedicated manager contracts are enabled.
+`cmd/api/file_profile_resolver.go` resolves an owned saved profile fail-closed, decrypts its credentials with the field-domain AAD, refreshes expiring OAuth access tokens, scopes Local access to the JWT user, and constructs the provider through `storage.NewProvider`. `file_handlers.go` seals user/profile-bound references and cursors with independent crypto domains, resolves stored quick-link paths to sealed breadcrumbs, and issues Redis-backed one-time download tickets. The manager capability registry is intentionally separate from `StorageProvider`: Google Drive uses an ID-based native manager contract and every files provider has a bounded read adapter; mutations require explicit manager capabilities.
 
 ---
 

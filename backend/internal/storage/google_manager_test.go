@@ -51,6 +51,20 @@ func TestGoogleManagerListKeepsDriveFileID(t *testing.T) {
 	}
 }
 
+func TestGoogleManagerConnectChecksOnlyDrive(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/about" {
+			t.Fatalf("path = %s, want /about", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"displayName": "manager"}})
+	}))
+
+	connected, err := provider.ConnectManager(context.Background())
+	if err != nil || !connected {
+		t.Fatalf("ConnectManager() = (%t, %v), want (true, nil)", connected, err)
+	}
+}
+
 func TestGoogleManagerDownloadUsesNativeID(t *testing.T) {
 	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/files/drive-file-b" {
