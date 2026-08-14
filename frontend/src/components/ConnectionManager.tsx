@@ -311,7 +311,8 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
     openOAuthPopup(provider, 'connect', {
       onSuccess: (msg) => {
         const refreshToken = msg.refreshToken || '';
-        if (!refreshToken) {
+        const accessToken = msg.token || '';
+        if (!refreshToken || !accessToken) {
           setBusy(false);
           onError(t('settings.connections.testFailed'));
           return;
@@ -322,7 +323,9 @@ function ReauthorizeButton({ apiUrl, token, profile, onReauthorized, onError }: 
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           signal: controller.signal,
           body: JSON.stringify({
+            password: accessToken,
             refresh_token: refreshToken,
+            refresh_token_expires_in: msg.expiresIn,
             oauth_user: msg.username || provider,
           }),
         })
@@ -378,6 +381,7 @@ interface FormState {
   password: string;
   oauthUser: string;
   oauthRefreshToken: string;
+  oauthExpiresIn: number;
   smbHost: string;
   smbPort: string;
   smbShare: string;
@@ -410,6 +414,7 @@ function initFormState(editing: ConnectionProfilePublic | null): FormState {
     password: '',
     oauthUser: editing?.oauth_user || '',
     oauthRefreshToken: '',
+    oauthExpiresIn: 0,
     smbHost: smb.host,
     smbPort: smb.port || '445',
     smbShare: smb.share,
@@ -503,7 +508,9 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
     triggerOAuthPopup(form.provider, 'connect', {
       onSuccess: (msg) => {
         updateField('oauthUser', msg.username || form.provider);
+        updateField('password', msg.token || '');
         updateField('oauthRefreshToken', msg.refreshToken || '');
+        updateField('oauthExpiresIn', msg.expiresIn || 0);
       },
       onError: (code) => {
         onError(translateApiError(code));
@@ -515,6 +522,10 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
     e.preventDefault();
     if (!form.name.trim()) {
       onError(t('settings.connections.nameRequired'));
+      return;
+    }
+    if (isOAuth && (!form.password || !form.oauthRefreshToken)) {
+      onError(t('settings.connections.oauthRequired'));
       return;
     }
 
@@ -601,10 +612,10 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
 
     if (isOAuth) {
       payload.username = form.oauthUser || form.provider;
-      if (form.oauthRefreshToken) {
-        payload.refresh_token = form.oauthRefreshToken;
-        payload.oauth_user = form.oauthUser || form.provider;
-      }
+      payload.password = form.password;
+      payload.refresh_token = form.oauthRefreshToken;
+      payload.refresh_token_expires_in = form.oauthExpiresIn;
+      payload.oauth_user = form.oauthUser || form.provider;
     } else if (needsPassword && finalPassword) {
       payload.password = finalPassword;
     }
@@ -678,7 +689,12 @@ function ProfileEditor({ apiUrl, token, providerOptions, editing, onClose, onSav
                 oauthUser={form.oauthUser}
                 oauthRefreshToken={form.oauthRefreshToken}
                 onOpenOAuthPopup={openOAuthPopup}
-                onDisconnectOAuth={() => { updateField('oauthRefreshToken', ''); updateField('oauthUser', ''); }}
+                onDisconnectOAuth={() => {
+                  updateField('password', '');
+                  updateField('oauthRefreshToken', '');
+                  updateField('oauthExpiresIn', 0);
+                  updateField('oauthUser', '');
+                }}
                 url={form.url}
                 onUrlChange={(v) => updateField('url', v)}
                 username={form.username}

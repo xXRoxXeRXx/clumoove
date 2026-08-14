@@ -24,6 +24,11 @@ type resolvedFileProfile struct {
 	close    func()
 }
 
+func fileProfileOAuthAccessNeedsRefresh(profile *db.ConnectionProfile, accessToken string, now time.Time) bool {
+	return oauth.IsProvider(profile.Provider) &&
+		(accessToken == "" || !profile.TokenExpiresAt.Valid || profile.TokenExpiresAt.Time.Before(now.Add(2*time.Minute)))
+}
+
 func (s *APIServer) loadOwnedFileProfile(ctx context.Context, userID, profileID string) (*db.ConnectionProfile, error) {
 	if userID == "" || profileID == "" {
 		return nil, errFileProfileNotFound
@@ -71,8 +76,7 @@ func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID st
 		clear(plain)
 	}
 
-	if oauth.IsProvider(profile.Provider) && refreshToken != "" &&
-		(!profile.TokenExpiresAt.Valid || profile.TokenExpiresAt.Time.Before(time.Now().Add(2*time.Minute))) {
+	if refreshToken != "" && fileProfileOAuthAccessNeedsRefresh(profile, password, time.Now()) {
 		token, refreshErr := oauth.RefreshToken(ctx, profile.Provider, refreshToken)
 		if refreshErr != nil || token == nil || token.AccessToken == "" || s.persistProfileOAuthTokens(profile, token) != nil {
 			crypto.ZeroString(&password)

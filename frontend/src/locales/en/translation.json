@@ -435,6 +435,7 @@
       "profileNamePlaceholder": "Enter profile name (e.g. My Cloud)",
       "saveProfileHint": "The entered credentials will be stored encrypted for future transfers.",
       "oauthConnectedAs": "Connected as {{user}}",
+      "oauthRequired": "Connect the OAuth provider before saving this profile.",
       "reauthenticate": "Reconnect and continue",
       "tokenExpiresIn": "Token expires in {{days}} days",
       "tokenExpired": "Token expired",
