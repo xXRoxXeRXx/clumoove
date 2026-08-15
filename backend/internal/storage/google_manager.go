@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -53,6 +54,7 @@ func (p *GoogleProvider) ListManager(ctx context.Context, locator ManagerLocator
 var (
 	_ ManagerUploader         = (*GoogleProvider)(nil)
 	_ ManagerDirectoryCreator = (*GoogleProvider)(nil)
+	_ ManagerThumbnailer      = (*GoogleProvider)(nil)
 )
 
 // CreateManagerDirectory creates a new directory in the selected Drive parent by immutable ID.
@@ -289,3 +291,76 @@ func managerParentID(value string) string {
 	}
 	return value
 }
+
+// ThumbnailManager fetches a thumbnail image from Google Drive for the given file locator.
+func (p *GoogleProvider) ThumbnailManager(ctx context.Context, locator ManagerLocator, width, height int) (io.ReadCloser, string, error) {
+	if locator.NativeID == "" {
+		return nil, "", fmt.Errorf("Google manager item ID is required")
+	}
+
+	file, err := p.driveService.Files.Get(locator.NativeID).
+		Fields("id, mimeType, thumbnailLink").
+		Context(ctx).
+		Do()
+	if err != nil {
+		return nil, "", wrapGoogleNotFound(err)
+	}
+
+	if file.MimeType == googleDriveFolderMIME {
+		return nil, "", fmt.Errorf("Google manager thumbnail: %w", ErrNotFound)
+	}
+
+	if file.ThumbnailLink == "" {
+		return nil, "", ErrUnsupportedMedia
+	}
+
+	thumbnailURL := file.ThumbnailLink
+	if width > 0 || height > 0 {
+		maxDim := width
+		if height > maxDim {
+			maxDim = height
+		}
+		if maxDim < 32 {
+			maxDim = 32
+		} else if maxDim > 1024 {
+			maxDim = 1024
+		}
+		if idx := strings.LastIndex(thumbnailURL, "=s"); idx != -1 {
+			thumbnailURL = thumbnailURL[:idx] + fmt.Sprintf("=s%d", maxDim)
+		}
+	}
+
+	client := p.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, thumbnailURL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("google thumbnail request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("google thumbnail fetch: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		_ = resp.Body.Close()
+		return nil, "", fmt.Errorf("google thumbnail: %w", ErrNotFound)
+	}
+	if resp.StatusCode != http.StatusOK {
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, "", fmt.Errorf("google thumbnail unauthorized: %w", ErrAuth)
+		}
+		return nil, "", fmt.Errorf("google thumbnail unexpected status: %d", resp.StatusCode)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+	return resp.Body, contentType, nil
+}
+

@@ -22,7 +22,7 @@ func newGoogleManagerTestProvider(t *testing.T, handler http.Handler) *GooglePro
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &GoogleProvider{driveService: service}
+	return &GoogleProvider{driveService: service, httpClient: server.Client()}
 }
 
 func TestGoogleManagerListKeepsDriveFileID(t *testing.T) {
@@ -189,3 +189,80 @@ func TestGoogleManagerCreateDirectorySuccessAndConflict(t *testing.T) {
 		t.Fatalf("CreateManagerDirectory() error = %v, want nil", err)
 	}
 }
+
+func TestGoogleManagerThumbnailSuccess(t *testing.T) {
+	var serverURL string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/files/photo-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":            "photo-1",
+				"mimeType":      "image/jpeg",
+				"thumbnailLink": serverURL + "/cdn-thumb=s220",
+			})
+		case r.URL.Path == "/cdn-thumb=s300":
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("fake-jpeg-thumbnail-bytes"))
+		default:
+			t.Fatalf("unexpected request to: %s", r.URL.String())
+		}
+	})
+
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	serverURL = server.URL
+
+	service, err := drive.NewService(context.Background(), option.WithHTTPClient(server.Client()), option.WithEndpoint(server.URL+"/"), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &GoogleProvider{driveService: service, httpClient: server.Client()}
+
+	stream, contentType, err := provider.ThumbnailManager(context.Background(), ManagerLocator{NativeID: "photo-1"}, 300, 300)
+	if err != nil {
+		t.Fatalf("ThumbnailManager() error = %v", err)
+	}
+	defer stream.Close()
+
+	if contentType != "image/jpeg" {
+		t.Fatalf("contentType = %q, want image/jpeg", contentType)
+	}
+
+	data, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "fake-jpeg-thumbnail-bytes" {
+		t.Fatalf("data = %q, want fake-jpeg-thumbnail-bytes", string(data))
+	}
+}
+
+func TestGoogleManagerThumbnailUnsupported(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":            "doc-1",
+			"mimeType":      "application/pdf",
+			"thumbnailLink": "",
+		})
+	}))
+
+	_, _, err := provider.ThumbnailManager(context.Background(), ManagerLocator{NativeID: "doc-1"}, 256, 256)
+	if !errors.Is(err, ErrUnsupportedMedia) {
+		t.Fatalf("ThumbnailManager() error = %v, want ErrUnsupportedMedia", err)
+	}
+}
+
+func TestGoogleManagerThumbnailNotFound(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"code": 404, "message": "File not found"},
+		})
+	}))
+
+	_, _, err := provider.ThumbnailManager(context.Background(), ManagerLocator{NativeID: "missing-id"}, 256, 256)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ThumbnailManager() error = %v, want ErrNotFound", err)
+	}
+}
+
