@@ -50,6 +50,29 @@ function makeEntry(name: string, mimeType?: string, size = 1024): FileEntry {
   };
 }
 
+type MockWorkerInstance = {
+  postMessage: ReturnType<typeof vi.fn>;
+  terminate: ReturnType<typeof vi.fn>;
+  onmessage: ((event: MessageEvent) => void) | null;
+  onerror: ((error: ErrorEvent) => void) | null;
+};
+
+const mockXlsxWorkerInstances: MockWorkerInstance[] = [];
+
+vi.mock('./xlsxPreview.worker.ts?worker', () => {
+  return {
+    default: class MockXlsxWorker {
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      onmessage = null;
+      onerror = null;
+      constructor() {
+        mockXlsxWorkerInstances.push(this);
+      }
+    },
+  };
+});
+
 describe('FilePreviewDialog', () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -61,12 +84,14 @@ describe('FilePreviewDialog', () => {
     vi.mocked(createDownloadTicket).mockReset();
     onDownload.mockReset();
     onClose.mockReset();
+    mockXlsxWorkerInstances.length = 0;
     container = document.createElement('div');
     document.body.append(container);
     root = createRoot(container);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     act(() => root?.unmount());
     container?.remove();
   });
@@ -161,4 +186,202 @@ describe('FilePreviewDialog', () => {
     });
     expect(onDownload).toHaveBeenCalledWith(entry);
   });
+
+  it('loads and renders an XLSX spreadsheet preview with sheets and table cells', async () => {
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-456',
+      },
+    });
+
+    const mockBlob = new Blob(['mock xlsx bytes'], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(mockBlob, {
+        status: 200,
+        headers: { 'Content-Length': String(mockBlob.size) },
+      })
+    );
+
+    const xlsxEntry = makeEntry(
+      'budget.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      100
+    );
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={xlsxEntry}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(mockXlsxWorkerInstances).toHaveLength(1);
+    const worker = mockXlsxWorkerInstances[0];
+
+    await act(async () => {
+      worker.onmessage?.({
+        data: {
+          ok: true,
+          sheets: [
+            {
+              name: 'Q1',
+              rows: [
+                ['Category', 'Amount'],
+                ['Hardware', '1200'],
+              ],
+            },
+            {
+              name: 'Q2',
+              rows: [['Category', 'Amount']],
+            },
+          ],
+        },
+      } as MessageEvent);
+      await Promise.resolve();
+    });
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Q1');
+    expect(dialog?.textContent).toContain('Hardware');
+    expect(dialog?.textContent).toContain('1200');
+
+    fetchSpy.mockRestore();
+  });
+
+  it('terminates unresponsive XLSX worker after 15s timeout and presents download fallback', async () => {
+    vi.useFakeTimers();
+
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-789',
+      },
+    });
+
+    const mockBlob = new Blob(['mock xlsx bytes'], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(mockBlob, {
+        status: 200,
+        headers: { 'Content-Length': String(mockBlob.size) },
+      })
+    );
+
+    const xlsxEntry = makeEntry(
+      'huge.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      100
+    );
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={xlsxEntry}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    // Let the fetch and worker startup complete
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    expect(mockXlsxWorkerInstances).toHaveLength(1);
+    const worker = mockXlsxWorkerInstances[0];
+
+    // Fast-forward 15 seconds to trigger parseWorker timeout
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    expect(worker.terminate).toHaveBeenCalled();
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('This file cannot be safely previewed.');
+
+    fetchSpy.mockRestore();
+  });
+
+  it('terminates worker and revokes Blob URL on dialog unmount or abort without error', async () => {
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-abort',
+      },
+    });
+
+    const mockBlob = new Blob(['mock xlsx bytes'], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(mockBlob, {
+        status: 200,
+        headers: { 'Content-Length': String(mockBlob.size) },
+      })
+    );
+
+    const revokeObjectURLSpy = vi.spyOn(URL, 'revokeObjectURL');
+
+    const xlsxEntry = makeEntry(
+      'data.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      100
+    );
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={xlsxEntry}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    expect(mockXlsxWorkerInstances).toHaveLength(1);
+    const worker = mockXlsxWorkerInstances[0];
+
+    // Unmount before worker finishes
+    act(() => {
+      root.unmount();
+    });
+
+    expect(worker.terminate).toHaveBeenCalled();
+    expect(revokeObjectURLSpy).toHaveBeenCalled();
+
+    fetchSpy.mockRestore();
+    revokeObjectURLSpy.mockRestore();
+  });
 });
+
