@@ -289,6 +289,7 @@ func main() {
 	mux.Handle("PUT /api/files/profiles/{profileID}/content", jwtMiddleware(http.HandlerFunc(server.handleFileUpload)))
 	mux.Handle("POST /api/files/profiles/{profileID}/directories", jwtMiddleware(http.HandlerFunc(server.handleFileDirectoryCreate)))
 	mux.Handle("POST /api/files/profiles/{profileID}/download-tickets", jwtMiddleware(http.HandlerFunc(server.handleFileDownloadTicket)))
+	mux.Handle("POST /api/files/profiles/{profileID}/thumbnail", jwtMiddleware(http.HandlerFunc(server.handleFileThumbnail)))
 	mux.HandleFunc("GET /api/files/download/{ticket}", server.handleFileDownload)
 
 	// Administrative routes require both a current JWT and the ADMIN role.

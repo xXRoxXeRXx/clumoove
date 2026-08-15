@@ -115,6 +115,7 @@ type ManagerUploader interface {
 var (
 	ErrManagerConflict    = errors.New("file manager conflict")
 	ErrUploadSizeMismatch = errors.New("upload size mismatch")
+	ErrUnsupportedMedia   = errors.New("unsupported media type")
 )
 
 // ExactSizeReader forwards a stream without buffering while enforcing its
@@ -186,4 +187,9 @@ type ManagerMover interface {
 
 type ManagerDeleter interface {
 	DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error
+}
+
+// ManagerThumbnailer generates or fetches a visual thumbnail for a file.
+type ManagerThumbnailer interface {
+	ThumbnailManager(ctx context.Context, locator ManagerLocator, width, height int) (io.ReadCloser, string, error)
 }

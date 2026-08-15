@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiJson } from '../utils/apiClient';
-import { createDownloadTicket, listFileEntries, resolveFilePath, uploadFile } from './files';
+import { createDownloadTicket, getFileThumbnail, listFileEntries, resolveFilePath, uploadFile } from './files';
 
 vi.mock('../utils/apiClient', () => ({ apiJson: vi.fn() }));
 
@@ -109,4 +109,29 @@ describe('file API', () => {
 
     await expect(result).resolves.toMatchObject({ ok: false, networkError: true });
   });
+
+  it('fetches thumbnail with dimensions via POST', async () => {
+    const mockBlob = new Blob(['image-data'], { type: 'image/jpeg' });
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(mockBlob),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const blob = await getFileThumbnail('https://api.example.test', 'token', 'profile-1', 'ref-photo', 128, 128);
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://api.example.test/api/files/profiles/profile-1/thumbnail',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: 'ref-photo', width: 128, height: 128 }),
+      }),
+    );
+    expect(blob).toBe(mockBlob);
+  });
 });
+

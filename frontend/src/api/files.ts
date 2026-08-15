@@ -226,3 +226,36 @@ export function uploadFile(
     xhr.send(file);
   });
 }
+
+export async function getFileThumbnail(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  ref: string,
+  width?: number,
+  height?: number,
+  signal?: AbortSignal,
+): Promise<Blob | null> {
+  const body: { ref: string; width?: number; height?: number } = { ref };
+  if (width) body.width = width;
+  if (height) body.height = height;
+
+  try {
+    const response = await fetch(profileUrl(apiUrl, profileId, '/thumbnail'), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return await response.blob();
+  } catch {
+    return null;
+  }
+}
+

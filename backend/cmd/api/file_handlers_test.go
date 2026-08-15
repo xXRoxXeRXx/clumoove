@@ -825,3 +825,47 @@ func TestHandleFileDirectoryCreateValidations(t *testing.T) {
 	}
 }
 
+func TestHandleFileThumbnailValidations(t *testing.T) {
+	server := &APIServer{
+		rateLimiter:   allowAllFileRateLimiter{},
+		encryptionKey: "test-encryption-key-for-files!!",
+	}
+
+	// 1. Missing claims
+	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/thumbnail", strings.NewReader(`{"ref":"abc"}`))
+	rec := httptest.NewRecorder()
+	server.handleFileThumbnail(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	// 2. Rate limited
+	serverBlocked := &APIServer{rateLimiter: blockAllFileRateLimiter{}, encryptionKey: server.encryptionKey}
+	reqBlocked := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/thumbnail", strings.NewReader(`{"ref":"abc"}`))
+	reqBlocked = reqBlocked.WithContext(context.WithValue(reqBlocked.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	recBlocked := httptest.NewRecorder()
+	serverBlocked.handleFileThumbnail(recBlocked, reqBlocked)
+	if recBlocked.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", recBlocked.Code, http.StatusTooManyRequests)
+	}
+
+	// 3. Directory reference instead of file reference
+	dirRef, _ := sealFileReference(fileReference{
+		UserID:       "u1",
+		ProfileID:    "p1",
+		ResourceType: "files",
+		Kind:         "directory",
+		Locator:      storage.ManagerLocator{Path: "/photos"},
+	}, server.encryptionKey)
+
+	reqDir := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/thumbnail", strings.NewReader(`{"ref":"`+dirRef+`"}`))
+	reqDir.SetPathValue("profileID", "p1")
+	reqDir = reqDir.WithContext(context.WithValue(reqDir.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	recDir := httptest.NewRecorder()
+	server.handleFileThumbnail(recDir, reqDir)
+	if recDir.Code != http.StatusBadRequest || !strings.Contains(recDir.Body.String(), string(ErrFilesInvalidRef)) {
+		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDir.Code, recDir.Body.String())
+	}
+}
+
+

@@ -6,7 +6,6 @@ import {
   ArrowPathIcon,
   ArrowUpIcon,
   ChevronRightIcon,
-  FileIcon,
   FolderIcon,
   FolderPlusIcon,
   ListBulletIcon,
@@ -22,6 +21,7 @@ import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl } from './FileUploadControl';
+import { FileThumbnail } from './FileThumbnail';
 import { canPreview } from './filePreview';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
@@ -570,7 +570,15 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                                 className={`inline-flex max-w-full items-center gap-2 min-w-0 text-left ${entry.kind === 'directory' || canPreview(entry) ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}
                                 title={entry.name}
                               >
-                                <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
+                                <FileThumbnail
+                                  apiUrl={apiUrl}
+                                  token={token}
+                                  profileId={profileId}
+                                  entry={entry}
+                                  thumbnailsEnabled={capabilities.thumbnails}
+                                  size="sm"
+                                  className="h-5 w-5 shrink-0"
+                                />
                                 <span className="truncate font-medium">{entry.name}</span>
                               </button>
                             </td>
@@ -640,10 +648,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                           </button>
                         )}
                         <div className="my-2 flex items-center justify-center h-14 w-14">
-                          <FileIcon
-                            name={entry.name}
-                            mimeType={entry.mime_type}
-                            isDir={entry.kind === 'directory'}
+                          <FileThumbnail
+                            apiUrl={apiUrl}
+                            token={token}
+                            profileId={profileId}
+                            entry={entry}
+                            thumbnailsEnabled={capabilities.thumbnails}
+                            size="lg"
                             className="h-12 w-12 shrink-0 drop-shadow-xs"
                           />
                         </div>

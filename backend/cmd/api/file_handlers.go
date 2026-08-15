@@ -28,6 +28,7 @@ const (
 	fileBrowseRateLimit       = 120
 	fileMutationRateLimit     = 120
 	fileUploadRateLimit       = 600
+	fileThumbnailRateLimit    = 600
 	fileRateWindow            = time.Minute
 	fileDefaultPageSize       = 100
 	fileMaximumPageSize       = 200
@@ -74,6 +75,12 @@ type fileEntry struct {
 
 type fileDownloadTicketRequest struct {
 	Ref string `json:"ref"`
+}
+
+type fileThumbnailRequest struct {
+	Ref    string `json:"ref"`
+	Width  int    `json:"width,omitempty"`
+	Height int    `json:"height,omitempty"`
 }
 
 type fileUploadResponse struct {
@@ -771,6 +778,91 @@ func (s *APIServer) handleFileDownloadTicket(w http.ResponseWriter, r *http.Requ
 		"success":      true,
 		"download_url": "/api/files/download/" + ticket,
 	})
+}
+
+func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.requireUserID(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowFileRequest(r, userID, "files-thumbnail", fileThumbnailRateLimit) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	var request fileThumbnailRequest
+	if !decodeJSONBody(w, r, &request, normalJSONBodyLimit) {
+		return
+	}
+	profileID := r.PathValue("profileID")
+	reference, referenceErr := openFileReference(request.Ref, s.encryptionKey, userID, profileID)
+	if referenceErr != nil || reference.Kind != "file" {
+		writeValidationError(w, ErrFilesInvalidRef)
+		return
+	}
+	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
+	if !capabilities.Thumbnails {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	defer resolved.close()
+
+	thumbnailer, supported := resolved.provider.(storage.ManagerThumbnailer)
+	if !supported {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+
+	width := request.Width
+	height := request.Height
+	if width <= 0 {
+		width = 256
+	}
+	if height <= 0 {
+		height = 256
+	}
+	if width > 1024 {
+		width = 1024
+	}
+	if height > 1024 {
+		height = 1024
+	}
+
+	stream, contentType, thumbnailErr := thumbnailer.ThumbnailManager(resolved.ctx, reference.Locator, width, height)
+	if thumbnailErr != nil {
+		if errors.Is(thumbnailErr, storage.ErrUnsupportedMedia) {
+			writeError(w, http.StatusUnsupportedMediaType, ErrFilesUnsupportedOperation)
+			return
+		}
+		s.writeFileProviderError(w, thumbnailErr)
+		return
+	}
+	if stream == nil {
+		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
+		return
+	}
+	defer stream.Close()
+
+	if contentType == "" {
+		contentType = "image/jpeg"
+	}
+
+	h := w.Header()
+	h.Set("Content-Type", contentType)
+	h.Set("Cache-Control", "private, max-age=3600")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy", "default-src 'none'")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, stream)
 }
 
 // handleFileUpload accepts only a raw file body. Parent locators remain sealed
