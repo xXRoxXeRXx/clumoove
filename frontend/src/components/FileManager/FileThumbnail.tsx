@@ -10,6 +10,8 @@ type FileThumbnailProps = {
   thumbnailsEnabled: boolean;
   size?: 'sm' | 'lg';
   className?: string;
+  imageClassName?: string;
+  fallbackIconClassName?: string;
 };
 
 // In-memory cache for fetched thumbnail object URLs and failed refs
@@ -32,6 +34,8 @@ export function FileThumbnail({
   thumbnailsEnabled,
   size = 'lg',
   className,
+  imageClassName,
+  fallbackIconClassName,
 }: FileThumbnailProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(() => typeof IntersectionObserver === 'undefined');
@@ -93,7 +97,7 @@ export function FileThumbnail({
         <img
           src={thumbnailUrl}
           alt={entry.name}
-          className="h-full w-full object-contain rounded-md drop-shadow-xs transition-opacity duration-150"
+          className={`transition-opacity duration-150 ${imageClassName || 'h-full w-full object-contain rounded-md drop-shadow-xs'}`}
           loading="lazy"
         />
       </div>
@@ -106,7 +110,7 @@ export function FileThumbnail({
         name={entry.name}
         mimeType={entry.mime_type}
         isDir={entry.kind === 'directory'}
-        className={className || (size === 'sm' ? 'h-5 w-5' : 'h-12 w-12')}
+        className={fallbackIconClassName || className || (size === 'sm' ? 'h-5 w-5' : 'h-12 w-12')}
       />
     </div>
   );

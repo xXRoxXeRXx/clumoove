@@ -627,7 +627,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             openEntry(entry);
                           }
                         }}
-                        className={`group relative flex flex-col items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 text-center transition-all hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs ${
+                        className={`group relative flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden transition-all hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs ${
                           isInteractive ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]' : 'opacity-70'
                         }`}
                         title={entry.name}
@@ -640,14 +640,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                               void download(entry);
                             }}
                             disabled={downloadingRef !== null}
-                            className="ui-icon-button absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-[var(--color-bg-tertiary)]/90 hover:bg-[var(--color-hover)] rounded-md z-10"
+                            className="ui-icon-button absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-[var(--color-bg-primary)]/90 hover:bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] rounded-md z-10 backdrop-blur-xs shadow-xs border border-[var(--color-border)]"
                             aria-label={t('files.download', { name: entry.name })}
                             title={t('files.download', { name: entry.name })}
                           >
                             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
-                        <div className="my-2 flex items-center justify-center h-14 w-14">
+                        <div className="relative w-full aspect-[4/3] flex items-center justify-center bg-[var(--color-bg-tertiary)]/40 overflow-hidden">
                           <FileThumbnail
                             apiUrl={apiUrl}
                             token={token}
@@ -655,10 +655,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             entry={entry}
                             thumbnailsEnabled={capabilities.thumbnails}
                             size="lg"
-                            className="h-12 w-12 shrink-0 drop-shadow-xs"
+                            className="w-full h-full flex items-center justify-center"
+                            imageClassName="w-full h-full object-cover"
+                            fallbackIconClassName="h-12 w-12 drop-shadow-xs"
                           />
                         </div>
-                        <div className="w-full min-w-0 flex flex-col items-center mt-1">
+                        <div className="w-full min-w-0 p-2.5 flex flex-col text-left border-t border-[var(--color-border)]/60 bg-[var(--color-bg-secondary)]">
                           <span className="w-full truncate text-xs font-medium text-[var(--color-text-primary)]">
                             {entry.name}
                           </span>
