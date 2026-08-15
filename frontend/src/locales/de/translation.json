@@ -603,6 +603,7 @@
     "up": "Zum übergeordneten Ordner",
     "listUnavailable": "Das Durchsuchen wird von dieser Verbindung nicht unterstützt.",
     "emptyDirectory": "Dieser Ordner ist leer.",
+    "loadMore": "Mehr laden",
     "name": "Name",
     "size": "Größe",
     "modified": "Geändert",

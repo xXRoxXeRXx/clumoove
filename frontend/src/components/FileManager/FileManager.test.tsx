@@ -222,7 +222,7 @@ describe('FileManager component', () => {
     expect(onProfileChange).toHaveBeenCalledWith('profile-2');
   });
 
-  it('navigates with next and previous cursor pagination', async () => {
+  it('loads more entries with cursor pagination and appends to the list', async () => {
     await act(async () => {
       root.render(
         <FileManager
@@ -237,13 +237,14 @@ describe('FileManager component', () => {
 
     await flushAsync();
 
-    const nextBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Next page') || b.textContent?.includes('Nächste Seite'));
-    expect(nextBtn).toBeDefined();
-    expect(nextBtn?.disabled).toBe(false);
+    expect(container.textContent).toContain('report.txt');
 
-    // Click Next Page
+    const loadMoreBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Load more') || b.textContent?.includes('Mehr laden'));
+    expect(loadMoreBtn).toBeDefined();
+
+    // Click Load more
     await act(async () => {
-      nextBtn?.click();
+      loadMoreBtn?.click();
       await Promise.resolve();
     });
     await flushAsync();
@@ -256,23 +257,13 @@ describe('FileManager component', () => {
       'cursor-page-2',
       expect.any(AbortSignal)
     );
+    // Both initial and appended items are in the view
+    expect(container.textContent).toContain('report.txt');
     expect(container.textContent).toContain('archive.zip');
 
-    // Next page should now not be rendered (no next_cursor), and Previous page enabled
-    const nextBtnPage2 = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Next page') || b.textContent?.includes('Nächste Seite'));
-    expect(nextBtnPage2).toBeUndefined();
-    const prevBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Previous page') || b.textContent?.includes('Vorherige Seite'));
-    expect(prevBtn).toBeDefined();
-    expect(prevBtn?.disabled).toBe(false);
-
-    // Click Previous Page
-    await act(async () => {
-      prevBtn?.click();
-      await Promise.resolve();
-    });
-    await flushAsync();
-
-    expect(container.textContent).toContain('report.txt');
+    // Load more button should now not be rendered (no next_cursor)
+    const loadMoreBtnPage2 = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Load more') || b.textContent?.includes('Mehr laden'));
+    expect(loadMoreBtnPage2).toBeUndefined();
   });
 
   it('navigates into directory and up via breadcrumbs', async () => {

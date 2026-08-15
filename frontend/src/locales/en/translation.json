@@ -603,6 +603,7 @@
     "up": "Go to parent folder",
     "listUnavailable": "Browsing is not supported by this connection.",
     "emptyDirectory": "This folder is empty.",
+    "loadMore": "Load more",
     "name": "Name",
     "size": "Size",
     "modified": "Modified",

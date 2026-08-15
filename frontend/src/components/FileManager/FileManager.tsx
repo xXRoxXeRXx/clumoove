@@ -3,7 +3,6 @@ import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
   ArrowPathIcon,
-  ArrowRightIcon,
   ArrowUpIcon,
   ChevronRightIcon,
   DocumentIcon,
@@ -65,10 +64,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [profilesLoading, setProfilesLoading] = useState(true);
   const [entries, setEntries] = useState<FileEntry[]>([]);
   const [entriesLoading, setEntriesLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [capabilities, setCapabilities] = useState<FileCapabilities>(unavailableCapabilities);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
-  const [cursor, setCursor] = useState<string | undefined>();
-  const [cursorHistory, setCursorHistory] = useState<string[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [downloadingRef, setDownloadingRef] = useState<string | null>(null);
@@ -76,12 +74,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const profileRequestRef = useRef<AbortController | null>(null);
   const entriesRequestRef = useRef<AbortController | null>(null);
   const latestEntriesRequestRef = useRef(0);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const currentBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
   const currentRef = currentBreadcrumb?.ref ?? null;
 
-  const loadEntries = useCallback(async (parentRef: string | null, nextPageCursor?: string) => {
+  const loadEntries = useCallback(async (parentRef: string | null) => {
     if (!profileId || !capabilities.browse) return;
     entriesRequestRef.current?.abort();
     const controller = new AbortController();
@@ -90,7 +89,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     latestEntriesRequestRef.current = request;
     setEntriesLoading(true);
     setError('');
-    const result = await listFileEntries(apiUrl, token, profileId, parentRef, nextPageCursor, controller.signal);
+    const result = await listFileEntries(apiUrl, token, profileId, parentRef, undefined, controller.signal);
     if (controller.signal.aborted || latestEntriesRequestRef.current !== request) return;
     if (result.ok === false) {
       setEntries([]);
@@ -99,10 +98,23 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     } else {
       setEntries(result.data.entries ?? []);
       setNextCursor(result.data.next_cursor ?? null);
-      setCursor(nextPageCursor);
     }
     setEntriesLoading(false);
   }, [apiUrl, capabilities.browse, profileId, token, translateApiError]);
+
+  const loadMore = useCallback(async () => {
+    if (!profileId || !capabilities.browse || !nextCursor || entriesLoading || loadingMore) return;
+    setLoadingMore(true);
+    const controller = new AbortController();
+    const result = await listFileEntries(apiUrl, token, profileId, currentRef, nextCursor, controller.signal);
+    if (result.ok === false) {
+      setError(translateApiError(result.errorCode));
+    } else {
+      setEntries((current) => [...current, ...(result.data.entries ?? [])]);
+      setNextCursor(result.data.next_cursor ?? null);
+    }
+    setLoadingMore(false);
+  }, [apiUrl, capabilities.browse, currentRef, entriesLoading, loadingMore, nextCursor, profileId, token, translateApiError]);
 
   const loadProfiles = useCallback(async () => {
     profileRequestRef.current?.abort();
@@ -134,8 +146,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     const timeoutId = window.setTimeout(() => {
       setEntries([]);
       setNextCursor(null);
-      setCursor(undefined);
-      setCursorHistory([]);
       setError('');
       entriesRequestRef.current?.abort();
       if (!selectedProfile) {
@@ -167,9 +177,27 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   useEffect(() => {
     if (!selectedProfile || !capabilities.browse || breadcrumbs.length === 0) return;
-    const timeoutId = window.setTimeout(() => void loadEntries(currentRef, cursor), 0);
+    const timeoutId = window.setTimeout(() => void loadEntries(currentRef), 0);
     return () => window.clearTimeout(timeoutId);
-  }, [breadcrumbs.length, capabilities.browse, currentRef, cursor, loadEntries, selectedProfile]);
+  }, [breadcrumbs.length, capabilities.browse, currentRef, loadEntries, selectedProfile]);
+
+  useEffect(() => {
+    if (!nextCursor || entriesLoading || loadingMore || !capabilities.browse) return;
+    const target = sentinelRef.current;
+    if (!target || typeof IntersectionObserver === 'undefined') return;
+
+    const observer = new IntersectionObserver(
+      (observedEntries) => {
+        if (observedEntries[0]?.isIntersecting) {
+          void loadMore();
+        }
+      },
+      { rootMargin: '250px' }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [capabilities.browse, entriesLoading, loadMore, loadingMore, nextCursor]);
 
   const selectProfile = (id: string) => {
     onProfileChange(id);
@@ -177,8 +205,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   const openDirectory = (entry: FileEntry) => {
     if (entry.kind !== 'directory' || !capabilities.browse || entriesLoading) return;
-    setCursorHistory([]);
-    setCursor(undefined);
     setBreadcrumbs((current) => [...current, { ref: entry.ref, name: entry.name }]);
   };
 
@@ -194,35 +220,17 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   const goUp = () => {
     if (breadcrumbs.length <= 1 || entriesLoading) return;
-    setCursorHistory([]);
-    setCursor(undefined);
     setBreadcrumbs((current) => current.slice(0, -1));
   };
 
   const refresh = () => {
     if (!capabilities.browse || entriesLoading) return;
-    void loadEntries(currentRef, cursor);
+    void loadEntries(currentRef);
   };
 
   const goToBreadcrumb = (index: number) => {
     if (entriesLoading || index === breadcrumbs.length - 1) return;
-    setCursorHistory([]);
-    setCursor(undefined);
     setBreadcrumbs((current) => current.slice(0, index + 1));
-  };
-
-  const nextPage = () => {
-    if (!nextCursor || entriesLoading) return;
-    if (cursor) setCursorHistory((current) => [...current, cursor]);
-    else setCursorHistory((current) => [...current, '']);
-    setCursor(nextCursor);
-  };
-
-  const previousPage = () => {
-    if (cursorHistory.length === 0 || entriesLoading) return;
-    const previous = cursorHistory[cursorHistory.length - 1];
-    setCursorHistory((current) => current.slice(0, -1));
-    setCursor(previous || undefined);
   };
 
   const download = async (entry: FileEntry) => {
@@ -241,9 +249,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   const uploadCompleted = (completedProfileID: string) => {
     if (completedProfileID !== profileId) return;
-    setCursorHistory([]);
-    setCursor(undefined);
-    void loadEntries(currentRef, undefined);
+    void loadEntries(currentRef);
   };
 
   return (
@@ -382,28 +388,18 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 </div>
               )}
 
-              {(cursorHistory.length > 0 || Boolean(nextCursor)) && (
-                <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] p-3">
-                  {cursorHistory.length > 0 && (
+              {nextCursor && (
+                <div ref={sentinelRef} className="flex justify-center p-4 border-t border-[var(--color-border)]">
+                  {loadingMore ? (
+                    <LoadingIndicator label={t('common.loading')} size="sm" />
+                  ) : (
                     <button
                       type="button"
-                      onClick={previousPage}
-                      disabled={entriesLoading}
-                      className="ui-button-secondary inline-flex items-center gap-1 px-3 py-2 text-sm"
+                      onClick={() => void loadMore()}
+                      className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                     >
-                      <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
-                      {t('common.previousPage')}
-                    </button>
-                  )}
-                  {Boolean(nextCursor) && (
-                    <button
-                      type="button"
-                      onClick={nextPage}
-                      disabled={entriesLoading}
-                      className="ui-button-secondary inline-flex items-center gap-1 px-3 py-2 text-sm"
-                    >
-                      {t('common.nextPage')}
-                      <ArrowRightIcon className="h-4 w-4" aria-hidden="true" />
+                      <ArrowPathIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                      {t('files.loadMore')}
                     </button>
                   )}
                 </div>
