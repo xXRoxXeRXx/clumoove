@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { createDownloadTicket, type FileEntry } from '../../api/files';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useApiError } from '../../utils/apiError';
+import { FileIcon } from '../FileIcon';
 import { canPreview, previewKindFor, previewLimit } from './filePreview';
 import DocxWorker from './docxPreview.worker.ts?worker';
 import XlsxWorker from './xlsxPreview.worker.ts?worker';
@@ -158,7 +159,10 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, onClose, on
     <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-0 sm:p-5" role="presentation">
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="file-preview-title" tabIndex={-1} className="flex h-full w-full flex-col bg-[var(--color-bg-primary)] sm:rounded-lg overflow-hidden border border-[var(--color-border)] shadow-2xl">
         <header className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 shrink-0 sm:rounded-t-lg">
-          <h2 id="file-preview-title" className="min-w-0 truncate text-base font-semibold text-[var(--color-text-primary)]">{t('files.previewTitle', { name: entry.name })}</h2>
+          <div className="flex min-w-0 items-center gap-2">
+            <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
+            <h2 id="file-preview-title" className="min-w-0 truncate text-base font-semibold text-[var(--color-text-primary)]">{t('files.previewTitle', { name: entry.name })}</h2>
+          </div>
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => onDownload(entry)} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.download', { name: entry.name })} title={t('files.download', { name: entry.name })}><ArrowDownTrayIcon className="h-5 w-5" aria-hidden="true" /></button>
             <button ref={closeRef} type="button" onClick={onClose} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('common.close')} title={t('common.close')}><XMarkIcon className="h-5 w-5" aria-hidden="true" /></button>

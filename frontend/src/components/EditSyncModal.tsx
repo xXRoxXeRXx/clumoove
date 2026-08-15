@@ -1,20 +1,13 @@
 import React, { useState, useEffect, useCallback, useId, useRef } from "react";
 import {
-  ArchiveBoxIcon as Archive,
   ArrowPathIcon as RefreshCw,
   CheckIcon as Check,
   ChevronDownIcon as ChevronDown,
   ChevronRightIcon as ChevronRight,
-  CodeBracketIcon as FileCode,
-  DocumentIcon as File,
-  DocumentTextIcon as FileText,
   ExclamationTriangleIcon as AlertTriangle,
-  FilmIcon as Film,
   FolderIcon as Folder,
   FolderOpenIcon as FolderOpen,
   FolderPlusIcon as FolderPlus,
-  MusicalNoteIcon as Music,
-  PhotoIcon as ImageIcon,
   XMarkIcon as X,
 } from "@heroicons/react/24/outline";
 import { useTranslation } from "react-i18next";
@@ -24,6 +17,7 @@ import { useApiError } from "../utils/apiError";
 import { useFormat } from "../utils/format";
 import { apiFetch } from "../utils/apiClient";
 import { logger } from "../utils/logger";
+import { FileIcon } from "./FileIcon";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { SyncOptionsForm } from "./SyncOptionsForm";
 import { Button } from "./Button";
@@ -35,113 +29,6 @@ interface EditSyncModalProps {
   onClose: () => void;
   onSuccess: (updates: Partial<Pick<SyncJob, "selected_paths" | "target_dir" | "conflict_strategy" | "direction" | "delete_propagation" | "interval_minutes" | "bandwidth_limit_mbps">>, partial: boolean) => void;
 }
-
-const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
-  if (!fileName) return <File className={`${className} ui-file-default`} />;
-  if (fileName.endsWith("/"))
-    return <Folder className={`${className} ui-file-folder`} />;
-
-  const lastSegment = fileName.split("/").pop() || "";
-  if (!lastSegment.includes("."))
-    return <File className={`${className} ui-file-default`} />;
-
-  const ext = lastSegment.split(".").pop()?.toLowerCase() || "";
-
-  if (
-    [
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "webp",
-      "svg",
-      "bmp",
-      "ico",
-      "tiff",
-      "heic",
-      "raw",
-      "psd",
-      "ai",
-    ].includes(ext)
-  ) {
-    return <ImageIcon className={`${className} ui-file-image`} />;
-  }
-  if (
-    [
-      "mp4",
-      "mkv",
-      "avi",
-      "mov",
-      "webm",
-      "m4v",
-      "flv",
-      "wmv",
-      "mpeg",
-      "3gp",
-    ].includes(ext)
-  ) {
-    return <Film className={`${className} ui-file-video`} />;
-  }
-  if (
-    ["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "alac"].includes(ext)
-  ) {
-    return <Music className={`${className} ui-file-audio`} />;
-  }
-  if (
-    [
-      "pdf",
-      "doc",
-      "docx",
-      "xls",
-      "xlsx",
-      "ppt",
-      "pptx",
-      "odt",
-      "ods",
-      "odp",
-      "rtf",
-      "txt",
-      "csv",
-      "md",
-    ].includes(ext)
-  ) {
-    return <FileText className={`${className} ui-file-document`} />;
-  }
-  if (
-    [
-      "js",
-      "ts",
-      "jsx",
-      "tsx",
-      "json",
-      "xml",
-      "html",
-      "css",
-      "scss",
-      "py",
-      "go",
-      "rs",
-      "java",
-      "c",
-      "cpp",
-      "h",
-      "sh",
-      "yaml",
-      "yml",
-      "sql",
-      "env",
-    ].includes(ext)
-  ) {
-    return <FileCode className={`${className} ui-file-default`} />;
-  }
-  if (
-    ["zip", "tar", "gz", "7z", "rar", "bz2", "xz", "iso", "dmg"].includes(ext)
-  ) {
-    return <Archive className={`${className} ui-file-archive`} />;
-  }
-
-  return <File className={`${className} ui-file-default`} />;
-};
 
 const sortEntries = (entries: CloudFile[]): CloudFile[] => {
   return [...entries].sort((a, b) => {
@@ -496,7 +383,7 @@ export const EditSyncModal: React.FC<EditSyncModalProps> = ({
                 <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />
               )
             ) : (
-              getFileIcon(file.name, "w-5 h-5")
+              <FileIcon name={file.name} className="w-5 h-5 shrink-0" />
             )}
           </span>
 

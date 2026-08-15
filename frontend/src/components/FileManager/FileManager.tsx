@@ -5,7 +5,6 @@ import {
   ArrowPathIcon,
   ArrowUpIcon,
   ChevronRightIcon,
-  DocumentIcon,
   FolderIcon,
   WrenchScrewdriverIcon,
 } from '@heroicons/react/24/outline';
@@ -15,6 +14,7 @@ import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
+import { FileIcon } from '../FileIcon';
 import { FileUploadControl } from './FileUploadControl';
 import { canPreview } from './filePreview';
 
@@ -370,7 +370,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                         <tr key={entry.ref} className="border-t border-[var(--color-border)]">
                           <td data-label={t('files.name')} className="min-w-56 px-3 py-2">
                             <button type="button" onClick={() => openEntry(entry)} disabled={(entry.kind === 'directory' && (!capabilities.browse || entriesLoading)) || (entry.kind === 'file' && !canPreview(entry))} className={`inline-flex max-w-full items-center gap-2 truncate text-left ${entry.kind === 'directory' || canPreview(entry) ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}>
-                              {entry.kind === 'directory' ? <FolderIcon className="h-5 w-5 shrink-0 text-[var(--color-file-folder)]" aria-hidden="true" /> : <DocumentIcon className="h-5 w-5 shrink-0 text-[var(--color-file-default)]" aria-hidden="true" />}
+                              <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
                               <span className="truncate">{entry.name}</span>
                             </button>
                           </td>

@@ -1,33 +1,26 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ArchiveBoxIcon as Archive,
   CheckIcon as Check,
   ChevronDownIcon as ChevronDown,
   ChevronRightIcon as ChevronRight,
-  CodeBracketIcon as FileCode,
-  DocumentIcon as File,
-  DocumentTextIcon as FileText,
   EyeIcon as Eye,
   FolderIcon as Folder,
   FolderOpenIcon as FolderOpen,
   RectangleStackIcon as FolderTree,
   MagnifyingGlassIcon as Search,
-  PhotoIcon as ImageIcon,
-  FilmIcon as Film,
-  MusicalNoteIcon as Music,
   ClipboardDocumentIcon as Copy,
   Squares2X2Icon as Layers,
   ListBulletIcon as List,
   XMarkIcon as X,
 } from '@heroicons/react/24/outline';
+import { FileIcon } from './FileIcon';
+import { getFileCategory, type FileCategory } from '../utils/fileIcons';
 
 interface SelectedPathsViewerProps {
   paths?: string[];
   maxVisible?: number;
 }
-
-type PathType = 'folder' | 'image' | 'video' | 'audio' | 'document' | 'code' | 'archive' | 'file';
 
 interface TreeNode {
   name: string;
@@ -38,56 +31,7 @@ interface TreeNode {
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-const getPathType = (path: string): PathType => {
-  if (!path) return 'file';
-  if (path.endsWith('/')) return 'folder';
-  
-  const lastSegment = path.split('/').pop() || '';
-  if (!lastSegment.includes('.')) return 'folder';
-
-  const ext = lastSegment.split('.').pop()?.toLowerCase() || '';
-
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff', 'heic', 'raw', 'psd', 'ai'].includes(ext)) {
-    return 'image';
-  }
-  if (['mp4', 'mkv', 'avi', 'mov', 'webm', 'm4v', 'flv', 'wmv', 'mpeg', '3gp'].includes(ext)) {
-    return 'video';
-  }
-  if (['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a', 'wma', 'alac'].includes(ext)) {
-    return 'audio';
-  }
-  if (['pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'csv', 'md', 'txt', 'odt', 'ods', 'odp', 'rtf'].includes(ext)) {
-    return 'document';
-  }
-  if (['js', 'ts', 'jsx', 'tsx', 'json', 'xml', 'html', 'css', 'scss', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'sh', 'yaml', 'yml', 'sql', 'env'].includes(ext)) {
-    return 'code';
-  }
-  if (['zip', 'tar', 'gz', '7z', 'rar', 'bz2', 'xz', 'iso', 'dmg'].includes(ext)) {
-    return 'archive';
-  }
-  return 'file';
-};
-
-const getPathIcon = (type: PathType, className = "w-3.5 h-3.5 shrink-0") => {
-  switch (type) {
-    case 'folder':
-      return <Folder className={`${className} ui-file-folder`} />;
-    case 'image':
-      return <ImageIcon className={`${className} ui-file-image`} />;
-    case 'video':
-      return <Film className={`${className} ui-file-video`} />;
-    case 'audio':
-      return <Music className={`${className} ui-file-audio`} />;
-    case 'document':
-      return <FileText className={`${className} ui-file-document`} />;
-    case 'code':
-      return <FileCode className={`${className} ui-file-folder`} />;
-    case 'archive':
-      return <Archive className={`${className} ui-file-archive`} />;
-    default:
-      return <File className={`${className} ui-file-default`} />;
-  }
-};
+const getPathType = (path: string): FileCategory => getFileCategory(path);
 
 const buildTreeFromPaths = (paths: string[], lng: string): TreeNode[] => {
   const rootNodes: TreeNode[] = [];
@@ -322,7 +266,6 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
 
   const renderTreeNode = (node: TreeNode, depth: number): React.ReactNode => {
     const isExpanded = expandedPaths[node.path] !== false;
-    const type = getPathType(node.path);
 
     return (
       <div key={node.path} className="select-none font-sans text-xs">
@@ -346,7 +289,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
             </span>
           ) : <span className="w-4 h-4" aria-hidden="true" />}
           <span className="shrink-0" aria-hidden="true">
-            {node.isDir ? (isExpanded ? <FolderOpen className="w-4 h-4 text-[var(--color-text-secondary)]" /> : <Folder className="w-4 h-4 text-[var(--color-text-secondary)]" />) : getPathIcon(type, 'w-4 h-4')}
+            {node.isDir ? (isExpanded ? <FolderOpen className="w-4 h-4 text-[var(--color-text-secondary)]" /> : <Folder className="w-4 h-4 text-[var(--color-text-secondary)]" />) : <FileIcon name={node.name} className="w-4 h-4 shrink-0" />}
           </span>
           <span className="text-[11.5px] font-mono text-[var(--color-text-primary)] truncate flex-grow leading-normal py-0.5">{node.name}</span>
         </div>
@@ -366,14 +309,13 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
         {hasPaths ? (
           <>
             {visiblePaths.map((p) => {
-              const type = getPathType(p);
               return (
                 <span
                   key={p}
                   className="ui-card inline-flex max-w-[200px] items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono text-[var(--color-text-primary)] truncate"
                   title={p}
                 >
-                  {getPathIcon(type)}
+                  <FileIcon name={p} className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">{p}</span>
                 </span>
               );
@@ -564,7 +506,7 @@ export const SelectedPathsViewer: React.FC<SelectedPathsViewerProps> = ({
                       className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/50 hover:bg-[var(--color-bg-secondary)] transition-colors group"
                     >
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                        {getPathIcon(type, "w-4 h-4 shrink-0")}
+                        <FileIcon name={p} className="w-4 h-4 shrink-0" />
                         <span className="text-xs font-mono text-[var(--color-text-primary)] truncate break-all select-all">
                           {p}
                         </span>

@@ -7,7 +7,6 @@ import React, {
   useRef,
 } from "react";
 import {
-  ArchiveBoxIcon as Archive,
   ArrowLeftIcon as ArrowLeft,
   ArrowPathIcon as RefreshCw,
   BookOpenIcon as BookOpen,
@@ -15,16 +14,10 @@ import {
   CheckIcon as Check,
   ChevronDownIcon as ChevronDown,
   ChevronRightIcon as ChevronRight,
-  CodeBracketIcon as FileCode,
-  DocumentIcon as File,
-  DocumentTextIcon as FileText,
   ExclamationTriangleIcon as AlertTriangle,
-  FilmIcon as Film,
   FolderIcon as Folder,
   FolderOpenIcon as FolderOpen,
   FolderPlusIcon as FolderPlus,
-  MusicalNoteIcon as Music,
-  PhotoIcon as ImageIcon,
   PlayIcon as Play,
   XMarkIcon as X,
 } from "@heroicons/react/24/outline";
@@ -34,6 +27,7 @@ import { useFormat } from "../utils/format";
 import { useApiError } from "../utils/apiError";
 import { apiFetch } from "../utils/apiClient";
 import { logger } from "../utils/logger";
+import { FileIcon } from "./FileIcon";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { Button } from "./Button";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -75,113 +69,6 @@ const isOneDrivePersonalVault = (file: CloudFile) =>
 
 const isAbortError = (error: unknown) =>
   error instanceof DOMException && error.name === "AbortError";
-
-const getFileIcon = (fileName: string, className = "w-5 h-5 shrink-0") => {
-  if (!fileName) return <File className={`${className} ui-file-default`} />;
-  if (fileName.endsWith("/"))
-    return <Folder className={`${className} ui-file-folder`} />;
-
-  const lastSegment = fileName.split("/").pop() || "";
-  if (!lastSegment.includes("."))
-    return <File className={`${className} ui-file-default`} />;
-
-  const ext = lastSegment.split(".").pop()?.toLowerCase() || "";
-
-  if (
-    [
-      "jpg",
-      "jpeg",
-      "png",
-      "gif",
-      "webp",
-      "svg",
-      "bmp",
-      "ico",
-      "tiff",
-      "heic",
-      "raw",
-      "psd",
-      "ai",
-    ].includes(ext)
-  ) {
-    return <ImageIcon className={`${className} ui-file-image`} />;
-  }
-  if (
-    [
-      "mp4",
-      "mkv",
-      "avi",
-      "mov",
-      "webm",
-      "m4v",
-      "flv",
-      "wmv",
-      "mpeg",
-      "3gp",
-    ].includes(ext)
-  ) {
-    return <Film className={`${className} ui-file-video`} />;
-  }
-  if (
-    ["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "alac"].includes(ext)
-  ) {
-    return <Music className={`${className} ui-file-audio`} />;
-  }
-  if (
-    [
-      "pdf",
-      "doc",
-      "docx",
-      "xls",
-      "xlsx",
-      "ppt",
-      "pptx",
-      "odt",
-      "ods",
-      "odp",
-      "rtf",
-      "txt",
-      "csv",
-      "md",
-    ].includes(ext)
-  ) {
-    return <FileText className={`${className} ui-file-document`} />;
-  }
-  if (
-    [
-      "js",
-      "ts",
-      "jsx",
-      "tsx",
-      "json",
-      "xml",
-      "html",
-      "css",
-      "scss",
-      "py",
-      "go",
-      "rs",
-      "java",
-      "c",
-      "cpp",
-      "h",
-      "sh",
-      "yaml",
-      "yml",
-      "sql",
-      "env",
-    ].includes(ext)
-  ) {
-    return <FileCode className={`${className} ui-file-folder`} />;
-  }
-  if (
-    ["zip", "tar", "gz", "7z", "rar", "bz2", "xz", "iso", "dmg"].includes(ext)
-  ) {
-    return <Archive className={`${className} ui-file-archive`} />;
-  }
-
-  return <File className={`${className} ui-file-default`} />;
-};
 
 interface SourceTreeRowProps {
   file: CloudFile;
@@ -268,7 +155,7 @@ const SourceTreeRow = React.memo(function SourceTreeRow({
       </button>
 
       <span className="shrink-0">
-        {file.is_dir ? (isExpanded ? <FolderOpen className="w-5 h-5 text-[var(--color-text-secondary)]" /> : <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />) : getFileIcon(file.name, "w-5 h-5")}
+        {file.is_dir ? (isExpanded ? <FolderOpen className="w-5 h-5 text-[var(--color-text-secondary)]" /> : <Folder className="w-5 h-5 text-[var(--color-text-secondary)]" />) : <FileIcon name={file.name} className="w-5 h-5 shrink-0" />}
       </span>
       <span className={`text-[12px] truncate flex-grow leading-normal py-0.5 ${isPersonalVault ? "text-[var(--color-text-muted)]" : isSelected ? "text-[var(--color-text-primary)] font-bold" : "text-[var(--color-text-primary)]"}`}>
         {file.name}

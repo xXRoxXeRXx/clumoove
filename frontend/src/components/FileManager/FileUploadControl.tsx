@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { uploadFile, type FileCapabilities, type UploadConflictStrategy } from '../../api/files';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
+import { FileIcon } from '../FileIcon';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 type QueueTask = {
@@ -137,6 +138,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
           <ul className="space-y-2">
             {tasks.map((task) => (
               <li key={task.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <FileIcon name={task.file.name} mimeType={task.file.type} className="h-4 w-4 shrink-0" />
                 <span className="min-w-0 flex-1 truncate">{task.file.name}</span>
                 <span className="text-[var(--color-text-secondary)]">
                   {task.status === 'uploading' ? `${Math.round(task.loaded / Math.max(task.file.size, 1) * 100)}%` : t(`files.uploadStatus.${task.status}`)}
@@ -165,8 +167,10 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
               <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.uploadConflictDescription', { count: pending.length })}</p>
               <ul className="mt-3 max-h-32 overflow-auto text-sm">
                 {pending.map((file, index) => (
-                  <li key={`${file.name}-${file.lastModified}-${index}`}>
-                    {file.name} ({formatBytes(file.size)})
+                  <li key={`${file.name}-${file.lastModified}-${index}`} className="flex items-center gap-2 py-0.5">
+                    <FileIcon name={file.name} mimeType={file.type} className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{file.name}</span>
+                    <span className="text-[var(--color-text-secondary)] shrink-0">({formatBytes(file.size)})</span>
                   </li>
                 ))}
               </ul>
