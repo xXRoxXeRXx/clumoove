@@ -40,11 +40,13 @@ export function FileThumbnail({
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(() => typeof IntersectionObserver === 'undefined');
   const [fetchedUrl, setFetchedUrl] = useState<string | null>(null);
+  const [loadedKeys, setLoadedKeys] = useState<Record<string, boolean>>({});
 
   const shouldFetch = thumbnailsEnabled && isProbableThumbnailCandidate(entry);
   const cacheKey = `${profileId}:${entry.ref}:${size}`;
   const cachedUrl = shouldFetch ? (thumbnailBlobCache.get(cacheKey) ?? null) : null;
   const thumbnailUrl = cachedUrl ?? fetchedUrl;
+  const imageLoaded = !!loadedKeys[cacheKey];
 
   useEffect(() => {
     if (!shouldFetch || cachedUrl !== null || failedThumbnailCache.has(cacheKey) || isVisible) return;
@@ -91,27 +93,35 @@ export function FileThumbnail({
     };
   }, [apiUrl, cacheKey, cachedUrl, entry.ref, isVisible, profileId, shouldFetch, size, token]);
 
-  if (thumbnailUrl) {
-    return (
-      <div ref={containerRef} className={`relative flex items-center justify-center overflow-hidden ${className || ''}`}>
+  return (
+    <div ref={containerRef} className={`relative flex items-center justify-center overflow-hidden ${className || ''}`}>
+      {/* Background FileIcon: rendered smoothly and faded out once image is loaded */}
+      <div
+        className={`flex items-center justify-center transition-opacity duration-300 ease-out ${
+          imageLoaded ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        }`}
+      >
+        <FileIcon
+          name={entry.name}
+          mimeType={entry.mime_type}
+          isDir={entry.kind === 'directory'}
+          className={fallbackIconClassName || (size === 'sm' ? 'h-5 w-5' : 'h-12 w-12 drop-shadow-xs')}
+        />
+      </div>
+
+      {thumbnailUrl && (
         <img
           src={thumbnailUrl}
           alt={entry.name}
-          className={`transition-opacity duration-150 ${imageClassName || 'h-full w-full object-contain rounded-md drop-shadow-xs'}`}
+          onLoad={() => {
+            setLoadedKeys((prev) => (prev[cacheKey] ? prev : { ...prev, [cacheKey]: true }));
+          }}
+          className={`absolute inset-0 transition-opacity duration-300 ease-out ${
+            imageLoaded ? 'opacity-100' : 'opacity-0'
+          } ${imageClassName || 'h-full w-full object-contain rounded-md drop-shadow-xs'}`}
           loading="lazy"
         />
-      </div>
-    );
-  }
-
-  return (
-    <div ref={containerRef} className={`flex items-center justify-center ${className || ''}`}>
-      <FileIcon
-        name={entry.name}
-        mimeType={entry.mime_type}
-        isDir={entry.kind === 'directory'}
-        className={fallbackIconClassName || className || (size === 'sm' ? 'h-5 w-5' : 'h-12 w-12')}
-      />
+      )}
     </div>
   );
 }
