@@ -9,7 +9,9 @@ import {
   FileIcon,
   FolderIcon,
   FolderPlusIcon,
+  ListBulletIcon,
   ProviderIcon,
+  Squares2X2Icon,
   WrenchScrewdriverIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
@@ -79,6 +81,23 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [newDirName, setNewDirName] = useState('');
   const [creatingDir, setCreatingDir] = useState(false);
   const [createDirError, setCreateDirError] = useState('');
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
+    try {
+      const stored = localStorage.getItem('clumoove_file_manager_view_mode');
+      return stored === 'grid' ? 'grid' : 'list';
+    } catch {
+      return 'list';
+    }
+  });
+
+  const handleViewModeChange = (mode: 'list' | 'grid') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('clumoove_file_manager_view_mode', mode);
+    } catch {
+      // ignore storage errors
+    }
+  };
   const createDirDialogRef = useRef<HTMLDivElement>(null);
   const createDirCancelRef = useRef<HTMLButtonElement>(null);
   const profileRequestRef = useRef<AbortController | null>(null);
@@ -447,6 +466,36 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   </nav>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5" role="group" aria-label={t('files.viewMode')}>
+                    <button
+                      type="button"
+                      onClick={() => handleViewModeChange('list')}
+                      aria-pressed={viewMode === 'list'}
+                      aria-label={t('files.viewList')}
+                      title={t('files.viewList')}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        viewMode === 'list'
+                          ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-xs'
+                          : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                      }`}
+                    >
+                      <ListBulletIcon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleViewModeChange('grid')}
+                      aria-pressed={viewMode === 'grid'}
+                      aria-label={t('files.viewGrid')}
+                      title={t('files.viewGrid')}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        viewMode === 'grid'
+                          ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-xs'
+                          : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                      }`}
+                    >
+                      <Squares2X2Icon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
                   <FileUploadControl
                     apiUrl={apiUrl}
                     token={token}
@@ -490,7 +539,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 <div className="p-8 flex-1 flex items-center justify-center"><LoadingIndicator label={t('common.loading')} /></div>
               ) : entries.length === 0 ? (
                 <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.emptyDirectory')}</p>
-              ) : (
+              ) : viewMode === 'list' ? (
                 <div className="overflow-x-auto flex-1">
                   <table className="ui-table ui-responsive-table w-full table-fixed text-sm">
                     <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
@@ -551,6 +600,64 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       })}
                     </tbody>
                   </table>
+                </div>
+              ) : (
+                <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 flex-1 auto-rows-max" role="grid" aria-label={t('files.title')}>
+                  {entries.map((entry) => {
+                    const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || (entry.kind === 'file' && canPreview(entry));
+                    const canDownload = entry.kind === 'file' && entry.allowed_actions.includes('download') && capabilities.download;
+
+                    return (
+                      <div
+                        key={entry.ref}
+                        role="gridcell"
+                        tabIndex={isInteractive ? 0 : undefined}
+                        onClick={() => isInteractive && openEntry(entry)}
+                        onKeyDown={(e) => {
+                          if ((e.key === 'Enter' || e.key === ' ') && isInteractive) {
+                            e.preventDefault();
+                            openEntry(entry);
+                          }
+                        }}
+                        className={`group relative flex flex-col items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 text-center transition-all hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs ${
+                          isInteractive ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]' : 'opacity-70'
+                        }`}
+                        title={entry.name}
+                      >
+                        {canDownload && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void download(entry);
+                            }}
+                            disabled={downloadingRef !== null}
+                            className="ui-icon-button absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-[var(--color-bg-tertiary)]/90 hover:bg-[var(--color-hover)] rounded-md z-10"
+                            aria-label={t('files.download', { name: entry.name })}
+                            title={t('files.download', { name: entry.name })}
+                          >
+                            <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        )}
+                        <div className="my-2 flex items-center justify-center h-14 w-14">
+                          <FileIcon
+                            name={entry.name}
+                            mimeType={entry.mime_type}
+                            isDir={entry.kind === 'directory'}
+                            className="h-12 w-12 shrink-0 drop-shadow-xs"
+                          />
+                        </div>
+                        <div className="w-full min-w-0 flex flex-col items-center mt-1">
+                          <span className="w-full truncate text-xs font-medium text-[var(--color-text-primary)]">
+                            {entry.name}
+                          </span>
+                          <span className="text-[11px] text-[var(--color-text-secondary)] mt-0.5 truncate">
+                            {entry.kind === 'directory' ? t('files.directory') : formatBytes(entry.size)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 

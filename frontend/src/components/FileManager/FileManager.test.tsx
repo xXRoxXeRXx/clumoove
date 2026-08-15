@@ -89,6 +89,7 @@ describe('FileManager component', () => {
   const onOpenManager = vi.fn();
 
   beforeEach(async () => {
+    localStorage.clear();
     await i18n.changeLanguage('en');
     onProfileChange.mockReset();
     onBack.mockReset();
@@ -578,5 +579,148 @@ describe('FileManager component', () => {
     const nameCell = container.querySelector('tbody td[data-label="Name"]');
     expect(nameCell).not.toBeNull();
     expect(nameCell?.className).toContain('min-w-0');
+  });
+
+  it('toggles between list view and grid view and persists to localStorage', async () => {
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    // Default view should be list (table is present, grid is not)
+    expect(container.querySelector('table')).not.toBeNull();
+    expect(container.querySelector('[role="grid"]')).toBeNull();
+
+    // Switch to grid view
+    const gridBtn = container.querySelector('button[aria-label="Grid view"], button[title="Grid view"]');
+    expect(gridBtn).toBeDefined();
+
+    await act(async () => {
+      (gridBtn as HTMLButtonElement)?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    // Table should now be absent and grid present
+    expect(container.querySelector('table')).toBeNull();
+    const grid = container.querySelector('[role="grid"]');
+    expect(grid).not.toBeNull();
+
+    const cells = container.querySelectorAll('[role="gridcell"]');
+    expect(cells.length).toBe(2);
+    expect(cells[0].textContent).toContain('Documents');
+    expect(cells[1].textContent).toContain('report.txt');
+
+    expect(localStorage.getItem('clumoove_file_manager_view_mode')).toBe('grid');
+
+    // Switch back to list view
+    const listBtn = container.querySelector('button[aria-label="List view"], button[title="List view"]');
+    expect(listBtn).toBeDefined();
+
+    await act(async () => {
+      (listBtn as HTMLButtonElement)?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container.querySelector('table')).not.toBeNull();
+    expect(container.querySelector('[role="grid"]')).toBeNull();
+    expect(localStorage.getItem('clumoove_file_manager_view_mode')).toBe('list');
+  });
+
+  it('navigates into directory from grid view', async () => {
+    localStorage.setItem('clumoove_file_manager_view_mode', 'grid');
+
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    expect(container.querySelector('[role="grid"]')).not.toBeNull();
+
+    // Find directory card
+    const dirCard = Array.from(container.querySelectorAll('[role="gridcell"]')).find((cell) => cell.textContent?.includes('Documents'));
+    expect(dirCard).toBeDefined();
+
+    await act(async () => {
+      dirCard?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container.textContent).toContain('invoice.pdf');
+    expect(vi.mocked(listFileEntries)).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-dir-1',
+      undefined,
+      expect.any(AbortSignal)
+    );
+  });
+
+  it('downloads file directly from grid card download button', async () => {
+    localStorage.setItem('clumoove_file_manager_view_mode', 'grid');
+
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-123',
+        expires_at: '2026-08-15T12:00:00Z',
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    const fileCard = Array.from(container.querySelectorAll('[role="gridcell"]')).find((cell) => cell.textContent?.includes('report.txt'));
+    expect(fileCard).toBeDefined();
+
+    const downloadBtn = fileCard?.querySelector('button[aria-label="Download report.txt"]');
+    expect(downloadBtn).toBeDefined();
+
+    await act(async () => {
+      (downloadBtn as HTMLButtonElement)?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(vi.mocked(createDownloadTicket)).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-file-1',
+      expect.any(AbortSignal)
+    );
   });
 });
