@@ -685,7 +685,6 @@ describe('FileManager component', () => {
       status: 200,
       data: {
         download_url: '/api/files/download/ticket-123',
-        expires_at: '2026-08-15T12:00:00Z',
       },
     });
 
