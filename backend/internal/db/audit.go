@@ -46,6 +46,7 @@ const (
 	AuditSyncRecovered       AuditAction = "SYNC_RECOVERED"
 	AuditSyncUpdated         AuditAction = "SYNC_UPDATED"
 	AuditFileUploadCompleted AuditAction = "FILE_UPLOAD_COMPLETED"
+	AuditFileDirectoryCreated AuditAction = "FILE_DIRECTORY_CREATED"
 )
 
 type AuditEntry struct {

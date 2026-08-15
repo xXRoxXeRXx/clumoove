@@ -287,6 +287,7 @@ func main() {
 	mux.Handle("POST /api/files/profiles/{profileID}/entries:list", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesList)))
 	mux.Handle("POST /api/files/profiles/{profileID}/entries:resolve", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesResolve)))
 	mux.Handle("PUT /api/files/profiles/{profileID}/content", jwtMiddleware(http.HandlerFunc(server.handleFileUpload)))
+	mux.Handle("POST /api/files/profiles/{profileID}/directories", jwtMiddleware(http.HandlerFunc(server.handleFileDirectoryCreate)))
 	mux.Handle("POST /api/files/profiles/{profileID}/download-tickets", jwtMiddleware(http.HandlerFunc(server.handleFileDownloadTicket)))
 	mux.HandleFunc("GET /api/files/download/{ticket}", server.handleFileDownload)
 

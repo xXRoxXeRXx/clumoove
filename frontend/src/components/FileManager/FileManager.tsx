@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
@@ -7,15 +8,17 @@ import {
   ChevronRightIcon,
   FileIcon,
   FolderIcon,
+  FolderPlusIcon,
   ProviderIcon,
   WrenchScrewdriverIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { getFileCapabilities, listFileEntries, createDownloadTicket, type FileBreadcrumb, type FileCapabilities, type FileEntry } from '../../api/files';
+import { createDirectory, getFileCapabilities, listFileEntries, createDownloadTicket, type FileBreadcrumb, type FileCapabilities, type FileEntry } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl } from './FileUploadControl';
 import { canPreview } from './filePreview';
 
@@ -72,11 +75,25 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [error, setError] = useState('');
   const [downloadingRef, setDownloadingRef] = useState<string | null>(null);
   const [previewEntry, setPreviewEntry] = useState<FileEntry | null>(null);
+  const [isCreateDirOpen, setIsCreateDirOpen] = useState(false);
+  const [newDirName, setNewDirName] = useState('');
+  const [creatingDir, setCreatingDir] = useState(false);
+  const [createDirError, setCreateDirError] = useState('');
+  const createDirDialogRef = useRef<HTMLDivElement>(null);
+  const createDirCancelRef = useRef<HTMLButtonElement>(null);
   const profileRequestRef = useRef<AbortController | null>(null);
   const entriesRequestRef = useRef<AbortController | null>(null);
   const latestEntriesRequestRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const uploadRefreshTimeoutRef = useRef<number | null>(null);
+
+  useFocusTrap(createDirDialogRef, createDirCancelRef, () => {
+    if (!creatingDir) {
+      setIsCreateDirOpen(false);
+      setNewDirName('');
+      setCreateDirError('');
+    }
+  }, isCreateDirOpen);
 
   useEffect(() => {
     return () => {
@@ -308,6 +325,25 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     }, 500);
   }, [currentRef, loadEntries, profileId]);
 
+  const handleCreateDirectory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newDirName.trim();
+    if (!trimmed || creatingDir || !capabilities.mkdir) return;
+    setCreatingDir(true);
+    setCreateDirError('');
+    const result = await createDirectory(apiUrl, token, profileId, trimmed, currentRef);
+    if (result.ok === false) {
+      setCreateDirError(translateApiError(result.errorCode));
+      setCreatingDir(false);
+    } else {
+      setCreatingDir(false);
+      setIsCreateDirOpen(false);
+      setNewDirName('');
+      setCreateDirError('');
+      void loadEntries(currentRef);
+    }
+  };
+
   return (
     <section className="w-full space-y-5" aria-labelledby="file-manager-title">
       {/* Back Header */}
@@ -383,22 +419,66 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-3">
-                <nav className="flex min-w-0 flex-wrap items-center gap-1 text-sm" aria-label={t('files.breadcrumb')}>
-                  {breadcrumbs.map((breadcrumb, index) => (
-                    <span key={breadcrumb.ref ?? 'root'} className="inline-flex min-w-0 items-center gap-1">
-                      {index > 0 && <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
-                      <button type="button" onClick={() => goToBreadcrumb(index)} disabled={index === breadcrumbs.length - 1} className="max-w-44 truncate rounded px-1 py-0.5 disabled:text-[var(--color-text-primary)] hover:bg-[var(--color-hover)]">
-                        {breadcrumb.name}
-                      </button>
-                    </span>
-                  ))}
-                </nav>
-                 <div className="flex items-center gap-1">
-                   <FileUploadControl apiUrl={apiUrl} token={token} profileId={profileId} parentRef={currentRef} capabilities={capabilities} disabled={entriesLoading} onCompleted={uploadCompleted} />
-                   <button type="button" onClick={goUp} disabled={!capabilities.browse || breadcrumbs.length <= 1} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.up')} title={t('files.up')}>
+                <div className="flex min-w-0 items-center gap-1.5 flex-1">
+                  <button
+                    type="button"
+                    onClick={goUp}
+                    disabled={!capabilities.browse || breadcrumbs.length <= 1 || entriesLoading}
+                    className="ui-icon-button p-2 hover:bg-[var(--color-hover)] shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                    aria-label={t('files.up')}
+                    title={t('files.up')}
+                  >
                     <ArrowUpIcon className="h-4 w-4" aria-hidden="true" />
                   </button>
-                  <button type="button" onClick={refresh} disabled={!capabilities.browse} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.refresh')} title={t('files.refresh')}>
+                  <nav className="flex min-w-0 flex-wrap items-center gap-1 text-sm" aria-label={t('files.breadcrumb')}>
+                    {breadcrumbs.map((breadcrumb, index) => (
+                      <span key={breadcrumb.ref ?? 'root'} className="inline-flex min-w-0 items-center gap-1">
+                        {index > 0 && <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
+                        <button
+                          type="button"
+                          onClick={() => goToBreadcrumb(index)}
+                          disabled={index === breadcrumbs.length - 1}
+                          className="max-w-44 truncate rounded px-1 py-0.5 disabled:text-[var(--color-text-primary)] hover:bg-[var(--color-hover)]"
+                        >
+                          {breadcrumb.name}
+                        </button>
+                      </span>
+                    ))}
+                  </nav>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <FileUploadControl
+                    apiUrl={apiUrl}
+                    token={token}
+                    profileId={profileId}
+                    parentRef={currentRef}
+                    capabilities={capabilities}
+                    disabled={entriesLoading}
+                    onCompleted={uploadCompleted}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreateDirOpen(true);
+                      setNewDirName('');
+                      setCreateDirError('');
+                    }}
+                    disabled={entriesLoading || !capabilities.mkdir}
+                    className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                    title={!capabilities.mkdir ? t('files.mkdirUnavailable') : t('files.newFolder')}
+                    aria-label={t('files.newFolder')}
+                  >
+                    <FolderPlusIcon className="h-4 w-4" aria-hidden="true" />
+                    <span className="hidden sm:inline">{t('files.newFolder')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={refresh}
+                    disabled={!capabilities.browse}
+                    className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                    aria-label={t('files.refresh')}
+                    title={t('files.refresh')}
+                  >
                     <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
@@ -412,33 +492,63 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.emptyDirectory')}</p>
               ) : (
                 <div className="overflow-x-auto flex-1">
-                  <table className="ui-table ui-responsive-table w-full text-sm">
+                  <table className="ui-table ui-responsive-table w-full table-fixed text-sm">
                     <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
                       <tr>
                         <th scope="col" className="px-3 py-2 font-medium">{t('files.name')}</th>
-                        <th scope="col" className="px-3 py-2 font-medium">{t('files.size')}</th>
-                        <th scope="col" className="px-3 py-2 font-medium">{t('files.modified')}</th>
-                        <th scope="col" className="px-3 py-2 font-medium"><span className="sr-only">{t('files.actions')}</span></th>
+                        <th scope="col" className="w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.size')}</th>
+                        <th scope="col" className="w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.modified')}</th>
+                        <th scope="col" className="w-14 sm:w-16 px-3 py-2 font-medium text-right shrink-0"><span className="sr-only">{t('files.actions')}</span></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {entries.map((entry) => (
-                        <tr key={entry.ref} className="border-t border-[var(--color-border)] hover:bg-[var(--color-hover)] transition-colors">
-                          <td data-label={t('files.name')} className="min-w-56 px-3 py-2">
-                            <button type="button" onClick={() => openEntry(entry)} disabled={(entry.kind === 'directory' && (!capabilities.browse || entriesLoading)) || (entry.kind === 'file' && !canPreview(entry))} className={`inline-flex max-w-full items-center gap-2 truncate text-left ${entry.kind === 'directory' || canPreview(entry) ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}>
-                              <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
-                              <span className="truncate">{entry.name}</span>
-                            </button>
-                          </td>
-                          <td data-label={t('files.size')} className="px-3 py-2 text-[var(--color-text-secondary)]">{entry.kind === 'directory' ? t('files.directory') : formatBytes(entry.size)}</td>
-                          <td data-label={t('files.modified')} className="px-3 py-2 text-[var(--color-text-secondary)]">{entry.modified_at ? formatDateTime(entry.modified_at) : t('common.unspecified')}</td>
-                          <td data-label={t('files.actions')} className="px-3 py-2 text-right">
-                            <button type="button" onClick={() => void download(entry)} disabled={entry.kind === 'directory' || !entry.allowed_actions.includes('download') || !capabilities.download || downloadingRef !== null} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.download', { name: entry.name })} title={t('files.download', { name: entry.name })}>
-                              <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {entries.map((entry) => {
+                        const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || (entry.kind === 'file' && canPreview(entry));
+                        return (
+                          <tr
+                            key={entry.ref}
+                            onClick={() => isInteractive && openEntry(entry)}
+                            className={`border-t border-[var(--color-border)] hover:bg-[var(--color-hover)] transition-colors ${isInteractive ? 'cursor-pointer' : ''}`}
+                          >
+                            <td data-label={t('files.name')} className="px-3 py-2 min-w-0 max-w-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEntry(entry);
+                                }}
+                                disabled={(entry.kind === 'directory' && (!capabilities.browse || entriesLoading)) || (entry.kind === 'file' && !canPreview(entry))}
+                                className={`inline-flex max-w-full items-center gap-2 min-w-0 text-left ${entry.kind === 'directory' || canPreview(entry) ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}
+                                title={entry.name}
+                              >
+                                <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
+                                <span className="truncate font-medium">{entry.name}</span>
+                              </button>
+                            </td>
+                            <td data-label={t('files.size')} className="w-28 sm:w-32 px-3 py-2 text-[var(--color-text-secondary)] whitespace-nowrap shrink-0">
+                              {entry.kind === 'directory' ? t('files.directory') : formatBytes(entry.size)}
+                            </td>
+                            <td data-label={t('files.modified')} className="w-36 sm:w-44 px-3 py-2 text-[var(--color-text-secondary)] whitespace-nowrap shrink-0">
+                              {entry.modified_at ? formatDateTime(entry.modified_at) : t('common.unspecified')}
+                            </td>
+                            <td data-label={t('files.actions')} className="w-14 sm:w-16 px-3 py-2 text-right whitespace-nowrap shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void download(entry);
+                                }}
+                                disabled={entry.kind === 'directory' || !entry.allowed_actions.includes('download') || !capabilities.download || downloadingRef !== null}
+                                className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                                aria-label={t('files.download', { name: entry.name })}
+                                title={t('files.download', { name: entry.name })}
+                              >
+                                <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -464,6 +574,75 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           )}
         </div>
       </div>
+      {isCreateDirOpen &&
+        createPortal(
+          <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+            <div
+              ref={createDirDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="create-dir-title"
+              tabIndex={-1}
+              className="ui-card w-full max-w-md p-5"
+            >
+              <h2 id="create-dir-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
+                {t('files.newFolder')}
+              </h2>
+              {createDirError && (
+                <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">
+                  {createDirError}
+                </p>
+              )}
+              <form onSubmit={handleCreateDirectory} className="mt-4 space-y-4">
+                <div>
+                  <label htmlFor="new-folder-name-input" className="block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">
+                    {t('files.folderName')}
+                  </label>
+                  <input
+                    id="new-folder-name-input"
+                    type="text"
+                    value={newDirName}
+                    onChange={(e) => setNewDirName(e.target.value)}
+                    placeholder={t('files.folderNamePlaceholder')}
+                    disabled={creatingDir}
+                    className="ui-input w-full py-2 px-3 text-sm"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    ref={createDirCancelRef}
+                    type="button"
+                    onClick={() => {
+                      setIsCreateDirOpen(false);
+                      setNewDirName('');
+                      setCreateDirError('');
+                    }}
+                    disabled={creatingDir}
+                    className="ui-button-secondary px-3 py-2 text-sm"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!newDirName.trim() || creatingDir}
+                    className="ui-button-primary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {creatingDir ? (
+                      <>
+                        <LoadingIndicator label={t('common.loading')} size="sm" />
+                        <span>{t('common.loading')}</span>
+                      </>
+                    ) : (
+                      <span>{t('common.create')}</span>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>,
+          document.body
+        )}
       {previewEntry && (
         <Suspense fallback={null}>
           <FilePreviewDialog apiUrl={apiUrl} token={token} profileId={profileId} entry={previewEntry} onClose={() => setPreviewEntry(null)} onDownload={(entry) => void download(entry)} />
@@ -472,3 +651,4 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     </section>
   );
 }
+

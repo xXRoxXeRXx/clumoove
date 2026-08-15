@@ -50,7 +50,36 @@ func (p *GoogleProvider) ListManager(ctx context.Context, locator ManagerLocator
 	return ManagerPage{Items: items, NextCursor: page.NextPageToken}, nil
 }
 
-var _ ManagerUploader = (*GoogleProvider)(nil)
+var (
+	_ ManagerUploader         = (*GoogleProvider)(nil)
+	_ ManagerDirectoryCreator = (*GoogleProvider)(nil)
+)
+
+// CreateManagerDirectory creates a new directory in the selected Drive parent by immutable ID.
+func (p *GoogleProvider) CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error {
+	parentID := "root"
+	if parent.NativeID != "" {
+		parentID = parent.NativeID
+	}
+
+	matches, err := p.googleManagerChildrenByName(ctx, parentID, name)
+	if err != nil {
+		return err
+	}
+	if len(matches) > 0 {
+		return ErrManagerConflict
+	}
+
+	file := &drive.File{
+		Name:     name,
+		MimeType: googleDriveFolderMIME,
+		Parents:  []string{parentID},
+	}
+	if _, err := p.driveService.Files.Create(file).Context(ctx).Do(); err != nil {
+		return wrapGoogleError("google manager mkdir", err)
+	}
+	return nil
+}
 
 // UploadManager uploads into the selected Drive parent by immutable ID. It
 // never resolves a display path, which prevents duplicate sibling names from

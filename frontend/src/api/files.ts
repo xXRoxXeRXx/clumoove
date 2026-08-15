@@ -135,6 +135,26 @@ export async function resolveFilePath(
   return apiJson<ResolveFilePathResponse>(profileUrl(apiUrl, profileId, '/entries:resolve'), init);
 }
 
+export type CreateDirectoryResponse = {
+  success: boolean;
+  name: string;
+};
+
+export async function createDirectory(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  name: string,
+  parentRef: string | null,
+  signal?: AbortSignal,
+): Promise<ApiJsonResult<CreateDirectoryResponse>> {
+  const body: { name: string; parent_ref?: string } = { name };
+  if (parentRef) body.parent_ref = parentRef;
+  const init = requestInit(token, signal);
+  init.body = JSON.stringify(body);
+  return apiJson<CreateDirectoryResponse>(profileUrl(apiUrl, profileId, '/directories'), init);
+}
+
 function encodeHeaderFileName(name: string): string {
   const bytes = new TextEncoder().encode(name);
   let binary = '';

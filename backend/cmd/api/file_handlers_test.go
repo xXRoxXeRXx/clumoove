@@ -749,3 +749,79 @@ func TestAllowedFileActions(t *testing.T) {
 	}
 }
 
+func TestHandleFileDirectoryCreateValidations(t *testing.T) {
+	server := &APIServer{
+		rateLimiter:   allowAllFileRateLimiter{},
+		encryptionKey: "test-encryption-key-for-files!!",
+	}
+
+	tests := []struct {
+		name       string
+		claims     *auth.Claims
+		rateLimit  rateLimiter
+		body       string
+		wantStatus int
+		wantCode   APIErrorCode
+	}{
+		{
+			name:       "missing claims",
+			claims:     nil,
+			body:       `{"name":"newdir"}`,
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   ErrUnauthorized,
+		},
+		{
+			name:       "rate limited",
+			claims:     &auth.Claims{UserID: "u1"},
+			rateLimit:  blockAllFileRateLimiter{},
+			body:       `{"name":"newdir"}`,
+			wantStatus: http.StatusTooManyRequests,
+			wantCode:   ErrRateLimited,
+		},
+		{
+			name:       "invalid body - empty name",
+			claims:     &auth.Claims{UserID: "u1"},
+			body:       `{"name":""}`,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   ErrInvalidBody,
+		},
+		{
+			name:       "invalid body - slash in name",
+			claims:     &auth.Claims{UserID: "u1"},
+			body:       `{"name":"invalid/name"}`,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   ErrInvalidBody,
+		},
+		{
+			name:       "profile not found",
+			claims:     &auth.Claims{UserID: "u1"},
+			body:       `{"name":"validname"}`,
+			wantStatus: http.StatusNotFound,
+			wantCode:   ErrProfileNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := server
+			if tt.rateLimit != nil {
+				s = &APIServer{rateLimiter: tt.rateLimit, encryptionKey: server.encryptionKey}
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/directories", strings.NewReader(tt.body))
+			req.SetPathValue("profileID", "p1")
+			if tt.claims != nil {
+				req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, tt.claims))
+			}
+			rec := httptest.NewRecorder()
+			s.handleFileDirectoryCreate(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d (body: %s)", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), string(tt.wantCode)) {
+				t.Fatalf("body = %s, want code %s", rec.Body.String(), tt.wantCode)
+			}
+		})
+	}
+}
+

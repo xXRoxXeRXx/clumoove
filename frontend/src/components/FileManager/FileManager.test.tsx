@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
 import { FileManager } from './FileManager';
-import { getFileCapabilities, listFileEntries, createDownloadTicket, type FileEntry } from '../../api/files';
+import { getFileCapabilities, listFileEntries, createDownloadTicket, createDirectory, type FileEntry } from '../../api/files';
 import { listConnectionProfiles } from '../../api/profiles';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -12,6 +12,7 @@ vi.mock('../../api/files', () => ({
   getFileCapabilities: vi.fn(),
   listFileEntries: vi.fn(),
   createDownloadTicket: vi.fn(),
+  createDirectory: vi.fn(),
 }));
 
 vi.mock('../../api/profiles', () => ({
@@ -96,6 +97,7 @@ describe('FileManager component', () => {
     vi.mocked(getFileCapabilities).mockReset();
     vi.mocked(listFileEntries).mockReset();
     vi.mocked(createDownloadTicket).mockReset();
+    vi.mocked(createDirectory).mockReset();
 
     vi.mocked(listConnectionProfiles).mockResolvedValue({
       ok: true,
@@ -421,8 +423,8 @@ describe('FileManager component', () => {
 
     await flushAsync();
 
-    const downloadBtn = container.querySelector('button[title*="report.txt"]');
-    expect(downloadBtn).toBeDefined();
+    const downloadBtn = container.querySelector('button[aria-label="Download report.txt"]');
+    expect(downloadBtn).not.toBeNull();
 
     await act(async () => {
       (downloadBtn as HTMLButtonElement)?.click();
@@ -444,5 +446,137 @@ describe('FileManager component', () => {
       writable: true,
       configurable: true,
     });
+  });
+
+  it('navigates into directory when table row is clicked anywhere', async () => {
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    // Find the row containing "Documents"
+    const dirRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent?.includes('Documents'));
+    expect(dirRow).toBeDefined();
+
+    // Click directly on the row <tr>
+    await act(async () => {
+      dirRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container.textContent).toContain('invoice.pdf');
+    expect(vi.mocked(listFileEntries)).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-dir-1',
+      undefined,
+      expect.any(AbortSignal)
+    );
+  });
+
+  it('creates new directory via dialog and refreshes entries', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { capabilities: { ...mockCapabilities, mkdir: true } },
+    });
+
+    vi.mocked(createDirectory).mockResolvedValue({
+      ok: true,
+      status: 201,
+      data: { success: true, name: 'New Folder' },
+    });
+
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    // Find and click "New folder" button
+    const newFolderBtn = container.querySelector('button[aria-label="New folder"], button[title="New folder"]');
+    expect(newFolderBtn).toBeDefined();
+
+    await act(async () => {
+      (newFolderBtn as HTMLButtonElement)?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    // Input folder name in the dialog portal
+    const input = document.body.querySelector('#new-folder-name-input') as HTMLInputElement;
+    expect(input).toBeDefined();
+
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    await act(async () => {
+      nativeSetter?.call(input, 'My New Folder');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // Submit form
+    const submitBtn = Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === 'Create' || b.textContent === 'Erstellen');
+    expect(submitBtn).toBeDefined();
+
+    await act(async () => {
+      submitBtn?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(vi.mocked(createDirectory)).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'My New Folder',
+      null
+    );
+
+    // Dialog should be closed
+    expect(document.body.querySelector('#new-folder-name-input')).toBeNull();
+  });
+
+  it('renders table-fixed layout and truncate classes for filenames', async () => {
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(table?.className).toContain('table-fixed');
+
+    const nameCell = container.querySelector('tbody td[data-label="Name"]');
+    expect(nameCell).not.toBeNull();
+    expect(nameCell?.className).toContain('min-w-0');
   });
 });

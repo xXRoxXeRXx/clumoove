@@ -82,6 +82,16 @@ type fileUploadResponse struct {
 	Name    string `json:"name"`
 }
 
+type fileDirectoryCreateRequest struct {
+	Name      string `json:"name"`
+	ParentRef string `json:"parent_ref"`
+}
+
+type fileDirectoryCreateResponse struct {
+	Success bool   `json:"success"`
+	Name    string `json:"name"`
+}
+
 type fileResolveRequest struct {
 	ResourceType string `json:"resource_type"`
 	Path         string `json:"path"`
@@ -440,6 +450,33 @@ func uploadLegacyManager(ctx context.Context, provider storage.StorageProvider, 
 		status = "renamed"
 	}
 	return storage.ManagerUploadResult{Status: status, FinalName: finalName}, nil
+}
+
+func createDirectoryLegacyManager(ctx context.Context, provider storage.StorageProvider, parent storage.ManagerLocator, name string) error {
+	parentPath := parent.Path
+	if parentPath == "" {
+		parentPath = managedRootPath()
+	}
+	resources, err := provider.GetDirectoryListing(ctx, "files", parentPath)
+	if err != nil {
+		return err
+	}
+	for i := range resources {
+		if resources[i].Name == name {
+			return storage.ErrManagerConflict
+		}
+	}
+
+	cleanParent := strings.TrimSuffix(parentPath, "/")
+	if cleanParent == "" {
+		cleanParent = "/"
+	}
+	targetPath := path.Join(cleanParent, name)
+	if !strings.HasPrefix(targetPath, "/") {
+		targetPath = "/" + targetPath
+	}
+
+	return provider.CreateDirectory(ctx, "files", targetPath)
 }
 
 func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []string {
@@ -841,6 +878,81 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, fileUploadResponse{Success: true, Status: result.Status, Name: result.FinalName})
+}
+
+func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.requireUserID(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+
+	var request fileDirectoryCreateRequest
+	if !decodeJSONBody(w, r, &request, normalJSONBodyLimit) {
+		return
+	}
+	name := strings.TrimSpace(request.Name)
+	if !validManagerUploadName(name) {
+		writeValidationError(w, ErrInvalidBody)
+		return
+	}
+
+	profileID := r.PathValue("profileID")
+	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
+	if !capabilities.Mkdir {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+
+	parent := storage.ManagerLocator{Path: managedRootPath()}
+	if request.ParentRef != "" {
+		reference, referenceErr := openFileReference(request.ParentRef, s.encryptionKey, userID, profileID)
+		if referenceErr != nil || reference.Kind != "directory" {
+			writeValidationError(w, ErrFilesInvalidRef)
+			return
+		}
+		parent = reference.Locator
+	}
+
+	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	defer resolved.close()
+
+	var createErr error
+	if creator, supported := resolved.provider.(storage.ManagerDirectoryCreator); supported {
+		createErr = creator.CreateManagerDirectory(resolved.ctx, parent, name)
+	} else {
+		createErr = createDirectoryLegacyManager(resolved.ctx, resolved.provider, parent, name)
+	}
+
+	if createErr != nil {
+		switch {
+		case errors.Is(createErr, storage.ErrManagerConflict), errors.Is(createErr, storage.ErrAmbiguousPath):
+			writeConflictError(w, ErrFilesConflict)
+		default:
+			s.writeFileProviderError(w, createErr)
+		}
+		return
+	}
+
+	s.writeAudit(r, db.AuditFileDirectoryCreated, profileID, userID, map[string]interface{}{
+		"provider":  profile.Provider,
+		"item_kind": "directory",
+		"name":      name,
+	})
+
+	writeJSON(w, http.StatusCreated, fileDirectoryCreateResponse{Success: true, Name: name})
 }
 
 func decodeUploadFileName(value string) (string, error) {

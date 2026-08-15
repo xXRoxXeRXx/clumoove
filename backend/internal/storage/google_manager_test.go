@@ -153,3 +153,39 @@ func TestGoogleManagerUploadCreatesInParentID(t *testing.T) {
 		t.Fatalf("UploadManager() = %#v", result)
 	}
 }
+
+func TestGoogleManagerCreateDirectorySuccessAndConflict(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if query := r.URL.Query().Get("q"); strings.Contains(query, "existing-dir") {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"files": []map[string]any{{"id": "dir-1", "name": "existing-dir", "mimeType": googleDriveFolderMIME}},
+				})
+			} else {
+				_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{}})
+			}
+		case http.MethodPost:
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["name"] != "new-dir" || req["mimeType"] != googleDriveFolderMIME {
+				t.Fatalf("unexpected folder creation body: %#v", req)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "created-dir-id", "name": "new-dir"})
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+
+	// Test conflict
+	err := provider.CreateManagerDirectory(context.Background(), ManagerLocator{NativeID: "parent-id"}, "existing-dir")
+	if !errors.Is(err, ErrManagerConflict) {
+		t.Fatalf("CreateManagerDirectory() conflict error = %v, want ErrManagerConflict", err)
+	}
+
+	// Test success
+	err = provider.CreateManagerDirectory(context.Background(), ManagerLocator{NativeID: "parent-id"}, "new-dir")
+	if err != nil {
+		t.Fatalf("CreateManagerDirectory() error = %v, want nil", err)
+	}
+}
