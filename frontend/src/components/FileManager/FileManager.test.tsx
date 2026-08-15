@@ -258,9 +258,11 @@ describe('FileManager component', () => {
     );
     expect(container.textContent).toContain('archive.zip');
 
-    // Next page should now be disabled (no next_cursor), and Previous page enabled
-    expect(nextBtn?.disabled).toBe(true);
+    // Next page should now not be rendered (no next_cursor), and Previous page enabled
+    const nextBtnPage2 = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Next page') || b.textContent?.includes('Nächste Seite'));
+    expect(nextBtnPage2).toBeUndefined();
     const prevBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Previous page') || b.textContent?.includes('Vorherige Seite'));
+    expect(prevBtn).toBeDefined();
     expect(prevBtn?.disabled).toBe(false);
 
     // Click Previous Page

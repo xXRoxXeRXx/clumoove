@@ -382,16 +382,32 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 </div>
               )}
 
-              <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] p-3">
-                <button type="button" onClick={previousPage} disabled={cursorHistory.length === 0 || entriesLoading} className="ui-button-secondary inline-flex items-center gap-1 px-3 py-2 text-sm">
-                  <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
-                  {t('common.previousPage')}
-                </button>
-                <button type="button" onClick={nextPage} disabled={!nextCursor || entriesLoading} className="ui-button-secondary inline-flex items-center gap-1 px-3 py-2 text-sm">
-                  {t('common.nextPage')}
-                  <ArrowRightIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
-              </div>
+              {(cursorHistory.length > 0 || Boolean(nextCursor)) && (
+                <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] p-3">
+                  {cursorHistory.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={previousPage}
+                      disabled={entriesLoading}
+                      className="ui-button-secondary inline-flex items-center gap-1 px-3 py-2 text-sm"
+                    >
+                      <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
+                      {t('common.previousPage')}
+                    </button>
+                  )}
+                  {Boolean(nextCursor) && (
+                    <button
+                      type="button"
+                      onClick={nextPage}
+                      disabled={entriesLoading}
+                      className="ui-button-secondary inline-flex items-center gap-1 px-3 py-2 text-sm"
+                    >
+                      {t('common.nextPage')}
+                      <ArrowRightIcon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
