@@ -86,8 +86,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     entriesRequestRef.current?.abort();
     const controller = new AbortController();
     entriesRequestRef.current = controller;
-    const request = latestEntriesRequestRef.current + 1;
-    latestEntriesRequestRef.current = request;
+    const request = ++latestEntriesRequestRef.current;
     setEntriesLoading(true);
     setError('');
     const result = await listFileEntries(apiUrl, token, profileId, parentRef, undefined, controller.signal);
@@ -145,42 +144,75 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   useEffect(() => {
     let controller: AbortController | null = null;
     const timeoutId = window.setTimeout(() => {
-      setEntries([]);
-      setNextCursor(null);
-      setError('');
-      entriesRequestRef.current?.abort();
       if (!selectedProfile) {
         setCapabilities(unavailableCapabilities);
         setBreadcrumbs([]);
+        setEntries([]);
+        setNextCursor(null);
+        setEntriesLoading(false);
         return;
       }
+
+      controller = new AbortController();
+      entriesRequestRef.current?.abort();
+      entriesRequestRef.current = controller;
+      const request = ++latestEntriesRequestRef.current;
 
       const resolvedBreadcrumbs = initialBreadcrumbs?.length
         ? initialBreadcrumbs.map((breadcrumb) => ({ ref: breadcrumb.ref || null, name: breadcrumb.name }))
         : [{ ref: null, name: selectedProfile.name }];
       setBreadcrumbs(resolvedBreadcrumbs);
-      controller = new AbortController();
-      void getFileCapabilities(apiUrl, token, selectedProfile.id, controller.signal).then((result) => {
-        if (controller?.signal.aborted) return;
-        if (result.ok === false) {
+      setEntries([]);
+      setNextCursor(null);
+      setError('');
+      setEntriesLoading(true);
+
+      const targetRef = resolvedBreadcrumbs[resolvedBreadcrumbs.length - 1]?.ref ?? null;
+
+      async function initProfile() {
+        const capResult = await getFileCapabilities(apiUrl, token, selectedProfile!.id, controller!.signal);
+        if (controller!.signal.aborted || latestEntriesRequestRef.current !== request) return;
+
+        if (capResult.ok === false) {
           setCapabilities(unavailableCapabilities);
-          setError(translateApiError(result.errorCode));
+          setEntries([]);
+          setNextCursor(null);
+          setError(translateApiError(capResult.errorCode));
+          setEntriesLoading(false);
           return;
         }
-        setCapabilities(result.data.capabilities);
-      });
+
+        setCapabilities(capResult.data.capabilities);
+
+        if (!capResult.data.capabilities.browse) {
+          setEntries([]);
+          setNextCursor(null);
+          setEntriesLoading(false);
+          return;
+        }
+
+        const listResult = await listFileEntries(apiUrl, token, selectedProfile!.id, targetRef, undefined, controller!.signal);
+        if (controller!.signal.aborted || latestEntriesRequestRef.current !== request) return;
+
+        if (listResult.ok === false) {
+          setEntries([]);
+          setNextCursor(null);
+          setError(translateApiError(listResult.errorCode));
+        } else {
+          setEntries(listResult.data.entries ?? []);
+          setNextCursor(listResult.data.next_cursor ?? null);
+        }
+        setEntriesLoading(false);
+      }
+
+      void initProfile();
     }, 0);
+
     return () => {
       window.clearTimeout(timeoutId);
       controller?.abort();
     };
   }, [apiUrl, initialBreadcrumbs, selectedProfile, token, translateApiError]);
-
-  useEffect(() => {
-    if (!selectedProfile || !capabilities.browse || breadcrumbs.length === 0) return;
-    const timeoutId = window.setTimeout(() => void loadEntries(currentRef), 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [breadcrumbs.length, capabilities.browse, currentRef, loadEntries, selectedProfile]);
 
   useEffect(() => {
     if (!nextCursor || entriesLoading || loadingMore || !capabilities.browse) return;
@@ -201,12 +233,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   }, [capabilities.browse, entriesLoading, loadMore, loadingMore, nextCursor]);
 
   const selectProfile = (id: string) => {
+    if (id === profileId) return;
     onProfileChange(id);
   };
 
   const openDirectory = (entry: FileEntry) => {
-    if (entry.kind !== 'directory' || !capabilities.browse || entriesLoading) return;
+    if (entry.kind !== 'directory' || !capabilities.browse) return;
     setBreadcrumbs((current) => [...current, { ref: entry.ref, name: entry.name }]);
+    void loadEntries(entry.ref);
   };
 
   const openEntry = (entry: FileEntry) => {
@@ -220,18 +254,24 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   };
 
   const goUp = () => {
-    if (breadcrumbs.length <= 1 || entriesLoading) return;
-    setBreadcrumbs((current) => current.slice(0, -1));
+    if (breadcrumbs.length <= 1) return;
+    const parentBreadcrumbs = breadcrumbs.slice(0, -1);
+    const parentRef = parentBreadcrumbs[parentBreadcrumbs.length - 1]?.ref ?? null;
+    setBreadcrumbs(parentBreadcrumbs);
+    void loadEntries(parentRef);
   };
 
   const refresh = () => {
-    if (!capabilities.browse || entriesLoading) return;
+    if (!capabilities.browse) return;
     void loadEntries(currentRef);
   };
 
   const goToBreadcrumb = (index: number) => {
-    if (entriesLoading || index === breadcrumbs.length - 1) return;
-    setBreadcrumbs((current) => current.slice(0, index + 1));
+    if (index === breadcrumbs.length - 1) return;
+    const targetBreadcrumbs = breadcrumbs.slice(0, index + 1);
+    const targetRef = targetBreadcrumbs[targetBreadcrumbs.length - 1]?.ref ?? null;
+    setBreadcrumbs(targetBreadcrumbs);
+    void loadEntries(targetRef);
   };
 
   const download = async (entry: FileEntry) => {
@@ -322,9 +362,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           )}
         </aside>
 
-        <div className="ui-card min-w-0 overflow-hidden">
+        <div className="ui-card min-w-0 overflow-hidden min-h-[400px] flex flex-col">
           {!selectedProfile ? (
-            <div className="ui-empty p-8 text-sm">{t('files.selectProfile')}</div>
+            <div className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.selectProfile')}</div>
           ) : (
             <>
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-3">
@@ -332,7 +372,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   {breadcrumbs.map((breadcrumb, index) => (
                     <span key={breadcrumb.ref ?? 'root'} className="inline-flex min-w-0 items-center gap-1">
                       {index > 0 && <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
-                      <button type="button" onClick={() => goToBreadcrumb(index)} disabled={entriesLoading || index === breadcrumbs.length - 1} className="max-w-44 truncate rounded px-1 py-0.5 disabled:text-[var(--color-text-primary)] hover:bg-[var(--color-hover)]">
+                      <button type="button" onClick={() => goToBreadcrumb(index)} disabled={index === breadcrumbs.length - 1} className="max-w-44 truncate rounded px-1 py-0.5 disabled:text-[var(--color-text-primary)] hover:bg-[var(--color-hover)]">
                         {breadcrumb.name}
                       </button>
                     </span>
@@ -340,23 +380,23 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 </nav>
                  <div className="flex items-center gap-1">
                    <FileUploadControl apiUrl={apiUrl} token={token} profileId={profileId} parentRef={currentRef} capabilities={capabilities} disabled={entriesLoading} onCompleted={uploadCompleted} />
-                   <button type="button" onClick={goUp} disabled={!capabilities.browse || breadcrumbs.length <= 1 || entriesLoading} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.up')} title={t('files.up')}>
+                   <button type="button" onClick={goUp} disabled={!capabilities.browse || breadcrumbs.length <= 1} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.up')} title={t('files.up')}>
                     <ArrowUpIcon className="h-4 w-4" aria-hidden="true" />
                   </button>
-                  <button type="button" onClick={refresh} disabled={!capabilities.browse || entriesLoading} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.refresh')} title={t('files.refresh')}>
+                  <button type="button" onClick={refresh} disabled={!capabilities.browse} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.refresh')} title={t('files.refresh')}>
                     <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
               </div>
 
-              {!capabilities.browse ? (
-                <p className="ui-empty p-8 text-sm">{t('files.listUnavailable')}</p>
+              {!capabilities.browse && !entriesLoading ? (
+                <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.listUnavailable')}</p>
               ) : entriesLoading ? (
-                <div className="p-8"><LoadingIndicator label={t('common.loading')} /></div>
+                <div className="p-8 flex-1 flex items-center justify-center"><LoadingIndicator label={t('common.loading')} /></div>
               ) : entries.length === 0 ? (
-                <p className="ui-empty p-8 text-sm">{t('files.emptyDirectory')}</p>
+                <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.emptyDirectory')}</p>
               ) : (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto flex-1">
                   <table className="ui-table ui-responsive-table w-full text-sm">
                     <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
                       <tr>
