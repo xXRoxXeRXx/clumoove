@@ -17,10 +17,14 @@ function entry(name: string, mimeType?: string, size = 1024): FileEntry {
 describe('file preview policy', () => {
   it('uses an explicit supported MIME type', () => {
     expect(previewKindFor(entry('download.bin', 'application/pdf'))).toBe('pdf');
+    expect(previewKindFor(entry('sheet.bin', 'application/vnd.ms-excel'))).toBe('xlsx');
+    expect(previewKindFor(entry('doc.bin', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))).toBe('docx');
   });
 
   it('uses an extension only when MIME is absent or generic', () => {
     expect(previewKindFor(entry('report.pdf', 'application/octet-stream'))).toBe('pdf');
+    expect(previewKindFor(entry('table.xls', ''))).toBe('xlsx');
+    expect(previewKindFor(entry('doc.docx', ''))).toBe('docx');
     expect(previewKindFor(entry('report.pdf', 'application/zip'))).toBeNull();
   });
 

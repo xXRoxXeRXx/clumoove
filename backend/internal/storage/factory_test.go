@@ -242,9 +242,6 @@ func TestGoogleManagerUploadCapabilities(t *testing.T) {
 	if !capabilities.Upload || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename {
 		t.Fatalf("Google manager capabilities = %#v, want tested upload support", capabilities)
 	}
-	if ManagerCapabilitiesFor("s3").Upload {
-		t.Fatal("S3 manager upload was enabled without a provider-specific manager implementation")
-	}
 }
 
 func TestPublicFactoryConstructsEveryProvider(t *testing.T) {

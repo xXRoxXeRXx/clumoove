@@ -168,25 +168,23 @@ var providerRegistry = map[string]ProviderMetadata{
 // files provider. Mutations remain false until each provider has
 // manager-specific tests and semantics.
 var managerCapabilityRegistry = map[string]ManagerCapabilities{
-	// Google adds dedicated, ID-based manager contracts and native cursor
-	// paging. The remaining providers use the bounded path-based read adapter.
-	"nextcloud":    {Browse: true, Download: true},
-	"opencloud":    {Browse: true, Download: true},
-	"webdav":       {Browse: true, Download: true},
-	"dropbox":      {Browse: true, Download: true},
+	"nextcloud":    {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"opencloud":    {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"webdav":       {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"dropbox":      {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"onedrive":     {Browse: true, Download: true},
-	"hidrive":      {Browse: true, Download: true},
-	"smb":          {Browse: true, Download: true},
-	"s3":           {Browse: true, Download: true},
-	"sftp":         {Browse: true, Download: true},
-	"ftp":          {Browse: true, Download: true},
-	"magentacloud": {Browse: true, Download: true},
-	"koofr":        {Browse: true, Download: true},
-	"local":        {Browse: true, Download: true},
+	"onedrive":     {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"hidrive":      {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"smb":          {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"s3":           {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
+	"sftp":         {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"ftp":          {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"magentacloud": {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"koofr":        {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
+	"local":        {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"immich":       {Browse: true, Download: true},
-	"seafile":      {Browse: true, Download: true},
-	"mega":         {Browse: true, Download: true},
+	"seafile":      {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
+	"mega":         {Browse: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 }
 
 // ManagerCapabilitiesFor returns static capabilities after applying runtime

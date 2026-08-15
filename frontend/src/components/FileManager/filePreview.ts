@@ -17,8 +17,8 @@ const extensionKinds: Record<string, PreviewKind> = {
   mp3: 'audio', wav: 'audio', ogg: 'audio', m4a: 'audio', aac: 'audio', flac: 'audio',
   mp4: 'video', webm: 'video', ogv: 'video',
   txt: 'text', log: 'text', md: 'text', csv: 'text', json: 'text', xml: 'text', yaml: 'text', yml: 'text',
-  js: 'text', ts: 'text', tsx: 'text', jsx: 'text', css: 'text',
-  pdf: 'pdf', docx: 'docx', xlsx: 'xlsx',
+  js: 'text', ts: 'text', tsx: 'text', jsx: 'text', css: 'text', rtf: 'text', sql: 'text', sh: 'text', env: 'text', ini: 'text', conf: 'text',
+  pdf: 'pdf', docx: 'docx', xlsx: 'xlsx', xls: 'xlsx', ods: 'xlsx', tsv: 'xlsx',
 };
 
 function extension(name: string): string {
@@ -40,8 +40,8 @@ function mimeKind(value: string): PreviewKind | null {
   if (value.startsWith('audio/')) return 'audio';
   if (value.startsWith('video/')) return 'video';
   if (value === 'application/pdf') return 'pdf';
-  if (value === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') return 'docx';
-  if (value === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'xlsx';
+  if (value === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || value === 'application/msword') return 'docx';
+  if (value === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || value === 'application/vnd.ms-excel' || value === 'application/vnd.oasis.opendocument.spreadsheet') return 'xlsx';
   if (value.startsWith('text/') || value === 'application/json' || value === 'application/xml' || value === 'application/yaml' || value === 'application/x-yaml') return 'text';
   return null;
 }

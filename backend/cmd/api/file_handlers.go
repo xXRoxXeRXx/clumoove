@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -366,6 +367,80 @@ func downloadLegacyManager(ctx context.Context, provider storage.StorageProvider
 	return storage.ManagerDownload{Item: managerItemFromCloudResource(resource), Stream: stream}, nil
 }
 
+func managerRenamedName(name string, suffix int) string {
+	lastDot := strings.LastIndex(name, ".")
+	if lastDot > 0 {
+		return fmt.Sprintf("%s (%d)%s", name[:lastDot], suffix, name[lastDot:])
+	}
+	return fmt.Sprintf("%s (%d)", name, suffix)
+}
+
+func uploadLegacyManager(ctx context.Context, provider storage.StorageProvider, parent storage.ManagerLocator, name string, stream io.Reader, size int64, options storage.ManagerUploadOptions) (storage.ManagerUploadResult, error) {
+	parentPath := parent.Path
+	if parentPath == "" {
+		parentPath = managedRootPath()
+	}
+	resources, err := provider.GetDirectoryListing(ctx, "files", parentPath)
+	if err != nil {
+		return storage.ManagerUploadResult{}, err
+	}
+	var existing *storage.CloudResource
+	existingNames := make(map[string]bool, len(resources))
+	for i := range resources {
+		existingNames[resources[i].Name] = true
+		if resources[i].Name == name {
+			existing = &resources[i]
+		}
+	}
+
+	finalName := name
+	switch options.ConflictStrategy {
+	case "SKIP":
+		if existing != nil {
+			return storage.ManagerUploadResult{Status: "skipped", FinalName: name}, nil
+		}
+	case "OVERWRITE":
+		if existing != nil && existing.IsDir {
+			return storage.ManagerUploadResult{}, storage.ErrManagerConflict
+		}
+	case "RENAME":
+		if existing != nil {
+			found := false
+			for suffix := 1; suffix <= 100; suffix++ {
+				candidate := managerRenamedName(name, suffix)
+				if !existingNames[candidate] {
+					finalName = candidate
+					found = true
+					break
+				}
+			}
+			if !found {
+				return storage.ManagerUploadResult{}, storage.ErrManagerConflict
+			}
+		}
+	default:
+		return storage.ManagerUploadResult{}, errors.New("invalid manager upload conflict strategy")
+	}
+
+	cleanParent := strings.TrimSuffix(parentPath, "/")
+	if cleanParent == "" {
+		cleanParent = "/"
+	}
+	targetPath := path.Join(cleanParent, finalName)
+	if !strings.HasPrefix(targetPath, "/") {
+		targetPath = "/" + targetPath
+	}
+
+	if err := provider.StreamUpload(ctx, "files", targetPath, stream, size); err != nil {
+		return storage.ManagerUploadResult{}, err
+	}
+	status := "uploaded"
+	if finalName != name {
+		status = "renamed"
+	}
+	return storage.ManagerUploadResult{Status: status, FinalName: finalName}, nil
+}
+
 func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []string {
 	actions := make([]string, 0, 2)
 	if !isDir && capabilities.Download {
@@ -715,11 +790,6 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resolved.close()
-	uploader, supported := resolved.provider.(storage.ManagerUploader)
-	if !supported {
-		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-		return
-	}
 
 	streamID := generateRandomString(16)
 	if streamID == "" || !s.acquireFileStream(r.Context(), userID, "upload", streamID, fileStreamLease) {
@@ -735,7 +805,13 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	_ = controller.SetReadDeadline(time.Time{})
 	_ = controller.SetWriteDeadline(time.Time{})
 	stream := storage.NewExactSizeReader(r.Body, r.ContentLength)
-	result, uploadErr := uploader.UploadManager(resolved.ctx, parent, name, stream, r.ContentLength, options)
+	var result storage.ManagerUploadResult
+	var uploadErr error
+	if uploader, supported := resolved.provider.(storage.ManagerUploader); supported {
+		result, uploadErr = uploader.UploadManager(resolved.ctx, parent, name, stream, r.ContentLength, options)
+	} else {
+		result, uploadErr = uploadLegacyManager(resolved.ctx, resolved.provider, parent, name, stream, r.ContentLength, options)
+	}
 	if uploadErr == nil {
 		uploadErr = stream.Verify()
 	}

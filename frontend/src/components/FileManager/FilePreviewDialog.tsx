@@ -7,12 +7,15 @@ import { useTranslation } from 'react-i18next';
 import { createDownloadTicket, type FileEntry } from '../../api/files';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useApiError } from '../../utils/apiError';
-import { canPreview, isGenericPreviewMime, normalizedPreviewMime, previewKindFor, previewLimit } from './filePreview';
+import { canPreview, previewKindFor, previewLimit } from './filePreview';
+import DocxWorker from './docxPreview.worker.ts?worker';
+import XlsxWorker from './xlsxPreview.worker.ts?worker';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 type Sheet = { name: string; rows: string[][] };
 
@@ -37,8 +40,8 @@ function parseWorker<T>(worker: Worker, buffer: ArrayBuffer, signal: AbortSignal
         resolve(event.data);
       }
     };
-    worker.onerror = () => {
-      fail(new Error('preview parser failed'));
+    worker.onerror = (err) => {
+      fail(err instanceof Error ? err : new Error('preview parser failed'));
     };
     worker.postMessage({ type: 'parse', buffer }, [buffer]);
   });
@@ -105,12 +108,6 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, onClose, on
           setState('fallback');
           return;
         }
-        const declaredMime = normalizedPreviewMime(entry.mime_type);
-        const receivedMime = normalizedPreviewMime(response.headers.get('Content-Type'));
-        if (!isGenericPreviewMime(declaredMime) && !isGenericPreviewMime(receivedMime) && declaredMime !== receivedMime) {
-          setState('fallback');
-          return;
-        }
         const contentLength = Number(response.headers.get('Content-Length') || 0);
         if (contentLength > previewLimit(kind)) {
           setState('fallback');
@@ -121,11 +118,14 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, onClose, on
         objectUrl = URL.createObjectURL(blob);
         setBlobUrl(objectUrl);
         if (kind === 'text') setText(await blob.text());
-        if (kind === 'docx' || kind === 'xlsx') {
-          worker = new Worker(new URL(kind === 'docx' ? './docxPreview.worker.ts' : './xlsxPreview.worker.ts', import.meta.url), { type: 'module' });
-          const parsed = await parseWorker<{ html?: string; sheets?: Sheet[]; ok: boolean }>(worker, await blob.arrayBuffer(), controller.signal);
-          if (kind === 'docx') setDocxHtml(sanitizeDocx(parsed.html ?? ''));
-          else setSheets(parsed.sheets ?? []);
+        if (kind === 'docx') {
+          worker = new DocxWorker();
+          const parsed = await parseWorker<{ html?: string; ok: boolean }>(worker, await blob.arrayBuffer(), controller.signal);
+          setDocxHtml(sanitizeDocx(parsed.html ?? ''));
+        } else if (kind === 'xlsx') {
+          worker = new XlsxWorker();
+          const parsed = await parseWorker<{ sheets?: Sheet[]; ok: boolean }>(worker, await blob.arrayBuffer(), controller.signal);
+          setSheets(parsed.sheets ?? []);
         }
         if (!controller.signal.aborted) setState('ready');
       } catch (loadError) {

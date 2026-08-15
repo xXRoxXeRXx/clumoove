@@ -233,3 +233,35 @@ func TestLegacyManagerPathResolveFallsBackToExistingParent(t *testing.T) {
 		t.Fatalf("resolve result = (%#v, %#v, %t)", locator, breadcrumbs, fallback)
 	}
 }
+
+func TestLegacyManagerUpload(t *testing.T) {
+	provider := &legacyFileManagerTestProvider{listings: map[string][]storage.CloudResource{
+		"/": {
+			{Path: "/existing.txt", Name: "existing.txt"},
+		},
+	}}
+
+	// SKIP
+	res, err := uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "existing.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "SKIP"})
+	if err != nil || res.Status != "skipped" || res.FinalName != "existing.txt" {
+		t.Fatalf("uploadLegacyManager SKIP = (%#v, %v), want skipped", res, err)
+	}
+
+	// OVERWRITE
+	res, err = uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "existing.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "OVERWRITE"})
+	if err != nil || res.Status != "uploaded" || res.FinalName != "existing.txt" {
+		t.Fatalf("uploadLegacyManager OVERWRITE = (%#v, %v), want uploaded", res, err)
+	}
+
+	// RENAME
+	res, err = uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "existing.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "RENAME"})
+	if err != nil || res.Status != "renamed" || res.FinalName != "existing (1).txt" {
+		t.Fatalf("uploadLegacyManager RENAME = (%#v, %v), want renamed to existing (1).txt", res, err)
+	}
+
+	// NEW FILE
+	res, err = uploadLegacyManager(context.Background(), provider, storage.ManagerLocator{Path: "/"}, "new.txt", strings.NewReader("content"), 7, storage.ManagerUploadOptions{ConflictStrategy: "SKIP"})
+	if err != nil || res.Status != "uploaded" || res.FinalName != "new.txt" {
+		t.Fatalf("uploadLegacyManager NEW = (%#v, %v), want uploaded", res, err)
+	}
+}
