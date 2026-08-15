@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	fileBrowseRateLimit       = 60
-	fileMutationRateLimit     = 30
+	fileBrowseRateLimit       = 120
+	fileMutationRateLimit     = 120
+	fileUploadRateLimit       = 600
 	fileRateWindow            = time.Minute
 	fileDefaultPageSize       = 100
 	fileMaximumPageSize       = 200
@@ -743,7 +744,7 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+	if !s.allowFileRequest(r, userID, "files-upload", fileUploadRateLimit) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
 		return
 	}

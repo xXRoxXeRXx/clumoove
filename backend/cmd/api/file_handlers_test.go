@@ -129,6 +129,40 @@ func TestHandleFileUploadRequiresKnownLength(t *testing.T) {
 	}
 }
 
+type captureFileRateLimiter struct {
+	scope string
+	limit int
+	allow bool
+}
+
+func (c *captureFileRateLimiter) Allow(_ context.Context, scope, _ string, limit int, _ time.Duration) bool {
+	c.scope = scope
+	c.limit = limit
+	return c.allow
+}
+
+func TestHandleFileUploadUsesUploadRateLimit(t *testing.T) {
+	limiter := &captureFileRateLimiter{allow: false}
+	server := &APIServer{rateLimiter: limiter}
+	request := httptest.NewRequest(http.MethodPut, "/api/files/profiles/profile-a/content", strings.NewReader("body"))
+	request.ContentLength = 4
+	request.SetPathValue("profileID", "profile-a")
+	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-a"}))
+	recorder := httptest.NewRecorder()
+
+	server.handleFileUpload(recorder, request)
+
+	if limiter.scope != "files-upload" || limiter.limit != 600 {
+		t.Fatalf("scope = %q (limit %d), want files-upload with limit 600", limiter.scope, limiter.limit)
+	}
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusTooManyRequests)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, string(ErrRateLimited)) {
+		t.Fatalf("body = %s, want machine-readable rate limit error", body)
+	}
+}
+
 func TestDecodeUploadFileNameAcceptsPaddedBase64URL(t *testing.T) {
 	encoded := base64.URLEncoding.EncodeToString([]byte("report ä.txt"))
 	name, err := decodeUploadFileName(encoded)

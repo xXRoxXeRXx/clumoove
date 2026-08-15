@@ -279,6 +279,15 @@ describe('FileUploadControl component', () => {
 
     expect(capturedSignal?.aborted).toBe(false);
 
+    // Expand queue overlay to access item controls
+    const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
+    if (expandBtn) {
+      await act(async () => {
+        expandBtn.click();
+        await Promise.resolve();
+      });
+    }
+
     // Cancel the uploading item
     const cancelBtn = container.querySelector('button[aria-label*="cancel-test.txt"]');
     expect(cancelBtn).toBeDefined();
@@ -309,6 +318,81 @@ describe('FileUploadControl component', () => {
 
     expect(container.textContent).toContain('Uploaded');
     expect(onCompleted).toHaveBeenCalledWith('profile-1');
+  });
+
+  it('toggles between compact pill and expanded detail overlay and clears queue', async () => {
+    vi.mocked(uploadFile).mockResolvedValue({
+      ok: true,
+      status: 201,
+      data: { status: 'uploaded', name: 'doc.pdf' },
+    });
+
+    await act(async () => {
+      root.render(
+        <FileUploadControl
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          parentRef="ref-root"
+          capabilities={mockFullCapabilities}
+          onCompleted={onCompleted}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    const testFile = makeFile('doc.pdf');
+
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', { value: [testFile], writable: true });
+      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const dialog = document.querySelector('[role="dialog"]');
+    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
+    await act(async () => {
+      startBtn?.click();
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Compact pill is visible with summary
+    const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
+    expect(expandBtn).not.toBeNull();
+    expect(container.textContent).toContain('1/1');
+
+    // Click to expand
+    await act(async () => {
+      expandBtn?.click();
+      await Promise.resolve();
+    });
+
+    // Expanded overlay shows filename and minimize button
+    expect(container.textContent).toContain('doc.pdf');
+    const minimizeBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Minimize queue"], button[aria-label="Warteschlange minimieren"]');
+    expect(minimizeBtn).not.toBeNull();
+
+    // Minimize back to pill
+    await act(async () => {
+      minimizeBtn?.click();
+      await Promise.resolve();
+    });
+
+    // Compact pill is visible again
+    expect(container.querySelector('button[aria-expanded="false"]')).not.toBeNull();
+
+    // Clear queue when all done
+    const clearBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Clear queue"], button[aria-label="Warteschlange leeren"]');
+    expect(clearBtn).not.toBeNull();
+    await act(async () => {
+      clearBtn?.click();
+      await Promise.resolve();
+    });
+
+    // Queue is now empty and dismissed
+    expect(container.querySelector('aside')).toBeNull();
   });
 
   it('aborts active upload controllers on unmount', async () => {

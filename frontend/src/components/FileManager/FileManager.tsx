@@ -76,6 +76,15 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const entriesRequestRef = useRef<AbortController | null>(null);
   const latestEntriesRequestRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const uploadRefreshTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (uploadRefreshTimeoutRef.current !== null) {
+        window.clearTimeout(uploadRefreshTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const currentBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
@@ -288,10 +297,16 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     setDownloadingRef(null);
   };
 
-  const uploadCompleted = (completedProfileID: string) => {
+  const uploadCompleted = useCallback((completedProfileID: string) => {
     if (completedProfileID !== profileId) return;
-    void loadEntries(currentRef);
-  };
+    if (uploadRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(uploadRefreshTimeoutRef.current);
+    }
+    uploadRefreshTimeoutRef.current = window.setTimeout(() => {
+      uploadRefreshTimeoutRef.current = null;
+      void loadEntries(currentRef);
+    }, 500);
+  }, [currentRef, loadEntries, profileId]);
 
   return (
     <section className="w-full space-y-5" aria-labelledby="file-manager-title">

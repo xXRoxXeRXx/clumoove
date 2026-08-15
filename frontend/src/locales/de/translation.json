@@ -622,6 +622,11 @@
     "conflictRename": "Beide Dateien behalten",
     "nonAtomicOverwriteWarning": "Diese Verbindung kann Dateien nicht atomar überschreiben.",
     "startUpload": "Upload starten",
+    "uploadProgressSummary": "{{completed}} von {{total}} Dateien fertig",
+    "clearCompleted": "Abgeschlossene entfernen",
+    "clearQueue": "Warteschlange leeren",
+    "minimizeQueue": "Warteschlange minimieren",
+    "expandQueue": "Warteschlange erweitern",
     "uploadStatus": {
       "queued": "Wartet",
       "uploading": "Wird hochgeladen",
