@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowDownTrayIcon, ChevronLeftIcon, ChevronRightIcon, MagnifyingGlassMinusIcon, MagnifyingGlassPlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import DOMPurify from 'dompurify';
@@ -10,17 +10,13 @@ import { useApiError } from '../../utils/apiError';
 import { canPreview, previewKindFor, previewLimit } from './filePreview';
 import DocxWorker from './docxPreview.worker.ts?worker';
 import XlsxWorker from './xlsxPreview.worker.ts?worker';
-import PdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?worker';
+import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-if (typeof window !== 'undefined' && 'Worker' in window) {
-  try {
-    pdfjs.GlobalWorkerOptions.workerPort = new PdfWorker();
-  } catch {
-    // fallback if worker port initialization is unsupported in environment
-  }
+if (typeof window !== 'undefined') {
+  pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 }
 
 type Sheet = { name: string; rows: string[][] };
@@ -80,6 +76,7 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, onClose, on
   const translateApiError = useApiError();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const kind = previewKindFor(entry);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const [text, setText] = useState('');
@@ -89,10 +86,15 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, onClose, on
   const [pages, setPages] = useState(0);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(1);
-  const [state, setState] = useState<'loading' | 'ready' | 'fallback'>('loading');
+  const [state, setState] = useState<'loading' | 'ready' | 'fallback'>(() => (!kind || !canPreview(entry) ? 'fallback' : 'loading'));
   const [error, setError] = useState('');
-  const kind = previewKindFor(entry);
   useFocusTrap(dialogRef, closeRef, onClose);
+
+  const pdfFile = useMemo(() => {
+    if (pdfData) return { data: pdfData };
+    if (blobUrl) return blobUrl;
+    return null;
+  }, [pdfData, blobUrl]);
 
   useEffect(() => {
     if (!kind || !canPreview(entry)) return;
@@ -171,7 +173,7 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, onClose, on
           {state === 'ready' && kind === 'text' && <div className="w-full h-full overflow-auto"><pre className="whitespace-pre-wrap break-words font-mono text-sm">{text}</pre></div>}
           {state === 'ready' && kind === 'docx' && <div className="w-full h-full overflow-auto"><article className="prose max-w-none dark:prose-invert" dangerouslySetInnerHTML={{ __html: docxHtml }} /></div>}
           {state === 'ready' && kind === 'xlsx' && <div className="w-full h-full overflow-auto space-y-3"><div className="flex flex-wrap gap-2">{sheets.map((sheet, index) => <button key={sheet.name} type="button" onClick={() => setSheetIndex(index)} className={index === sheetIndex ? 'ui-button-primary px-3 py-2 text-sm' : 'ui-button-secondary px-3 py-2 text-sm'}>{sheet.name}</button>)}</div><div className="overflow-auto"><table className="ui-table text-sm"><tbody>{(sheets[sheetIndex]?.rows ?? []).map((row, rowIndex) => <tr key={rowIndex}>{row.map((value, cellIndex) => <td key={cellIndex} className="border border-[var(--color-border)] px-2 py-1">{value}</td>)}</tr>)}</tbody></table></div></div>}
-          {state === 'ready' && kind === 'pdf' && (pdfData || blobUrl) && <div className="w-full h-full overflow-auto flex flex-col items-center space-y-3"><div className="flex items-center justify-center gap-2 shrink-0"><button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1} className="ui-icon-button p-2"><ChevronLeftIcon className="h-4 w-4" aria-hidden="true" /></button><span className="text-sm">{page} / {pages || '?'}</span><button type="button" onClick={() => setPage((current) => Math.min(pages || current, current + 1))} disabled={pages === 0 || page >= pages} className="ui-icon-button p-2"><ChevronRightIcon className="h-4 w-4" aria-hidden="true" /></button><button type="button" onClick={() => setZoom((current) => Math.max(0.5, current - 0.25))} className="ui-icon-button p-2" aria-label={t('files.previewZoomOut')}><MagnifyingGlassMinusIcon className="h-4 w-4" aria-hidden="true" /></button><button type="button" onClick={() => setZoom((current) => Math.min(2, current + 0.25))} className="ui-icon-button p-2" aria-label={t('files.previewZoomIn')}><MagnifyingGlassPlusIcon className="h-4 w-4" aria-hidden="true" /></button></div><div className="overflow-auto max-h-full"><Document file={pdfData ? { data: pdfData } : blobUrl} onLoadSuccess={({ numPages }) => { setPages(numPages); setPage(1); }} onLoadError={() => setState('fallback')}><Page pageNumber={page} scale={zoom} className="mx-auto w-fit max-w-full" /></Document></div></div>}
+          {state === 'ready' && kind === 'pdf' && pdfFile && <div className="w-full h-full overflow-auto flex flex-col items-center space-y-3"><div className="flex items-center justify-center gap-2 shrink-0"><button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page <= 1} className="ui-icon-button p-2"><ChevronLeftIcon className="h-4 w-4" aria-hidden="true" /></button><span className="text-sm">{page} / {pages || '?'}</span><button type="button" onClick={() => setPage((current) => Math.min(pages || current, current + 1))} disabled={pages === 0 || page >= pages} className="ui-icon-button p-2"><ChevronRightIcon className="h-4 w-4" aria-hidden="true" /></button><button type="button" onClick={() => setZoom((current) => Math.max(0.5, current - 0.25))} className="ui-icon-button p-2" aria-label={t('files.previewZoomOut')}><MagnifyingGlassMinusIcon className="h-4 w-4" aria-hidden="true" /></button><button type="button" onClick={() => setZoom((current) => Math.min(2, current + 0.25))} className="ui-icon-button p-2" aria-label={t('files.previewZoomIn')}><MagnifyingGlassPlusIcon className="h-4 w-4" aria-hidden="true" /></button></div><div className="overflow-auto max-h-full"><Document file={pdfFile} onLoadSuccess={({ numPages }) => { setPages(numPages); setPage(1); }} onLoadError={() => setState('fallback')}><Page pageNumber={page} scale={zoom} className="mx-auto w-fit max-w-full" /></Document></div></div>}
         </div>
       </div>
     </div>,
