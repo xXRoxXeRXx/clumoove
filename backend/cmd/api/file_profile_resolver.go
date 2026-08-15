@@ -30,7 +30,7 @@ func fileProfileOAuthAccessNeedsRefresh(profile *db.ConnectionProfile, accessTok
 }
 
 func (s *APIServer) loadOwnedFileProfile(ctx context.Context, userID, profileID string) (*db.ConnectionProfile, error) {
-	if userID == "" || profileID == "" {
+	if userID == "" || profileID == "" || s.db == nil {
 		return nil, errFileProfileNotFound
 	}
 	owned, err := db.VerifyProfileOwnershipContext(ctx, s.db, profileID, userID)

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { SyncDashboard } from './components/SyncDashboard';
 import { ConnectForm } from './components/ConnectForm';
 import { FileBrowser } from './components/FileBrowser';
@@ -10,7 +10,7 @@ import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
 import { SettingsPage } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { AdminPanel } from './components/AdminPanel';
-import { FileManager } from './components/FileManager/FileManager';
+import { LoadingIndicator } from './components/LoadingIndicator';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConfirmationProvider } from './contexts/ConfirmationContext';
@@ -24,6 +24,8 @@ import { configuredApiOrigin } from './utils/runtimeConfig';
 import { useAppHistory } from './hooks/useAppHistory';
 import { safeAvatarUrl } from './utils/avatar';
 import { resolveFilePath, type FileBreadcrumb } from './api/files';
+
+const FileManager = lazy(() => import('./components/FileManager/FileManager').then((m) => ({ default: m.FileManager })));
 
 function getApiUrl(): string {
   // Production nginx injects a validated runtime origin before this bundle
@@ -118,6 +120,8 @@ function App() {
   const [credentials, setCredentials] = useState<MigrationConfig | null>(null);
   const [initialFiles, setInitialFiles] = useState<CloudFile[]>([]);
   const [fileStart, setFileStart] = useState<{ profileId: string; breadcrumbs: FileBreadcrumb[]; fallback: boolean } | null>(null);
+  const resolveAbortControllerRef = useRef<AbortController | null>(null);
+  const resolveRequestIdRef = useRef<number>(0);
   const clearCreationState = useCallback(() => {
     setCredentials(null);
     setInitialFiles([]);
@@ -373,13 +377,29 @@ function App() {
     void handleLogout();
   };
 
+  useEffect(() => {
+    return () => {
+      resolveAbortControllerRef.current?.abort();
+    };
+  }, []);
+
   const handleReset = () => {
+    resolveAbortControllerRef.current?.abort();
+    resolveRequestIdRef.current += 1;
     clearCreationState();
     goToOverview();
   };
 
   const openFileManagerAtPath = useCallback(async (nextProfileId: string, path: string) => {
-    const result = await resolveFilePath(API_URL, token, nextProfileId, path);
+    resolveAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    resolveAbortControllerRef.current = controller;
+    const reqId = ++resolveRequestIdRef.current;
+
+    const result = await resolveFilePath(API_URL, token, nextProfileId, path, controller.signal);
+    if (resolveRequestIdRef.current !== reqId || controller.signal.aborted) {
+      return;
+    }
     if (result.ok) {
       setFileStart({ profileId: nextProfileId, breadcrumbs: result.data.breadcrumbs, fallback: result.data.fallback });
     } else {
@@ -392,6 +412,8 @@ function App() {
   }, [navigate, token]);
 
   const openFileManagerRoot = useCallback((nextProfileId = '') => {
+    resolveAbortControllerRef.current?.abort();
+    resolveRequestIdRef.current += 1;
     setFileStart(null);
     navigate('files', nextProfileId);
   }, [navigate]);
@@ -569,16 +591,24 @@ function App() {
           )}
 
           {step === 'files' && (
-            <FileManager
-              apiUrl={API_URL}
-              token={token}
-              profileId={profileId}
-              initialBreadcrumbs={fileStart?.profileId === profileId ? fileStart.breadcrumbs : undefined}
-              initialPathFallback={fileStart?.profileId === profileId && fileStart.fallback}
-              onProfileChange={openFileManagerRoot}
-              onOpenManager={() => navigate('settings')}
-              onBack={handleBack}
-            />
+            <Suspense
+              fallback={(
+                <div className="flex min-h-[50vh] items-center justify-center p-8">
+                  <LoadingIndicator label={t('common.loading')} />
+                </div>
+              )}
+            >
+              <FileManager
+                apiUrl={API_URL}
+                token={token}
+                profileId={profileId}
+                initialBreadcrumbs={fileStart?.profileId === profileId ? fileStart.breadcrumbs : undefined}
+                initialPathFallback={fileStart?.profileId === profileId && fileStart.fallback}
+                onProfileChange={openFileManagerRoot}
+                onOpenManager={() => navigate('settings')}
+                onBack={handleBack}
+              />
+            </Suspense>
           )}
 
           {step === 'syncdetail' && (

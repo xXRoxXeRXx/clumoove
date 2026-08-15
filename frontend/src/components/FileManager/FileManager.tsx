@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react';
 import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
@@ -16,9 +16,10 @@ import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
-import { FilePreviewDialog } from './FilePreviewDialog';
 import { FileUploadControl } from './FileUploadControl';
 import { canPreview } from './filePreview';
+
+const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
 type Breadcrumb = {
   ref: string | null;
@@ -395,7 +396,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           )}
         </div>
       </div>
-      {previewEntry && <FilePreviewDialog apiUrl={apiUrl} token={token} profileId={profileId} entry={previewEntry} onClose={() => setPreviewEntry(null)} onDownload={(entry) => void download(entry)} />}
+      {previewEntry && (
+        <Suspense fallback={null}>
+          <FilePreviewDialog apiUrl={apiUrl} token={token} profileId={profileId} entry={previewEntry} onClose={() => setPreviewEntry(null)} onDownload={(entry) => void download(entry)} />
+        </Suspense>
+      )}
     </section>
   );
 }
