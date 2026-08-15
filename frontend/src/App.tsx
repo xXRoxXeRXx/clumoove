@@ -23,7 +23,6 @@ import { logger } from './utils/logger';
 import { configuredApiOrigin } from './utils/runtimeConfig';
 import { useAppHistory } from './hooks/useAppHistory';
 import { safeAvatarUrl } from './utils/avatar';
-import { FolderIcon, HomeIcon } from '@heroicons/react/24/outline';
 import { resolveFilePath, type FileBreadcrumb } from './api/files';
 
 function getApiUrl(): string {
@@ -437,36 +436,11 @@ function App() {
                 Clumoove
               </div>
             )}
-            </div>
+          </div>
 
-            {user && (
-              <nav className="ml-auto flex items-center gap-1" aria-label={t('nav.primary')}>
-                <button
-                  type="button"
-                  onClick={goToOverview}
-                  aria-current={step === 'history' ? 'page' : undefined}
-                  aria-label={t('nav.overview')}
-                  className={`ui-icon-button gap-2 px-2 py-2 text-sm hover:bg-[var(--color-hover)] sm:px-3 ${step === 'history' ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}
-                >
-                  <HomeIcon className="h-4 w-4" aria-hidden="true" />
-                  <span className="hidden sm:inline">{t('nav.overview')}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openFileManagerRoot(profileId)}
-                  aria-current={step === 'files' ? 'page' : undefined}
-                  aria-label={t('nav.files')}
-                  className={`ui-icon-button gap-2 px-2 py-2 text-sm hover:bg-[var(--color-hover)] sm:px-3 ${step === 'files' ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)]' : 'text-[var(--color-text-secondary)]'}`}
-                >
-                  <FolderIcon className="h-4 w-4" aria-hidden="true" />
-                  <span className="hidden sm:inline">{t('nav.files')}</span>
-                </button>
-              </nav>
-            )}
-
-           {/* User Section in Header */}
+          {/* User Section in Header */}
           {user && (
-            <div className="relative" ref={userMenuRef}>
+            <div className="relative ml-auto" ref={userMenuRef}>
               <button
                 ref={userMenuButtonRef}
                 type="button"
@@ -590,6 +564,7 @@ function App() {
                 navigate('syncdetail', id);
               }}
               onOpenFileManager={(id, path) => void openFileManagerAtPath(id, path)}
+              onOpenFilemanagerRoot={() => openFileManagerRoot(profileId)}
             />
           )}
 
@@ -602,6 +577,7 @@ function App() {
               initialPathFallback={fileStart?.profileId === profileId && fileStart.fallback}
               onProfileChange={openFileManagerRoot}
               onOpenManager={() => navigate('settings')}
+              onBack={handleBack}
             />
           )}
 

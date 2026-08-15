@@ -132,7 +132,6 @@ describe('MigrationsDashboard tabs', () => {
       { from: 'migrations', key: 'ArrowRight', selected: 'sync', unselected: 'migrations' },
       { from: 'sync', key: 'ArrowLeft', selected: 'migrations', unselected: 'sync' },
       { from: 'sync', key: 'Home', selected: 'migrations', unselected: 'sync' },
-      { from: 'migrations', key: 'End', selected: 'sync', unselected: 'migrations' },
     ];
 
     for (const testCase of cases) {
@@ -146,6 +145,45 @@ describe('MigrationsDashboard tabs', () => {
 
     expect(container.querySelector(`input[aria-label="${i18n.t('migrations.searchLabel')}"]`)).not.toBeNull();
     expect(container.querySelector(`select[aria-label="${i18n.t('migrations.statusFilterLabel')}"]`)).not.toBeNull();
+  });
+
+  it('calls onOpenFilemanagerRoot when the Dateimanager tab is clicked or selected with End key', async () => {
+    const onOpenFilemanagerRoot = vi.fn();
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <MigrationsDashboard
+          apiUrl="https://api.example.test"
+          token="token"
+          user={null}
+          onStartNewMigration={vi.fn()}
+          onSelectActiveMigration={vi.fn()}
+          onOpenFilemanagerRoot={onOpenFilemanagerRoot}
+        />,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    const fileManagerTab = container.querySelector<HTMLButtonElement>('#filemanager-tab')!;
+    expect(fileManagerTab).not.toBeNull();
+    expect(fileManagerTab.textContent).toContain(i18n.t('sync.tabFileManager'));
+
+    await act(async () => {
+      fileManagerTab.click();
+    });
+    expect(onOpenFilemanagerRoot).toHaveBeenCalledTimes(1);
+
+    const migrationsTab = getTab('migrations')!;
+    await act(async () => {
+      migrationsTab.focus();
+      migrationsTab.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    });
+    expect(onOpenFilemanagerRoot).toHaveBeenCalledTimes(2);
   });
 
   it('shows a loading state before the initial migration snapshot resolves', async () => {

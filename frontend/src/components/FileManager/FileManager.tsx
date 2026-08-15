@@ -33,6 +33,7 @@ type FileManagerProps = {
   initialPathFallback?: boolean;
   onProfileChange: (profileId: string) => void;
   onOpenManager?: () => void;
+  onBack?: () => void;
 };
 
 const unavailableCapabilities: FileCapabilities = {
@@ -55,7 +56,7 @@ const unavailableCapabilities: FileCapabilities = {
   thumbnails: false,
 };
 
-export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, initialPathFallback = false, onProfileChange, onOpenManager }: FileManagerProps) {
+export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, initialPathFallback = false, onProfileChange, onOpenManager, onBack }: FileManagerProps) {
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
@@ -246,50 +247,70 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   return (
     <section className="w-full space-y-5" aria-labelledby="file-manager-title">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 id="file-manager-title" className="text-xl font-semibold">{t('files.title')}</h1>
-          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{t('files.subtitle')}</p>
-        </div>
-        {onOpenManager && (
-          <button type="button" onClick={onOpenManager} className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm">
-            <WrenchScrewdriverIcon className="h-4 w-4" aria-hidden="true" />
-            {t('files.manageProfiles')}
+      {/* Back Header */}
+      <div className="flex items-center justify-between pb-4 border-b border-[var(--color-border)]/50">
+        {onBack ? (
+          <button
+            type="button"
+            onClick={onBack}
+            className="ui-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-[var(--color-bg-tertiary)]"
+          >
+            <ArrowLeftIcon className="w-4 h-4" aria-hidden="true" />
+            {t('common.back')}
           </button>
-        )}
+        ) : <div />}
+        <div className="flex items-center gap-2">
+          <FolderIcon className="w-5 h-5 text-[var(--color-text-primary)]" aria-hidden="true" />
+          <h1 id="file-manager-title" className="font-display font-semibold text-xl text-[var(--color-text-primary)] leading-none">{t('files.title')}</h1>
+        </div>
       </div>
 
       {error && <p className="ui-alert ui-alert-error px-3 py-2 text-sm" role="alert">{error}</p>}
       {initialPathFallback && <p className="ui-alert px-3 py-2 text-sm" role="status">{t('files.pathFallback')}</p>}
 
       <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <aside className="ui-card p-3" aria-label={t('files.profiles')}>
-          <div className="mb-2 flex items-center justify-between gap-2 px-2">
-            <h2 className="text-sm font-semibold">{t('files.profiles')}</h2>
-            <button type="button" onClick={() => void loadProfiles()} disabled={profilesLoading} className="ui-icon-button p-1.5 hover:bg-[var(--color-hover)]" aria-label={t('files.refresh')} title={t('files.refresh')}>
-              <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
-            </button>
+        <aside className="ui-card flex flex-col justify-between p-3" aria-label={t('files.profiles')}>
+          <div>
+            <div className="mb-2 flex items-center justify-between gap-2 px-2">
+              <h2 className="text-sm font-semibold">{t('files.profiles')}</h2>
+              <button type="button" onClick={() => void loadProfiles()} disabled={profilesLoading} className="ui-icon-button p-1.5 hover:bg-[var(--color-hover)]" aria-label={t('files.refresh')} title={t('files.refresh')}>
+                <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+            {profilesLoading ? (
+              <div className="px-2 py-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div>
+            ) : profiles.length === 0 ? (
+              <p className="ui-empty px-2 py-4 text-sm">{t('files.noProfiles')}</p>
+            ) : (
+              <ul className="space-y-1" aria-label={t('files.profiles')}>
+                {profiles.map((profile) => (
+                  <li key={profile.id}>
+                    <button
+                      type="button"
+                      onClick={() => selectProfile(profile.id)}
+                      aria-current={profile.id === profileId ? 'page' : undefined}
+                      className={`w-full rounded-md px-2 py-2 text-left text-sm ${profile.id === profileId ? 'bg-[var(--color-selection-bg)] text-[var(--color-selection-text)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)]'}`}
+                    >
+                      <span className="block truncate font-medium">{profile.name}</span>
+                      <span className="block truncate text-xs opacity-75">{profile.provider}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
-          {profilesLoading ? (
-            <div className="px-2 py-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div>
-          ) : profiles.length === 0 ? (
-            <p className="ui-empty px-2 py-4 text-sm">{t('files.noProfiles')}</p>
-          ) : (
-            <ul className="space-y-1" aria-label={t('files.profiles')}>
-              {profiles.map((profile) => (
-                <li key={profile.id}>
-                  <button
-                    type="button"
-                    onClick={() => selectProfile(profile.id)}
-                    aria-current={profile.id === profileId ? 'page' : undefined}
-                    className={`w-full rounded-md px-2 py-2 text-left text-sm ${profile.id === profileId ? 'bg-[var(--color-selection-bg)] text-[var(--color-selection-text)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)]'}`}
-                  >
-                    <span className="block truncate font-medium">{profile.name}</span>
-                    <span className="block truncate text-xs opacity-75">{profile.provider}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+
+          {onOpenManager && (
+            <div className="mt-3 border-t border-[var(--color-border)] pt-2">
+              <button
+                type="button"
+                onClick={onOpenManager}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)] hover:text-[var(--color-text-primary)]"
+              >
+                <WrenchScrewdriverIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t('files.manageProfiles')}</span>
+              </button>
+            </div>
           )}
         </aside>
 

@@ -592,7 +592,7 @@
     "networkError": "Verbindung zum Server fehlgeschlagen."
   },
   "files": {
-    "title": "Dateien",
+    "title": "Dateimanager",
     "subtitle": "Durchsuche die Dateien einer gespeicherten Verbindung.",
     "profiles": "Verbindungen",
     "manageProfiles": "Verbindungen verwalten",
@@ -915,6 +915,7 @@
   "sync": {
     "tabMigrations": "Migrationen",
     "tabSyncs": "Synchronisationen",
+    "tabFileManager": "Dateimanager",
     "mode": "Aufgabenmodus",
     "modeMigration": "Einmalige Migration",
     "modeSync": "Fortlaufende Synchronisation",

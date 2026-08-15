@@ -592,7 +592,7 @@
     "networkError": "Could not connect to the server."
   },
   "files": {
-    "title": "Files",
+    "title": "File Manager",
     "subtitle": "Browse the files available through a saved connection.",
     "profiles": "Connections",
     "manageProfiles": "Manage connections",
@@ -915,6 +915,7 @@
   "sync": {
     "tabMigrations": "Migrations",
     "tabSyncs": "Sync Jobs",
+    "tabFileManager": "File Manager",
     "mode": "Task Mode",
     "modeMigration": "One-time Migration",
     "modeSync": "Continuous Sync",

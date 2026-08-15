@@ -20,9 +20,10 @@ interface MigrationsDashboardProps {
   onSelectActiveMigration: (id: string) => void;
   onSelectActiveSync?: (id: string) => void;
   onOpenFileManager?: (profileId: string, path: string) => void;
+  onOpenFilemanagerRoot?: () => void;
 }
 
-type DashboardTab = 'migrations' | 'sync';
+type DashboardTab = 'migrations' | 'sync' | 'fileManager';
 
 function commonParentPath(paths: string[] | undefined): string {
   if (!paths?.length) return '/';
@@ -44,6 +45,7 @@ export function MigrationsDashboard({
   onSelectActiveMigration,
   onSelectActiveSync,
   onOpenFileManager,
+  onOpenFilemanagerRoot,
 }: MigrationsDashboardProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('migrations');
   const [migrations, setMigrations] = useState<Migration[]>([]);
@@ -62,6 +64,7 @@ export function MigrationsDashboard({
   const tabRefs = useRef<Record<DashboardTab, HTMLButtonElement | null>>({
     migrations: null,
     sync: null,
+    fileManager: null,
   });
   // A live stream frame is newer than the initial HTTP snapshot, regardless of
   // which response happens to arrive first.
@@ -393,6 +396,10 @@ export function MigrationsDashboard({
   // The shared Tabs component cannot yet preserve this tablist's count badges and adjacent filters.
   // Keep its horizontal keyboard contract in sync when those extension points are added.
   function selectTab(tab: DashboardTab): void {
+    if (tab === 'fileManager') {
+      onOpenFilemanagerRoot?.();
+      return;
+    }
     setActiveTab(tab);
     tabRefs.current[tab]?.focus();
   }
@@ -402,14 +409,16 @@ export function MigrationsDashboard({
 
     switch (event.key) {
       case 'ArrowRight':
+        nextTab = tab === 'migrations' ? 'sync' : tab === 'sync' ? 'fileManager' : 'migrations';
+        break;
       case 'ArrowLeft':
-        nextTab = tab === 'migrations' ? 'sync' : 'migrations';
+        nextTab = tab === 'migrations' ? 'fileManager' : tab === 'sync' ? 'migrations' : 'sync';
         break;
       case 'Home':
         nextTab = 'migrations';
         break;
       case 'End':
-        nextTab = 'sync';
+        nextTab = 'fileManager';
         break;
       default:
         return;
@@ -539,6 +548,18 @@ export function MigrationsDashboard({
               <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'sync' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {syncJobs.length}
               </span>
+            </button>
+            <button
+              ref={(node) => { tabRefs.current.fileManager = node; }}
+              id="filemanager-tab"
+              onClick={() => onOpenFilemanagerRoot?.()}
+              role="tab"
+              aria-selected={false}
+              tabIndex={-1}
+              onKeyDown={(event) => handleTabKeyDown(event, 'fileManager')}
+              className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+            >
+              <span>{t('sync.tabFileManager')}</span>
             </button>
           </div>
 
