@@ -7,6 +7,7 @@ import {
   ChevronRightIcon,
   FileIcon,
   FolderIcon,
+  ProviderIcon,
   WrenchScrewdriverIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
@@ -296,10 +297,10 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       type="button"
                       onClick={() => selectProfile(profile.id)}
                       aria-current={profile.id === profileId ? 'page' : undefined}
-                      className={`w-full rounded-md px-2 py-2 text-left text-sm ${profile.id === profileId ? 'bg-[var(--color-selection-bg)] text-[var(--color-selection-text)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)]'}`}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors ${profile.id === profileId ? 'bg-[var(--color-selection-bg)] text-[var(--color-selection-text)]' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)]'}`}
                     >
-                      <span className="block truncate font-medium">{profile.name}</span>
-                      <span className="block truncate text-xs opacity-75">{profile.provider}</span>
+                      <ProviderIcon provider={profile.provider} className="h-4 w-4 shrink-0" />
+                      <span className="truncate font-medium">{profile.name}</span>
                     </button>
                   </li>
                 ))}
@@ -367,7 +368,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     </thead>
                     <tbody>
                       {entries.map((entry) => (
-                        <tr key={entry.ref} className="border-t border-[var(--color-border)]">
+                        <tr key={entry.ref} className="border-t border-[var(--color-border)] hover:bg-[var(--color-hover)] transition-colors">
                           <td data-label={t('files.name')} className="min-w-56 px-3 py-2">
                             <button type="button" onClick={() => openEntry(entry)} disabled={(entry.kind === 'directory' && (!capabilities.browse || entriesLoading)) || (entry.kind === 'file' && !canPreview(entry))} className={`inline-flex max-w-full items-center gap-2 truncate text-left ${entry.kind === 'directory' || canPreview(entry) ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}>
                               <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
