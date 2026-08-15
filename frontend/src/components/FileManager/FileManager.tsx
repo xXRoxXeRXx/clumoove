@@ -5,16 +5,16 @@ import {
   ArrowPathIcon,
   ArrowUpIcon,
   ChevronRightIcon,
+  FileIcon,
   FolderIcon,
   WrenchScrewdriverIcon,
-} from '@heroicons/react/24/outline';
+} from '../icons';
 import { useTranslation } from 'react-i18next';
 import { getFileCapabilities, listFileEntries, createDownloadTicket, type FileBreadcrumb, type FileCapabilities, type FileEntry } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
-import { FileIcon } from '../FileIcon';
 import { FileUploadControl } from './FileUploadControl';
 import { canPreview } from './filePreview';
 

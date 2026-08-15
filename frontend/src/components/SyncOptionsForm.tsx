@@ -6,7 +6,7 @@ import {
   InformationCircleIcon as Info,
   ExclamationTriangleIcon as AlertTriangle,
   CalendarDaysIcon as Calendar,
-} from "@heroicons/react/24/outline";
+} from "./icons";
 import { useTranslation } from "react-i18next";
 import {
   BANDWIDTH_OPTIONS,

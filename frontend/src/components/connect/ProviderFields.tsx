@@ -1,6 +1,6 @@
 import { type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ExclamationCircleIcon as AlertCircle, ArrowPathIcon as RefreshCw } from '@heroicons/react/24/outline';
+import { ExclamationCircleIcon as AlertCircle, ArrowPathIcon as RefreshCw } from '../icons';
 import { isOAuthProvider, type ProviderId } from '../../types';
 import type { FtpTlsMode } from '../../utils/providerUrls';
 import { FixedCredentialsFields as SharedFixedCredentialsFields, type FixedCredentialsProvider } from './FixedCredentialsFields';

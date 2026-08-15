@@ -15,19 +15,19 @@ import {
   ChevronDownIcon as ChevronDown,
   ChevronRightIcon as ChevronRight,
   ExclamationTriangleIcon as AlertTriangle,
+  FileIcon,
   FolderIcon as Folder,
   FolderOpenIcon as FolderOpen,
   FolderPlusIcon as FolderPlus,
   PlayIcon as Play,
   XMarkIcon as X,
-} from "@heroicons/react/24/outline";
+} from "./icons";
 import type { CloudFile, MigrationConfig } from "../types";
 import { useTranslation } from "react-i18next";
 import { useFormat } from "../utils/format";
 import { useApiError } from "../utils/apiError";
 import { apiFetch } from "../utils/apiClient";
 import { logger } from "../utils/logger";
-import { FileIcon } from "./FileIcon";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { Button } from "./Button";
 import { useFocusTrap } from "../hooks/useFocusTrap";

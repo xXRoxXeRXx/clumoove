@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon } from './icons';
 import { useTranslation } from 'react-i18next';
 import { Button } from './Button';
 

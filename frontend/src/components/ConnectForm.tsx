@@ -1,5 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, CheckCircleIcon as CheckCircle2, ExclamationCircleIcon as AlertCircle, QuestionMarkCircleIcon as HelpCircle } from '@heroicons/react/24/outline';
+import {
+  ArrowLeftIcon as ArrowLeft,
+  ArrowPathIcon as RefreshCw,
+  ArrowRightIcon as ArrowRight,
+  CheckCircleIcon as CheckCircle2,
+  ExclamationCircleIcon as AlertCircle,
+  QuestionMarkCircleIcon as HelpCircle,
+} from './icons';
 import { useTranslation } from 'react-i18next';
 import { isOAuthProvider, type CloudFile, type MigrationConfig, type ProviderId } from '../types';
 

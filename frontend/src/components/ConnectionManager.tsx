@@ -9,7 +9,7 @@ import { LoadingIndicator } from './LoadingIndicator';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useOAuthPopup } from '../hooks/useOAuthPopup';
 import type { ApiErrBody } from './SettingsPage';
-import { LinkIcon as Plug } from '@heroicons/react/24/outline';
+import { LinkIcon as Plug } from './icons';
 import {
   parseSmbUrl,
   buildSmbUrl,

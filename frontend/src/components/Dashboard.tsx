@@ -22,7 +22,7 @@ import { isAuthFailureError } from '../utils/authFailure';
 import {
   QueueListIcon,
   SignalIcon,
-} from '@heroicons/react/24/outline';
+} from './icons';
 
 interface DashboardProps {
   migrationId: string;

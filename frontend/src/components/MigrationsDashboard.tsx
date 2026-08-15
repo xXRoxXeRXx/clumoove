@@ -9,7 +9,14 @@ import { StatusBadge } from './StatusBadge';
 import { LoadingIndicator } from './LoadingIndicator';
 import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
-import { ArrowPathIcon, CalendarDaysIcon, FolderOpenIcon, PauseIcon, PlayIcon, TrashIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowPathIcon,
+  CalendarDaysIcon,
+  FolderOpenIcon,
+  PauseIcon,
+  PlayIcon,
+  TrashIcon,
+} from './icons';
 import { ProgressBar } from './ProgressBar';
 
 interface MigrationsDashboardProps {

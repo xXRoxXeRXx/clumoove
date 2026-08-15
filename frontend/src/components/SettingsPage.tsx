@@ -1,6 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeftIcon as ArrowLeft, ComputerDesktopIcon as Monitor, Cog6ToothIcon as Settings, EnvelopeIcon as Mail, EyeIcon as Eye, EyeSlashIcon as EyeOff, InformationCircleIcon as Info, LockClosedIcon as Lock, MoonIcon as Moon, LinkIcon as Plug, ShieldCheckIcon as ShieldCheck, SunIcon as Sun, SwatchIcon as Palette, TrashIcon as Trash2, ArrowUpTrayIcon as Upload, UserIcon as User } from '@heroicons/react/24/outline';
+import {
+  ArrowLeftIcon as ArrowLeft,
+  ComputerDesktopIcon as Monitor,
+  Cog6ToothIcon as Settings,
+  EnvelopeIcon as Mail,
+  EyeIcon as Eye,
+  EyeSlashIcon as EyeOff,
+  InformationCircleIcon as Info,
+  LockClosedIcon as Lock,
+  MoonIcon as Moon,
+  LinkIcon as Plug,
+  ShieldCheckIcon as ShieldCheck,
+  SunIcon as Sun,
+  SwatchIcon as Palette,
+  TrashIcon as Trash2,
+  ArrowUpTrayIcon as Upload,
+  UserIcon as User,
+} from './icons';
 import { AvatarCropper } from './AvatarCropper';
 import { ConnectionManager } from './ConnectionManager';
 import { useThemeContext } from '../contexts/useThemeContext';

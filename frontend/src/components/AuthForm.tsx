@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { EyeIcon as Eye, EyeSlashIcon as EyeOff } from '@heroicons/react/24/outline';
+import { EyeIcon as Eye, EyeSlashIcon as EyeOff } from './icons';
 import type { User as UserType } from '../types';
 import { useApiError } from '../utils/apiError';
 import { apiFetch } from '../utils/apiClient';

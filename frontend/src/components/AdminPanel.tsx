@@ -1,6 +1,23 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AdjustmentsHorizontalIcon as SlidersHorizontal, ArrowLeftIcon as ArrowLeft, ArrowPathIcon as RefreshCw, ArrowRightIcon as ArrowRight, ChartBarIcon as Activity, CheckCircleIcon as CheckCircle2, DocumentTextIcon as ScrollText, EnvelopeIcon as Mail, KeyIcon, LinkIcon, NoSymbolIcon as Ban, PresentationChartBarIcon as BarChart3, ShieldCheckIcon as ShieldCheck, ShieldExclamationIcon as ShieldOff, TrashIcon as Trash2, UsersIcon } from '@heroicons/react/24/outline';
+import {
+  AdjustmentsHorizontalIcon as SlidersHorizontal,
+  ArrowLeftIcon as ArrowLeft,
+  ArrowPathIcon as RefreshCw,
+  ArrowRightIcon as ArrowRight,
+  ChartBarIcon as Activity,
+  CheckCircleIcon as CheckCircle2,
+  DocumentTextIcon as ScrollText,
+  EnvelopeIcon as Mail,
+  KeyIcon,
+  LinkIcon,
+  NoSymbolIcon as Ban,
+  PresentationChartBarIcon as BarChart3,
+  ShieldCheckIcon as ShieldCheck,
+  ShieldExclamationIcon as ShieldOff,
+  TrashIcon as Trash2,
+  UsersIcon,
+} from './icons';
 import { useApiError } from '../utils/apiError';
 import { adminApi, type AdminUser, type AdminStats, type AuditEntry, type ApiResult, type InstanceOAuthSettings, type InstanceOAuthUpdate } from '../utils/adminApi';
 import { useFormat } from '../utils/format';

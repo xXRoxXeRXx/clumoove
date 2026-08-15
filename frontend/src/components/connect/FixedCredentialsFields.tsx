@@ -1,4 +1,4 @@
-import { ExclamationCircleIcon as AlertCircle } from '@heroicons/react/24/outline';
+import { ExclamationCircleIcon as AlertCircle } from '../icons';
 import { useTranslation } from 'react-i18next';
 
 export type FixedCredentialsProvider = 'magentacloud' | 'koofr';

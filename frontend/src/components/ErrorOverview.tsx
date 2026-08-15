@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { apiFetch } from '../utils/apiClient';
-import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ExclamationTriangleIcon } from './icons';
 
 interface ErrorListItem {
   id: string;

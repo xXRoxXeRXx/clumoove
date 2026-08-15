@@ -5,11 +5,12 @@ import {
   ChevronDownIcon as ChevronDown,
   ChevronRightIcon as ChevronRight,
   ExclamationTriangleIcon as AlertTriangle,
+  FileIcon,
   FolderIcon as Folder,
   FolderOpenIcon as FolderOpen,
   FolderPlusIcon as FolderPlus,
   XMarkIcon as X,
-} from "@heroicons/react/24/outline";
+} from "./icons";
 import { useTranslation } from "react-i18next";
 import type { CloudFile, SyncJob } from "../types";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -17,7 +18,6 @@ import { useApiError } from "../utils/apiError";
 import { useFormat } from "../utils/format";
 import { apiFetch } from "../utils/apiClient";
 import { logger } from "../utils/logger";
-import { FileIcon } from "./FileIcon";
 import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { SyncOptionsForm } from "./SyncOptionsForm";
 import { Button } from "./Button";

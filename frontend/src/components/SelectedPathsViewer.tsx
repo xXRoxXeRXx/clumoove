@@ -5,6 +5,7 @@ import {
   ChevronDownIcon as ChevronDown,
   ChevronRightIcon as ChevronRight,
   EyeIcon as Eye,
+  FileIcon,
   FolderIcon as Folder,
   FolderOpenIcon as FolderOpen,
   RectangleStackIcon as FolderTree,
@@ -13,8 +14,7 @@ import {
   Squares2X2Icon as Layers,
   ListBulletIcon as List,
   XMarkIcon as X,
-} from '@heroicons/react/24/outline';
-import { FileIcon } from './FileIcon';
+} from './icons';
 import { getFileCategory, type FileCategory } from '../utils/fileIcons';
 
 interface SelectedPathsViewerProps {

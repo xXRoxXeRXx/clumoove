@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowPathIcon, ArrowUpTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowPathIcon,
+  ArrowUpTrayIcon,
+  FileIcon,
+  XMarkIcon,
+} from '../icons';
 import { useTranslation } from 'react-i18next';
 import { uploadFile, type FileCapabilities, type UploadConflictStrategy } from '../../api/files';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
-import { FileIcon } from '../FileIcon';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 
 type QueueTask = {

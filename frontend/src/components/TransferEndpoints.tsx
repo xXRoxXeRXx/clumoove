@@ -1,4 +1,4 @@
-import { CloudArrowDownIcon, CloudArrowUpIcon } from '@heroicons/react/24/outline';
+import { CloudArrowDownIcon, CloudArrowUpIcon } from './icons';
 import { SelectedPathsViewer } from './SelectedPathsViewer';
 import { useTranslation } from 'react-i18next';
 

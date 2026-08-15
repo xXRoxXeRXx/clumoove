@@ -1,13 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDownTrayIcon, ChevronLeftIcon, ChevronRightIcon, MagnifyingGlassMinusIcon, MagnifyingGlassPlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowDownTrayIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  FileIcon,
+  MagnifyingGlassMinusIcon,
+  MagnifyingGlassPlusIcon,
+  XMarkIcon,
+} from '../icons';
 import DOMPurify from 'dompurify';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { useTranslation } from 'react-i18next';
 import { createDownloadTicket, type FileEntry } from '../../api/files';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useApiError } from '../../utils/apiError';
-import { FileIcon } from '../FileIcon';
 import { canPreview, previewKindFor, previewLimit } from './filePreview';
 import DocxWorker from './docxPreview.worker.ts?worker';
 import XlsxWorker from './xlsxPreview.worker.ts?worker';

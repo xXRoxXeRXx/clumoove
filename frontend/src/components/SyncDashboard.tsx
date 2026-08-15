@@ -25,7 +25,7 @@ import {
   ArrowLeftIcon,
   ClockIcon,
   PencilIcon,
-} from '@heroicons/react/24/outline';
+} from './icons';
 
 interface SyncDashboardProps {
   syncId: string;
