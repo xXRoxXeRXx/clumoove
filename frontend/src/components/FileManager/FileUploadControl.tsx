@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowPathIcon, ArrowUpTrayIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
 import { uploadFile, type FileCapabilities, type UploadConflictStrategy } from '../../api/files';
@@ -114,17 +115,84 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
     setTasks((current) => current.map((task) => task.id === id ? { ...task, status: 'queued', loaded: 0, error: undefined } : task));
   };
 
-  if (!capabilities.upload) return null;
+  const isUploadDisabled = disabled || !capabilities.upload;
+
   return (
     <>
-      <div className="relative" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFiles(event.dataTransfer.files); }}>
-        <input ref={inputRef} type="file" multiple className="sr-only" onChange={(event) => { selectFiles(event.target.files); event.currentTarget.value = ''; }} />
-        <button type="button" onClick={() => inputRef.current?.click()} disabled={disabled} className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm">
-          <ArrowUpTrayIcon className="h-4 w-4" aria-hidden="true" />{t('files.upload')}
+      <div className="relative" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!isUploadDisabled) selectFiles(event.dataTransfer.files); }}>
+        <input ref={inputRef} type="file" multiple disabled={isUploadDisabled} className="sr-only" onChange={(event) => { selectFiles(event.target.files); event.currentTarget.value = ''; }} />
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={isUploadDisabled}
+          title={!capabilities.upload ? t('files.uploadUnavailable') : t('files.upload')}
+          className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <ArrowUpTrayIcon className="h-4 w-4" aria-hidden="true" />
+          {t('files.upload')}
         </button>
       </div>
-      {tasks.length > 0 && <section className="border-t border-[var(--color-border)] p-3" aria-label={t('files.uploadQueue')}><ul className="space-y-2">{tasks.map((task) => <li key={task.id} className="flex flex-wrap items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{task.file.name}</span><span className="text-[var(--color-text-secondary)]">{task.status === 'uploading' ? `${Math.round(task.loaded / Math.max(task.file.size, 1) * 100)}%` : t(`files.uploadStatus.${task.status}`)}</span>{task.status === 'failed' && <span role="alert" className="text-[var(--color-danger)]">{task.error}</span>}{(task.status === 'queued' || task.status === 'uploading') && <button type="button" onClick={() => cancelTask(task.id)} className="ui-icon-button p-1" aria-label={t('files.cancelUpload', { name: task.file.name })}><XMarkIcon className="h-4 w-4" aria-hidden="true" /></button>}{(task.status === 'failed' || task.status === 'cancelled') && <button type="button" onClick={() => retryTask(task.id)} className="ui-icon-button p-1" aria-label={t('common.retry')}><ArrowPathIcon className="h-4 w-4" aria-hidden="true" /></button>}</li>)}</ul></section>}
-      {pending.length > 0 && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"><div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="upload-conflict-title" tabIndex={-1} className="ui-card w-full max-w-lg p-5"><h2 id="upload-conflict-title" className="text-lg font-semibold">{t('files.uploadConflictTitle')}</h2><p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.uploadConflictDescription', { count: pending.length })}</p><ul className="mt-3 max-h-32 overflow-auto text-sm">{pending.map((file, index) => <li key={`${file.name}-${file.lastModified}-${index}`}>{file.name} ({formatBytes(file.size)})</li>)}</ul><label className="mt-4 block text-sm font-medium">{t('files.conflictStrategy')}<select value={strategy} onChange={(event) => setStrategy(event.target.value as UploadConflictStrategy)} className="ui-input mt-1 block w-full"><option value="SKIP">{t('files.conflictSkip')}</option>{strategies.includes('OVERWRITE') && <option value="OVERWRITE">{t('files.conflictOverwrite')}</option>}{strategies.includes('RENAME') && <option value="RENAME">{t('files.conflictRename')}</option>}</select></label>{strategy === 'OVERWRITE' && !capabilities.conflict_overwrite_atomic && <p className="ui-alert mt-3 text-sm">{t('files.nonAtomicOverwriteWarning')}</p>}<div className="mt-5 flex justify-end gap-2"><button ref={cancelRef} type="button" onClick={() => setPending([])} className="ui-button-secondary px-3 py-2 text-sm">{t('common.cancel')}</button><button type="button" onClick={enqueue} className="ui-button-primary px-3 py-2 text-sm">{t('files.startUpload')}</button></div></div></div>}
+      {tasks.length > 0 && (
+        <section className="border-t border-[var(--color-border)] p-3" aria-label={t('files.uploadQueue')}>
+          <ul className="space-y-2">
+            {tasks.map((task) => (
+              <li key={task.id} className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="min-w-0 flex-1 truncate">{task.file.name}</span>
+                <span className="text-[var(--color-text-secondary)]">
+                  {task.status === 'uploading' ? `${Math.round(task.loaded / Math.max(task.file.size, 1) * 100)}%` : t(`files.uploadStatus.${task.status}`)}
+                </span>
+                {task.status === 'failed' && <span role="alert" className="text-[var(--color-danger)]">{task.error}</span>}
+                {(task.status === 'queued' || task.status === 'uploading') && (
+                  <button type="button" onClick={() => cancelTask(task.id)} className="ui-icon-button p-1" aria-label={t('files.cancelUpload', { name: task.file.name })}>
+                    <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )}
+                {(task.status === 'failed' || task.status === 'cancelled') && (
+                  <button type="button" onClick={() => retryTask(task.id)} className="ui-icon-button p-1" aria-label={t('common.retry')}>
+                    <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {pending.length > 0 &&
+        createPortal(
+          <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+            <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="upload-conflict-title" tabIndex={-1} className="ui-card w-full max-w-lg p-5">
+              <h2 id="upload-conflict-title" className="text-lg font-semibold">{t('files.uploadConflictTitle')}</h2>
+              <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.uploadConflictDescription', { count: pending.length })}</p>
+              <ul className="mt-3 max-h-32 overflow-auto text-sm">
+                {pending.map((file, index) => (
+                  <li key={`${file.name}-${file.lastModified}-${index}`}>
+                    {file.name} ({formatBytes(file.size)})
+                  </li>
+                ))}
+              </ul>
+              <label className="mt-4 block text-sm font-medium">
+                {t('files.conflictStrategy')}
+                <select value={strategy} onChange={(event) => setStrategy(event.target.value as UploadConflictStrategy)} className="ui-input mt-1 block w-full">
+                  <option value="SKIP">{t('files.conflictSkip')}</option>
+                  {strategies.includes('OVERWRITE') && <option value="OVERWRITE">{t('files.conflictOverwrite')}</option>}
+                  {strategies.includes('RENAME') && <option value="RENAME">{t('files.conflictRename')}</option>}
+                </select>
+              </label>
+              {strategy === 'OVERWRITE' && !capabilities.conflict_overwrite_atomic && (
+                <p className="ui-alert mt-3 text-sm">{t('files.nonAtomicOverwriteWarning')}</p>
+              )}
+              <div className="mt-5 flex justify-end gap-2">
+                <button ref={cancelRef} type="button" onClick={() => setPending([])} className="ui-button-secondary px-3 py-2 text-sm">
+                  {t('common.cancel')}
+                </button>
+                <button type="button" onClick={enqueue} className="ui-button-primary px-3 py-2 text-sm">
+                  {t('files.startUpload')}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </>
   );
 }

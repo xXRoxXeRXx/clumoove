@@ -610,6 +610,7 @@
     "directory": "Ordner",
     "download": "{{name}} herunterladen",
     "upload": "Dateien hochladen",
+    "uploadUnavailable": "Dateien hochladen wird für diese Verbindung nicht unterstützt.",
     "uploadQueue": "Upload-Warteschlange",
     "cancelUpload": "Upload von {{name}} abbrechen",
     "uploadConflictTitle": "Konflikte beim Hochladen",

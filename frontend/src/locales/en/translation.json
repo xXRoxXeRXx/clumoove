@@ -610,6 +610,7 @@
     "directory": "Folder",
     "download": "Download {{name}}",
     "upload": "Upload files",
+    "uploadUnavailable": "Uploading files is not supported for this connection.",
     "uploadQueue": "Upload queue",
     "cancelUpload": "Cancel upload of {{name}}",
     "uploadConflictTitle": "Upload conflict handling",
