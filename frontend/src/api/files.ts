@@ -1,4 +1,4 @@
-import { apiJson, type ApiJsonResult } from '../utils/apiClient';
+import { apiJson, type ApiJsonFailure, type ApiJsonResult } from '../utils/apiClient';
 
 export type FileEntry = {
   ref: string;
@@ -25,6 +25,7 @@ export type FileCapabilities = {
   delete_recursive_directory: boolean;
   conflict_skip: boolean;
   conflict_overwrite: boolean;
+  conflict_overwrite_atomic: boolean;
   conflict_rename: boolean;
   native_copy: boolean;
   range_download: boolean;
@@ -53,6 +54,18 @@ export type ResolveFilePathResponse = {
   ref: string;
   breadcrumbs: FileBreadcrumb[];
   fallback: boolean;
+};
+
+export type UploadConflictStrategy = 'SKIP' | 'OVERWRITE' | 'RENAME';
+
+export type UploadFileResponse = {
+  status: 'uploaded' | 'skipped' | 'renamed';
+  name: string;
+};
+
+export type UploadProgress = {
+  loaded: number;
+  total: number;
 };
 
 function profileUrl(apiUrl: string, profileId: string, suffix: string): string {
@@ -120,4 +133,76 @@ export async function resolveFilePath(
   const init = requestInit(token, signal);
   init.body = JSON.stringify({ resource_type: 'files', path });
   return apiJson<ResolveFilePathResponse>(profileUrl(apiUrl, profileId, '/entries:resolve'), init);
+}
+
+function encodeHeaderFileName(name: string): string {
+  const bytes = new TextEncoder().encode(name);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function uploadError(xhr: XMLHttpRequest): ApiJsonFailure<UploadFileResponse> {
+  let errorCode = 'UNKNOWN';
+  try {
+    const body: unknown = JSON.parse(xhr.responseText);
+    if (typeof body === 'object' && body !== null && 'error_code' in body && typeof body.error_code === 'string') {
+      errorCode = body.error_code;
+    }
+  } catch {
+    // Upload responses are deliberately exposed only as machine-readable codes.
+  }
+  return { ok: false, status: xhr.status, errorCode, networkError: xhr.status === 0 };
+}
+
+export function uploadFile(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  file: File,
+  parentRef: string | null,
+  strategy: UploadConflictStrategy,
+  onProgress: (progress: UploadProgress) => void,
+  signal?: AbortSignal,
+): Promise<ApiJsonResult<UploadFileResponse>> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    const cleanup = () => signal?.removeEventListener('abort', abort);
+    const abort = () => xhr.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    xhr.open('PUT', profileUrl(apiUrl, profileId, '/content'));
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('X-Clumoove-File-Name', encodeHeaderFileName(file.name));
+    xhr.setRequestHeader('X-Clumoove-Conflict-Strategy', strategy);
+    if (parentRef) xhr.setRequestHeader('X-Clumoove-Parent-Ref', parentRef);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress({ loaded: event.loaded, total: event.total });
+    };
+    xhr.onerror = () => {
+      cleanup();
+      resolve({ ok: false, status: 0, errorCode: 'UNKNOWN', networkError: true });
+    };
+    xhr.onabort = () => {
+      cleanup();
+      resolve({ ok: false, status: 0, errorCode: 'UNKNOWN', networkError: true });
+    };
+    xhr.onload = () => {
+      cleanup();
+      if (xhr.status < 200 || xhr.status >= 300) {
+        resolve(uploadError(xhr));
+        return;
+      }
+      try {
+        const body = JSON.parse(xhr.responseText) as UploadFileResponse;
+        if ((body.status !== 'uploaded' && body.status !== 'skipped' && body.status !== 'renamed') || typeof body.name !== 'string') {
+          resolve({ ok: false, status: xhr.status, errorCode: 'UNKNOWN', networkError: false });
+          return;
+        }
+        resolve({ ok: true, status: xhr.status, data: body });
+      } catch {
+        resolve({ ok: false, status: xhr.status, errorCode: 'UNKNOWN', networkError: false });
+      }
+    };
+    xhr.send(file);
+  });
 }

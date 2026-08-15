@@ -2,11 +2,14 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 )
 
 const googleDriveFolderMIME = "application/vnd.google-apps.folder"
@@ -45,6 +48,94 @@ func (p *GoogleProvider) ListManager(ctx context.Context, locator ManagerLocator
 		items = append(items, googleManagerItem(file, parentPath))
 	}
 	return ManagerPage{Items: items, NextCursor: page.NextPageToken}, nil
+}
+
+var _ ManagerUploader = (*GoogleProvider)(nil)
+
+// UploadManager uploads into the selected Drive parent by immutable ID. It
+// never resolves a display path, which prevents duplicate sibling names from
+// selecting an arbitrary target.
+func (p *GoogleProvider) UploadManager(ctx context.Context, parent ManagerLocator, name string, stream io.Reader, size int64, options ManagerUploadOptions) (ManagerUploadResult, error) {
+	parentID := "root"
+	if parent.NativeID != "" {
+		parentID = parent.NativeID
+	}
+
+	matches, err := p.googleManagerChildrenByName(ctx, parentID, name)
+	if err != nil {
+		return ManagerUploadResult{}, err
+	}
+
+	switch options.ConflictStrategy {
+	case "SKIP":
+		if len(matches) > 0 {
+			return ManagerUploadResult{Status: "skipped", FinalName: name}, nil
+		}
+	case "OVERWRITE":
+		switch len(matches) {
+		case 0:
+			// Create below.
+		case 1:
+			if matches[0].MimeType == googleDriveFolderMIME {
+				return ManagerUploadResult{}, ErrManagerConflict
+			}
+			call := p.driveService.Files.Update(matches[0].Id, &drive.File{Name: name}).Context(ctx)
+			if size > 50*1024*1024 {
+				call = call.Media(stream, googleapi.ChunkSize(googleapi.DefaultUploadChunkSize))
+			} else {
+				call = call.Media(stream)
+			}
+			if _, err := call.Do(); err != nil {
+				return ManagerUploadResult{}, wrapGoogleError("google manager overwrite", err)
+			}
+			return ManagerUploadResult{Status: "uploaded", FinalName: name}, nil
+		default:
+			return ManagerUploadResult{}, ErrAmbiguousPath
+		}
+	case "RENAME":
+		if len(matches) > 0 {
+			for suffix := 1; suffix <= 100; suffix++ {
+				candidate := managerRenamedName(name, suffix)
+				candidateMatches, candidateErr := p.googleManagerChildrenByName(ctx, parentID, candidate)
+				if candidateErr != nil {
+					return ManagerUploadResult{}, candidateErr
+				}
+				if len(candidateMatches) == 0 {
+					name = candidate
+					break
+				}
+				if suffix == 100 {
+					return ManagerUploadResult{}, ErrManagerConflict
+				}
+			}
+		}
+	default:
+		return ManagerUploadResult{}, errors.New("invalid manager upload conflict strategy")
+	}
+
+	file := &drive.File{Name: name, Parents: []string{parentID}}
+	call := p.driveService.Files.Create(file).Context(ctx)
+	if size > 50*1024*1024 {
+		call = call.Media(stream, googleapi.ChunkSize(googleapi.DefaultUploadChunkSize))
+	} else {
+		call = call.Media(stream)
+	}
+	if _, err := call.Do(); err != nil {
+		return ManagerUploadResult{}, wrapGoogleError("google manager upload", err)
+	}
+	status := "uploaded"
+	if name != "" && options.ConflictStrategy == "RENAME" && len(matches) > 0 {
+		status = "renamed"
+	}
+	return ManagerUploadResult{Status: status, FinalName: name}, nil
+}
+
+func managerRenamedName(name string, suffix int) string {
+	lastDot := strings.LastIndex(name, ".")
+	if lastDot > 0 {
+		return fmt.Sprintf("%s (%d)%s", name[:lastDot], suffix, name[lastDot:])
+	}
+	return fmt.Sprintf("%s (%d)", name, suffix)
 }
 
 // ConnectManager verifies only Drive access. The generic provider connection

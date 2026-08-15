@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"backend/internal/crypto"
 	"backend/internal/db"
@@ -70,6 +72,12 @@ type fileEntry struct {
 
 type fileDownloadTicketRequest struct {
 	Ref string `json:"ref"`
+}
+
+type fileUploadResponse struct {
+	Success bool   `json:"success"`
+	Status  string `json:"status"`
+	Name    string `json:"name"`
 }
 
 type fileResolveRequest struct {
@@ -363,6 +371,9 @@ func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []
 	if !isDir && capabilities.Download {
 		actions = append(actions, "download")
 	}
+	if isDir && capabilities.Upload {
+		actions = append(actions, "upload")
+	}
 	return actions
 }
 
@@ -647,6 +658,149 @@ func (s *APIServer) handleFileDownloadTicket(w http.ResponseWriter, r *http.Requ
 		"success":      true,
 		"download_url": "/api/files/download/" + ticket,
 	})
+}
+
+// handleFileUpload accepts only a raw file body. Parent locators remain sealed
+// references and the filename is encoded in a header so no private location or
+// credential-adjacent value is ever placed in a request URL.
+func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.requireUserID(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	if r.ContentLength < 0 {
+		writeError(w, http.StatusLengthRequired, ErrFilesUploadLengthRequired)
+		return
+	}
+
+	profileID := r.PathValue("profileID")
+	profile, err := s.loadOwnedFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	capabilities := storage.ManagerCapabilitiesFor(profile.Provider)
+	if !capabilities.Upload {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+	name, nameErr := decodeUploadFileName(r.Header.Get("X-Clumoove-File-Name"))
+	if nameErr != nil || !validManagerUploadName(name) {
+		writeValidationError(w, ErrInvalidBody)
+		return
+	}
+	options, optionsErr := parseManagerUploadOptions(r.Header.Get("X-Clumoove-Conflict-Strategy"), capabilities)
+	if optionsErr != nil {
+		writeValidationError(w, ErrInvalidBody)
+		return
+	}
+
+	parent := storage.ManagerLocator{Path: managedRootPath()}
+	if parentRef := r.Header.Get("X-Clumoove-Parent-Ref"); parentRef != "" {
+		reference, referenceErr := openFileReference(parentRef, s.encryptionKey, userID, profileID)
+		if referenceErr != nil || reference.Kind != "directory" {
+			writeValidationError(w, ErrFilesInvalidRef)
+			return
+		}
+		parent = reference.Locator
+	}
+
+	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	defer resolved.close()
+	uploader, supported := resolved.provider.(storage.ManagerUploader)
+	if !supported {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+
+	streamID := generateRandomString(16)
+	if streamID == "" || !s.acquireFileStream(r.Context(), userID, "upload", streamID, fileStreamLease) {
+		writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
+		return
+	}
+	defer s.releaseFileStream(r.Context(), userID, "upload", streamID)
+	stopLeaseRenewal := make(chan struct{})
+	defer close(stopLeaseRenewal)
+	go s.renewFileStreamLease(stopLeaseRenewal, userID, "upload", streamID)
+
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(time.Time{})
+	_ = controller.SetWriteDeadline(time.Time{})
+	stream := storage.NewExactSizeReader(r.Body, r.ContentLength)
+	result, uploadErr := uploader.UploadManager(resolved.ctx, parent, name, stream, r.ContentLength, options)
+	if uploadErr == nil {
+		uploadErr = stream.Verify()
+	}
+	if uploadErr != nil {
+		switch {
+		case errors.Is(uploadErr, storage.ErrUploadSizeMismatch):
+			writeValidationError(w, ErrFilesUploadSizeMismatch)
+		case errors.Is(uploadErr, storage.ErrManagerConflict), errors.Is(uploadErr, storage.ErrAmbiguousPath):
+			writeConflictError(w, ErrFilesConflict)
+		default:
+			s.writeFileProviderError(w, uploadErr)
+		}
+		return
+	}
+	if result.Status != "uploaded" && result.Status != "skipped" && result.Status != "renamed" || result.FinalName == "" {
+		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
+		return
+	}
+	s.writeAudit(r, db.AuditFileUploadCompleted, profileID, userID, map[string]interface{}{
+		"provider":  profile.Provider,
+		"item_kind": "file",
+		"result":    result.Status,
+	})
+	status := http.StatusCreated
+	if result.Status == "skipped" {
+		status = http.StatusOK
+	}
+	writeJSON(w, status, fileUploadResponse{Success: true, Status: result.Status, Name: result.FinalName})
+}
+
+func decodeUploadFileName(value string) (string, error) {
+	if value == "" {
+		return "", errors.New("missing upload filename")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(value, "="))
+	if err != nil || !utf8.Valid(decoded) {
+		return "", errors.New("invalid upload filename")
+	}
+	return string(decoded), nil
+}
+
+func validManagerUploadName(name string) bool {
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") || strings.ContainsRune(name, 0) {
+		return false
+	}
+	for _, value := range name {
+		if value < 0x20 || value == 0x7f {
+			return false
+		}
+	}
+	return utf8.ValidString(name)
+}
+
+func parseManagerUploadOptions(value string, capabilities storage.ManagerCapabilities) (storage.ManagerUploadOptions, error) {
+	strategy := strings.ToUpper(strings.TrimSpace(value))
+	if strategy == "" {
+		strategy = "SKIP"
+	}
+	supported := (strategy == "SKIP" && capabilities.ConflictSkip) ||
+		(strategy == "OVERWRITE" && capabilities.ConflictOverwrite) ||
+		(strategy == "RENAME" && capabilities.ConflictRename)
+	if !supported {
+		return storage.ManagerUploadOptions{}, errors.New("unsupported upload conflict strategy")
+	}
+	return storage.ManagerUploadOptions{ConflictStrategy: strategy}, nil
 }
 
 func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {

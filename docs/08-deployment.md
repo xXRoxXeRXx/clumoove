@@ -5,7 +5,7 @@ configuration, scaling, and routine operational tasks.
 
 ## Cloud File Manager Streams
 
-Downloads are streamed without API buffering. The frontend proxy must keep buffering disabled for the API download route and allow a sufficiently long read/send timeout. Any external reverse proxy can still impose its own body-size or timeout limit; this must be configured separately when uploads are introduced.
+Downloads and raw uploads are streamed without API buffering. The frontend nginx template has a narrow `/api/files/profiles/{id}/content` location with `client_max_body_size 0`, `proxy_request_buffering off`, disabled response buffering, and 24-hour send/read timeouts; other API routes remain on the general proxy location. Any external reverse proxy must apply equivalent body-size, request-buffering, and timeout settings. The SPA CSP allows only local Blob image/media data and local workers for previews; it does not allow external viewer frames or scripts.
 
 ---
 

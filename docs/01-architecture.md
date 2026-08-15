@@ -5,7 +5,7 @@ migration flows through the system, and the resilience mechanisms that keep tran
 
 ## Cloud File Manager (Phase 1)
 
-The authenticated file manager is a direct, profile-bound API path and is not part of the migration queue. It resolves only saved `connection_profiles`, creates a provider through the normal factory, and streams downloads directly from the provider. It never accepts ad-hoc credentials, remote paths in URLs, or JWTs in download URLs.
+The authenticated file manager is a direct, profile-bound API path and is not part of the migration queue. It resolves only saved `connection_profiles`, creates a provider through the normal factory, and streams downloads and raw uploads directly to the provider. It never accepts ad-hoc credentials, remote paths in URLs, or JWTs in download URLs. Uploads use explicit manager capabilities, an exact-length stream wrapper, and a Redis per-user lease; no migration upload primitive implicitly enables an interactive mutation.
 
 ---
 

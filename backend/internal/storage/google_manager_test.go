@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/api/drive/v3"
@@ -102,5 +104,52 @@ func TestGoogleManagerResolveRejectsAmbiguousSibling(t *testing.T) {
 	_, _, _, err := provider.ResolveManagerPath(context.Background(), "/same-name")
 	if !errors.Is(err, ErrAmbiguousPath) {
 		t.Fatalf("ResolveManagerPath() error = %v, want ErrAmbiguousPath", err)
+	}
+}
+
+func TestGoogleManagerUploadSkipsExistingFileByParentID(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/files" {
+			t.Fatalf("path = %s, want /files", r.URL.Path)
+		}
+		if query := r.URL.Query().Get("q"); query != "'parent-id' in parents and name = 'report.txt' and trashed = false" {
+			t.Fatalf("query = %q", query)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"files": []map[string]any{{"id": "existing", "name": "report.txt", "mimeType": "text/plain"}},
+		})
+	}))
+
+	result, err := provider.UploadManager(context.Background(), ManagerLocator{NativeID: "parent-id", Path: "/display-only"}, "report.txt", strings.NewReader("unused"), 6, ManagerUploadOptions{ConflictStrategy: "SKIP"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "skipped" || result.FinalName != "report.txt" {
+		t.Fatalf("UploadManager() = %#v", result)
+	}
+}
+
+func TestGoogleManagerUploadCreatesInParentID(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files":
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{}})
+		case "/upload/drive/v3/files":
+			body, err := io.ReadAll(r.Body)
+			if err != nil || !strings.Contains(string(body), "parent-id") || !strings.Contains(string(body), "new.txt") {
+				t.Fatalf("upload payload = %q, err = %v", body, err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "new-file"})
+		default:
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+	}))
+
+	result, err := provider.UploadManager(context.Background(), ManagerLocator{NativeID: "parent-id"}, "new.txt", strings.NewReader("content"), 7, ManagerUploadOptions{ConflictStrategy: "SKIP"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "uploaded" || result.FinalName != "new.txt" {
+		t.Fatalf("UploadManager() = %#v", result)
 	}
 }

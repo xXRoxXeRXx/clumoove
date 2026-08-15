@@ -2,13 +2,24 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"backend/internal/auth"
 	"backend/internal/storage"
 )
+
+type allowAllFileRateLimiter struct{}
+
+func (allowAllFileRateLimiter) Allow(context.Context, string, string, int, time.Duration) bool {
+	return true
+}
 
 type legacyFileManagerTestProvider struct {
 	listings map[string][]storage.CloudResource
@@ -91,6 +102,45 @@ func TestFileReferenceRoundTripBindsUserAndProfile(t *testing.T) {
 	}
 	if _, err := openFileReference(reference+"00", key, "user-a", "profile-a"); err == nil {
 		t.Fatal("tampered reference was accepted")
+	}
+}
+
+func TestHandleFileUploadRequiresKnownLength(t *testing.T) {
+	server := &APIServer{rateLimiter: allowAllFileRateLimiter{}}
+	request := httptest.NewRequest(http.MethodPut, "/api/files/profiles/profile-a/content", strings.NewReader("body"))
+	request.ContentLength = -1
+	request.SetPathValue("profileID", "profile-a")
+	request = request.WithContext(context.WithValue(request.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user-a"}))
+	recorder := httptest.NewRecorder()
+
+	server.handleFileUpload(recorder, request)
+
+	if recorder.Code != http.StatusLengthRequired {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusLengthRequired)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, string(ErrFilesUploadLengthRequired)) {
+		t.Fatalf("body = %s, want machine-readable length error", body)
+	}
+}
+
+func TestDecodeUploadFileNameAcceptsPaddedBase64URL(t *testing.T) {
+	encoded := base64.URLEncoding.EncodeToString([]byte("report ä.txt"))
+	name, err := decodeUploadFileName(encoded)
+	if err != nil || name != "report ä.txt" {
+		t.Fatalf("decodeUploadFileName() = (%q, %v)", name, err)
+	}
+}
+
+func TestValidManagerUploadName(t *testing.T) {
+	for _, name := range []string{"report.txt", "überblick.pdf", "spaces are valid.txt"} {
+		if !validManagerUploadName(name) {
+			t.Errorf("validManagerUploadName(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"", ".", "..", "nested/file.txt", "nested\\file.txt", "nul\x00.txt", "line\nbreak.txt"} {
+		if validManagerUploadName(name) {
+			t.Errorf("validManagerUploadName(%q) = true", name)
+		}
 	}
 }
 

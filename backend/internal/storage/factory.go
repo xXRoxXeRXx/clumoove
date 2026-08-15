@@ -174,7 +174,7 @@ var managerCapabilityRegistry = map[string]ManagerCapabilities{
 	"opencloud":    {Browse: true, Download: true},
 	"webdav":       {Browse: true, Download: true},
 	"dropbox":      {Browse: true, Download: true},
-	"google":       {Browse: true, NativePagination: true, Download: true},
+	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"onedrive":     {Browse: true, Download: true},
 	"hidrive":      {Browse: true, Download: true},
 	"smb":          {Browse: true, Download: true},

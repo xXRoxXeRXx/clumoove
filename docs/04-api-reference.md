@@ -26,10 +26,11 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | `GET /files/profiles/{profileID}/capabilities` | JWT | Returns profile and explicit manager capabilities. |
 | `POST /files/profiles/{profileID}/entries:list` | JWT | Lists `files` with optional opaque `parent_ref`, sealed cursor, and a maximum limit of 200. |
 | `POST /files/profiles/{profileID}/entries:resolve` | JWT | Resolves a stored path to sealed breadcrumbs, returning the nearest existing parent when necessary. |
+| `PUT /files/profiles/{profileID}/content` | JWT | Streams one raw file body. `Content-Length` is required; `X-Clumoove-File-Name` is Base64URL UTF-8, `X-Clumoove-Parent-Ref` is an optional sealed directory ref, and `X-Clumoove-Conflict-Strategy` is `SKIP`, `OVERWRITE`, or `RENAME`. |
 | `POST /files/profiles/{profileID}/download-tickets` | JWT | Creates a single-use, 60-second download ticket from an opaque file ref. |
 | `GET /files/download/{ticket}` | ticket | Streams an attachment without a JWT or remote path in the URL. |
 
-The file manager returns normal HTTP errors. Its `FILES_*` error codes are localized by the frontend. Google Drive uses native pagination; other files providers use deterministic, emulated paging with a 10,000-entry safety limit and return `FILES_DIRECTORY_CHANGED` if a folder changes between pages.
+The file manager returns normal HTTP errors. Its `FILES_*` error codes are localized by the frontend. Upload returns `201` for upload/rename and `200` for skip; it returns `411 FILES_UPLOAD_LENGTH_REQUIRED`, `400 FILES_UPLOAD_SIZE_MISMATCH`, or `409 FILES_CONFLICT` as applicable. Google Drive uses native pagination and currently is the only manager provider with upload enabled; other files providers use deterministic, emulated paging with a 10,000-entry safety limit and return `FILES_DIRECTORY_CHANGED` if a folder changes between pages.
 
 ---
 

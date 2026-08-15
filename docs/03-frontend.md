@@ -9,7 +9,7 @@ The connection wizard has an Immich branch with server URL and API-key fields (n
 
 ## Cloud File Manager (Phase 1)
 
-`FileManager` uses saved profile IDs, opaque server references, paginated listings, breadcrumbs, and ticketed downloads. `useAppHistory` persists only `?view=files&profile=<uuid>`; remote paths, names, and item references remain out of the URL. Unsupported write actions remain unavailable until their backend capability exists.
+`FileManager` uses saved profile IDs, opaque server references, paginated listings, breadcrumbs, ticketed downloads, and a capability-gated upload queue. `useAppHistory` persists only `?view=files&profile=<uuid>`; remote paths, names, item references, and tickets remain out of the URL. The queue sends immutable `File` bodies through XHR, runs at most four uploads, and retains failed or cancelled items for manual retry. The modal preview fetches a one-time download ticket into a local Blob URL, then renders safe images/media/text/PDF/DOCX/XLSX content. PDF uses bundled `react-pdf`/`pdfjs-dist`; DOCX (`mammoth`) and XLSX (`xlsx`) parsers run in terminating workers, and DOCX HTML is restricted with `dompurify`. MIME agreement and fixed per-format limits determine whether a file is previewed or download-only.
 
 ---
 

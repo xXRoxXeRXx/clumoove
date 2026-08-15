@@ -16,6 +16,9 @@ import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
+import { FilePreviewDialog } from './FilePreviewDialog';
+import { FileUploadControl } from './FileUploadControl';
+import { canPreview } from './filePreview';
 
 type Breadcrumb = {
   ref: string | null;
@@ -45,6 +48,7 @@ const unavailableCapabilities: FileCapabilities = {
   delete_recursive_directory: false,
   conflict_skip: false,
   conflict_overwrite: false,
+  conflict_overwrite_atomic: false,
   conflict_rename: false,
   native_copy: false,
   range_download: false,
@@ -66,6 +70,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [downloadingRef, setDownloadingRef] = useState<string | null>(null);
+  const [previewEntry, setPreviewEntry] = useState<FileEntry | null>(null);
   const profileRequestRef = useRef<AbortController | null>(null);
   const entriesRequestRef = useRef<AbortController | null>(null);
   const latestEntriesRequestRef = useRef(0);
@@ -175,6 +180,16 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     setBreadcrumbs((current) => [...current, { ref: entry.ref, name: entry.name }]);
   };
 
+  const openEntry = (entry: FileEntry) => {
+    if (entry.kind === 'directory') {
+      openDirectory(entry);
+      return;
+    }
+    if (entry.allowed_actions.includes('download') && capabilities.download && canPreview(entry)) {
+      setPreviewEntry(entry);
+    }
+  };
+
   const goUp = () => {
     if (breadcrumbs.length <= 1 || entriesLoading) return;
     setCursorHistory([]);
@@ -220,6 +235,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       window.location.assign(new URL(result.data.download_url, apiUrl).toString());
     }
     setDownloadingRef(null);
+  };
+
+  const uploadCompleted = (completedProfileID: string) => {
+    if (completedProfileID !== profileId) return;
+    setCursorHistory([]);
+    setCursor(undefined);
+    void loadEntries(currentRef, undefined);
   };
 
   return (
@@ -287,8 +309,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     </span>
                   ))}
                 </nav>
-                <div className="flex items-center gap-1">
-                  <button type="button" onClick={goUp} disabled={!capabilities.browse || breadcrumbs.length <= 1 || entriesLoading} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.up')} title={t('files.up')}>
+                 <div className="flex items-center gap-1">
+                   <FileUploadControl apiUrl={apiUrl} token={token} profileId={profileId} parentRef={currentRef} capabilities={capabilities} disabled={entriesLoading} onCompleted={uploadCompleted} />
+                   <button type="button" onClick={goUp} disabled={!capabilities.browse || breadcrumbs.length <= 1 || entriesLoading} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.up')} title={t('files.up')}>
                     <ArrowUpIcon className="h-4 w-4" aria-hidden="true" />
                   </button>
                   <button type="button" onClick={refresh} disabled={!capabilities.browse || entriesLoading} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.refresh')} title={t('files.refresh')}>
@@ -318,7 +341,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       {entries.map((entry) => (
                         <tr key={entry.ref} className="border-t border-[var(--color-border)]">
                           <td data-label={t('files.name')} className="min-w-56 px-3 py-2">
-                            <button type="button" onClick={() => openDirectory(entry)} disabled={entry.kind !== 'directory' || !capabilities.browse || entriesLoading} className={`inline-flex max-w-full items-center gap-2 truncate text-left ${entry.kind === 'directory' ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}>
+                            <button type="button" onClick={() => openEntry(entry)} disabled={(entry.kind === 'directory' && (!capabilities.browse || entriesLoading)) || (entry.kind === 'file' && !canPreview(entry))} className={`inline-flex max-w-full items-center gap-2 truncate text-left ${entry.kind === 'directory' || canPreview(entry) ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}>
                               {entry.kind === 'directory' ? <FolderIcon className="h-5 w-5 shrink-0 text-[var(--color-file-folder)]" aria-hidden="true" /> : <DocumentIcon className="h-5 w-5 shrink-0 text-[var(--color-file-default)]" aria-hidden="true" />}
                               <span className="truncate">{entry.name}</span>
                             </button>
@@ -351,6 +374,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           )}
         </div>
       </div>
+      {previewEntry && <FilePreviewDialog apiUrl={apiUrl} token={token} profileId={profileId} entry={previewEntry} onClose={() => setPreviewEntry(null)} onDownload={(entry) => void download(entry)} />}
     </section>
   );
 }

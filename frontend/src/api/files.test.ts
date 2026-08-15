@@ -1,8 +1,55 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiJson } from '../utils/apiClient';
-import { createDownloadTicket, listFileEntries, resolveFilePath } from './files';
+import { createDownloadTicket, listFileEntries, resolveFilePath, uploadFile } from './files';
 
 vi.mock('../utils/apiClient', () => ({ apiJson: vi.fn() }));
+
+class MockXMLHttpRequest {
+  static instances: MockXMLHttpRequest[] = [];
+  static completeOnSend = true;
+  method = '';
+  url = '';
+  headers = new Map<string, string>();
+  status = 0;
+  responseText = '';
+  body: Document | XMLHttpRequestBodyInit | null = null;
+  upload = {} as XMLHttpRequestUpload;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  onload: (() => void) | null = null;
+
+  constructor() {
+    MockXMLHttpRequest.instances.push(this);
+  }
+
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+
+  setRequestHeader(name: string, value: string) {
+    this.headers.set(name, value);
+  }
+
+  send(body: Document | XMLHttpRequestBodyInit | null) {
+    this.body = body;
+    this.upload.onprogress?.call(this as unknown as XMLHttpRequest, { lengthComputable: true, loaded: 2, total: 4 } as ProgressEvent);
+    if (!MockXMLHttpRequest.completeOnSend) return;
+    this.status = 201;
+    this.responseText = JSON.stringify({ status: 'uploaded', name: 'uploaded.txt' });
+    this.onload?.();
+  }
+
+  abort() {
+    this.onabort?.();
+  }
+}
+
+afterEach(() => {
+  MockXMLHttpRequest.instances = [];
+  MockXMLHttpRequest.completeOnSend = true;
+  vi.unstubAllGlobals();
+});
 
 describe('file API', () => {
   it('sends directory refs and cursors in the entries-list body', async () => {
@@ -33,5 +80,33 @@ describe('file API', () => {
       'https://api.example.test/api/files/profiles/profile-id/entries:resolve',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ resource_type: 'files', path: '/documents/reports' }) }),
     );
+  });
+
+  it('streams a raw file with encoded metadata and progress', async () => {
+    vi.stubGlobal('XMLHttpRequest', MockXMLHttpRequest);
+    const progress = vi.fn();
+    const result = await uploadFile('https://api.example.test', 'token', 'profile id', new File(['test'], 'fä.txt'), 'opaque-parent-ref', 'SKIP', progress);
+
+    const request = MockXMLHttpRequest.instances[0];
+    expect(request.method).toBe('PUT');
+    expect(request.url).toBe('https://api.example.test/api/files/profiles/profile%20id/content');
+    expect(request.headers).toEqual(new Map([
+      ['Authorization', 'Bearer token'],
+      ['X-Clumoove-File-Name', 'ZsOkLnR4dA'],
+      ['X-Clumoove-Conflict-Strategy', 'SKIP'],
+      ['X-Clumoove-Parent-Ref', 'opaque-parent-ref'],
+    ]));
+    expect(progress).toHaveBeenCalledWith({ loaded: 2, total: 4 });
+    expect(result).toEqual({ ok: true, status: 201, data: { status: 'uploaded', name: 'uploaded.txt' } });
+  });
+
+  it('propagates cancellation to the XHR upload', async () => {
+    vi.stubGlobal('XMLHttpRequest', MockXMLHttpRequest);
+    MockXMLHttpRequest.completeOnSend = false;
+    const controller = new AbortController();
+    const result = uploadFile('https://api.example.test', 'token', 'profile-id', new File(['test'], 'test.txt'), null, 'SKIP', vi.fn(), controller.signal);
+    controller.abort();
+
+    await expect(result).resolves.toMatchObject({ ok: false, networkError: true });
   });
 });

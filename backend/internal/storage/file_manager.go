@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 )
@@ -22,6 +23,7 @@ type ManagerCapabilities struct {
 	DeleteRecursiveDirectory bool `json:"delete_recursive_directory"`
 	ConflictSkip             bool `json:"conflict_skip"`
 	ConflictOverwrite        bool `json:"conflict_overwrite"`
+	ConflictOverwriteAtomic  bool `json:"conflict_overwrite_atomic"`
 	ConflictRename           bool `json:"conflict_rename"`
 	NativeCopy               bool `json:"native_copy"`
 	RangeDownload            bool `json:"range_download"`
@@ -93,8 +95,85 @@ type ManagerPathResolver interface {
 	ResolveManagerPath(ctx context.Context, value string) (locator ManagerLocator, breadcrumbs []ManagerBreadcrumb, fallback bool, err error)
 }
 
+type ManagerUploadOptions struct {
+	ConflictStrategy string
+}
+
+type ManagerUploadResult struct {
+	// Status is one of uploaded, skipped, or renamed.
+	Status    string
+	FinalName string
+}
+
+// ManagerUploader is deliberately separate from StorageProvider's migration
+// upload methods. A provider implements it only after its interactive upload
+// semantics, conflict handling, and locator safety have been tested.
 type ManagerUploader interface {
-	UploadManager(ctx context.Context, parent ManagerLocator, name string, stream io.Reader, size int64) error
+	UploadManager(ctx context.Context, parent ManagerLocator, name string, stream io.Reader, size int64, options ManagerUploadOptions) (ManagerUploadResult, error)
+}
+
+var (
+	ErrManagerConflict    = errors.New("file manager conflict")
+	ErrUploadSizeMismatch = errors.New("upload size mismatch")
+)
+
+// ExactSizeReader forwards a stream without buffering while enforcing its
+// declared length. Call Verify after the consumer returns to detect a short
+// body or trailing bytes when the consumer stopped exactly at its boundary.
+type ExactSizeReader struct {
+	reader    io.Reader
+	remaining int64
+	checked   bool
+	trailing  error
+}
+
+func NewExactSizeReader(reader io.Reader, size int64) *ExactSizeReader {
+	return &ExactSizeReader{reader: reader, remaining: size}
+}
+
+func (r *ExactSizeReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.remaining == 0 {
+		if err := r.checkTrailing(); err != nil {
+			return 0, err
+		}
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.reader.Read(p)
+	if n > 0 {
+		r.remaining -= int64(n)
+	}
+	return n, err
+}
+
+func (r *ExactSizeReader) Verify() error {
+	if r.remaining != 0 {
+		return ErrUploadSizeMismatch
+	}
+	return r.checkTrailing()
+}
+
+func (r *ExactSizeReader) checkTrailing() error {
+	if r.checked {
+		return r.trailing
+	}
+	r.checked = true
+	var extra [1]byte
+	n, err := r.reader.Read(extra[:])
+	if n > 0 {
+		r.trailing = ErrUploadSizeMismatch
+		return r.trailing
+	}
+	if err == nil || errors.Is(err, io.EOF) {
+		return nil
+	}
+	r.trailing = err
+	return r.trailing
 }
 
 type ManagerDirectoryCreator interface {
