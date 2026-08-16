@@ -265,4 +265,3 @@ func TestGoogleManagerThumbnailNotFound(t *testing.T) {
 		t.Fatalf("ThumbnailManager() error = %v, want ErrNotFound", err)
 	}
 }
-

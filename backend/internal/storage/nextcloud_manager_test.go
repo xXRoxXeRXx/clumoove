@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -93,15 +94,15 @@ func TestNextcloudManagerList(t *testing.T) {
 		t.Fatalf("len(page.Items) = %d, want 2", len(page.Items))
 	}
 
-	// First item: photo.jpg
+	// First item: Documents (directory)
 	item0 := page.Items[0]
-	if item0.Name != "photo.jpg" || item0.MIMEType != "image/jpeg" || item0.Locator.NativeID != "101" || item0.Size != 2048 || item0.IsDir {
+	if item0.Name != "Documents" || !item0.IsDir || item0.Locator.NativeID != "102" || item0.Size != 4096 {
 		t.Fatalf("unexpected item 0: %#v", item0)
 	}
 
-	// Second item: Documents
+	// Second item: photo.jpg (file)
 	item1 := page.Items[1]
-	if item1.Name != "Documents" || !item1.IsDir || item1.Locator.NativeID != "102" || item1.Size != 4096 {
+	if item1.Name != "photo.jpg" || item1.MIMEType != "image/jpeg" || item1.Locator.NativeID != "101" || item1.Size != 2048 || item1.IsDir {
 		t.Fatalf("unexpected item 1: %#v", item1)
 	}
 
@@ -435,4 +436,22 @@ func TestNextcloudManagerThumbnail(t *testing.T) {
 			t.Fatalf("ThumbnailManager() error = %v, want ErrAuth", err)
 		}
 	})
+}
+
+func TestNextcloudManagerListDirectoryTooLarge(t *testing.T) {
+	provider := newNextcloudManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMultiStatus)
+		var buf bytes.Buffer
+		buf.WriteString(`<?xml version="1.0" encoding="utf-8" ?><d:multistatus xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:response><d:href>/remote.php/dav/files/testuser/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`)
+		for i := 1; i <= 10001; i++ {
+			buf.WriteString(fmt.Sprintf(`<d:response><d:href>/remote.php/dav/files/testuser/file_%d.txt</d:href><d:propstat><d:prop><d:getcontentlength>10</d:getcontentlength><d:resourcetype/><oc:fileid>%d</oc:fileid></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>`, i, i))
+		}
+		buf.WriteString(`</d:multistatus>`)
+		_, _ = w.Write(buf.Bytes())
+	}))
+
+	_, err := provider.ListManager(context.Background(), ManagerLocator{Path: "/"}, ManagerListOptions{})
+	if !errors.Is(err, ErrManagerDirectoryTooLarge) {
+		t.Fatalf("ListManager(large) error = %v, want ErrManagerDirectoryTooLarge", err)
+	}
 }

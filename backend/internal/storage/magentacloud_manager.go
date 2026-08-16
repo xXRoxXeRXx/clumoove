@@ -16,32 +16,32 @@ import (
 )
 
 var (
-	_ ManagerConnector        = (*NextcloudProvider)(nil)
-	_ ManagerLister           = (*NextcloudProvider)(nil)
-	_ ManagerDownloader       = (*NextcloudProvider)(nil)
-	_ ManagerUploader         = (*NextcloudProvider)(nil)
-	_ ManagerDirectoryCreator = (*NextcloudProvider)(nil)
-	_ ManagerPathResolver     = (*NextcloudProvider)(nil)
-	_ ManagerThumbnailer      = (*NextcloudProvider)(nil)
+	_ ManagerConnector        = (*MagentacloudProvider)(nil)
+	_ ManagerLister           = (*MagentacloudProvider)(nil)
+	_ ManagerDownloader       = (*MagentacloudProvider)(nil)
+	_ ManagerUploader         = (*MagentacloudProvider)(nil)
+	_ ManagerDirectoryCreator = (*MagentacloudProvider)(nil)
+	_ ManagerPathResolver     = (*MagentacloudProvider)(nil)
+	_ ManagerThumbnailer      = (*MagentacloudProvider)(nil)
 )
 
-type xmlNextcloudManagerMultistatus struct {
-	XMLName   xml.Name                      `xml:"multistatus"`
-	Responses []xmlNextcloudManagerResponse `xml:"response"`
+type xmlMagentacloudManagerMultistatus struct {
+	XMLName   xml.Name                         `xml:"multistatus"`
+	Responses []xmlMagentacloudManagerResponse `xml:"response"`
 }
 
-type xmlNextcloudManagerResponse struct {
-	Href     string                        `xml:"href"`
-	Status   string                        `xml:"status"`
-	Propstat []xmlNextcloudManagerPropstat `xml:"propstat"`
+type xmlMagentacloudManagerResponse struct {
+	Href     string                           `xml:"href"`
+	Status   string                           `xml:"status"`
+	Propstat []xmlMagentacloudManagerPropstat `xml:"propstat"`
 }
 
-type xmlNextcloudManagerPropstat struct {
-	Prop   xmlNextcloudManagerProp `xml:"prop"`
-	Status string                  `xml:"status"`
+type xmlMagentacloudManagerPropstat struct {
+	Prop   xmlMagentacloudManagerProp `xml:"prop"`
+	Status string                     `xml:"status"`
 }
 
-type xmlNextcloudManagerProp struct {
+type xmlMagentacloudManagerProp struct {
 	GetLastModified  string          `xml:"getlastmodified"`
 	GetContentLength string          `xml:"getcontentlength"`
 	GetContentType   string          `xml:"getcontenttype"`
@@ -54,13 +54,13 @@ type xmlNextcloudManagerProp struct {
 	Size             string          `xml:"size"`
 }
 
-// ConnectManager verifies connectivity to Nextcloud via PROPFIND.
-func (p *NextcloudProvider) ConnectManager(ctx context.Context) (bool, error) {
+// ConnectManager verifies connectivity to MagentaCLOUD via PROPFIND.
+func (p *MagentacloudProvider) ConnectManager(ctx context.Context) (bool, error) {
 	return p.Connect(ctx)
 }
 
-// ListManager lists directory contents from Nextcloud with native limit/offset pagination and file metadata.
-func (p *NextcloudProvider) ListManager(ctx context.Context, locator ManagerLocator, options ManagerListOptions) (ManagerPage, error) {
+// ListManager lists directory contents from MagentaCLOUD with limit/offset pagination and file metadata.
+func (p *MagentacloudProvider) ListManager(ctx context.Context, locator ManagerLocator, options ManagerListOptions) (ManagerPage, error) {
 	limit := options.Limit
 	if limit <= 0 {
 		limit = 100
@@ -108,16 +108,16 @@ func (p *NextcloudProvider) ListManager(ctx context.Context, locator ManagerLoca
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return ManagerPage{}, fmt.Errorf("nextcloud manager list: %w", ErrAuth)
+		return ManagerPage{}, fmt.Errorf("magentacloud manager list: %w", ErrAuth)
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return ManagerPage{}, fmt.Errorf("nextcloud manager list: %w", ErrNotFound)
+		return ManagerPage{}, fmt.Errorf("magentacloud manager list: %w", ErrNotFound)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ManagerPage{}, fmt.Errorf("nextcloud manager list failed, status: %d", resp.StatusCode)
+		return ManagerPage{}, fmt.Errorf("magentacloud manager list failed, status: %d", resp.StatusCode)
 	}
 
-	var multistatus xmlNextcloudManagerMultistatus
+	var multistatus xmlMagentacloudManagerMultistatus
 	decoder := xml.NewDecoder(resp.Body)
 	if err := decoder.Decode(&multistatus); err != nil {
 		return ManagerPage{}, err
@@ -128,17 +128,15 @@ func (p *NextcloudProvider) ListManager(ctx context.Context, locator ManagerLoca
 	if parseErr == nil {
 		basePath = strings.TrimSuffix(uParsed.Path, "/")
 	} else {
-		basePath = "/remote.php/dav"
+		basePath = "/remote.php/webdav"
 	}
 
 	prefixPath := p.pb.listingPrefix(basePath, p.Username, "files")
-	prefixLower := strings.ToLower(prefixPath)
 
 	var items []ManagerItem
 	for _, r := range multistatus.Responses {
 		decodedHref := decodeDAVHref(r.Href)
-		hrefLower := strings.ToLower(decodedHref)
-		if !strings.HasPrefix(hrefLower, prefixLower) {
+		if len(decodedHref) < len(prefixPath) || !strings.EqualFold(decodedHref[:len(prefixPath)], prefixPath) {
 			continue
 		}
 
@@ -226,15 +224,15 @@ func (p *NextcloudProvider) ListManager(ctx context.Context, locator ManagerLoca
 	return ManagerPage{Items: pageItems, NextCursor: nextCursor}, nil
 }
 
-// DownloadManager retrieves the specified file directly from Nextcloud.
-func (p *NextcloudProvider) DownloadManager(ctx context.Context, locator ManagerLocator) (ManagerDownload, error) {
+// DownloadManager retrieves the specified file directly from MagentaCLOUD.
+func (p *MagentacloudProvider) DownloadManager(ctx context.Context, locator ManagerLocator) (ManagerDownload, error) {
 	cleanPath := cleanDAVEndpointPath(locator.Path)
 	res, err := p.InspectResource(ctx, "files", cleanPath)
 	if err != nil {
 		return ManagerDownload{}, err
 	}
 	if res.IsDir {
-		return ManagerDownload{}, fmt.Errorf("nextcloud manager download: %w", ErrNotFound)
+		return ManagerDownload{}, fmt.Errorf("magentacloud manager download: %w", ErrNotFound)
 	}
 
 	stream, err := p.StreamDownload(ctx, "files", cleanPath)
@@ -254,29 +252,10 @@ func (p *NextcloudProvider) DownloadManager(ctx context.Context, locator Manager
 	}, nil
 }
 
-// CreateManagerDirectory creates a directory under the given parent locator.
-func (p *NextcloudProvider) CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error {
-	parentPath := cleanDAVEndpointPath(parent.Path)
-	dirPath := path.Join(parentPath, name)
-	if !strings.HasPrefix(dirPath, "/") {
-		dirPath = "/" + dirPath
-	}
-
-	exists, _, err := p.FileExists(ctx, "files", dirPath)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return ErrManagerConflict
-	}
-
-	return p.CreateDirectory(ctx, "files", dirPath)
-}
-
-// UploadManager streams content to Nextcloud respecting conflict strategies.
-func (p *NextcloudProvider) UploadManager(ctx context.Context, parent ManagerLocator, name string, stream io.Reader, size int64, options ManagerUploadOptions) (ManagerUploadResult, error) {
-	parentPath := cleanDAVEndpointPath(parent.Path)
-	targetPath := path.Join(parentPath, name)
+// UploadManager uploads a file stream into MagentaCLOUD with conflict resolution.
+func (p *MagentacloudProvider) UploadManager(ctx context.Context, parent ManagerLocator, name string, stream io.Reader, size int64, options ManagerUploadOptions) (ManagerUploadResult, error) {
+	cleanParent := cleanDAVEndpointPath(parent.Path)
+	targetPath := path.Join(cleanParent, name)
 	if !strings.HasPrefix(targetPath, "/") {
 		targetPath = "/" + targetPath
 	}
@@ -324,7 +303,7 @@ func (p *NextcloudProvider) UploadManager(ctx context.Context, parent ManagerLoc
 		if exists {
 			for suffix := 1; suffix <= 100; suffix++ {
 				candidate := managerRenamedName(name, suffix)
-				candidatePath := path.Join(parentPath, candidate)
+				candidatePath := path.Join(cleanParent, candidate)
 				if !strings.HasPrefix(candidatePath, "/") {
 					candidatePath = "/" + candidatePath
 				}
@@ -363,8 +342,27 @@ func (p *NextcloudProvider) UploadManager(ctx context.Context, parent ManagerLoc
 	return ManagerUploadResult{Status: status, FinalName: finalName}, nil
 }
 
-// ResolveManagerPath turns a path string into ManagerBreadcrumbs for navigation.
-func (p *NextcloudProvider) ResolveManagerPath(ctx context.Context, value string) (ManagerLocator, []ManagerBreadcrumb, bool, error) {
+// CreateManagerDirectory creates a new directory in MagentaCLOUD.
+func (p *MagentacloudProvider) CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error {
+	cleanParent := cleanDAVEndpointPath(parent.Path)
+	targetPath := path.Join(cleanParent, name)
+	if !strings.HasPrefix(targetPath, "/") {
+		targetPath = "/" + targetPath
+	}
+
+	exists, _, err := p.FileExists(ctx, "files", targetPath)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrManagerConflict
+	}
+
+	return p.CreateDirectory(ctx, "files", targetPath)
+}
+
+// ResolveManagerPath resolves a human-readable path to stable breadcrumbs and locator.
+func (p *MagentacloudProvider) ResolveManagerPath(ctx context.Context, value string) (ManagerLocator, []ManagerBreadcrumb, bool, error) {
 	clean := strings.Trim(value, "/")
 	if clean == "" {
 		return ManagerLocator{Path: "/"}, nil, false, nil
@@ -392,8 +390,8 @@ func (p *NextcloudProvider) ResolveManagerPath(ctx context.Context, value string
 	return ManagerLocator{Path: currentPath}, breadcrumbs, false, nil
 }
 
-// ThumbnailManager retrieves a thumbnail image stream from Nextcloud for the specified file.
-func (p *NextcloudProvider) ThumbnailManager(ctx context.Context, locator ManagerLocator, width, height int) (io.ReadCloser, string, error) {
+// ThumbnailManager retrieves a thumbnail image stream from MagentaCLOUD for the specified file.
+func (p *MagentacloudProvider) ThumbnailManager(ctx context.Context, locator ManagerLocator, width, height int) (io.ReadCloser, string, error) {
 	if width <= 0 {
 		width = 256
 	}
@@ -407,7 +405,7 @@ func (p *NextcloudProvider) ThumbnailManager(ctx context.Context, locator Manage
 		height = 2048
 	}
 
-	instanceRoot := strings.TrimSuffix(p.baseURL(), "/remote.php/dav")
+	instanceRoot := strings.TrimSuffix(p.baseURL(), "/remote.php/webdav")
 	previewURL := fmt.Sprintf("%s/index.php/core/preview?x=%d&y=%d&a=1", instanceRoot, width, height)
 
 	if locator.NativeID != "" {
@@ -419,7 +417,7 @@ func (p *NextcloudProvider) ThumbnailManager(ctx context.Context, locator Manage
 		}
 		previewURL += "&file=" + url.QueryEscape(cleanPath)
 	} else {
-		return nil, "", fmt.Errorf("nextcloud thumbnail: %w", ErrNotFound)
+		return nil, "", fmt.Errorf("magentacloud thumbnail: %w", ErrNotFound)
 	}
 
 	req, err := p.newRequest(http.MethodGet, previewURL, nil)
@@ -435,19 +433,19 @@ func (p *NextcloudProvider) ThumbnailManager(ctx context.Context, locator Manage
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		_ = resp.Body.Close()
-		return nil, "", fmt.Errorf("nextcloud thumbnail: %w", ErrAuth)
+		return nil, "", fmt.Errorf("magentacloud thumbnail: %w", ErrAuth)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		_ = resp.Body.Close()
-		return nil, "", fmt.Errorf("nextcloud thumbnail: %w", ErrNotFound)
+		return nil, "", fmt.Errorf("magentacloud thumbnail: %w", ErrNotFound)
 	}
 	if resp.StatusCode == http.StatusUnsupportedMediaType || resp.StatusCode == http.StatusBadRequest {
 		_ = resp.Body.Close()
-		return nil, "", fmt.Errorf("nextcloud thumbnail: %w", ErrUnsupportedMedia)
+		return nil, "", fmt.Errorf("magentacloud thumbnail: %w", ErrUnsupportedMedia)
 	}
 	if resp.StatusCode != http.StatusOK {
 		_ = resp.Body.Close()
-		return nil, "", fmt.Errorf("nextcloud thumbnail failed, status: %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("magentacloud thumbnail failed, status: %d", resp.StatusCode)
 	}
 
 	contentType := resp.Header.Get("Content-Type")

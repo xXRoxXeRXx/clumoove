@@ -604,7 +604,7 @@ func normalizeKoofrPath(value string) (string, error) {
 }
 
 func koofrChildPath(parent, name string) (string, error) {
-	if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
+	if name == "" || name == "." || name == ".." || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return "", ErrPathEscapesRoot
 	}
 	return normalizeKoofrPath(path.Join(parent, name))

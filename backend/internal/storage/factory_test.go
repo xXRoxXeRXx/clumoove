@@ -251,10 +251,112 @@ func TestNextcloudManagerCapabilities(t *testing.T) {
 	}
 }
 
-func TestOneDriveManagerCapabilities(t *testing.T) {
-	capabilities := ManagerCapabilitiesFor("onedrive")
+func TestDropboxManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("dropbox")
 	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.Thumbnails {
-		t.Fatalf("OneDrive manager capabilities = %#v, want full browse, pagination, mutations, and thumbnails", capabilities)
+		t.Fatalf("Dropbox manager capabilities = %#v, want full browse, pagination, mutations, and thumbnails", capabilities)
+	}
+}
+
+func TestHiDriveManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("hidrive")
+	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.Thumbnails {
+		t.Fatalf("HiDrive manager capabilities = %#v, want full browse, pagination, mutations, and thumbnails", capabilities)
+	}
+}
+
+func TestMagentacloudManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("magentacloud")
+	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename {
+		t.Fatalf("MagentaCLOUD manager capabilities = %#v, want browse, download, and mutations", capabilities)
+	}
+}
+
+func TestOpenCloudManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("opencloud")
+	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename {
+		t.Fatalf("OpenCloud manager capabilities = %#v, want browse, download, and mutations", capabilities)
+	}
+}
+
+func TestKoofrManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("koofr")
+	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.Thumbnails {
+		t.Fatalf("Koofr manager capabilities = %#v, want browse, download, upload, mkdir, and thumbnails", capabilities)
+	}
+}
+
+func TestSeafileManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("seafile")
+	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.Thumbnails {
+		t.Fatalf("Seafile manager capabilities = %#v, want browse, download, upload, mkdir, and thumbnails", capabilities)
+	}
+}
+
+func TestImmichManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("immich")
+	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download || !capabilities.Thumbnails {
+		t.Fatalf("Immich manager capabilities = %#v, want browse, pagination, download, and thumbnails", capabilities)
+	}
+}
+
+func TestManagerCapabilityInterfaceSatisfaction(t *testing.T) {
+	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
+	ctx := WithLocalUserScope(context.Background(), "test-user")
+
+	dedicatedProviders := []struct {
+		name     string
+		url      string
+		username string
+		password string
+	}{
+		{"nextcloud", "https://example.com", "u", "p"},
+		{"opencloud", "https://example.com", "u", "p"},
+		{"dropbox", "", "u", "token"},
+		{"google", "", "u", "token"},
+		{"onedrive", "oauth://onedrive", "u", "token"},
+		{"hidrive", "", "u", "token"},
+		{"magentacloud", "", "u", "p"},
+		{"koofr", "", "u", "p"},
+		{"immich", "https://example.com", "", "apikey"},
+		{"seafile", "https://example.com", "u", "p"},
+	}
+
+	for _, tc := range dedicatedProviders {
+		p, err := NewProvider(ctx, tc.name, tc.url, tc.username, tc.password)
+		if err != nil {
+			t.Fatalf("NewProvider(%q) error = %v", tc.name, err)
+		}
+		caps := ManagerCapabilitiesFor(tc.name)
+
+		if caps.Browse {
+			if _, ok := p.(ManagerLister); !ok {
+				t.Errorf("Dedicated provider %q has Browse: true but does not implement ManagerLister", tc.name)
+			}
+			if _, ok := p.(ManagerPathResolver); !ok {
+				t.Errorf("Dedicated provider %q has Browse: true but does not implement ManagerPathResolver", tc.name)
+			}
+		}
+		if caps.Download {
+			if _, ok := p.(ManagerDownloader); !ok {
+				t.Errorf("Dedicated provider %q has Download: true but does not implement ManagerDownloader", tc.name)
+			}
+		}
+		if caps.Upload {
+			if _, ok := p.(ManagerUploader); !ok {
+				t.Errorf("Dedicated provider %q has Upload: true but does not implement ManagerUploader", tc.name)
+			}
+		}
+		if caps.Mkdir {
+			if _, ok := p.(ManagerDirectoryCreator); !ok {
+				t.Errorf("Dedicated provider %q has Mkdir: true but does not implement ManagerDirectoryCreator", tc.name)
+			}
+		}
+		if caps.Thumbnails {
+			if _, ok := p.(ManagerThumbnailer); !ok {
+				t.Errorf("Dedicated provider %q has Thumbnails: true but does not implement ManagerThumbnailer", tc.name)
+			}
+		}
 	}
 }
 

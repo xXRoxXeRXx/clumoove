@@ -363,4 +363,3 @@ func (p *GoogleProvider) ThumbnailManager(ctx context.Context, locator ManagerLo
 	}
 	return resp.Body, contentType, nil
 }
-

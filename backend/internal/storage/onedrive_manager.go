@@ -98,6 +98,9 @@ func (p *OneDriveProvider) ListManager(ctx context.Context, locator ManagerLocat
 
 	items := make([]ManagerItem, 0, len(page.Value))
 	for _, item := range page.Value {
+		if item.SpecialFolder != nil && strings.EqualFold(item.SpecialFolder.Name, "vault") {
+			continue
+		}
 		childPath := managerChildPath(locator.Path, item.Name)
 		modified, _ := time.Parse(time.RFC3339, item.LastModifiedDateTime)
 		mimeType := ""
@@ -149,29 +152,7 @@ func (p *OneDriveProvider) DownloadManager(ctx context.Context, locator ManagerL
 	}, nil
 }
 
-// CreateManagerDirectory creates a directory under the given parent locator.
-func (p *OneDriveProvider) CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error {
-	parentPath, err := oneDrivePath(parent.Path)
-	if err != nil {
-		return err
-	}
-	targetPath := path.Join(parentPath, name)
-	if !strings.HasPrefix(targetPath, "/") {
-		targetPath = "/" + targetPath
-	}
-
-	exists, _, err := p.FileExists(ctx, "files", targetPath)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return ErrManagerConflict
-	}
-
-	return p.CreateDirectory(ctx, "files", targetPath)
-}
-
-// UploadManager streams content to OneDrive respecting conflict strategies.
+// UploadManager uploads a file directly to OneDrive, supporting skip, overwrite, and rename.
 func (p *OneDriveProvider) UploadManager(ctx context.Context, parent ManagerLocator, name string, stream io.Reader, size int64, options ManagerUploadOptions) (ManagerUploadResult, error) {
 	parentPath, err := oneDrivePath(parent.Path)
 	if err != nil {
@@ -204,8 +185,12 @@ func (p *OneDriveProvider) UploadManager(ctx context.Context, parent ManagerLoca
 			if meta.IsDir {
 				return ManagerUploadResult{}, ErrManagerConflict
 			}
-			// Stage to .tmp and promote atomically via RenameFile
-			tmpPath := fmt.Sprintf("%s.tmp.%d", targetPath, time.Now().UnixNano())
+
+			// Stage to .tmp, backup target, promote, and remove backup
+			nowNano := time.Now().UnixNano()
+			tmpPath := fmt.Sprintf("%s.tmp.%d", targetPath, nowNano)
+			bakPath := fmt.Sprintf("%s.bak.%d", targetPath, nowNano)
+
 			var uploadErr error
 			if size > oneDriveSimpleUploadLimit {
 				uploadErr = p.StreamUploadChunked(ctx, "files", tmpPath, stream, size, nil)
@@ -213,12 +198,28 @@ func (p *OneDriveProvider) UploadManager(ctx context.Context, parent ManagerLoca
 				uploadErr = p.StreamUpload(ctx, "files", tmpPath, stream, size)
 			}
 			if uploadErr != nil {
+				_ = p.DeleteFile(ctx, "files", tmpPath)
 				return ManagerUploadResult{}, uploadErr
 			}
+
+			// Preserve existing target to backup
+			if err := p.RenameFile(ctx, "files", targetPath, bakPath); err != nil {
+				_ = p.DeleteFile(ctx, "files", tmpPath)
+				return ManagerUploadResult{}, fmt.Errorf("failed to backup existing file before overwrite: %w", err)
+			}
+
+			// Promote temporary upload to target
 			if err := p.RenameFile(ctx, "files", tmpPath, targetPath); err != nil {
 				_ = p.DeleteFile(ctx, "files", tmpPath)
-				return ManagerUploadResult{}, err
+				_ = p.RenameFile(ctx, "files", bakPath, targetPath)
+				return ManagerUploadResult{}, fmt.Errorf("failed to promote temporary upload: %w", err)
 			}
+
+			// Remove backup
+			if err := p.DeleteFile(ctx, "files", bakPath); err != nil {
+				return ManagerUploadResult{}, fmt.Errorf("failed to delete overwrite backup: %w", err)
+			}
+
 			return ManagerUploadResult{Status: "uploaded", FinalName: name}, nil
 		}
 	case "RENAME":
@@ -264,27 +265,58 @@ func (p *OneDriveProvider) UploadManager(ctx context.Context, parent ManagerLoca
 	return ManagerUploadResult{Status: status, FinalName: finalName}, nil
 }
 
-// ResolveManagerPath turns a path string into ManagerBreadcrumbs for navigation.
-func (p *OneDriveProvider) ResolveManagerPath(ctx context.Context, value string) (ManagerLocator, []ManagerBreadcrumb, bool, error) {
-	clean, err := oneDrivePath(value)
-	if err != nil || clean == "/" {
-		return ManagerLocator{Path: "/"}, nil, false, nil
+// CreateManagerDirectory creates a new folder in OneDrive under the parent locator.
+func (p *OneDriveProvider) CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error {
+	parentPath, err := oneDrivePath(parent.Path)
+	if err != nil {
+		return err
 	}
+	targetPath := path.Join(parentPath, name)
+	if !strings.HasPrefix(targetPath, "/") {
+		targetPath = "/" + targetPath
+	}
+
+	exists, _, err := p.FileExists(ctx, "files", targetPath)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrManagerConflict
+	}
+
+	return p.CreateDirectory(ctx, "files", targetPath)
+}
+
+// ResolveManagerPath turns a path string into ManagerBreadcrumbs for navigation.
+func (p *OneDriveProvider) ResolveManagerPath(ctx context.Context, value string) (locator ManagerLocator, breadcrumbs []ManagerBreadcrumb, fallback bool, err error) {
+	clean, err := oneDrivePath(value)
+	if err != nil {
+		return ManagerLocator{}, nil, false, err
+	}
+
+	if clean == "" || clean == "/" {
+		return ManagerLocator{Path: "/"}, []ManagerBreadcrumb{{Name: "/", Locator: ManagerLocator{Path: "/"}}}, false, nil
+	}
+
+	parts := strings.Split(strings.Trim(clean, "/"), "/")
+	breadcrumbs = []ManagerBreadcrumb{{Name: "/", Locator: ManagerLocator{Path: "/"}}}
 	currentPath := ""
-	segments := strings.Split(strings.Trim(clean, "/"), "/")
-	breadcrumbs := make([]ManagerBreadcrumb, 0, len(segments))
-	for _, segment := range segments {
+	for _, segment := range parts {
 		if segment == "" {
 			continue
 		}
-		currentPath = currentPath + "/" + segment
-		exists, _, err := p.FileExists(ctx, "files", currentPath)
+		nextPath := currentPath + "/" + segment
+		exists, _, err := p.FileExists(ctx, "files", nextPath)
 		if err != nil {
 			return ManagerLocator{}, nil, false, err
 		}
 		if !exists {
-			return ManagerLocator{Path: path.Dir(currentPath)}, breadcrumbs, true, nil
+			if currentPath == "" {
+				currentPath = "/"
+			}
+			return ManagerLocator{Path: currentPath}, breadcrumbs, true, nil
 		}
+		currentPath = nextPath
 		breadcrumbs = append(breadcrumbs, ManagerBreadcrumb{
 			Name:    segment,
 			Locator: ManagerLocator{Path: currentPath},
@@ -309,9 +341,7 @@ func (p *OneDriveProvider) ThumbnailManager(ctx context.Context, locator Manager
 	}
 
 	var itemURL string
-	if locator.NativeID != "" {
-		itemURL = p.apiBase + "/items/" + url.PathEscape(locator.NativeID)
-	} else if locator.Path != "" {
+	if locator.Path != "" && locator.Path != "/" {
 		clean, err := oneDrivePath(locator.Path)
 		if err != nil {
 			return nil, "", err
@@ -320,6 +350,8 @@ func (p *OneDriveProvider) ThumbnailManager(ctx context.Context, locator Manager
 		if err != nil {
 			return nil, "", err
 		}
+	} else if locator.NativeID != "" {
+		itemURL = p.apiBase + "/items/" + url.PathEscape(locator.NativeID)
 	} else {
 		return nil, "", fmt.Errorf("onedrive thumbnail: missing item ID or path: %w", ErrNotFound)
 	}

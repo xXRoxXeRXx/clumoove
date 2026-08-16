@@ -201,9 +201,16 @@ func (p *HiDriveProvider) UploadManager(ctx context.Context, parent ManagerLocat
 			if meta.IsDir {
 				return ManagerUploadResult{}, ErrManagerConflict
 			}
-			if delErr := p.DeleteFile(ctx, "files", targetPath); delErr != nil {
-				return ManagerUploadResult{}, delErr
+			tmpPath := fmt.Sprintf("%s.tmp.%d", targetPath, time.Now().UnixNano())
+			if err := p.StreamUploadChunked(ctx, "files", tmpPath, stream, size, nil); err != nil {
+				_ = p.DeleteFile(ctx, "files", tmpPath)
+				return ManagerUploadResult{}, err
 			}
+			if err := p.RenameFile(ctx, "files", tmpPath, targetPath); err != nil {
+				_ = p.DeleteFile(ctx, "files", tmpPath)
+				return ManagerUploadResult{}, err
+			}
+			return ManagerUploadResult{Status: "uploaded", FinalName: name}, nil
 		}
 	case "RENAME":
 		if exists {

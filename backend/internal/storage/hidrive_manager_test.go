@@ -160,10 +160,87 @@ func TestHiDriveManagerUploadConflictStrategies(t *testing.T) {
 		}
 	})
 
+	t.Run("overwrite", func(t *testing.T) {
+		renamedMoved := false
+		provider := newHiDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/meta" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"type": "file", "size": 100})
+				return
+			}
+			if r.URL.Path == "/dir" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.URL.Path == "/file" && r.Method == http.MethodPost {
+				// Uploading to temp file
+				if !strings.Contains(r.URL.Query().Get("dir"), "public") || !strings.Contains(r.URL.Query().Get("name"), ".tmp.") {
+					t.Fatalf("expected upload to temp file, got dir=%q name=%q", r.URL.Query().Get("dir"), r.URL.Query().Get("name"))
+				}
+				w.WriteHeader(http.StatusCreated)
+				return
+			}
+			if r.URL.Path == "/file/move" && r.Method == http.MethodPost {
+				if r.URL.Query().Get("on_exist") != "overwrite" || !strings.HasSuffix(r.URL.Query().Get("dst"), "public/file.txt") {
+					t.Fatalf("expected move with on_exist=overwrite to public/file.txt, got query=%v", r.URL.Query())
+				}
+				renamedMoved = true
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			t.Fatalf("unexpected call: %s %s", r.Method, r.URL.Path)
+		}))
+
+		res, err := provider.UploadManager(context.Background(), ManagerLocator{Path: "/public"}, "file.txt", strings.NewReader("content"), 7, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Status != "uploaded" || res.FinalName != "file.txt" {
+			t.Fatalf("result = %#v, want uploaded file.txt", res)
+		}
+		if !renamedMoved {
+			t.Fatal("expected file to be moved with on_exist=overwrite")
+		}
+	})
+
+	t.Run("overwrite upload failure cleans temp without deleting original", func(t *testing.T) {
+		tempDeleted := false
+		provider := newHiDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/meta" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"type": "file", "size": 100})
+				return
+			}
+			if r.URL.Path == "/dir" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.URL.Path == "/file" && r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if r.URL.Path == "/file" && r.Method == http.MethodDelete {
+				if strings.Contains(r.URL.Query().Get("path"), ".tmp.") {
+					tempDeleted = true
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				t.Fatalf("unexpected delete of path: %s", r.URL.Query().Get("path"))
+			}
+			t.Fatalf("unexpected call: %s %s", r.Method, r.URL.Path)
+		}))
+
+		_, err := provider.UploadManager(context.Background(), ManagerLocator{Path: "/public"}, "file.txt", strings.NewReader("content"), 7, ManagerUploadOptions{ConflictStrategy: "OVERWRITE"})
+		if err == nil {
+			t.Fatal("expected error on failed upload, got nil")
+		}
+		if !tempDeleted {
+			t.Fatal("expected temp file to be deleted on upload failure")
+		}
+	})
+
 	t.Run("rename", func(t *testing.T) {
 		provider := newHiDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/meta" {
-				if r.URL.Query().Get("path") == "/public/file.txt" {
+				if r.URL.Query().Get("path") == "public/file.txt" || r.URL.Query().Get("path") == "/public/file.txt" {
 					_ = json.NewEncoder(w).Encode(map[string]any{"type": "file", "size": 100})
 					return
 				}

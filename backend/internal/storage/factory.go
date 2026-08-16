@@ -169,9 +169,9 @@ var providerRegistry = map[string]ProviderMetadata{
 // manager-specific tests and semantics.
 var managerCapabilityRegistry = map[string]ManagerCapabilities{
 	"nextcloud":    {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"opencloud":    {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"opencloud":    {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
 	"webdav":       {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"dropbox":      {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"dropbox":      {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"onedrive":     {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"hidrive":      {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
@@ -179,11 +179,11 @@ var managerCapabilityRegistry = map[string]ManagerCapabilities{
 	"s3":           {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
 	"sftp":         {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"ftp":          {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"magentacloud": {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"koofr":        {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
+	"magentacloud": {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
+	"koofr":        {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
 	"local":        {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"immich":       {Browse: true, Download: true},
-	"seafile":      {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
+	"immich":       {Browse: true, NativePagination: true, Download: true, Thumbnails: true},
+	"seafile":      {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
 	"mega":         {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 }
 

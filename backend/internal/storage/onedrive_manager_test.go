@@ -34,6 +34,14 @@ func TestOneDriveManagerList(t *testing.T) {
 			_, _ = io.WriteString(w, `{
 				"value": [
 					{
+						"id": "vault-1",
+						"name": "Personal Vault",
+						"size": 0,
+						"specialFolder": {
+							"name": "vault"
+						}
+					},
+					{
 						"id": "file-1",
 						"name": "photo.jpg",
 						"size": 1024,
@@ -64,8 +72,9 @@ func TestOneDriveManagerList(t *testing.T) {
 		t.Fatalf("ListManager() error = %v", err)
 	}
 
+	// Personal Vault should be filtered out
 	if len(page.Items) != 2 {
-		t.Fatalf("len(page.Items) = %d, want 2", len(page.Items))
+		t.Fatalf("len(page.Items) = %d, want 2 (vault skipped)", len(page.Items))
 	}
 
 	// First item: photo.jpg
@@ -188,8 +197,10 @@ func TestOneDriveManagerUploadConflictStrategies(t *testing.T) {
 	})
 
 	t.Run("overwrite", func(t *testing.T) {
+		backupCreated := false
+		backupDeleted := false
 		provider := newOneDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.HasSuffix(r.URL.Path, "/root:/target.txt:") {
+			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/root:/target.txt:") {
 				w.WriteHeader(http.StatusOK)
 				_, _ = io.WriteString(w, `{"id":"target-id","name":"target.txt","size":5,"file":{}}`)
 				return
@@ -199,9 +210,23 @@ func TestOneDriveManagerUploadConflictStrategies(t *testing.T) {
 				_, _ = io.WriteString(w, `{"id":"tmp-id","name":"target.txt.tmp","size":11}`)
 				return
 			}
-			if r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "target.txt.tmp.") {
+			if r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "target.txt:") {
+				// Renaming target to bakPath
+				backupCreated = true
 				w.WriteHeader(http.StatusOK)
-				_, _ = io.WriteString(w, `{"id":"target-id","name":"target.txt","size":11}`)
+				_, _ = io.WriteString(w, `{"id":"target-id","name":"target.txt.bak","size":5}`)
+				return
+			}
+			if r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "target.txt.tmp.") {
+				// Promoting tmp to targetPath
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, `{"id":"tmp-id","name":"target.txt","size":11}`)
+				return
+			}
+			if r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "target.txt.bak.") {
+				// Deleting backup
+				backupDeleted = true
+				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 			http.NotFound(w, r)
@@ -213,6 +238,9 @@ func TestOneDriveManagerUploadConflictStrategies(t *testing.T) {
 		}
 		if res.Status != "uploaded" || res.FinalName != "target.txt" {
 			t.Fatalf("res = %#v, want uploaded", res)
+		}
+		if !backupCreated || !backupDeleted {
+			t.Fatalf("backupCreated=%v, backupDeleted=%v, want both true", backupCreated, backupDeleted)
 		}
 	})
 
@@ -260,7 +288,7 @@ func TestOneDriveManagerResolvePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveManagerPath(/Photos) error = %v", err)
 	}
-	if fallback || locator.Path != "/Photos" || len(breadcrumbs) != 1 || breadcrumbs[0].Name != "Photos" {
+	if fallback || locator.Path != "/Photos" || len(breadcrumbs) != 2 || breadcrumbs[1].Name != "Photos" {
 		t.Fatalf("unexpected resolve result: locator = %#v, breadcrumbs = %#v, fallback = %v", locator, breadcrumbs, fallback)
 	}
 
@@ -269,7 +297,7 @@ func TestOneDriveManagerResolvePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveManagerPath(/Photos/2026/Vacation) error = %v", err)
 	}
-	if !fallback2 || locator2.Path != "/Photos" || len(breadcrumbs2) != 1 {
+	if !fallback2 || locator2.Path != "/Photos" || len(breadcrumbs2) != 2 {
 		t.Fatalf("unexpected fallback resolve result: locator = %#v, breadcrumbs = %#v, fallback = %v", locator2, breadcrumbs2, fallback2)
 	}
 }
@@ -284,7 +312,7 @@ func TestOneDriveManagerThumbnail(t *testing.T) {
 			_, _ = w.Write([]byte("fake-onedrive-jpeg-preview"))
 		}))
 
-		stream, contentType, err := provider.ThumbnailManager(context.Background(), ManagerLocator{NativeID: "item-123", Path: "/photo.jpg"}, 256, 256)
+		stream, contentType, err := provider.ThumbnailManager(context.Background(), ManagerLocator{NativeID: "item-123"}, 256, 256)
 		if err != nil {
 			t.Fatalf("ThumbnailManager() error = %v", err)
 		}
@@ -321,6 +349,31 @@ func TestOneDriveManagerThumbnail(t *testing.T) {
 
 		if contentType != "image/png" {
 			t.Fatalf("contentType = %q, want image/png", contentType)
+		}
+	})
+
+	t.Run("success with shared shortcut path", func(t *testing.T) {
+		provider := newOneDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/root:/SharedFolder:") {
+				_, _ = io.WriteString(w, `{"id":"shortcut-1","remoteItem":{"id":"remote-item-id","parentReference":{"driveId":"remote-drive-1"}}}`)
+				return
+			}
+			if strings.Contains(r.URL.Path, "/drives/remote-drive-1/items/remote-item-id:/photo.jpg:/thumbnails/0/c256x256/content") {
+				w.Header().Set("Content-Type", "image/jpeg")
+				_, _ = w.Write([]byte("fake-remote-thumbnail"))
+				return
+			}
+			http.NotFound(w, r)
+		}))
+
+		stream, contentType, err := provider.ThumbnailManager(context.Background(), ManagerLocator{Path: "/SharedFolder/photo.jpg"}, 256, 256)
+		if err != nil {
+			t.Fatalf("ThumbnailManager() error = %v", err)
+		}
+		defer stream.Close()
+
+		if contentType != "image/jpeg" {
+			t.Fatalf("contentType = %q, want image/jpeg", contentType)
 		}
 	})
 

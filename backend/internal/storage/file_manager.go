@@ -113,10 +113,34 @@ type ManagerUploader interface {
 }
 
 var (
-	ErrManagerConflict    = errors.New("file manager conflict")
-	ErrUploadSizeMismatch = errors.New("upload size mismatch")
-	ErrUnsupportedMedia   = errors.New("unsupported media type")
+	ErrManagerConflict          = errors.New("file manager conflict")
+	ErrUploadSizeMismatch       = errors.New("upload size mismatch")
+	ErrUnsupportedMedia         = errors.New("unsupported media type")
+	ErrManagerDirectoryTooLarge = errors.New("directory too large")
 )
+
+// sortManagerItems sorts a slice of ManagerItem consistently: directories first, then alphabetical by name.
+func sortManagerItems(items []ManagerItem) {
+	for i := 0; i < len(items)-1; i++ {
+		for j := i + 1; j < len(items); j++ {
+			swap := false
+			if items[j].IsDir != items[i].IsDir {
+				swap = items[j].IsDir
+			} else {
+				left := items[i].Name
+				right := items[j].Name
+				if left != right {
+					swap = right < left
+				} else {
+					swap = items[j].Locator.Path < items[i].Locator.Path
+				}
+			}
+			if swap {
+				items[i], items[j] = items[j], items[i]
+			}
+		}
+	}
+}
 
 // ExactSizeReader forwards a stream without buffering while enforcing its
 // declared length. Call Verify after the consumer returns to detect a short
