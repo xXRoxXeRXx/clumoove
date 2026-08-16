@@ -372,7 +372,7 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, on
         <header className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 shrink-0 sm:rounded-t-lg">
           <div className="flex min-w-0 items-center gap-2.5">
             {hasMultipleFiles && currentIndex >= 0 && (
-              <span className="inline-flex shrink-0 items-center rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+              <span className="text-xs text-[var(--color-text-secondary)] shrink-0 select-none">
                 {currentIndex + 1} / {fileList.length}
               </span>
             )}
