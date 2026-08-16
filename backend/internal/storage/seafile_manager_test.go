@@ -59,8 +59,8 @@ func TestSeafileManager(t *testing.T) {
 		]`))
 	})
 
-	mux.HandleFunc("/api/v2.1/repos/repo-123/thumbnail/", func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Query().Get("path")
+	mux.HandleFunc("/api2/repos/repo-123/thumbnail/", func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Query().Get("p")
 		if p == "/not_found.jpg" {
 			w.WriteHeader(http.StatusNotFound)
 			return

@@ -296,7 +296,7 @@ func (p *SeafileProvider) ThumbnailManager(ctx context.Context, locator ManagerL
 		size = 1024
 	}
 
-	reqURL := fmt.Sprintf("%s/api/v2.1/repos/%s/thumbnail/?path=%s&size=%d", p.BaseURL, repoID, url.QueryEscape(repoPath), size)
+	reqURL := fmt.Sprintf("%s/api2/repos/%s/thumbnail/?p=%s&size=%d", p.BaseURL, repoID, url.QueryEscape(repoPath), size)
 	req, err := p.newAuthRequest(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, "", err
