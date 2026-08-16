@@ -649,6 +649,8 @@
     "previewUnavailable": "Diese Datei kann nicht sicher angezeigt werden. Lade sie herunter, um sie lokal zu öffnen.",
     "previewZoomIn": "Vergrößern",
     "previewZoomOut": "Verkleinern",
+    "previousFile": "Vorherige Datei",
+    "nextFile": "Nächste Datei",
     "openSource": "Quelle im Dateimanager öffnen",
     "openTarget": "Ziel im Dateimanager öffnen",
     "pathFallback": "Der gespeicherte Ordner ist nicht mehr verfügbar. Der nächste vorhandene übergeordnete Ordner wurde geöffnet."

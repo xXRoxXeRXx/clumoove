@@ -82,6 +82,13 @@ describe('FilePreviewDialog', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en');
     vi.mocked(createDownloadTicket).mockReset();
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/mock-ticket',
+      },
+    });
     onDownload.mockReset();
     onClose.mockReset();
     mockXlsxWorkerInstances.length = 0;
@@ -97,7 +104,7 @@ describe('FilePreviewDialog', () => {
   });
 
   it('renders fallback state for unsupported file types', async () => {
-    const unsupported = makeEntry('archive.zip', 'application/zip');
+    const unsupported = makeEntry('archive.zip', 'application/zip', 2048);
     await act(async () => {
       root.render(
         <FilePreviewDialog
@@ -114,7 +121,124 @@ describe('FilePreviewDialog', () => {
 
     const dialog = document.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain('archive.zip');
+    expect(dialog?.textContent).toContain('2 KB');
+    expect(dialog?.textContent).toContain('application/zip');
     expect(dialog?.textContent).toContain('This file cannot be safely previewed.');
+
+    const downloadBtn = dialog?.querySelector('button.ui-button-primary');
+    expect(downloadBtn).not.toBeNull();
+    act(() => {
+      (downloadBtn as HTMLButtonElement)?.click();
+    });
+    expect(onDownload).toHaveBeenCalledWith(unsupported);
+  });
+
+  it('renders navigation buttons and counter when multiple files are provided', async () => {
+    const file1 = { ...makeEntry('photo1.jpg', 'image/jpeg'), ref: 'ref-1' };
+    const file2 = { ...makeEntry('doc.pdf', 'application/pdf'), ref: 'ref-2' };
+    const file3 = { ...makeEntry('archive.zip', 'application/zip'), ref: 'ref-3' };
+    const dir = { ...makeEntry('Folder', undefined), ref: 'ref-dir', kind: 'directory' as const };
+    const onNavigate = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={file2}
+          entries={[file1, dir, file2, file3]}
+          onNavigate={onNavigate}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('2 / 3');
+
+    const prevBtn = dialog?.querySelector<HTMLButtonElement>('button[aria-label="Previous file"]');
+    const nextBtn = dialog?.querySelector<HTMLButtonElement>('button[aria-label="Next file"]');
+    expect(prevBtn).not.toBeNull();
+    expect(nextBtn).not.toBeNull();
+    expect(prevBtn?.disabled).toBe(false);
+    expect(nextBtn?.disabled).toBe(false);
+
+    act(() => {
+      prevBtn?.click();
+    });
+    expect(onNavigate).toHaveBeenCalledWith(file1);
+
+    act(() => {
+      nextBtn?.click();
+    });
+    expect(onNavigate).toHaveBeenCalledWith(file3);
+  });
+
+  it('disables previous button on first file and next button on last file', async () => {
+    const file1 = { ...makeEntry('first.txt', 'text/plain'), ref: 'ref-1' };
+    const file2 = { ...makeEntry('second.txt', 'text/plain'), ref: 'ref-2' };
+    const onNavigate = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={file1}
+          entries={[file1, file2]}
+          onNavigate={onNavigate}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('1 / 2');
+
+    const prevBtn = dialog?.querySelector<HTMLButtonElement>('button[aria-label="Previous file"]');
+    const nextBtn = dialog?.querySelector<HTMLButtonElement>('button[aria-label="Next file"]');
+    expect(prevBtn?.disabled).toBe(true);
+    expect(nextBtn?.disabled).toBe(false);
+  });
+
+  it('handles keyboard navigation with arrow keys', async () => {
+    const file1 = { ...makeEntry('first.txt', 'text/plain'), ref: 'ref-1' };
+    const file2 = { ...makeEntry('second.txt', 'text/plain'), ref: 'ref-2' };
+    const file3 = { ...makeEntry('third.txt', 'text/plain'), ref: 'ref-3' };
+    const onNavigate = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={file2}
+          entries={[file1, file2, file3]}
+          onNavigate={onNavigate}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+    });
+    expect(onNavigate).toHaveBeenCalledWith(file1);
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    });
+    expect(onNavigate).toHaveBeenCalledWith(file3);
   });
 
   it('loads and renders a PDF with page controls', async () => {

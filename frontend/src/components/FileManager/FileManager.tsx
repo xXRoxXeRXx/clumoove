@@ -22,7 +22,6 @@ import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { FileUploadControl } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
-import { canPreview } from './filePreview';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
 
@@ -293,9 +292,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       openDirectory(entry);
       return;
     }
-    if (entry.allowed_actions.includes('download') && capabilities.download && canPreview(entry)) {
-      setPreviewEntry(entry);
-    }
+    setPreviewEntry(entry);
   };
 
   const goUp = () => {
@@ -552,7 +549,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     </thead>
                     <tbody>
                       {entries.map((entry) => {
-                        const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || (entry.kind === 'file' && canPreview(entry));
+                        const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
                         return (
                           <tr
                             key={entry.ref}
@@ -566,8 +563,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                                   e.stopPropagation();
                                   openEntry(entry);
                                 }}
-                                disabled={(entry.kind === 'directory' && (!capabilities.browse || entriesLoading)) || (entry.kind === 'file' && !canPreview(entry))}
-                                className={`inline-flex max-w-full items-center gap-2 min-w-0 text-left ${entry.kind === 'directory' || canPreview(entry) ? 'ui-link disabled:cursor-not-allowed disabled:opacity-55' : ''}`}
+                                disabled={entry.kind === 'directory' && (!capabilities.browse || entriesLoading)}
+                                className="inline-flex max-w-full items-center gap-2 min-w-0 text-left ui-link disabled:cursor-not-allowed disabled:opacity-55"
                                 title={entry.name}
                               >
                                 <FileThumbnail
@@ -612,7 +609,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
               ) : (
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 flex-1 auto-rows-max" role="grid" aria-label={t('files.title')}>
                   {entries.map((entry) => {
-                    const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || (entry.kind === 'file' && canPreview(entry));
+                    const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
                     const canDownload = entry.kind === 'file' && entry.allowed_actions.includes('download') && capabilities.download;
 
                     return (
@@ -765,7 +762,16 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
         )}
       {previewEntry && (
         <Suspense fallback={null}>
-          <FilePreviewDialog apiUrl={apiUrl} token={token} profileId={profileId} entry={previewEntry} onClose={() => setPreviewEntry(null)} onDownload={(entry) => void download(entry)} />
+          <FilePreviewDialog
+            apiUrl={apiUrl}
+            token={token}
+            profileId={profileId}
+            entry={previewEntry}
+            entries={entries}
+            onNavigate={(entry) => setPreviewEntry(entry)}
+            onClose={() => setPreviewEntry(null)}
+            onDownload={(entry) => void download(entry)}
+          />
         </Suspense>
       )}
     </section>

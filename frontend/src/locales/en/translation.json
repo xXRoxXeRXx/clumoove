@@ -649,6 +649,8 @@
     "previewUnavailable": "This file cannot be safely previewed. Download it to open it locally.",
     "previewZoomIn": "Zoom in",
     "previewZoomOut": "Zoom out",
+    "previousFile": "Previous file",
+    "nextFile": "Next file",
     "openSource": "Open source in file manager",
     "openTarget": "Open target in file manager",
     "pathFallback": "The saved folder is no longer available. Opened its nearest available parent instead."

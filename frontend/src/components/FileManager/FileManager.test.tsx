@@ -19,6 +19,15 @@ vi.mock('../../api/profiles', () => ({
   listConnectionProfiles: vi.fn(),
 }));
 
+vi.mock('./FilePreviewDialog', () => ({
+  FilePreviewDialog: ({ entry, onClose }: { entry: { name: string }; onClose: () => void }) => (
+    <div role="dialog">
+      <span>{entry.name}</span>
+      <button onClick={onClose}>Close</button>
+    </div>
+  ),
+}));
+
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
@@ -721,5 +730,58 @@ describe('FileManager component', () => {
       'ref-file-1',
       expect.any(AbortSignal)
     );
+  });
+
+  it('opens preview dialog when clicking any file in list view', async () => {
+    vi.mocked(listFileEntries).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        entries: [
+          {
+            ref: 'ref-archive',
+            name: 'backup.tar.gz',
+            display_path: '/backup.tar.gz',
+            kind: 'file',
+            size: 1048576,
+            mime_type: 'application/gzip',
+            allowed_actions: ['download'],
+          },
+        ],
+        next_cursor: null,
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    const fileRow = container.querySelector('tbody tr');
+    expect(fileRow).not.toBeNull();
+    expect(fileRow?.classList.contains('cursor-pointer')).toBe(true);
+
+    const fileButton = fileRow?.querySelector<HTMLButtonElement>('button');
+    expect(fileButton?.disabled).toBe(false);
+
+    await act(async () => {
+      fileButton?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    // Dialog should open
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog?.textContent).toContain('backup.tar.gz');
   });
 });
