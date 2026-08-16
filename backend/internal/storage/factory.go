@@ -168,7 +168,7 @@ var providerRegistry = map[string]ProviderMetadata{
 // files provider. Mutations remain false until each provider has
 // manager-specific tests and semantics.
 var managerCapabilityRegistry = map[string]ManagerCapabilities{
-	"nextcloud":    {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"nextcloud":    {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"opencloud":    {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"webdav":       {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"dropbox":      {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},

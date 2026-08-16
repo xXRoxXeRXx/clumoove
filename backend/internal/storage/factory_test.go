@@ -244,6 +244,13 @@ func TestGoogleManagerUploadCapabilities(t *testing.T) {
 	}
 }
 
+func TestNextcloudManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("nextcloud")
+	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.Thumbnails {
+		t.Fatalf("Nextcloud manager capabilities = %#v, want full browse, pagination, mutations, and thumbnails", capabilities)
+	}
+}
+
 func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
 	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
 	ctx := WithLocalUserScope(context.Background(), "factory-test-user")
