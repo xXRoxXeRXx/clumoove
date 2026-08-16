@@ -377,7 +377,7 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, on
               </span>
             )}
             <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
-            <h2 id="file-preview-title" className="min-w-0 truncate text-base font-semibold text-[var(--color-text-primary)]">
+            <h2 id="file-preview-title" className="min-w-0 truncate text-base text-[var(--color-text-primary)]">
               {t('files.previewTitle', { name: entry.name })}
             </h2>
           </div>

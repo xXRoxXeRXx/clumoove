@@ -463,6 +463,30 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   </nav>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <FileUploadControl
+                    apiUrl={apiUrl}
+                    token={token}
+                    profileId={profileId}
+                    parentRef={currentRef}
+                    capabilities={capabilities}
+                    disabled={entriesLoading}
+                    onCompleted={uploadCompleted}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreateDirOpen(true);
+                      setNewDirName('');
+                      setCreateDirError('');
+                    }}
+                    disabled={entriesLoading || !capabilities.mkdir}
+                    className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                    title={!capabilities.mkdir ? t('files.mkdirUnavailable') : t('files.newFolder')}
+                    aria-label={t('files.newFolder')}
+                  >
+                    <FolderPlusIcon className="h-4 w-4" aria-hidden="true" />
+                    <span className="hidden sm:inline">{t('files.newFolder')}</span>
+                  </button>
                   <div className="flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5" role="group" aria-label={t('files.viewMode')}>
                     <button
                       type="button"
@@ -493,30 +517,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       <Squares2X2Icon className="h-4 w-4" aria-hidden="true" />
                     </button>
                   </div>
-                  <FileUploadControl
-                    apiUrl={apiUrl}
-                    token={token}
-                    profileId={profileId}
-                    parentRef={currentRef}
-                    capabilities={capabilities}
-                    disabled={entriesLoading}
-                    onCompleted={uploadCompleted}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCreateDirOpen(true);
-                      setNewDirName('');
-                      setCreateDirError('');
-                    }}
-                    disabled={entriesLoading || !capabilities.mkdir}
-                    className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                    title={!capabilities.mkdir ? t('files.mkdirUnavailable') : t('files.newFolder')}
-                    aria-label={t('files.newFolder')}
-                  >
-                    <FolderPlusIcon className="h-4 w-4" aria-hidden="true" />
-                    <span className="hidden sm:inline">{t('files.newFolder')}</span>
-                  </button>
                   <button
                     type="button"
                     onClick={refresh}
