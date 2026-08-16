@@ -111,8 +111,8 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, onDownload }: Fil
     const load = async () => {
       const ticket = await createDownloadTicket(apiUrl, token, profileId, entry.ref, controller.signal);
       if (controller.signal.aborted) return;
-      if (!ticket || ticket.ok === false) {
-        setError(translateApiError(ticket?.errorCode));
+      if (ticket.ok === false) {
+        setError(translateApiError(ticket.errorCode));
         setState('fallback');
         return;
       }
