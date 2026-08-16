@@ -123,7 +123,6 @@ describe('FilePreviewDialog', () => {
     expect(dialog).not.toBeNull();
     expect(dialog?.textContent).toContain('archive.zip');
     expect(dialog?.textContent).toContain('2 KB');
-    expect(dialog?.textContent).toContain('application/zip');
     expect(dialog?.textContent).toContain('This file cannot be safely previewed.');
 
     const downloadBtn = dialog?.querySelector('button.ui-button-primary');

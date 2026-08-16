@@ -179,20 +179,14 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, onDownload }: Fil
         <h3 className="text-lg font-semibold text-[var(--color-text-primary)] break-all max-w-md">
           {entry.name}
         </h3>
-        <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2 text-xs text-[var(--color-text-secondary)]">
-          <span className="rounded-md bg-[var(--color-bg-secondary)] px-2.5 py-1 border border-[var(--color-border)] font-medium">
-            {formatBytes(entry.size)}
-          </span>
-          {entry.mime_type && (
-            <span className="rounded-md bg-[var(--color-bg-secondary)] px-2.5 py-1 border border-[var(--color-border)] font-mono text-[11px]">
-              {entry.mime_type}
-            </span>
-          )}
+        <div className="mt-2 flex items-center justify-center gap-2 text-xs text-[var(--color-text-secondary)]">
           {entry.modified_at && (
-            <span className="rounded-md bg-[var(--color-bg-secondary)] px-2.5 py-1 border border-[var(--color-border)]">
-              {formatDateTime(entry.modified_at)}
-            </span>
+            <span>{formatDateTime(entry.modified_at)}</span>
           )}
+          {entry.modified_at && entry.size >= 0 && (
+            <span className="text-[var(--color-text-muted)]" aria-hidden="true">•</span>
+          )}
+          <span>{formatBytes(entry.size)}</span>
         </div>
         <p className="mt-4 text-sm text-[var(--color-text-muted)] max-w-sm">
           {error || t('files.previewUnavailable')}
@@ -377,15 +371,15 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, on
       <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="file-preview-title" tabIndex={-1} className="flex h-full w-full flex-col bg-[var(--color-bg-primary)] sm:rounded-lg overflow-hidden border border-[var(--color-border)] shadow-2xl">
         <header className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-3 shrink-0 sm:rounded-t-lg">
           <div className="flex min-w-0 items-center gap-2.5">
-            <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
-            <h2 id="file-preview-title" className="min-w-0 truncate text-base font-semibold text-[var(--color-text-primary)]">
-              {t('files.previewTitle', { name: entry.name })}
-            </h2>
             {hasMultipleFiles && currentIndex >= 0 && (
               <span className="inline-flex shrink-0 items-center rounded-md bg-[var(--color-bg-tertiary)] px-2 py-0.5 text-xs font-medium text-[var(--color-text-secondary)] border border-[var(--color-border)]">
                 {currentIndex + 1} / {fileList.length}
               </span>
             )}
+            <FileIcon name={entry.name} mimeType={entry.mime_type} isDir={entry.kind === 'directory'} className="h-5 w-5 shrink-0" />
+            <h2 id="file-preview-title" className="min-w-0 truncate text-base font-semibold text-[var(--color-text-primary)]">
+              {t('files.previewTitle', { name: entry.name })}
+            </h2>
           </div>
           <div className="flex items-center gap-1">
             <button
