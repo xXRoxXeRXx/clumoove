@@ -281,8 +281,8 @@ func TestOpenCloudManagerCapabilities(t *testing.T) {
 
 func TestKoofrManagerCapabilities(t *testing.T) {
 	capabilities := ManagerCapabilitiesFor("koofr")
-	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.Thumbnails {
-		t.Fatalf("Koofr manager capabilities = %#v, want browse, download, upload, mkdir, and thumbnails", capabilities)
+	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictRename || !capabilities.Thumbnails {
+		t.Fatalf("Koofr manager capabilities = %#v, want browse, download, upload, mkdir, conflict options, and thumbnails", capabilities)
 	}
 }
 

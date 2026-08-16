@@ -278,17 +278,25 @@ func (p *KoofrProvider) ThumbnailManager(ctx context.Context, locator ManagerLoc
 		return nil, "", err
 	}
 
-	sizeStr := "256x256"
-	if width <= 128 && height <= 128 {
-		sizeStr = "128x128"
+	thumbSize := "large"
+	if width <= 64 && height <= 64 {
+		thumbSize = "small"
+	} else if width <= 128 && height <= 128 {
+		thumbSize = "medium"
 	} else if width > 256 || height > 256 {
-		sizeStr = "large"
+		thumbSize = "huge"
 	}
 
-	req, err := p.contentMountRequest(ctx, http.MethodGet, "/files/thumbnail", url.Values{"path": {filePath}, "size": {sizeStr}}, nil)
+	query := url.Values{
+		"path":  {filePath},
+		"thumb": {thumbSize},
+	}
+
+	req, err := p.contentMountRequest(ctx, http.MethodGet, "/files/get", query, nil)
 	if err != nil {
 		return nil, "", err
 	}
+	req.Header.Set("Accept", "*/*")
 
 	resp, err := p.HTTPClient.Do(req)
 	if err != nil {

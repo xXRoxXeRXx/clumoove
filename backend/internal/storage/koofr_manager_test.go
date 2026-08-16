@@ -68,7 +68,7 @@ func TestKoofrManager(t *testing.T) {
 		}`))
 	})
 
-	mux.HandleFunc("/content/api/v2/mounts/mount-primary-1/files/thumbnail", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/content/api/v2/mounts/mount-primary-1/files/get", func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Query().Get("path")
 		if strings.Contains(p, "not_found") {
 			w.WriteHeader(http.StatusNotFound)
@@ -78,13 +78,14 @@ func TestKoofrManager(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
+		thumb := r.URL.Query().Get("thumb")
+		if thumb != "" {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("fake-koofr-thumbnail-jpeg"))
+			return
+		}
 
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("fake-koofr-thumbnail-jpeg"))
-	})
-
-	mux.HandleFunc("/content/api/v2/mounts/mount-primary-1/files/get", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/jpeg")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("downloaded-sample-content"))
@@ -142,19 +143,27 @@ func TestKoofrManager(t *testing.T) {
 		}
 	})
 
-	t.Run("ThumbnailManager Success", func(t *testing.T) {
-		stream, cType, err := provider.ThumbnailManager(context.Background(), ManagerLocator{Path: "/sample.jpg"}, 256, 256)
-		if err != nil {
-			t.Fatalf("ThumbnailManager() error = %v", err)
-		}
-		defer stream.Close()
-
-		if cType != "image/jpeg" {
-			t.Errorf("contentType = %q, want image/jpeg", cType)
-		}
-		body, _ := io.ReadAll(stream)
-		if string(body) != "fake-koofr-thumbnail-jpeg" {
-			t.Errorf("body = %q, want fake-koofr-thumbnail-jpeg", string(body))
+	t.Run("ThumbnailManager Success Sizes", func(t *testing.T) {
+		for _, tc := range []struct {
+			w, h int
+		}{
+			{64, 64},
+			{128, 128},
+			{256, 256},
+			{512, 512},
+		} {
+			stream, cType, err := provider.ThumbnailManager(context.Background(), ManagerLocator{Path: "/sample.jpg"}, tc.w, tc.h)
+			if err != nil {
+				t.Fatalf("ThumbnailManager(%d, %d) error = %v", tc.w, tc.h, err)
+			}
+			if cType != "image/jpeg" {
+				t.Errorf("contentType = %q, want image/jpeg", cType)
+			}
+			body, _ := io.ReadAll(stream)
+			stream.Close()
+			if string(body) != "fake-koofr-thumbnail-jpeg" {
+				t.Errorf("body = %q, want fake-koofr-thumbnail-jpeg", string(body))
+			}
 		}
 	})
 
