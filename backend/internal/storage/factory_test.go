@@ -251,6 +251,13 @@ func TestNextcloudManagerCapabilities(t *testing.T) {
 	}
 }
 
+func TestOneDriveManagerCapabilities(t *testing.T) {
+	capabilities := ManagerCapabilitiesFor("onedrive")
+	if !capabilities.Browse || !capabilities.NativePagination || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.Thumbnails {
+		t.Fatalf("OneDrive manager capabilities = %#v, want full browse, pagination, mutations, and thumbnails", capabilities)
+	}
+}
+
 func TestPublicFactoryConstructsEveryProvider(t *testing.T) {
 	t.Setenv("LOCAL_STORAGE_ROOT", t.TempDir())
 	ctx := WithLocalUserScope(context.Background(), "factory-test-user")

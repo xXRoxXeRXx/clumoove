@@ -173,7 +173,7 @@ var managerCapabilityRegistry = map[string]ManagerCapabilities{
 	"webdav":       {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"dropbox":      {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"onedrive":     {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"onedrive":     {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"hidrive":      {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"smb":          {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"s3":           {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},

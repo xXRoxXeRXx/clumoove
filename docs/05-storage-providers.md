@@ -6,7 +6,7 @@ in `NewProvider` (`factory.go`). Only whitelisted provider strings may reach `Ne
 
 ## Cloud File Manager Capabilities
 
-`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. Every files provider exposes Phase-1 browse/download through the bounded read adapter. Google Drive, HiDrive, and Nextcloud additionally implement native `ManagerLister`, `ManagerDownloader`, `ManagerUploader`, `ManagerDirectoryCreator`, `ManagerPathResolver`, and `ManagerThumbnailer` contracts with native pagination, visual thumbnails/previews, and tested conflict strategies (`SKIP`, atomic `OVERWRITE`, and bounded `RENAME`). Other mutations, copy, and range download remain disabled pending provider-specific contracts and tests.
+`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. Every files provider exposes Phase-1 browse/download through the bounded read adapter. Google Drive, HiDrive, Nextcloud, and OneDrive additionally implement native `ManagerLister`, `ManagerDownloader`, `ManagerUploader`, `ManagerDirectoryCreator`, `ManagerPathResolver`, and `ManagerThumbnailer` contracts with native pagination, visual thumbnails/previews, and tested conflict strategies (`SKIP`, atomic `OVERWRITE`, and bounded `RENAME`). Other mutations, copy, and range download remain disabled pending provider-specific contracts and tests.
 
 ---
 
