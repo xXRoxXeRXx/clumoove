@@ -561,18 +561,22 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                                   openEntry(entry);
                                 }}
                                 disabled={entry.kind === 'directory' && (!capabilities.browse || entriesLoading)}
-                                className="inline-flex max-w-full items-center gap-2 min-w-0 text-left ui-link disabled:cursor-not-allowed disabled:opacity-55"
+                                className="inline-flex max-w-full items-center gap-3 min-w-0 text-left ui-link disabled:cursor-not-allowed disabled:opacity-55"
                                 title={entry.name}
                               >
-                                <FileThumbnail
-                                  apiUrl={apiUrl}
-                                  token={token}
-                                  profileId={profileId}
-                                  entry={entry}
-                                  thumbnailsEnabled={capabilities.thumbnails}
-                                  size="sm"
-                                  className="h-5 w-5 shrink-0"
-                                />
+                                <div className="relative w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-[var(--color-bg-tertiary)]/40 border border-[var(--color-border)]/60 flex items-center justify-center">
+                                  <FileThumbnail
+                                    apiUrl={apiUrl}
+                                    token={token}
+                                    profileId={profileId}
+                                    entry={entry}
+                                    thumbnailsEnabled={capabilities.thumbnails}
+                                    size="sm"
+                                    className="w-full h-full flex items-center justify-center"
+                                    imageClassName="w-full h-full object-cover"
+                                    fallbackIconClassName="h-5 w-5"
+                                  />
+                                </div>
                                 <span className="truncate font-medium">{entry.name}</span>
                               </button>
                             </td>

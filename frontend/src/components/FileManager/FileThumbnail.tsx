@@ -71,8 +71,8 @@ export function FileThumbnail({
     if (!shouldFetch || !isVisible || cachedUrl !== null || failedThumbnailCache.has(cacheKey)) return;
 
     const controller = new AbortController();
-    const width = size === 'sm' ? 64 : 256;
-    const height = size === 'sm' ? 64 : 256;
+    const width = size === 'sm' ? 128 : 256;
+    const height = size === 'sm' ? 128 : 256;
 
     let isMounted = true;
 

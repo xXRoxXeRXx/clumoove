@@ -124,6 +124,37 @@ describe('FileThumbnail component', () => {
     expect(img?.getAttribute('alt')).toBe('photo.jpg');
   });
 
+  it('fetches 128x128 thumbnail when size is sm', async () => {
+    const mockBlob = new Blob(['image-bytes-sm'], { type: 'image/jpeg' });
+    const spy = vi.spyOn(filesApi, 'getFileThumbnail').mockResolvedValue(mockBlob);
+
+    act(() => {
+      root.render(
+        <FileThumbnail
+          apiUrl="https://api.example.test"
+          token="test-token"
+          profileId="p1"
+          entry={{ ...imageEntry, ref: 'ref-photo-sm' }}
+          thumbnailsEnabled={true}
+          size="sm"
+        />
+      );
+    });
+    await flushAsync();
+
+    expect(spy).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'test-token',
+      'p1',
+      'ref-photo-sm',
+      128,
+      128,
+      expect.any(AbortSignal)
+    );
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+  });
+
   it('falls back gracefully to FileIcon when thumbnail request fails', async () => {
     vi.spyOn(filesApi, 'getFileThumbnail').mockResolvedValue(null);
 
