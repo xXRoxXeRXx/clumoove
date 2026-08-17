@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileIcon } from '../icons';
-import { getFileThumbnail, type FileEntry } from '../../api/files';
+import { type FileEntry } from '../../api/files';
+import {
+  getCachedThumbnail,
+  isThumbnailPermanentlyFailed,
+  requestThumbnail,
+  type ThumbnailSize,
+} from '../../utils/thumbnailLoader';
 
 type FileThumbnailProps = {
   apiUrl: string;
@@ -8,15 +14,11 @@ type FileThumbnailProps = {
   profileId: string;
   entry: FileEntry;
   thumbnailsEnabled: boolean;
-  size?: 'sm' | 'lg';
+  size?: ThumbnailSize;
   className?: string;
   imageClassName?: string;
   fallbackIconClassName?: string;
 };
-
-// In-memory cache for fetched thumbnail object URLs and failed refs
-const thumbnailBlobCache = new Map<string, string>();
-const failedThumbnailCache = new Set<string>();
 
 function isProbableThumbnailCandidate(entry: FileEntry): boolean {
   if (entry.kind === 'directory') return false;
@@ -43,13 +45,13 @@ export function FileThumbnail({
   const [loadedKeys, setLoadedKeys] = useState<Record<string, boolean>>({});
 
   const shouldFetch = thumbnailsEnabled && isProbableThumbnailCandidate(entry);
-  const cacheKey = `${profileId}:${entry.ref}:${size}`;
-  const cachedUrl = shouldFetch ? (thumbnailBlobCache.get(cacheKey) ?? null) : null;
+  const cachedUrl = shouldFetch ? getCachedThumbnail(profileId, entry.ref, size) : null;
   const thumbnailUrl = cachedUrl ?? fetchedUrl;
-  const imageLoaded = !!loadedKeys[cacheKey];
+  const currentKey = `${profileId}:${entry.ref}:${size}`;
+  const imageLoaded = !!loadedKeys[currentKey];
 
   useEffect(() => {
-    if (!shouldFetch || cachedUrl !== null || failedThumbnailCache.has(cacheKey) || isVisible) return;
+    if (!shouldFetch || cachedUrl !== null || isThumbnailPermanentlyFailed(profileId, entry.ref, size) || isVisible) return;
     const element = containerRef.current;
     if (!element || typeof IntersectionObserver === 'undefined') return;
 
@@ -65,33 +67,36 @@ export function FileThumbnail({
 
     observer.observe(element);
     return () => observer.disconnect();
-  }, [cacheKey, cachedUrl, isVisible, shouldFetch]);
+  }, [cachedUrl, entry.ref, isVisible, profileId, shouldFetch, size]);
 
   useEffect(() => {
-    if (!shouldFetch || !isVisible || cachedUrl !== null || failedThumbnailCache.has(cacheKey)) return;
+    if (!shouldFetch || !isVisible || cachedUrl !== null || isThumbnailPermanentlyFailed(profileId, entry.ref, size)) return;
 
     const controller = new AbortController();
-    const width = size === 'sm' ? 128 : 256;
-    const height = size === 'sm' ? 128 : 256;
-
     let isMounted = true;
 
-    void getFileThumbnail(apiUrl, token, profileId, entry.ref, width, height, controller.signal).then((blob) => {
-      if (!isMounted || controller.signal.aborted) return;
-      if (blob && blob.size > 0) {
-        const url = URL.createObjectURL(blob);
-        thumbnailBlobCache.set(cacheKey, url);
-        setFetchedUrl(url);
-      } else {
-        failedThumbnailCache.add(cacheKey);
+    const unsubscribe = requestThumbnail(
+      {
+        apiUrl,
+        token,
+        profileId,
+        ref: entry.ref,
+        size,
+        signal: controller.signal,
+      },
+      (url) => {
+        if (isMounted) {
+          setFetchedUrl(url);
+        }
       }
-    });
+    );
 
     return () => {
       isMounted = false;
+      unsubscribe();
       controller.abort();
     };
-  }, [apiUrl, cacheKey, cachedUrl, entry.ref, isVisible, profileId, shouldFetch, size, token]);
+  }, [apiUrl, cachedUrl, entry.ref, isVisible, profileId, shouldFetch, size, token]);
 
   return (
     <div ref={containerRef} className={`relative flex items-center justify-center overflow-hidden ${className || ''}`}>
@@ -114,7 +119,7 @@ export function FileThumbnail({
           src={thumbnailUrl}
           alt={entry.name}
           onLoad={() => {
-            setLoadedKeys((prev) => (prev[cacheKey] ? prev : { ...prev, [cacheKey]: true }));
+            setLoadedKeys((prev) => (prev[currentKey] ? prev : { ...prev, [currentKey]: true }));
           }}
           className={`absolute inset-0 transition-opacity duration-300 ease-out ${
             imageLoaded ? 'opacity-100' : 'opacity-0'

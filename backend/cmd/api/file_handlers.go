@@ -28,7 +28,7 @@ const (
 	fileBrowseRateLimit       = 120
 	fileMutationRateLimit     = 120
 	fileUploadRateLimit       = 600
-	fileThumbnailRateLimit    = 600
+	fileThumbnailRateLimit    = 3600
 	fileRateWindow            = time.Minute
 	fileDefaultPageSize       = 100
 	fileMaximumPageSize       = 200

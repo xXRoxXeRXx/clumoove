@@ -227,7 +227,12 @@ export function uploadFile(
   });
 }
 
-export async function getFileThumbnail(
+export type ThumbnailFetchResult = {
+  blob: Blob | null;
+  status: number;
+};
+
+export async function getFileThumbnailResult(
   apiUrl: string,
   token: string,
   profileId: string,
@@ -235,7 +240,7 @@ export async function getFileThumbnail(
   width?: number,
   height?: number,
   signal?: AbortSignal,
-): Promise<Blob | null> {
+): Promise<ThumbnailFetchResult> {
   const body: { ref: string; width?: number; height?: number } = { ref };
   if (width) body.width = width;
   if (height) body.height = height;
@@ -251,11 +256,25 @@ export async function getFileThumbnail(
       signal,
     });
     if (!response.ok) {
-      return null;
+      return { blob: null, status: response.status };
     }
-    return await response.blob();
+    const blob = await response.blob();
+    return { blob, status: response.status };
   } catch {
-    return null;
+    return { blob: null, status: 0 };
   }
+}
+
+export async function getFileThumbnail(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  ref: string,
+  width?: number,
+  height?: number,
+  signal?: AbortSignal,
+): Promise<Blob | null> {
+  const result = await getFileThumbnailResult(apiUrl, token, profileId, ref, width, height, signal);
+  return result.blob;
 }
 

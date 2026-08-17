@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FileThumbnail } from './FileThumbnail';
 import * as filesApi from '../../api/files';
+import { clearThumbnailCaches } from '../../utils/thumbnailLoader';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,6 +39,7 @@ describe('FileThumbnail component', () => {
   let root: Root;
 
   beforeEach(() => {
+    clearThumbnailCaches();
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -52,6 +54,7 @@ describe('FileThumbnail component', () => {
       root.unmount();
     });
     container.remove();
+    clearThumbnailCaches();
     vi.restoreAllMocks();
   });
 
@@ -93,7 +96,10 @@ describe('FileThumbnail component', () => {
 
   it('fetches thumbnail and displays img when thumbnails are enabled for image files', async () => {
     const mockBlob = new Blob(['image-bytes'], { type: 'image/jpeg' });
-    const spy = vi.spyOn(filesApi, 'getFileThumbnail').mockResolvedValue(mockBlob);
+    const spy = vi.spyOn(filesApi, 'getFileThumbnailResult').mockResolvedValue({
+      blob: mockBlob,
+      status: 200,
+    });
 
     act(() => {
       root.render(
@@ -126,7 +132,10 @@ describe('FileThumbnail component', () => {
 
   it('fetches 128x128 thumbnail when size is sm', async () => {
     const mockBlob = new Blob(['image-bytes-sm'], { type: 'image/jpeg' });
-    const spy = vi.spyOn(filesApi, 'getFileThumbnail').mockResolvedValue(mockBlob);
+    const spy = vi.spyOn(filesApi, 'getFileThumbnailResult').mockResolvedValue({
+      blob: mockBlob,
+      status: 200,
+    });
 
     act(() => {
       root.render(
@@ -156,7 +165,10 @@ describe('FileThumbnail component', () => {
   });
 
   it('falls back gracefully to FileIcon when thumbnail request fails', async () => {
-    vi.spyOn(filesApi, 'getFileThumbnail').mockResolvedValue(null);
+    vi.spyOn(filesApi, 'getFileThumbnailResult').mockResolvedValue({
+      blob: null,
+      status: 404,
+    });
 
     act(() => {
       root.render(
