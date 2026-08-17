@@ -784,4 +784,41 @@ describe('FileManager component', () => {
     expect(dialog).not.toBeNull();
     expect(dialog?.textContent).toContain('backup.tar.gz');
   });
+
+  it('calls onOpenManager when clicking manage profiles button and has no refresh button in sidebar', async () => {
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+          onOpenManager={onOpenManager}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    const aside = container.querySelector('aside');
+    expect(aside).not.toBeNull();
+
+    // Verify there is no refresh button inside aside
+    const refreshBtnInAside = aside?.querySelector('button[aria-label="Refresh"], button[aria-label="Aktualisieren"]');
+    expect(refreshBtnInAside).toBeNull();
+
+    // Find and click the manage profiles button
+    const allButtons = Array.from(aside?.querySelectorAll('button') ?? []);
+    const manageBtn = allButtons.find((btn) => btn.textContent?.includes(i18n.t('files.manageProfiles')));
+    expect(manageBtn).toBeDefined();
+
+    await act(async () => {
+      manageBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(onOpenManager).toHaveBeenCalledTimes(1);
+  });
 });
+

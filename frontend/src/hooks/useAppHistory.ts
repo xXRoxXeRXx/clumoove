@@ -18,6 +18,7 @@ type NavigationState = {
   migrationId: string;
   syncId: string;
   profileId: string;
+  settingsTab: string;
 };
 
 type HistoryEntry = {
@@ -25,6 +26,7 @@ type HistoryEntry = {
   migration?: string;
   sync?: string;
   profile?: string;
+  tab?: string;
 };
 
 type UseAppHistoryOptions = {
@@ -36,15 +38,18 @@ type UseAppHistoryOptions = {
 
 function stateForStep(step: AppStep, id = ''): NavigationState {
   if (step === 'dashboard') {
-    return { step, migrationId: id, syncId: '', profileId: '' };
+    return { step, migrationId: id, syncId: '', profileId: '', settingsTab: '' };
   }
   if (step === 'syncdetail') {
-    return { step, migrationId: '', syncId: id, profileId: '' };
+    return { step, migrationId: '', syncId: id, profileId: '', settingsTab: '' };
   }
   if (step === 'files') {
-    return { step, migrationId: '', syncId: '', profileId: id };
+    return { step, migrationId: '', syncId: '', profileId: id, settingsTab: '' };
   }
-  return { step, migrationId: '', syncId: '', profileId: '' };
+  if (step === 'settings') {
+    return { step, migrationId: '', syncId: '', profileId: '', settingsTab: id || 'account' };
+  }
+  return { step, migrationId: '', syncId: '', profileId: '', settingsTab: '' };
 }
 
 export function initialNavigationFor(
@@ -59,7 +64,9 @@ export function initialNavigationFor(
   const migrationId = params.get('migration') ?? '';
   const syncId = params.get('sync') ?? '';
   const profileId = params.get('profile') ?? '';
+  const tab = params.get('tab') ?? '';
   if (params.get('view') === 'files') return stateForStep('files', profileId);
+  if (params.get('view') === 'settings') return stateForStep('settings', tab);
   if (migrationId) return stateForStep('dashboard', migrationId);
   if (syncId) return stateForStep('syncdetail', syncId);
   return stateForStep('history');
@@ -76,6 +83,9 @@ function navigationFromHistory(entry: HistoryEntry, search: string): NavigationS
   if (entry.step === 'files') {
     return stateForStep('files', entry.profile ?? params.get('profile') ?? '');
   }
+  if (entry.step === 'settings') {
+    return stateForStep('settings', entry.tab ?? params.get('tab') ?? '');
+  }
   return stateForStep(entry.step ?? 'login');
 }
 
@@ -86,6 +96,7 @@ function writeHistory(nextStep: AppStep, id: string, replace: boolean): void {
   url.searchParams.delete('sync');
   url.searchParams.delete('view');
   url.searchParams.delete('profile');
+  url.searchParams.delete('tab');
 
   if (nextStep === 'dashboard' && id) {
     url.searchParams.set('migration', id);
@@ -98,6 +109,10 @@ function writeHistory(nextStep: AppStep, id: string, replace: boolean): void {
     if (id) {
       url.searchParams.set('profile', id);
       state.profile = id;
+    }
+  } else if (nextStep === 'settings') {
+    if (id) {
+      state.tab = id;
     }
   }
 
@@ -130,8 +145,8 @@ export function useAppHistory(options: UseAppHistoryOptions) {
   // source of truth. This preserves authenticated migration and sync deep links
   // until silent session validation confirms them.
   useEffect(() => {
-    const { step, migrationId, syncId, profileId } = initialNavigation;
-    writeHistory(step, migrationId || syncId || profileId, true);
+    const { step, migrationId, syncId, profileId, settingsTab } = initialNavigation;
+    writeHistory(step, migrationId || syncId || profileId || settingsTab, true);
   }, [initialNavigation]);
 
   useEffect(() => {
@@ -163,12 +178,14 @@ export function useAppHistory(options: UseAppHistoryOptions) {
         ? navigation.migrationId
         : nextStep === 'syncdetail'
         ? navigation.syncId
-          : nextStep === 'files'
-            ? navigation.profileId
-            : '';
+        : nextStep === 'files'
+        ? navigation.profileId
+        : nextStep === 'settings'
+        ? (id ?? navigation.settingsTab)
+        : '';
       applyHistory(nextStep, id ?? activeId, false);
     },
-    [applyHistory, navigation.migrationId, navigation.profileId, navigation.syncId],
+    [applyHistory, navigation.migrationId, navigation.profileId, navigation.settingsTab, navigation.syncId],
   );
 
   const goToOverview = useCallback(() => {

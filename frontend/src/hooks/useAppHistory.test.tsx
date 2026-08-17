@@ -12,8 +12,8 @@ type HistoryOptions = {
 };
 
 function HistoryHarness({ options }: { options: HistoryOptions }) {
-  const { step, migrationId, syncId, profileId } = useAppHistory(options);
-  return <output data-migration={migrationId} data-profile={profileId} data-step={step} data-sync={syncId} />;
+  const { step, migrationId, syncId, profileId, settingsTab } = useAppHistory(options);
+  return <output data-migration={migrationId} data-profile={profileId} data-settings-tab={settingsTab} data-step={step} data-sync={syncId} />;
 }
 
 describe('useAppHistory', () => {
@@ -57,5 +57,13 @@ describe('useAppHistory', () => {
       emailChangeToken: null,
       hasStoredSession: true,
     })).toMatchObject({ step: 'files', migrationId: '', syncId: '', profileId: 'profile-123' });
+  });
+
+  it('restores the settings view and specific tab from the URL', () => {
+    expect(initialNavigationFor('?view=settings&tab=connections', {
+      resetToken: null,
+      emailChangeToken: null,
+      hasStoredSession: true,
+    })).toMatchObject({ step: 'settings', migrationId: '', syncId: '', profileId: '', settingsTab: 'connections' });
   });
 });

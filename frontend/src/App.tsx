@@ -7,7 +7,7 @@ import { AuthForm } from './components/AuthForm';
 import { MigrationsDashboard } from './components/MigrationsDashboard';
 import { ResetPasswordForm } from './components/ResetPasswordForm';
 import { ConfirmEmailChangeForm } from './components/ConfirmEmailChangeForm';
-import { SettingsPage } from './components/SettingsPage';
+import { SettingsPage, type SettingsTab } from './components/SettingsPage';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { AdminPanel } from './components/AdminPanel';
 import { LoadingIndicator } from './components/LoadingIndicator';
@@ -23,6 +23,13 @@ import { logger } from './utils/logger';
 import { configuredApiOrigin } from './utils/runtimeConfig';
 import { useAppHistory } from './hooks/useAppHistory';
 import { safeAvatarUrl } from './utils/avatar';
+
+function parseSettingsTab(tab: string): SettingsTab {
+  if (tab === 'connections' || tab === 'appearance' || tab === 'notifications' || tab === 'about') {
+    return tab;
+  }
+  return 'account';
+}
 import { resolveFilePath, type FileBreadcrumb } from './api/files';
 
 const FileManager = lazy(() => import('./components/FileManager/FileManager').then((m) => ({ default: m.FileManager })));
@@ -131,6 +138,7 @@ function App() {
     migrationId,
     syncId,
     profileId,
+    settingsTab,
     initialMigrationId,
     initialSyncId,
     initialProfileId,
@@ -551,7 +559,7 @@ function App() {
         </div>
       </header>
 
-      <main ref={mainRef} className={`mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'connect' ? 'justify-start' : 'justify-center'}`}>
+      <main ref={mainRef} className={`mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'login' || step === 'reset-password' || step === 'confirm-email' ? 'justify-center' : 'justify-start'}`}>
         <div key={`${step}:${migrationId}:${syncId}:${profileId}`} className="ui-view-enter w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />
@@ -605,7 +613,7 @@ function App() {
                 initialBreadcrumbs={fileStart?.profileId === profileId ? fileStart.breadcrumbs : undefined}
                 initialPathFallback={fileStart?.profileId === profileId && fileStart.fallback}
                 onProfileChange={openFileManagerRoot}
-                onOpenManager={() => navigate('settings')}
+                onOpenManager={() => navigate('settings', 'connections')}
                 onBack={handleBack}
               />
             </Suspense>
@@ -667,7 +675,7 @@ function App() {
 
           {step === 'settings' && (
             <SettingsPage
-              key={user?.id}
+              key={`${user?.id}:${settingsTab || 'account'}`}
               apiUrl={API_URL}
               token={token}
               user={user}
@@ -675,6 +683,7 @@ function App() {
               onUpdateUser={(updated) => setUser(updated)}
               oauthProviders={oauthProviders}
               localStorageEnabled={localStorageEnabled}
+              initialTab={parseSettingsTab(settingsTab)}
             />
           )}
 

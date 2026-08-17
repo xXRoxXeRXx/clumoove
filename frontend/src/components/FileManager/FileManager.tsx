@@ -383,14 +383,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       {error && <p className="ui-alert ui-alert-error px-3 py-2 text-sm" role="alert">{error}</p>}
       {initialPathFallback && <p className="ui-alert px-3 py-2 text-sm" role="status">{t('files.pathFallback')}</p>}
 
-      <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <aside className="ui-card flex flex-col justify-between p-3" aria-label={t('files.profiles')}>
+      <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)] items-start">
+        <aside className="ui-card flex flex-col justify-between p-3 min-h-[160px] self-start" aria-label={t('files.profiles')}>
           <div>
-            <div className="mb-2 flex items-center justify-between gap-2 px-2">
+            <div className="mb-2 px-2">
               <h2 className="text-sm font-semibold">{t('files.profiles')}</h2>
-              <button type="button" onClick={() => void loadProfiles()} disabled={profilesLoading} className="ui-icon-button p-1.5 hover:bg-[var(--color-hover)]" aria-label={t('files.refresh')} title={t('files.refresh')}>
-                <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
-              </button>
             </div>
             {profilesLoading ? (
               <div className="px-2 py-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div>
@@ -429,7 +426,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           )}
         </aside>
 
-        <div className="ui-card min-w-0 overflow-hidden min-h-[400px] flex flex-col">
+        <div className="ui-card min-w-0 overflow-hidden min-h-[560px] flex flex-col">
           {!selectedProfile ? (
             <div className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.selectProfile')}</div>
           ) : (

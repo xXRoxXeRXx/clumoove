@@ -44,6 +44,8 @@ interface SettingsUser {
   avatar?: string;
 }
 
+export type SettingsTab = 'account' | 'connections' | 'appearance' | 'notifications' | 'about';
+
 interface SettingsPageProps {
   apiUrl: string;
   token: string;
@@ -52,15 +54,25 @@ interface SettingsPageProps {
   onUpdateUser: (updatedUser: Partial<SettingsUser>) => void;
   localStorageEnabled?: boolean;
   oauthProviders?: Record<string, boolean>;
+  initialTab?: SettingsTab;
 }
 
-export function SettingsPage({ apiUrl, token, user, onBack, onUpdateUser, localStorageEnabled = false, oauthProviders = {} }: SettingsPageProps) {
+export function SettingsPage({
+  apiUrl,
+  token,
+  user,
+  onBack,
+  onUpdateUser,
+  localStorageEnabled = false,
+  oauthProviders = {},
+  initialTab = 'account',
+}: SettingsPageProps) {
   const { t } = useTranslation();
   const translateApiError = useApiError();
   const confirm = useConfirm();
   const userAvatar = safeAvatarUrl(user?.avatar);
 
-  const [tab, setTab] = useState<'account' | 'connections' | 'appearance' | 'notifications' | 'about'>('account');
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
   const tabs = ['account', 'connections', 'appearance', 'notifications', 'about'] as const;
   const tabItems = [
     ['account', User, 'settings.tabs.account'],
