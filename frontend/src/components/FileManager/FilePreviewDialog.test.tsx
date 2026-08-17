@@ -506,5 +506,97 @@ describe('FilePreviewDialog', () => {
     fetchSpy.mockRestore();
     revokeObjectURLSpy.mockRestore();
   });
+
+  it('loads and renders an audio file with autoplay enabled', async () => {
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-audio',
+      },
+    });
+
+    const mockBlob = new Blob(['mock audio data'], { type: 'audio/mpeg' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(mockBlob, {
+        status: 200,
+        headers: { 'Content-Length': String(mockBlob.size) },
+      })
+    );
+
+    const audioEntry = makeEntry('song.mp3', 'audio/mpeg', 100);
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={audioEntry}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const audioElement = document.querySelector<HTMLAudioElement>('audio');
+    expect(audioElement).not.toBeNull();
+    expect(audioElement?.controls).toBe(true);
+    expect(audioElement?.autoplay).toBe(true);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('loads and renders a video file with autoplay and playsinline enabled', async () => {
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-video',
+      },
+    });
+
+    const mockBlob = new Blob(['mock video data'], { type: 'video/mp4' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(mockBlob, {
+        status: 200,
+        headers: { 'Content-Length': String(mockBlob.size) },
+      })
+    );
+
+    const videoEntry = makeEntry('movie.mp4', 'video/mp4', 100);
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={videoEntry}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    const videoElement = document.querySelector<HTMLVideoElement>('video');
+    expect(videoElement).not.toBeNull();
+    expect(videoElement?.controls).toBe(true);
+    expect(videoElement?.autoplay).toBe(true);
+    expect(videoElement?.playsInline).toBe(true);
+
+    fetchSpy.mockRestore();
+  });
 });
+
 

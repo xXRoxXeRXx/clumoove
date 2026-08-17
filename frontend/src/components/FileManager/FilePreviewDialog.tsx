@@ -211,10 +211,10 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, onDownload }: Fil
         <img src={blobUrl} alt={entry.name} className="max-h-full max-w-full object-contain" onError={() => setState('fallback')} />
       )}
       {kind === 'audio' && blobUrl && (
-        <audio controls src={blobUrl} className="w-full max-w-2xl" onError={() => setState('fallback')} />
+        <audio controls autoPlay src={blobUrl} className="w-full max-w-2xl" onError={() => setState('fallback')} />
       )}
       {kind === 'video' && blobUrl && (
-        <video controls src={blobUrl} className="max-h-full max-w-full" onError={() => setState('fallback')} />
+        <video controls autoPlay playsInline src={blobUrl} className="max-h-full max-w-full" onError={() => setState('fallback')} />
       )}
       {kind === 'text' && (
         <div className="w-full h-full overflow-auto">
