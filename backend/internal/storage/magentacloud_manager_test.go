@@ -141,7 +141,7 @@ func TestMagentacloudManager(t *testing.T) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	})
 
-	mux.HandleFunc("/index.php/core/preview", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/core/preview", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		file := q.Get("file")
 		fileId := q.Get("fileId")

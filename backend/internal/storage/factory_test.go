@@ -267,8 +267,8 @@ func TestHiDriveManagerCapabilities(t *testing.T) {
 
 func TestMagentacloudManagerCapabilities(t *testing.T) {
 	capabilities := ManagerCapabilitiesFor("magentacloud")
-	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename {
-		t.Fatalf("MagentaCLOUD manager capabilities = %#v, want browse, download, and mutations", capabilities)
+	if !capabilities.Browse || !capabilities.Download || !capabilities.Upload || !capabilities.Mkdir || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename || !capabilities.Thumbnails {
+		t.Fatalf("MagentaCLOUD manager capabilities = %#v, want browse, download, mutations, and thumbnails", capabilities)
 	}
 }
 

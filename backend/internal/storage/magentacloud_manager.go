@@ -406,7 +406,7 @@ func (p *MagentacloudProvider) ThumbnailManager(ctx context.Context, locator Man
 	}
 
 	instanceRoot := strings.TrimSuffix(p.baseURL(), "/remote.php/webdav")
-	previewURL := fmt.Sprintf("%s/index.php/core/preview?x=%d&y=%d&a=1", instanceRoot, width, height)
+	previewURL := fmt.Sprintf("%s/core/preview?x=%d&y=%d&a=1", instanceRoot, width, height)
 
 	if locator.NativeID != "" {
 		previewURL += "&fileId=" + url.QueryEscape(locator.NativeID)

@@ -179,7 +179,7 @@ var managerCapabilityRegistry = map[string]ManagerCapabilities{
 	"s3":           {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
 	"sftp":         {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"ftp":          {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"magentacloud": {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
+	"magentacloud": {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"koofr":        {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
 	"local":        {Browse: true, Download: true, Upload: true, Mkdir: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"immich":       {Browse: true, NativePagination: true, Download: true, Thumbnails: true},
