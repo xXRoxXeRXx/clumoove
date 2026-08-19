@@ -339,9 +339,7 @@ func (p *GoogleProvider) ThumbnailManager(ctx context.Context, locator ManagerLo
 		return nil, "", fmt.Errorf("google thumbnail: invalid url: %w", parseErr)
 	}
 	host := strings.ToLower(parsedURL.Hostname())
-	if !strings.HasSuffix(host, ".googleusercontent.com") &&
-		!strings.HasSuffix(host, ".ggpht.com") &&
-		!strings.HasSuffix(host, ".google.com") {
+	if !isGoogleTrustedThumbnailHost(host) {
 		return nil, "", fmt.Errorf("google thumbnail: untrusted host %q: %w", host, ErrUnsupportedMedia)
 	}
 
@@ -377,4 +375,11 @@ func (p *GoogleProvider) ThumbnailManager(ctx context.Context, locator ManagerLo
 		contentType = "image/jpeg"
 	}
 	return resp.Body, contentType, nil
+}
+
+func isGoogleTrustedThumbnailHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	return host == "google.com" || strings.HasSuffix(host, ".google.com") ||
+		host == "googleusercontent.com" || strings.HasSuffix(host, ".googleusercontent.com") ||
+		host == "ggpht.com" || strings.HasSuffix(host, ".ggpht.com")
 }

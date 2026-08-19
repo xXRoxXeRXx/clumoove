@@ -190,15 +190,20 @@ func TestGoogleManagerCreateDirectorySuccessAndConflict(t *testing.T) {
 	}
 }
 
+type googleTestTransport func(req *http.Request) (*http.Response, error)
+
+func (f googleTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func TestGoogleManagerThumbnailSuccess(t *testing.T) {
-	var serverURL string
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/files/photo-1":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":            "photo-1",
 				"mimeType":      "image/jpeg",
-				"thumbnailLink": serverURL + "/cdn-thumb=s220",
+				"thumbnailLink": "https://lh3.googleusercontent.com/cdn-thumb=s220",
 			})
 		case r.URL.Path == "/cdn-thumb=s300":
 			w.Header().Set("Content-Type", "image/jpeg")
@@ -210,13 +215,22 @@ func TestGoogleManagerThumbnailSuccess(t *testing.T) {
 
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	serverURL = server.URL
+
+	testClient := &http.Client{
+		Transport: googleTestTransport(func(req *http.Request) (*http.Response, error) {
+			if strings.HasSuffix(req.URL.Host, "googleusercontent.com") {
+				req.URL.Scheme = "http"
+				req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+			}
+			return server.Client().Transport.RoundTrip(req)
+		}),
+	}
 
 	service, err := drive.NewService(context.Background(), option.WithHTTPClient(server.Client()), option.WithEndpoint(server.URL+"/"), option.WithoutAuthentication())
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := &GoogleProvider{driveService: service, httpClient: server.Client()}
+	provider := &GoogleProvider{driveService: service, httpClient: testClient}
 
 	stream, contentType, err := provider.ThumbnailManager(context.Background(), ManagerLocator{NativeID: "photo-1"}, 300, 300)
 	if err != nil {

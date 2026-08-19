@@ -226,8 +226,8 @@ func TestSeafileManager(t *testing.T) {
 	t.Run("CreateManagerDirectory", func(t *testing.T) {
 		// Root "/" directory creation is forbidden (root is library level)
 		err := provider.CreateManagerDirectory(context.Background(), ManagerLocator{Path: "/"}, "NewLib")
-		if !errors.Is(err, ErrManagerConflict) {
-			t.Errorf("CreateManagerDirectory(/) error = %v, want ErrManagerConflict", err)
+		if !errors.Is(err, ErrManagerUnsupported) {
+			t.Errorf("CreateManagerDirectory(/) error = %v, want ErrManagerUnsupported", err)
 		}
 
 		// Creating inside repository succeeds
