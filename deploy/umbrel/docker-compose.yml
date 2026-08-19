@@ -32,7 +32,7 @@ services:
 
   api-backend:
     container_name: clumoove-api
-    image: ghcr.io/xxroxxerxx/clumoove-api:v0.14.0
+    image: ghcr.io/xxroxxerxx/clumoove-api:v0.15.0
     restart: on-failure
     environment:
       - DATABASE_URL=postgres://clumoove:${APP_PASSWORD}@postgres-db:5432/cloud_migration_db?sslmode=disable
@@ -49,7 +49,7 @@ services:
 
   migration-worker:
     container_name: clumoove-worker
-    image: ghcr.io/xxroxxerxx/clumoove-worker:v0.14.0
+    image: ghcr.io/xxroxxerxx/clumoove-worker:v0.15.0
     restart: on-failure
     command: ["/app/worker"]
     environment:
@@ -65,7 +65,7 @@ services:
 
   frontend:
     container_name: clumoove-frontend
-    image: ghcr.io/xxroxxerxx/clumoove-frontend:v0.14.0
+    image: ghcr.io/xxroxxerxx/clumoove-frontend:v0.15.0
     restart: on-failure
     environment:
       - CLUMOOVE_API_URL=

@@ -5,6 +5,36 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-08-19
+
+### Added
+- **Cloud File Manager**:
+  - Direct cloud browsing, folder creation, and file management across supported providers (Google Drive, OneDrive, Dropbox, Nextcloud, OpenCloud, HiDrive, Seafile, Koofr, MagentaCLOUD, Immich, Local).
+  - Dual layout support: switch between a detailed List View and a rich Grid View with responsive cards and persisted view mode preference.
+  - In-browser file preview modal supporting Images, PDFs (with bundled worker), Office documents (.docx, .xlsx, legacy .xls via SheetJS), Audio and Video (with autoplay), Plaintext, and file metadata.
+  - Fast thumbnail generation and display with rate-limiting backoff/retry and smooth fade-in animations across Google Drive, OneDrive, HiDrive, Seafile, Koofr, and MagentaCLOUD.
+  - Multi-file uploads with a floating bottom-center queue overlay, 4 concurrent upload worker slots, and configurable conflict resolution strategies (Overwrite, Rename, Skip).
+  - Secure preview and download mechanics via AES-GCM encrypted profile references and single-use Redis tickets without exposing tokens or filesystem paths in URLs.
+- **Koofr Cloud Storage Provider**:
+  - Native integration for Koofr (`koofr`) cloud storage for migrations, sync passes, and file management using fixed endpoint `app.koofr.net`, application password authentication, and cryptographic MD5 integrity verification.
+- **Centralized Iconography & File Icons**:
+  - Unified icon hub (`icons.ts`) and MIME-type aware file icons (`FileIcon`) with tailored SVG artwork for all cloud providers (Koofr, MEGA, OneDrive, S3, OpenCloud, Local).
+
+### Improved & Security Hardened
+- **Storage & Security Protections**:
+  - Google Drive Thumbnail SSRF Hardening: Enforced domain allowlist verification for external Google thumbnail image requests.
+  - Local Storage Hardening: Used static descriptor references for descriptor wrapping in Unix-anchored sandbox operations.
+  - Decrypted Credential Lifecycle: Enforced idempotent memory zeroing for decrypted passwords and OAuth refresh tokens during profile resolution.
+  - Seafile & MagentaCLOUD File Management: Fixed thumbnail API endpoints and mapped root library creation to unsupported operation status.
+  - Directory Size Bounds: Capped directory listings in file manager to prevent excessive memory usage.
+- **Frontend Architecture & UX**:
+  - Lazy-loaded preview worker chunks for Excel and Word documents to optimize bundle size and startup speed.
+  - Added race-condition mitigations and navigation guards for rapid directory switching in the file browser.
+  - Full English and German internationalization (i18n) for all file manager, preview, and upload dialog features.
+
+### Fixed
+- **Navigation & Preview Stability**: Resolved PDF preview worker re-renders, fixed connection settings navigation stability, and resolved download ticket type narrowing in preview dialogs.
+
 ## [0.14.0] - 2026-08-12
 
 ### Added
