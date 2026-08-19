@@ -171,7 +171,7 @@ func (r *localRoot) open(parts []string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return os.NewFile(uintptr(fd), parts[len(parts)-1]), nil
+	return os.NewFile(uintptr(fd), "local file"), nil
 }
 
 func (r *localRoot) upload(ctx context.Context, parts []string, stream io.Reader, progress chan<- int64) error {
@@ -195,7 +195,7 @@ func (r *localRoot) upload(ctx context.Context, parts []string, stream io.Reader
 	if err != nil {
 		return err
 	}
-	tmp := os.NewFile(uintptr(fd), tmpName)
+	tmp := os.NewFile(uintptr(fd), "local temp file")
 	ok := false
 	defer func() {
 		if !ok {
