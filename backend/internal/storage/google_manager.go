@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -328,6 +329,20 @@ func (p *GoogleProvider) ThumbnailManager(ctx context.Context, locator ManagerLo
 		if idx := strings.LastIndex(thumbnailURL, "=s"); idx != -1 {
 			thumbnailURL = thumbnailURL[:idx] + fmt.Sprintf("=s%d", maxDim)
 		}
+	}
+
+	// Validate the thumbnail URL host before fetching: the link comes from the
+	// Google Drive API and should only ever point to Google CDN domains. Reject
+	// anything else to prevent SSRF through a provider-supplied URL.
+	parsedURL, parseErr := url.Parse(thumbnailURL)
+	if parseErr != nil {
+		return nil, "", fmt.Errorf("google thumbnail: invalid url: %w", parseErr)
+	}
+	host := strings.ToLower(parsedURL.Hostname())
+	if !strings.HasSuffix(host, ".googleusercontent.com") &&
+		!strings.HasSuffix(host, ".ggpht.com") &&
+		!strings.HasSuffix(host, ".google.com") {
+		return nil, "", fmt.Errorf("google thumbnail: untrusted host %q: %w", host, ErrUnsupportedMedia)
 	}
 
 	client := p.httpClient

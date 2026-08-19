@@ -65,6 +65,11 @@ func (s *APIServer) resolveFileProfile(ctx context.Context, userID, profileID st
 		password = string(plain)
 		clear(plain)
 	}
+	// Safety net: zero the plaintext password on any early return path that does
+	// not reach the returned close() closure (e.g., a connect failure or a future
+	// caller that forgets defer resolved.close()). The closure also zeros it, so
+	// this is idempotent.
+	defer func() { crypto.ZeroString(&password) }()
 	refreshToken := ""
 	if profile.RefreshTokenEncrypted != "" {
 		plain, decryptErr := crypto.DecryptBytesWithDomain(profile.RefreshTokenEncrypted, s.encryptionKey, crypto.DomainOAuthRefreshToken)

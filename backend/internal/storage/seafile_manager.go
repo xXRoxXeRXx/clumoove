@@ -107,6 +107,10 @@ func (p *SeafileProvider) ListManager(ctx context.Context, locator ManagerLocato
 		}
 	}
 
+	if len(items) > 10000 {
+		return ManagerPage{}, ErrManagerDirectoryTooLarge
+	}
+
 	totalItems := len(items)
 	if offset > totalItems {
 		return ManagerPage{Items: nil, NextCursor: ""}, nil
@@ -208,20 +212,15 @@ func (p *SeafileProvider) UploadManager(ctx context.Context, parent ManagerLocat
 		}
 	}
 
-	exactReader := NewExactSizeReader(stream, size)
 	var uploadErr error
 	if size > 50*1024*1024 {
-		uploadErr = p.StreamUploadChunked(ctx, "files", targetPath, exactReader, size, nil)
+		uploadErr = p.StreamUploadChunked(ctx, "files", targetPath, stream, size, nil)
 	} else {
-		uploadErr = p.StreamUpload(ctx, "files", targetPath, exactReader, size)
+		uploadErr = p.StreamUpload(ctx, "files", targetPath, stream, size)
 	}
 
 	if uploadErr != nil {
 		return ManagerUploadResult{}, uploadErr
-	}
-
-	if verifyErr := exactReader.Verify(); verifyErr != nil {
-		return ManagerUploadResult{}, verifyErr
 	}
 
 	status := "uploaded"
@@ -236,10 +235,13 @@ func (p *SeafileProvider) UploadManager(ctx context.Context, parent ManagerLocat
 }
 
 // CreateManagerDirectory creates a new folder in Seafile.
+// Creating a directory at the root level (i.e., a library) requires a
+// separate Seafile API and is not supported in the file manager; return
+// ErrManagerUnsupported so the handler can respond with 501.
 func (p *SeafileProvider) CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error {
 	cleanParent := strings.Trim(parent.Path, "/")
 	if cleanParent == "" {
-		return fmt.Errorf("cannot create directory at root library level: %w", ErrManagerConflict)
+		return ErrManagerUnsupported
 	}
 
 	targetPath := path.Join(parent.Path, name)

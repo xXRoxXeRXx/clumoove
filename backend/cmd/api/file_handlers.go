@@ -159,7 +159,7 @@ var (
 )
 
 func (s *APIServer) fileRateKey(r *http.Request, userID string) string {
-	return userID + ":" + s.clientIP(r)
+	return userID + "|" + s.clientIP(r)
 }
 
 func (s *APIServer) allowFileRequest(r *http.Request, userID, scope string, limit int) bool {
@@ -856,6 +856,7 @@ func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) 
 		contentType = "image/jpeg"
 	}
 
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 	h := w.Header()
 	h.Set("Content-Type", contentType)
 	h.Set("Cache-Control", "private, max-age=3600")
@@ -964,6 +965,7 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		"provider":  profile.Provider,
 		"item_kind": "file",
 		"result":    result.Status,
+		"name":      result.FinalName,
 	})
 	status := http.StatusCreated
 	if result.Status == "skipped" {
@@ -1062,6 +1064,9 @@ func validManagerUploadName(name string) bool {
 	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") || strings.ContainsRune(name, 0) {
 		return false
 	}
+	if len(name) > 255 {
+		return false
+	}
 	for _, value := range name {
 		if value < 0x20 || value == 0x7f {
 			return false
@@ -1104,6 +1109,13 @@ func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
 		return
 	}
+	// Validate the reference before acquiring the stream slot so that a
+	// malformed-reference ticket cannot exhaust the per-user slot budget.
+	reference, referenceErr := openFileReference(downloadTicket.Ref, s.encryptionKey, downloadTicket.UserID, downloadTicket.ProfileID)
+	if referenceErr != nil || reference.Kind != "file" {
+		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
+		return
+	}
 	defer s.releaseFileStream(r.Context(), downloadTicket.UserID, "download", downloadTicket.StreamID)
 	if !s.renewFileStream(r.Context(), downloadTicket.UserID, "download", downloadTicket.StreamID, fileStreamLease) {
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
@@ -1112,11 +1124,6 @@ func (s *APIServer) handleFileDownload(w http.ResponseWriter, r *http.Request) {
 	stopLeaseRenewal := make(chan struct{})
 	defer close(stopLeaseRenewal)
 	go s.renewFileStreamLease(stopLeaseRenewal, downloadTicket.UserID, "download", downloadTicket.StreamID)
-	reference, referenceErr := openFileReference(downloadTicket.Ref, s.encryptionKey, downloadTicket.UserID, downloadTicket.ProfileID)
-	if referenceErr != nil || reference.Kind != "file" {
-		writeError(w, http.StatusNotFound, ErrFilesDownloadTicketInvalid)
-		return
-	}
 	resolved, resolveErr := s.resolveFileProfile(r.Context(), downloadTicket.UserID, downloadTicket.ProfileID)
 	if resolveErr != nil {
 		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
@@ -1215,6 +1222,8 @@ func (s *APIServer) writeFileProviderError(w http.ResponseWriter, err error) {
 		writeConflictError(w, ErrFilesDirectoryChanged)
 	case errors.Is(err, errManagerDirectoryTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, ErrFilesDirectoryTooLarge)
+	case errors.Is(err, storage.ErrManagerUnsupported):
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, ErrFilesNotFound)
 	case errors.Is(err, storage.ErrAmbiguousPath):

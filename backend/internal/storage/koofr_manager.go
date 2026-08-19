@@ -90,6 +90,10 @@ func (p *KoofrProvider) ListManager(ctx context.Context, locator ManagerLocator,
 		})
 	}
 
+	if len(items) > 10000 {
+		return ManagerPage{}, ErrManagerDirectoryTooLarge
+	}
+
 	totalItems := len(items)
 	if offset > totalItems {
 		return ManagerPage{Items: nil, NextCursor: ""}, nil
@@ -195,20 +199,15 @@ func (p *KoofrProvider) UploadManager(ctx context.Context, parent ManagerLocator
 		}
 	}
 
-	exactReader := NewExactSizeReader(stream, size)
 	var uploadErr error
 	if size > 50*1024*1024 {
-		uploadErr = p.StreamUploadChunked(ctx, "files", targetPath, exactReader, size, nil)
+		uploadErr = p.StreamUploadChunked(ctx, "files", targetPath, stream, size, nil)
 	} else {
-		uploadErr = p.StreamUpload(ctx, "files", targetPath, exactReader, size)
+		uploadErr = p.StreamUpload(ctx, "files", targetPath, stream, size)
 	}
 
 	if uploadErr != nil {
 		return ManagerUploadResult{}, uploadErr
-	}
-
-	if verifyErr := exactReader.Verify(); verifyErr != nil {
-		return ManagerUploadResult{}, verifyErr
 	}
 
 	status := "uploaded"

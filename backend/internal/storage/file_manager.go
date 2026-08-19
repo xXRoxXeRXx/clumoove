@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -114,32 +116,36 @@ type ManagerUploader interface {
 
 var (
 	ErrManagerConflict          = errors.New("file manager conflict")
+	ErrManagerUnsupported       = errors.New("file manager operation not supported")
 	ErrUploadSizeMismatch       = errors.New("upload size mismatch")
 	ErrUnsupportedMedia         = errors.New("unsupported media type")
 	ErrManagerDirectoryTooLarge = errors.New("directory too large")
 )
 
-// sortManagerItems sorts a slice of ManagerItem consistently: directories first, then alphabetical by name.
-func sortManagerItems(items []ManagerItem) {
-	for i := 0; i < len(items)-1; i++ {
-		for j := i + 1; j < len(items); j++ {
-			swap := false
-			if items[j].IsDir != items[i].IsDir {
-				swap = items[j].IsDir
-			} else {
-				left := items[i].Name
-				right := items[j].Name
-				if left != right {
-					swap = right < left
-				} else {
-					swap = items[j].Locator.Path < items[i].Locator.Path
-				}
-			}
-			if swap {
-				items[i], items[j] = items[j], items[i]
-			}
-		}
+// managerLocatorKey returns a stable sort key for a ManagerLocator, consistent
+// with the handler-side managedLocatorIdentity used by sortManagedEntries.
+func managerLocatorKey(loc ManagerLocator) string {
+	if loc.NativeID != "" {
+		return "id:" + loc.NativeID
 	}
+	return "path:" + loc.Library + ":" + loc.Path
+}
+
+// sortManagerItems sorts a slice of ManagerItem consistently: directories
+// first, then alphabetical by lower-cased trimmed name, then by locator key.
+// Uses sort.Slice (O(n log n)) rather than a bubble sort.
+func sortManagerItems(items []ManagerItem) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].IsDir != items[j].IsDir {
+			return items[i].IsDir
+		}
+		left := strings.ToLower(strings.TrimSpace(items[i].Name))
+		right := strings.ToLower(strings.TrimSpace(items[j].Name))
+		if left != right {
+			return left < right
+		}
+		return managerLocatorKey(items[i].Locator) < managerLocatorKey(items[j].Locator)
+	})
 }
 
 // ExactSizeReader forwards a stream without buffering while enforcing its
