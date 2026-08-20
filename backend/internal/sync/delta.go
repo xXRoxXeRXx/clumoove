@@ -49,7 +49,6 @@ func syncStateChanges(
 	prevSource, prevTarget map[string]db.SyncState,
 	sourceDirETags, targetDirETags map[string]string,
 	sourceDirMap, targetDirMap map[string]bool,
-	prevSourceDirETags, prevTargetDirETags map[string]string,
 	prevSourceDirs, prevTargetDirs map[string]bool,
 	taskOutcomes map[string]string,
 ) ([]*db.SyncState, []db.SyncStateDelete) {
@@ -551,6 +550,23 @@ func getSourceRelPath(targetPath, targetDir string) string {
 		return "/"
 	}
 	return targetPath
+}
+
+// getTargetAbsPath is the inverse of getSourceRelPath: it maps a source-relative
+// path to the physical target path by prepending targetDir. This is used to
+// convert prevTargetFiles / prevTargetDirETags (stored source-relative in
+// sync_state) back to raw target paths before passing them to listFiles, so
+// that copyPreviousSubtree can match against provider-returned paths correctly.
+func getTargetAbsPath(relPath, targetDir string) string {
+	relPath = cleanRelPath(relPath)
+	targetDir = cleanRelPath(targetDir)
+	if targetDir == "/" {
+		return relPath
+	}
+	if relPath == "/" {
+		return targetDir
+	}
+	return targetDir + relPath
 }
 
 // shouldRefreshToken reports whether the stored OAuth token should be rotated

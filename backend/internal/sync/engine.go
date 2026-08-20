@@ -365,7 +365,23 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	cleanTargetDir := cleanRelPath(job.TargetDir)
 	targetScanPaths := []string{cleanTargetDir}
 
-	targetRawMap, targetDirMap, targetDirETags, tgtErrors, err := e.listFiles(indexCtx, targetClient, targetScanPaths, prevTargetDirETags, prevTargetFiles)
+	// prevTargetDirETags and prevTargetFiles are loaded from sync_state with
+	// source-relative paths (e.g. "/foto.jpg"), but listFiles operates with
+	// raw target paths (e.g. "/backup/foto.jpg"). Remap them before the call
+	// so that copyPreviousSubtree can prefix-match correctly and ETag skipping
+	// fires as expected.
+	prevTargetDirETagsRaw := make(map[string]string, len(prevTargetDirETags))
+	for relDir, etag := range prevTargetDirETags {
+		prevTargetDirETagsRaw[getTargetAbsPath(relDir, job.TargetDir)] = etag
+	}
+	prevTargetFilesRaw := make(map[string]fileState, len(prevTargetFiles))
+	for relPath, fs := range prevTargetFiles {
+		rawPath := getTargetAbsPath(relPath, job.TargetDir)
+		fs.Path = rawPath
+		prevTargetFilesRaw[rawPath] = fs
+	}
+
+	targetRawMap, targetDirMap, targetDirETags, tgtErrors, err := e.listFiles(indexCtx, targetClient, targetScanPaths, prevTargetDirETagsRaw, prevTargetFilesRaw)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(indexCtx.Err(), context.DeadlineExceeded) {
 			e.failSync(syncJobID, generation, fmt.Sprintf("Target file listing timed out: %v", err))
@@ -403,8 +419,17 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		srcRelTargetDirMap[relDir] = true
 	}
 
-	// isFirstPass is true when no sync state exists yet (initial run).
-	isFirstPass := len(prevStates) == 0
+	// Remap targetDirETags from raw target paths to source-relative paths so
+	// that all sync_state entries (files and directory ETags alike) are stored
+	// with a uniform coordinate system. Without this remap, dir ETags would be
+	// persisted as raw target paths ("/backup/subdir") while file entries use
+	// source-relative paths ("/subdir"), causing a mismatch on the next pass.
+	srcRelTargetDirETags := make(map[string]string, len(targetDirETags))
+	for rawDir, etag := range targetDirETags {
+		relDir := cleanRelPath(getSourceRelPath(rawDir, job.TargetDir))
+		srcRelTargetDirETags[relDir] = etag
+	}
+
 
 	// Only delete terminal tasks from the previous pass. PENDING tasks that
 	// survived the drain (e.g. from a prior incomplete pass) are also cleared
@@ -434,7 +459,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 		allKeys[k] = true
 	}
 
-	slog.Info("sync delta input", "sync_job_id", syncJobID, "source_files", len(sourceMap), "target_files", len(targetMap), "previous_source_files", len(prevSource), "previous_target_files", len(prevTarget), "paths", len(allKeys), "first_pass", isFirstPass)
+	slog.Info("sync delta input", "sync_job_id", syncJobID, "source_files", len(sourceMap), "target_files", len(targetMap), "previous_source_files", len(prevSource), "previous_target_files", len(prevTarget), "paths", len(allKeys), "first_pass", len(prevStates) == 0)
 
 	type taskToCreate struct {
 		filePath     string
@@ -689,7 +714,7 @@ func (e *Engine) runSyncPass(serverCtx context.Context, syncJobID string, genera
 	if totalCreatedTasks == 0 {
 		// The baseline and lifecycle result must commit together. Otherwise a
 		// successful empty pass can lose deletion/conflict history.
-		upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, prevSourceDirs, prevTargetDirs, nil)
+		upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, srcRelTargetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs, nil)
 		finalized, err := db.FinalizeEmptySyncJobPassWithStates(e.db, job.ID, generation, "SUCCESS", nil, 0, 0, 0, 0, 0, upserts, deletes)
 		if err != nil {
 			slog.Error("failed to finalize empty sync pass", "sync_job_id", syncJobID, "error", err)
@@ -896,7 +921,7 @@ SyncTaskPoll:
 	// Persist the durable delta baseline and return to IDLE in one transaction.
 	// The predicate excludes FAILED/PAUSED_*, so a concurrent task-worker
 	// failure is not overwritten.
-	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, targetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirETags, prevTargetDirETags, prevSourceDirs, prevTargetDirs, taskOutcomes)
+	upserts, deletes := syncStateChanges(job.ID, sourceMap, targetMap, prevSource, prevTarget, sourceDirETags, srcRelTargetDirETags, sourceDirMap, srcRelTargetDirMap, prevSourceDirs, prevTargetDirs, taskOutcomes)
 	finalized, err := db.FinalizeSyncJobPassWithStates(e.db, job.ID, generation, finalRunStatus, finalErr, total, completed+skipped, changedCount, deletedCount, failed, upserts, deletes)
 	if err != nil {
 		slog.Error("failed to finalize sync pass", "sync_job_id", syncJobID, "outcome", finalRunStatus, "total", total, "processed", completed+skipped, "changed", changedCount, "deleted", deletedCount, "failed", failed, "error", err)

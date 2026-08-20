@@ -284,7 +284,7 @@ func TestSyncStateChangesIncludesPreviousPaths(t *testing.T) {
 
 	// State generation must retain keys found only in the previous baseline so
 	// deletions are persisted on the next successful pass.
-	upserts, deletes := syncStateChanges("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	upserts, deletes := syncStateChanges("job-1", sourceMap, targetMap, prevSource, prevTarget, nil, nil, nil, nil, nil, nil, nil)
 	if len(upserts) != 0 || len(deletes) != 2 {
 		t.Fatalf("state changes = %d upserts, %d deletes; want 0, 2", len(upserts), len(deletes))
 	}
@@ -316,7 +316,7 @@ func TestListFilesSkipsUnchangedETagSubtree(t *testing.T) {
 }
 
 func TestSyncStateChangesDeletesStaleDirectoryWithoutETag(t *testing.T) {
-	_, deletes := syncStateChanges("job-1", nil, nil, nil, nil, nil, nil, map[string]bool{"/": true}, map[string]bool{}, map[string]string{}, map[string]string{}, map[string]bool{"/": true, "/removed": true}, map[string]bool{}, nil)
+	_, deletes := syncStateChanges("job-1", nil, nil, nil, nil, nil, nil, map[string]bool{"/": true}, map[string]bool{}, map[string]bool{"/": true, "/removed": true}, map[string]bool{}, nil)
 	for _, deletion := range deletes {
 		if deletion.Side == "source" && deletion.RelPath == "/removed" {
 			return
@@ -326,7 +326,7 @@ func TestSyncStateChangesDeletesStaleDirectoryWithoutETag(t *testing.T) {
 }
 
 func TestSyncStateChangesStoresHashOnMatchingSide(t *testing.T) {
-	upserts, _ := syncStateChanges("job-1", map[string]fileState{"/a": {Path: "/a", Hash: "src"}}, map[string]fileState{"/a": {Path: "/a", Hash: "tgt"}}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	upserts, _ := syncStateChanges("job-1", map[string]fileState{"/a": {Path: "/a", Hash: "src"}}, map[string]fileState{"/a": {Path: "/a", Hash: "tgt"}}, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	for _, state := range upserts {
 		if state.Side == "source" && (state.SourceHash != "src" || state.TargetHash != "") {
 			t.Fatalf("source hash fields = %#v", state)
@@ -335,6 +335,38 @@ func TestSyncStateChangesStoresHashOnMatchingSide(t *testing.T) {
 			t.Fatalf("target hash fields = %#v", state)
 		}
 	}
+}
+
+// TestSyncStateChangesDeletesStaleTargetDirWithNonRootTargetDir verifies that
+// stale target directories are correctly detected and deleted when using a
+// non-root target_dir. prevTargetDirs and the targetDirMap parameter (which
+// corresponds to srcRelTargetDirMap in the engine) must both use source-relative
+// paths for the stale-dir comparison to work correctly.
+func TestSyncStateChangesDeletesStaleTargetDirWithNonRootTargetDir(t *testing.T) {
+	// Simulate: a target dir "/sub" was known from the previous pass (source-relative).
+	// In the current pass it is no longer seen on the target → should be deleted.
+	prevTargetDirs := map[string]bool{
+		"/":    true,
+		"/sub": true, // stale — gone from target in this pass
+	}
+	// Current scan: only "/" present on target (source-relative, as srcRelTargetDirMap).
+	currentTargetDirMap := map[string]bool{
+		"/": true,
+	}
+	_, deletes := syncStateChanges(
+		"job-1",
+		nil, nil, nil, nil,
+		nil, nil, // sourceDirETags, targetDirETags
+		nil, currentTargetDirMap, // sourceDirMap, targetDirMap (source-relative)
+		nil, prevTargetDirs, // prevSourceDirs, prevTargetDirs (source-relative)
+		nil,
+	)
+	for _, d := range deletes {
+		if d.Side == "target" && d.RelPath == "/sub" {
+			return
+		}
+	}
+	t.Fatalf("stale target directory \"/sub\" was not deleted: %#v", deletes)
 }
 
 func TestWaitForNoRunningTasksChecksImmediately(t *testing.T) {
@@ -420,5 +452,117 @@ func TestListFilesMissingStartPath(t *testing.T) {
 	}
 	if dirMap["/missing"] {
 		t.Fatalf("expected /missing not to be in dirMap")
+	}
+}
+
+func TestGetTargetAbsPath(t *testing.T) {
+	tests := []struct {
+		relPath   string
+		targetDir string
+		expected  string
+	}{
+		{"/foto.jpg", "/backup", "/backup/foto.jpg"},
+		{"/sub/foto.jpg", "/backup", "/backup/sub/foto.jpg"},
+		{"/", "/backup", "/backup"},
+		{"/foto.jpg", "/", "/foto.jpg"},
+		{"/", "/", "/"},
+		// roundtrip: getSourceRelPath(getTargetAbsPath(p, dir), dir) == p
+	}
+	for _, tt := range tests {
+		got := getTargetAbsPath(tt.relPath, tt.targetDir)
+		if got != tt.expected {
+			t.Errorf("getTargetAbsPath(%q, %q) = %q; want %q", tt.relPath, tt.targetDir, got, tt.expected)
+		}
+		// roundtrip
+		roundtrip := getSourceRelPath(got, tt.targetDir)
+		if roundtrip != tt.relPath {
+			t.Errorf("roundtrip getSourceRelPath(getTargetAbsPath(%q, %q), %q) = %q; want %q",
+				tt.relPath, tt.targetDir, tt.targetDir, roundtrip, tt.relPath)
+		}
+	}
+}
+
+// TestListFilesETagSkipWithNonRootTargetDir verifies that the ETag subtree cache
+// fires correctly when the target scan starts at a non-root directory.
+// Previously, prevTargetFiles were stored with source-relative paths (e.g.
+// "/foto.jpg") but copyPreviousSubtree matched against raw target paths (e.g.
+// "/backup/foto.jpg"), so the cache always returned 0 files and triggered a
+// full re-scan on every subsequent pass.
+func TestListFilesETagSkipWithNonRootTargetDir(t *testing.T) {
+	const targetDir = "/backup"
+	listCalls := 0
+
+	provider := listingTestProvider{
+		inspect: func(resourcePath string) (storage.CloudResource, error) {
+			return storage.CloudResource{Path: resourcePath, IsDir: true, ETag: "etag-backup"}, nil
+		},
+		list: func(dirPath string) ([]storage.CloudResource, error) {
+			listCalls++
+			return nil, nil
+		},
+	}
+
+	// Simulate state as written by the fixed code: source-relative paths.
+	prevDirETags := map[string]string{
+		"/": "etag-backup", // source-relative root corresponds to /backup on target
+	}
+	prevFiles := map[string]fileState{
+		"/foto.jpg": {Path: "/foto.jpg", Size: 42},
+	}
+
+	// Convert to raw target paths as engine.go does before calling listFiles.
+	prevDirETagsRaw := make(map[string]string, len(prevDirETags))
+	for relDir, etag := range prevDirETags {
+		prevDirETagsRaw[getTargetAbsPath(relDir, targetDir)] = etag
+	}
+	prevFilesRaw := make(map[string]fileState, len(prevFiles))
+	for relPath, fs := range prevFiles {
+		rawPath := getTargetAbsPath(relPath, targetDir)
+		fs.Path = rawPath
+		prevFilesRaw[rawPath] = fs
+	}
+
+	files, _, _, errs, err := NewEngine(nil, nil, "secret").listFiles(
+		context.Background(), provider, []string{targetDir}, prevDirETagsRaw, prevFilesRaw,
+	)
+	if err != nil || len(errs) != 0 {
+		t.Fatalf("listFiles returned err=%v errors=%v", err, errs)
+	}
+	if listCalls != 0 {
+		t.Fatalf("GetDirectoryListing calls = %d; want 0 for unchanged ETag with non-root target_dir", listCalls)
+	}
+	// The file must be returned with its raw target path (engine.go remaps it afterwards).
+	if _, ok := files["/backup/foto.jpg"]; !ok {
+		t.Fatalf("expected /backup/foto.jpg in cached files, got: %v", files)
+	}
+}
+
+// TestSrcRelTargetDirETagsAreSourceRelative verifies that after the fix the
+// targetDirETags returned by listFiles are remapped to source-relative keys
+// before being passed to syncStateChanges for persistence.
+func TestSrcRelTargetDirETagsAreSourceRelative(t *testing.T) {
+	const targetDir = "/backup"
+
+	// The raw targetDirETags map as returned by listFiles (raw target paths).
+	rawTargetDirETags := map[string]string{
+		"/backup":     "etag-root",
+		"/backup/sub": "etag-sub",
+	}
+
+	// Apply the same remap engine.go now performs.
+	srcRelTargetDirETags := make(map[string]string, len(rawTargetDirETags))
+	for rawDir, etag := range rawTargetDirETags {
+		relDir := cleanRelPath(getSourceRelPath(rawDir, targetDir))
+		srcRelTargetDirETags[relDir] = etag
+	}
+
+	if etag, ok := srcRelTargetDirETags["/"]; !ok || etag != "etag-root" {
+		t.Errorf("expected source-relative root \"/\" with etag-root, got map: %v", srcRelTargetDirETags)
+	}
+	if etag, ok := srcRelTargetDirETags["/sub"]; !ok || etag != "etag-sub" {
+		t.Errorf("expected source-relative \"/sub\" with etag-sub, got map: %v", srcRelTargetDirETags)
+	}
+	if _, ok := srcRelTargetDirETags["/backup"]; ok {
+		t.Errorf("raw target path \"/backup\" must not appear in srcRelTargetDirETags")
 	}
 }
