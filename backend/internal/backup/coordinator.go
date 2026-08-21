@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"path"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"backend/internal/db"
 	"backend/internal/megasecret"
 	"backend/internal/oauth"
+	"backend/internal/observability"
 	"backend/internal/storage"
 )
 
@@ -30,6 +32,35 @@ type Coordinator struct {
 	db              *sql.DB
 	encryptionKey   string
 	packWriterSlots chan struct{}
+}
+
+// backupRunLogger supplies the stable correlation fields used by every
+// run-scoped record. Repository paths and credentials deliberately never leave
+// the worker through these attributes.
+func backupRunLogger(ctx context.Context, job *db.BackupJob, run *db.BackupRun) *slog.Logger {
+	return observability.Logger(ctx).With(
+		slog.String("component", "backup"),
+		slog.String("backup_job_id", job.ID),
+		slog.String("backup_run_id", run.ID),
+		slog.Int("generation", run.Generation),
+	)
+}
+
+func backupMaintenanceLogger(ctx context.Context, maintenance *db.BackupMaintenance) *slog.Logger {
+	return observability.Logger(ctx).With(
+		slog.String("component", "backup"),
+		slog.String("backup_job_id", maintenance.BackupJobID),
+		slog.String("backup_maintenance_id", maintenance.ID),
+		slog.String("maintenance_kind", maintenance.Kind),
+	)
+}
+
+func backupFailureAttrs(code string, cause error) []slog.Attr {
+	attrs := []slog.Attr{slog.String("error_code", code)}
+	if cause != nil {
+		attrs = append(attrs, observability.Error(cause), slog.String("error_kind", observability.ErrorKind(cause)))
+	}
+	return attrs
 }
 
 // NewCoordinator configures a worker-side coordinator. maxPackWriters is the
@@ -54,17 +85,20 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 	if run == nil {
 		return c.pollMaintenance(ctx)
 	}
+	logger := backupRunLogger(ctx, job, run)
+	logger.Info("backup_run_claimed", slog.String("trigger", run.Trigger))
 	conn, err := c.db.Conn(ctx)
 	if err != nil {
-		c.fail(ctx, job, run, "BACKUP_LOCK_UNAVAILABLE")
-		return true, err
+		c.fail(ctx, job, run, "BACKUP_LOCK_UNAVAILABLE", err)
+		return true, nil
 	}
 	defer conn.Close()
 	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, job.LockID); err != nil {
-		c.fail(ctx, job, run, "BACKUP_LOCK_UNAVAILABLE")
-		return true, err
+		c.fail(ctx, job, run, "BACKUP_LOCK_UNAVAILABLE", err)
+		return true, nil
 	}
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, job.LockID)
+	logger.Info("backup_run_lock_acquired")
 	c.execute(ctx, job, run)
 	return true, nil
 }
@@ -74,22 +108,38 @@ func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
 	if err != nil || maintenance == nil {
 		return maintenance != nil, err
 	}
+	logger := backupMaintenanceLogger(ctx, maintenance)
+	logger.Info("backup_maintenance_started")
 	conn, err := c.db.Conn(ctx)
 	if err != nil {
-		_ = db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_LOCK_UNAVAILABLE")
-		return true, err
+		logger.LogAttrs(ctx, slog.LevelError, "backup_maintenance_lock_failed", backupFailureAttrs("BACKUP_LOCK_UNAVAILABLE", err)...)
+		if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_LOCK_UNAVAILABLE"); retryErr != nil {
+			logger.Error("backup_maintenance_retry_persist_failed", observability.Error(retryErr), slog.String("error_kind", observability.ErrorKind(retryErr)))
+		}
+		return true, nil
 	}
 	defer conn.Close()
 	if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, maintenance.LockID); err != nil {
-		_ = db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_LOCK_UNAVAILABLE")
-		return true, err
+		logger.LogAttrs(ctx, slog.LevelError, "backup_maintenance_lock_failed", backupFailureAttrs("BACKUP_LOCK_UNAVAILABLE", err)...)
+		if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_LOCK_UNAVAILABLE"); retryErr != nil {
+			logger.Error("backup_maintenance_retry_persist_failed", observability.Error(retryErr), slog.String("error_kind", observability.ErrorKind(retryErr)))
+		}
+		return true, nil
 	}
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, maintenance.LockID)
 	if err := c.executeMaintenance(ctx, maintenance); err != nil {
-		_ = db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_MAINTENANCE_FAILED")
+		logger.LogAttrs(ctx, slog.LevelError, "backup_maintenance_failed", backupFailureAttrs("BACKUP_MAINTENANCE_FAILED", err)...)
+		if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_MAINTENANCE_FAILED"); retryErr != nil {
+			logger.Error("backup_maintenance_retry_persist_failed", observability.Error(retryErr), slog.String("error_kind", observability.ErrorKind(retryErr)))
+		}
+		return true, nil
+	}
+	if err := db.CompleteBackupMaintenanceContext(ctx, c.db, maintenance.ID); err != nil {
+		logger.Error("backup_maintenance_completion_persist_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		return true, err
 	}
-	return true, db.CompleteBackupMaintenanceContext(ctx, c.db, maintenance.ID)
+	logger.Info("backup_maintenance_completed")
+	return true, nil
 }
 
 func (c *Coordinator) executeMaintenance(ctx context.Context, maintenance *db.BackupMaintenance) error {
@@ -347,41 +397,61 @@ type runStats struct {
 }
 
 func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.BackupRun) {
+	logger := backupRunLogger(ctx, job, run)
+	logger.Info("backup_run_started",
+		slog.String("source_provider", job.SourceProvider),
+		slog.String("target_provider", job.TargetProvider),
+		slog.Int("selected_path_count", len(job.SelectedPaths)),
+	)
 	if job.SourceProvider == "immich" || job.TargetProvider == "immich" ||
 		!storage.ProviderSupportsResourceType(job.SourceProvider, "files") ||
 		!storage.ProviderSupportsResourceType(job.TargetProvider, "files") || len(job.SelectedPaths) == 0 {
-		c.fail(ctx, job, run, "BACKUP_FILES_UNSUPPORTED")
+		c.fail(ctx, job, run, "BACKUP_FILES_UNSUPPORTED", nil)
 		return
 	}
 	ctx = storage.WithLocalUserScope(ctx, job.UserID)
 	source, target, err := c.providers(ctx, job)
 	if err != nil {
-		c.fail(ctx, job, run, "BACKUP_CONNECTION_FAILED")
+		c.fail(ctx, job, run, "BACKUP_CONNECTION_FAILED", err)
 		return
 	}
 	defer source.Close()
 	defer target.Close()
 	if ok, err := source.Connect(ctx); err != nil || !ok {
-		c.fail(ctx, job, run, "BACKUP_CONNECTION_FAILED")
+		if err == nil {
+			err = errors.New("source connection returned unsuccessful")
+		}
+		c.fail(ctx, job, run, "BACKUP_CONNECTION_FAILED", err)
 		return
 	}
+	logger.Info("backup_source_connected")
 	if ok, err := target.Connect(ctx); err != nil || !ok {
-		c.fail(ctx, job, run, "BACKUP_CONNECTION_FAILED")
+		if err == nil {
+			err = errors.New("target connection returned unsuccessful")
+		}
+		c.fail(ctx, job, run, "BACKUP_CONNECTION_FAILED", err)
 		return
 	}
+	logger.Info("backup_target_connected")
 	if err := ensureDedicatedTarget(ctx, target, job.TargetDir, job.RepositoryID); err != nil {
-		c.fail(ctx, job, run, "BACKUP_TARGET_NOT_EMPTY")
+		c.fail(ctx, job, run, "BACKUP_TARGET_NOT_EMPTY", err)
 		return
 	}
 	if err := ensureFormat(ctx, target, job.RepositoryRoot, job.RepositoryID); err != nil {
-		c.fail(ctx, job, run, "BACKUP_REPOSITORY_FORMAT_INVALID")
+		c.fail(ctx, job, run, "BACKUP_REPOSITORY_FORMAT_INVALID", err)
 		return
 	}
+	logger.Info("backup_repository_validated")
 	files, directories, stats, err := scanFiles(ctx, source, job.SelectedPaths)
 	if err != nil {
 		c.finishOrFail(ctx, job, run, "SCANNING", err, stats)
 		return
 	}
+	logger.Info("backup_scan_completed",
+		slog.Int("total_files", stats.totalFiles),
+		slog.Int("total_directories", stats.totalDirs),
+		slog.Int64("total_bytes", stats.totalBytes),
+	)
 	// Hold this permit from the first source read through the final flush. This
 	// bounds an admitted job's pack buffer rather than merely serializing upload.
 	select {
@@ -392,13 +462,17 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	}
 	defer func() { <-c.packWriterSlots }()
 	if ok, err := db.TransitionBackupRunContext(ctx, c.db, job.ID, run.Generation, run.ID, "SCANNING", "RUNNING"); err != nil || !ok {
-		c.fail(ctx, job, run, "BACKUP_TRANSITION_FAILED")
+		if err == nil {
+			err = errors.New("backup run changed state before transfer start")
+		}
+		c.fail(ctx, job, run, "BACKUP_TRANSITION_FAILED", err)
 		return
 	}
 	run.State = "RUNNING"
+	logger.Info("backup_transfer_started")
 	snapshotID, err := db.CreateBackupSnapshotDraftContext(ctx, c.db, job.ID, run.ID, job.SelectedPaths)
 	if err != nil {
-		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED")
+		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
 		return
 	}
 	for _, directory := range directories {
@@ -450,12 +524,16 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 		return
 	}
 	if ok, err := db.TransitionBackupRunContext(ctx, c.db, job.ID, run.Generation, run.ID, "RUNNING", "VERIFYING"); err != nil || !ok {
-		c.fail(ctx, job, run, "BACKUP_TRANSITION_FAILED")
+		if err == nil {
+			err = errors.New("backup run changed state before verification")
+		}
+		c.fail(ctx, job, run, "BACKUP_TRANSITION_FAILED", err)
 		return
 	}
 	run.State = "VERIFYING"
+	logger.Info("backup_verification_started")
 	if err := c.verifySnapshotSample(ctx, job, snapshotID, target); err != nil {
-		c.fail(ctx, job, run, "BACKUP_VERIFICATION_FAILED")
+		c.fail(ctx, job, run, "BACKUP_VERIFICATION_FAILED", err)
 		return
 	}
 	snapshotState, runState := "READY", "COMPLETED"
@@ -464,7 +542,10 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	}
 	published, err := db.PublishBackupSnapshotAndFinalizeContext(ctx, c.db, job.ID, run.Generation, run.ID, snapshotID, snapshotState, runState, stats.totalFiles, stats.totalDirs, stats.totalBytes, stats.processedFiles, stats.processedBytes, stats.deduplicatedBytes, stats.unstableFiles, stats.failedFiles)
 	if err != nil || !published {
-		c.fail(ctx, job, run, "BACKUP_PUBLICATION_FAILED")
+		if err == nil {
+			err = errors.New("backup snapshot publication lost its state claim")
+		}
+		c.fail(ctx, job, run, "BACKUP_PUBLICATION_FAILED", err)
 		return
 	}
 	if runState == "PARTIAL" {
@@ -472,6 +553,15 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	} else {
 		c.audit(job, db.AuditBackupCompleted)
 	}
+	logger.Info("backup_run_completed",
+		slog.String("status", runState),
+		slog.Int("total_files", stats.totalFiles),
+		slog.Int("processed_files", stats.processedFiles),
+		slog.Int64("total_bytes", stats.totalBytes),
+		slog.Int64("processed_bytes", stats.processedBytes),
+		slog.Int64("deduplicated_bytes", stats.deduplicatedBytes),
+		slog.Int("unstable_files", stats.unstableFiles),
+	)
 }
 
 // verifySnapshotSample checks a cryptographically selected subset of packs
@@ -534,11 +624,15 @@ func (c *Coordinator) verifySnapshotSample(ctx context.Context, job *db.BackupJo
 func (c *Coordinator) runActive(ctx context.Context, job *db.BackupJob, run *db.BackupRun, snapshotID string) bool {
 	active, err := db.BackupRunActiveContext(ctx, c.db, job.ID, run.Generation, run.ID)
 	if err != nil {
-		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED")
+		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
 		return false
 	}
 	if !active {
-		_ = db.DiscardBackupSnapshotDraftContext(context.Background(), c.db, snapshotID, job.ID, run.ID)
+		logger := backupRunLogger(ctx, job, run)
+		logger.Info("backup_run_no_longer_active")
+		if err := db.DiscardBackupSnapshotDraftContext(context.Background(), c.db, snapshotID, job.ID, run.ID); err != nil {
+			logger.Warn("backup_snapshot_draft_discard_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		}
 		return false
 	}
 	return true
@@ -851,17 +945,38 @@ func safeRemotePath(value string) error {
 
 func (c *Coordinator) finishOrFail(ctx context.Context, job *db.BackupJob, run *db.BackupRun, state string, err error, stats runStats) {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		_, _ = db.FinalizeBackupRunContext(context.Background(), c.db, job.ID, run.Generation, run.ID, state, "CANCELLED", stats.totalFiles, stats.totalBytes, stats.processedFiles, stats.processedBytes, stats.deduplicatedBytes, stats.failedFiles, nil)
+		logger := backupRunLogger(ctx, job, run)
+		logger.LogAttrs(ctx, slog.LevelInfo, "backup_run_cancelled",
+			slog.String("state", state),
+			observability.Error(err),
+			slog.String("error_kind", observability.ErrorKind(err)),
+		)
+		finalized, finalizeErr := db.FinalizeBackupRunContext(context.Background(), c.db, job.ID, run.Generation, run.ID, state, "CANCELLED", stats.totalFiles, stats.totalBytes, stats.processedFiles, stats.processedBytes, stats.deduplicatedBytes, stats.failedFiles, nil)
+		if finalizeErr != nil {
+			logger.Error("backup_cancellation_persist_failed", observability.Error(finalizeErr), slog.String("error_kind", observability.ErrorKind(finalizeErr)))
+		} else if !finalized {
+			logger.Warn("backup_cancellation_claim_lost")
+		}
 		return
 	}
-	c.fail(ctx, job, run, failureCodeForState(state))
+	c.fail(ctx, job, run, failureCodeForState(state), err)
 }
 
-func (c *Coordinator) fail(ctx context.Context, job *db.BackupJob, run *db.BackupRun, code string) {
+func (c *Coordinator) fail(ctx context.Context, job *db.BackupJob, run *db.BackupRun, code string, cause error) {
+	logger := backupRunLogger(ctx, job, run)
+	attrs := backupFailureAttrs(code, cause)
+	attrs = append(attrs, slog.String("state", run.State))
+	logger.LogAttrs(ctx, slog.LevelError, "backup_run_failed", attrs...)
 	failed, err := db.FailBackupRunContext(context.Background(), c.db, job.ID, run.Generation, run.ID, run.State, code)
-	if err == nil && failed {
-		c.audit(job, db.AuditBackupFailed)
+	if err != nil {
+		logger.Error("backup_failure_persist_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		return
 	}
+	if !failed {
+		logger.Warn("backup_failure_claim_lost")
+		return
+	}
+	c.audit(job, db.AuditBackupFailed)
 }
 
 func failureCodeForState(state string) string {

@@ -32,6 +32,9 @@ export function BackupOptionsForm({
 
   return (
     <div className="space-y-5">
+      <p className="ui-alert ui-alert-info p-3 text-sm" role="note">
+        {t('backup.targetHint')}
+      </p>
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
         <div className="space-y-2">
           <label htmlFor={cronId} className="block text-xs font-medium text-[var(--color-text-primary)]">

@@ -1,8 +1,16 @@
 package backup
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"log/slog"
 	"testing"
+
+	"backend/internal/db"
+	"backend/internal/observability"
 )
 
 func TestNewCoordinatorValidatesPackWriterLimit(t *testing.T) {
@@ -71,5 +79,46 @@ func TestFailureCodeForState(t *testing.T) {
 				t.Fatalf("failureCodeForState(%q) = %q, want %q", test.state, got, test.want)
 			}
 		})
+	}
+}
+
+func TestBackupRunLoggerIncludesCorrelationFields(t *testing.T) {
+	var output bytes.Buffer
+	ctx := observability.WithLogger(context.Background(), slog.New(slog.NewJSONHandler(&output, nil)))
+	job := &db.BackupJob{ID: "backup-job"}
+	run := &db.BackupRun{ID: "backup-run", Generation: 7}
+
+	backupRunLogger(ctx, job, run).Info("backup_run_started")
+
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatalf("decode log record: %v", err)
+	}
+	for key, want := range map[string]any{
+		"component":     "backup",
+		"backup_job_id": "backup-job",
+		"backup_run_id": "backup-run",
+		"generation":    float64(7),
+	} {
+		if got := record[key]; got != want {
+			t.Errorf("log %s = %#v, want %#v", key, got, want)
+		}
+	}
+}
+
+func TestBackupFailureAttrsIncludesCodeAndClassifiedCause(t *testing.T) {
+	attrs := backupFailureAttrs("BACKUP_CONNECTION_FAILED", errors.New("connection refused"))
+	values := make(map[string]string, len(attrs))
+	for _, attr := range attrs {
+		values[attr.Key] = attr.Value.String()
+	}
+	if values["error_code"] != "BACKUP_CONNECTION_FAILED" {
+		t.Errorf("error_code = %q", values["error_code"])
+	}
+	if values["error"] == "" {
+		t.Error("error attribute is missing")
+	}
+	if values["error_kind"] != "network" {
+		t.Errorf("error_kind = %q, want network", values["error_kind"])
 	}
 }

@@ -1344,7 +1344,14 @@ function BackupList({
                   </div>
                   <p className="mt-1 max-w-48 truncate text-[10px] font-mono text-[var(--color-text-muted)]" title={job.selected_paths.join(', ')}>{job.selected_paths.join(', ')}</p>
                 </td>
-                <td data-label={t('migrations.status')} className="px-4 py-4"><StatusBadge status={badgeStatus} size="sm" /></td>
+                <td data-label={t('migrations.status')} className="px-4 py-4">
+                  <StatusBadge status={badgeStatus} size="sm" />
+                  {job.error_code && (
+                    <p className="mt-2 max-w-64 text-xs text-[var(--color-error-text)]" role="alert">
+                      {translateApiError(job.error_code)}
+                    </p>
+                  )}
+                </td>
                 <td data-label={t('backup.metrics')} className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
                   <div>{t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })}</div>
                   <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{formatBytes(job.processed_bytes)} · {t('backup.deduplicated', { value: formatBytes(job.deduplicated_bytes) })}</div>

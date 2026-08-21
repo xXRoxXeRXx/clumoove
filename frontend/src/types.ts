@@ -157,6 +157,7 @@ export interface BackupJob {
   failed_files: number;
   last_run_at: string | null;
   last_run_status: string | null;
+  error_code: string | null;
   created_at: string;
 }
 
