@@ -13,6 +13,8 @@ import (
 	"backend/internal/backuprepo"
 	"backend/internal/db"
 	"backend/internal/observability"
+	"backend/internal/storage"
+	"io"
 )
 
 func TestNewCoordinatorValidatesPackWriterLimit(t *testing.T) {
@@ -151,4 +153,149 @@ func TestBackupFailureAttrsIncludesCodeAndClassifiedCause(t *testing.T) {
 	if values["error_kind"] != "network" {
 		t.Errorf("error_kind = %q, want network", values["error_kind"])
 	}
+}
+
+type mockBackupTarget struct {
+	listings map[string][]storage.CloudResource
+}
+
+func (m *mockBackupTarget) Close() error                              { return nil }
+func (m *mockBackupTarget) Connect(ctx context.Context) (bool, error) { return true, nil }
+func (m *mockBackupTarget) InspectResource(ctx context.Context, resourceType, path string) (storage.CloudResource, error) {
+	return storage.CloudResource{}, errors.New("not implemented")
+}
+func (m *mockBackupTarget) StreamDownload(ctx context.Context, resourceType, filePath string) (io.ReadCloser, error) {
+	return nil, errors.New("not implemented")
+}
+func (m *mockBackupTarget) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
+	return errors.New("not implemented")
+}
+func (m *mockBackupTarget) StreamUploadChunked(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64, progressChan chan<- int64) error {
+	return errors.New("not implemented")
+}
+func (m *mockBackupTarget) DeleteFile(ctx context.Context, resourceType, filePath string) error {
+	return errors.New("not implemented")
+}
+func (m *mockBackupTarget) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {
+	return "", errors.New("not implemented")
+}
+func (m *mockBackupTarget) CreateParentDirectories(ctx context.Context, resourceType, filePath string) error {
+	return errors.New("not implemented")
+}
+func (m *mockBackupTarget) CreateDirectory(ctx context.Context, resourceType, dirPath string) error {
+	return errors.New("not implemented")
+}
+func (m *mockBackupTarget) RenameFile(ctx context.Context, resourceType, oldPath, newPath string) error {
+	return errors.New("not implemented")
+}
+func (m *mockBackupTarget) SupportsAtomicRename() bool { return true }
+func (m *mockBackupTarget) VerificationMode() storage.VerificationMode {
+	return storage.VerificationSizeOnly
+}
+func (m *mockBackupTarget) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error) {
+	return m.listings[dirPath], nil
+}
+func (m *mockBackupTarget) FileExists(ctx context.Context, resourceType, filePath string) (bool, int64, error) {
+	return false, 0, nil
+}
+
+func TestEnsureDedicatedTarget(t *testing.T) {
+	const (
+		targetDir    = "/backups"
+		repoID       = "38256494-2dce-416a-b4fd-46f5b25de01c"
+		container    = "/backups/.clumoove-backup"
+		repoRoot     = "/backups/.clumoove-backup/38256494-2dce-416a-b4fd-46f5b25de01c"
+	)
+
+	t.Run("empty target directory succeeds", func(t *testing.T) {
+		target := &mockBackupTarget{
+			listings: map[string][]storage.CloudResource{
+				targetDir: {},
+			},
+		}
+		if err := ensureDedicatedTarget(context.Background(), target, targetDir, repoID); err != nil {
+			t.Fatalf("ensureDedicatedTarget() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("webdav trailing slashes on directories succeed", func(t *testing.T) {
+		target := &mockBackupTarget{
+			listings: map[string][]storage.CloudResource{
+				targetDir: {
+					{Path: container + "/", Name: ".clumoove-backup", IsDir: true},
+				},
+				container: {
+					{Path: repoRoot + "/", Name: repoID, IsDir: true},
+				},
+			},
+		}
+		if err := ensureDedicatedTarget(context.Background(), target, targetDir, repoID); err != nil {
+			t.Fatalf("ensureDedicatedTarget() with trailing slashes error = %v, want nil", err)
+		}
+	})
+
+	t.Run("clean paths without trailing slashes succeed", func(t *testing.T) {
+		target := &mockBackupTarget{
+			listings: map[string][]storage.CloudResource{
+				targetDir: {
+					{Path: container, Name: ".clumoove-backup", IsDir: true},
+				},
+				container: {
+					{Path: repoRoot, Name: repoID, IsDir: true},
+				},
+			},
+		}
+		if err := ensureDedicatedTarget(context.Background(), target, targetDir, repoID); err != nil {
+			t.Fatalf("ensureDedicatedTarget() clean paths error = %v, want nil", err)
+		}
+	})
+
+	t.Run("non-empty directory with unexpected file fails", func(t *testing.T) {
+		target := &mockBackupTarget{
+			listings: map[string][]storage.CloudResource{
+				targetDir: {
+					{Path: "/backups/existing.docx", Name: "existing.docx", IsDir: false},
+				},
+			},
+		}
+		err := ensureDedicatedTarget(context.Background(), target, targetDir, repoID)
+		if err == nil || err.Error() != "backup target directory is not empty" {
+			t.Fatalf("ensureDedicatedTarget() error = %v, want 'backup target directory is not empty'", err)
+		}
+	})
+
+	t.Run("container with multiple repos fails dedicated check", func(t *testing.T) {
+		target := &mockBackupTarget{
+			listings: map[string][]storage.CloudResource{
+				targetDir: {
+					{Path: container, Name: ".clumoove-backup", IsDir: true},
+				},
+				container: {
+					{Path: repoRoot, Name: repoID, IsDir: true},
+					{Path: container + "/other-repo", Name: "other-repo", IsDir: true},
+				},
+			},
+		}
+		err := ensureDedicatedTarget(context.Background(), target, targetDir, repoID)
+		if err == nil || err.Error() != "backup target directory is not dedicated" {
+			t.Fatalf("ensureDedicatedTarget() error = %v, want 'backup target directory is not dedicated'", err)
+		}
+	})
+
+	t.Run("container belonging to another repo fails", func(t *testing.T) {
+		target := &mockBackupTarget{
+			listings: map[string][]storage.CloudResource{
+				targetDir: {
+					{Path: container, Name: ".clumoove-backup", IsDir: true},
+				},
+				container: {
+					{Path: container + "/other-repo-id", Name: "other-repo-id", IsDir: true},
+				},
+			},
+		}
+		err := ensureDedicatedTarget(context.Background(), target, targetDir, repoID)
+		if err == nil || err.Error() != "backup target directory belongs to another repository" {
+			t.Fatalf("ensureDedicatedTarget() error = %v, want 'backup target directory belongs to another repository'", err)
+		}
+	})
 }

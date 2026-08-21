@@ -650,7 +650,7 @@ func ensureDedicatedTarget(ctx context.Context, target storage.StorageProvider, 
 	if err != nil {
 		return err
 	}
-	if len(entries) != 1 || entries[0].Path != container || !entries[0].IsDir {
+	if len(entries) != 1 || path.Clean(entries[0].Path) != path.Clean(container) || !entries[0].IsDir {
 		return errors.New("backup target directory is not empty")
 	}
 	entries, err = target.GetDirectoryListing(ctx, "files", container)
@@ -658,7 +658,7 @@ func ensureDedicatedTarget(ctx context.Context, target storage.StorageProvider, 
 		return errors.New("backup target directory is not dedicated")
 	}
 	repositoryRoot, err := repositoryPath(container, repositoryID)
-	if err != nil || entries[0].Path != repositoryRoot || !entries[0].IsDir {
+	if err != nil || path.Clean(entries[0].Path) != path.Clean(repositoryRoot) || !entries[0].IsDir {
 		return errors.New("backup target directory belongs to another repository")
 	}
 	return nil
