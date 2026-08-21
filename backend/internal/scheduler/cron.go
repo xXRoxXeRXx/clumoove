@@ -36,3 +36,19 @@ func NextRunFrom(expr string, from time.Time) (time.Time, error) {
 	}
 	return schedule.Next(from), nil
 }
+
+// NextRunInLocation calculates a cron occurrence in the job's IANA timezone
+// and converts it to UTC for persistence. It intentionally does not use the
+// host timezone, which would make the same backup schedule run differently on
+// different API replicas.
+func NextRunInLocation(expr, timezone string, from time.Time) (time.Time, error) {
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("load timezone %q: %w", timezone, err)
+	}
+	schedule, err := parser.Parse(expr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return schedule.Next(from.In(location)).UTC(), nil
+}

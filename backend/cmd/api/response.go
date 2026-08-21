@@ -187,6 +187,16 @@ const (
 	ErrSyncInvalidState    APIErrorCode = "SYNC_INVALID_STATE"
 	ErrSyncIntervalInvalid APIErrorCode = "SYNC_INTERVAL_INVALID"
 
+	// Backup
+	ErrBackupIDMissing         APIErrorCode = "BACKUP_ID_MISSING"
+	ErrBackupNotFound          APIErrorCode = "BACKUP_NOT_FOUND"
+	ErrBackupInvalidState      APIErrorCode = "BACKUP_INVALID_STATE"
+	ErrBackupCronInvalid       APIErrorCode = "BACKUP_CRON_INVALID"
+	ErrBackupTimezoneInvalid   APIErrorCode = "BACKUP_TIMEZONE_INVALID"
+	ErrBackupRetentionInvalid  APIErrorCode = "BACKUP_RETENTION_INVALID"
+	ErrBackupPathsInvalid      APIErrorCode = "BACKUP_PATHS_INVALID"
+	ErrImmichBackupUnsupported APIErrorCode = "IMMICH_BACKUP_UNSUPPORTED"
+
 	// Connection profiles
 	ErrProfileNotFound        APIErrorCode = "PROFILE_NOT_FOUND"
 	ErrProfileNameExists      APIErrorCode = "PROFILE_NAME_EXISTS"

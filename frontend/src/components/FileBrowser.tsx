@@ -32,13 +32,14 @@ import { SelectedPathsViewer } from "./SelectedPathsViewer";
 import { Button } from "./Button";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { SyncOptionsForm } from "./SyncOptionsForm";
+import { BackupOptionsForm } from "./BackupOptionsForm";
 
 interface FileBrowserProps {
   initialFiles: CloudFile[];
   credentials: MigrationConfig;
   apiUrl: string;
   onBack: () => void;
-  onStartSuccess: (id: string, isSync?: boolean) => void;
+  onStartSuccess: (id: string, isSync?: boolean, isBackup?: boolean) => void;
   token: string;
 }
 
@@ -180,6 +181,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   const isImmichSource = credentials.source_provider === "immich";
   const isImmichTarget = credentials.target_provider === "immich";
   const hasImmichEndpoint = isImmichSource || isImmichTarget;
+  const backupAvailable = !hasImmichEndpoint
+    && Boolean(credentials.source_profile_id)
+    && Boolean(credentials.target_profile_id);
 
   const supportsCalendars = useMemo(() => {
     const src = credentials.source_provider || "nextcloud";
@@ -302,7 +306,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   }, []);
 
   // Job type
-  const [jobType, setJobType] = useState<"migration" | "sync">("migration");
+  const [jobType, setJobType] = useState<"migration" | "sync" | "backup">("migration");
   const [direction, setDirection] = useState<"one_way" | "two_way">("one_way");
   const [intervalMinutes, setIntervalMinutes] = useState<number>(15);
   const [deletePropagation, setDeletePropagation] = useState<boolean>(false);
@@ -310,6 +314,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   // active mode keeps the UI and request path migration-only without a stateful
   // effect that would cause an unnecessary render.
   const effectiveJobType = hasImmichEndpoint ? "migration" : jobType;
+  const [backupCronExpression, setBackupCronExpression] = useState("0 2 * * *");
+  const [backupTimezone, setBackupTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  const [backupRetentionCount, setBackupRetentionCount] = useState(7);
 
   // Scheduling state
   const [enableScheduling, setEnableScheduling] = useState(false);
@@ -344,6 +351,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       selectableRootItems.every((item) => selectedPaths[item.path]);
     return allRootSelected ? [] : pathsToMigrate;
   }, [directoryContents, initialFiles, selectedPaths, pathsToMigrate]);
+
+  const backupSelectedPaths = useMemo(() => pathsToMigrate.filter((candidate) => !pathsToMigrate.some(
+    (other) => other !== candidate && candidate.startsWith(`${other}/`),
+  )), [pathsToMigrate]);
 
   // Minimum selectable start time: now + 1 minute, formatted in the user's
   // local timezone (datetime-local inputs expect local time, not UTC).
@@ -654,20 +665,21 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   );
 
   const effectiveActiveTab = useMemo(() => {
+    if (effectiveJobType === "backup") return "files";
     if (activeTab === "calendars" && !supportsCalendars) return "files";
     if (activeTab === "contacts" && !supportsContacts) return "files";
     return activeTab;
-  }, [activeTab, supportsCalendars, supportsContacts]);
+  }, [activeTab, effectiveJobType, supportsCalendars, supportsContacts]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (supportsCalendars && !hasFetchedCalendarsRef.current) {
+      if (effectiveJobType !== "backup" && supportsCalendars && !hasFetchedCalendarsRef.current) {
         hasFetchedCalendarsRef.current = true;
         void fetchCalendars();
       } else if (!supportsCalendars) {
         setSelectedCalendars({});
       }
-      if (supportsContacts && !hasFetchedContactsRef.current) {
+      if (effectiveJobType !== "backup" && supportsContacts && !hasFetchedContactsRef.current) {
         hasFetchedContactsRef.current = true;
         void fetchContacts();
       } else if (!supportsContacts) {
@@ -675,7 +687,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       }
     }, 0);
     return () => clearTimeout(timer);
-  }, [supportsCalendars, supportsContacts, fetchCalendars, fetchContacts]);
+  }, [effectiveJobType, supportsCalendars, supportsContacts, fetchCalendars, fetchContacts]);
 
   const handleTabChange = (tab: "files" | "calendars" | "contacts") => {
     setActiveTab(tab);
@@ -685,8 +697,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
   const handleTabListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const tabs: Array<"files" | "calendars" | "contacts"> = ["files"];
-    if (supportsCalendars) tabs.push("calendars");
-    if (supportsContacts) tabs.push("contacts");
+    if (effectiveJobType !== "backup" && supportsCalendars) tabs.push("calendars");
+    if (effectiveJobType !== "backup" && supportsContacts) tabs.push("contacts");
     const currentIndex = tabs.indexOf(effectiveActiveTab);
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
@@ -959,15 +971,15 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   };
 
   const handleStartMigration = async () => {
-    const calendarsToMigrate = supportsCalendars
+    const calendarsToMigrate = effectiveJobType !== "backup" && supportsCalendars
       ? Object.keys(selectedCalendars).filter((p) => selectedCalendars[p])
       : [];
-    const contactsToMigrate = supportsContacts
+    const contactsToMigrate = effectiveJobType !== "backup" && supportsContacts
       ? Object.keys(selectedContacts).filter((p) => selectedContacts[p])
       : [];
 
     if (
-      pathsToMigrate.length === 0 &&
+      (effectiveJobType === "backup" ? backupSelectedPaths.length === 0 : pathsToMigrate.length === 0) &&
       calendarsToMigrate.length === 0 &&
       contactsToMigrate.length === 0
     ) {
@@ -975,7 +987,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       return;
     }
 
-    if (effectiveJobType === "sync") {
+    if (effectiveJobType === "backup") {
+      if (!backupAvailable || backupRetentionCount < 1 || backupRetentionCount > 365 || threads < 1 || threads > 16) {
+        setError(t("backup.invalidOptions"));
+        return;
+      }
+    } else if (effectiveJobType === "sync") {
       if (pathsToMigrate.length === 0) {
         setError(t("fileBrowser.errors.selectOne"));
         return;
@@ -996,7 +1013,33 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     const controller = createRequestController();
 
     try {
-      if (effectiveJobType === "sync") {
+      if (effectiveJobType === "backup") {
+        const response = await apiFetch(`${apiUrl}/api/backup`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            source_profile_id: credentials.source_profile_id,
+            target_profile_id: credentials.target_profile_id,
+            selected_paths: backupSelectedPaths,
+            target_dir: targetDir,
+            cron_expression: backupCronExpression,
+            timezone: backupTimezone,
+            retention_count: backupRetentionCount,
+            threads,
+          }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error_code?: string };
+          throw new Error(body.error_code ? translateApiError(body.error_code) : t("backup.createFailed"));
+        }
+        const data = await response.json() as { id?: string };
+        if (!controller.signal.aborted && data.id) onStartSuccess(data.id, false, true);
+        else if (!controller.signal.aborted) setError(t("backup.createFailed"));
+      } else if (effectiveJobType === "sync") {
         const response = await apiFetch(`${apiUrl}/api/sync`, {
           method: "POST",
           headers: {
@@ -1358,11 +1401,11 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         </div>
       </div>
 
-      {/* Settings Strip — full width, backup-ready 3-mode layout */}
+      {/* Settings Strip */}
       <div className="ui-card">
         {/* Mode selector (left) + start button (right) */}
         <div className="flex flex-col justify-between gap-3 border-b border-[var(--color-border-light)] px-5 py-3 sm:flex-row sm:items-center sm:px-6">
-          {/* Job Mode Selector (segmented control; a third column for Backup is added later) */}
+          {/* Job Mode Selector */}
           <div className="w-full text-xs sm:w-auto">
             <div className="flex border-b border-[var(--color-border-light)]">
               <button
@@ -1389,6 +1432,19 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                   {t("sync.modeSync")}
                 </button>
               )}
+              {backupAvailable && (
+                <button
+                  type="button"
+                  onClick={() => setJobType("backup")}
+                  className={`px-3 py-2 text-sm font-medium transition-colors ${
+                    effectiveJobType === "backup"
+                      ? "border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                  }`}
+                >
+                  {t("backup.mode")}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1407,7 +1463,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             ) : (
               <>
                 <Play className="w-4 h-4 fill-current stroke-[2.5]" />
-                <span>{t("fileBrowser.startTransfer")}</span>
+                <span>{effectiveJobType === "backup" ? t("backup.create") : t("fileBrowser.startTransfer")}</span>
               </>
             )}
           </button>
@@ -1415,30 +1471,44 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
         {/* Settings body */}
         <div className="p-5 sm:p-6">
-          <SyncOptionsForm
-            effectiveJobType={effectiveJobType}
-            direction={direction}
-            setDirection={setDirection}
-            intervalMinutes={intervalMinutes}
-            setIntervalMinutes={setIntervalMinutes}
-            deletePropagation={deletePropagation}
-            setDeletePropagation={setDeletePropagation}
-            conflictStrategy={conflictStrategy}
-            setConflictStrategy={setConflictStrategy}
-            threads={threads}
-            setThreads={setThreads}
-            bandwidthLimit={bandwidthLimit}
-            setBandwidthLimit={setBandwidthLimit}
-            enableScheduling={enableScheduling}
-            setEnableScheduling={setEnableScheduling}
-            scheduledTime={scheduledTime}
-            setScheduledTime={setScheduledTime}
-            minScheduledTime={minScheduledTime}
-            isImmichTarget={isImmichTarget}
-            targetDir={targetDir}
-            openTargetBrowser={openTargetBrowser}
-            error={error}
-          />
+          {effectiveJobType === "backup" ? (
+            <BackupOptionsForm
+              cronExpression={backupCronExpression}
+              setCronExpression={setBackupCronExpression}
+              timezone={backupTimezone}
+              setTimezone={setBackupTimezone}
+              retentionCount={backupRetentionCount}
+              setRetentionCount={setBackupRetentionCount}
+              threads={threads}
+              setThreads={setThreads}
+              error={error}
+            />
+          ) : (
+            <SyncOptionsForm
+              effectiveJobType={effectiveJobType}
+              direction={direction}
+              setDirection={setDirection}
+              intervalMinutes={intervalMinutes}
+              setIntervalMinutes={setIntervalMinutes}
+              deletePropagation={deletePropagation}
+              setDeletePropagation={setDeletePropagation}
+              conflictStrategy={conflictStrategy}
+              setConflictStrategy={setConflictStrategy}
+              threads={threads}
+              setThreads={setThreads}
+              bandwidthLimit={bandwidthLimit}
+              setBandwidthLimit={setBandwidthLimit}
+              enableScheduling={enableScheduling}
+              setEnableScheduling={setEnableScheduling}
+              scheduledTime={scheduledTime}
+              setScheduledTime={setScheduledTime}
+              minScheduledTime={minScheduledTime}
+              isImmichTarget={isImmichTarget}
+              targetDir={targetDir}
+              openTargetBrowser={openTargetBrowser}
+              error={error}
+            />
+          )}
         </div>
       </div>
 
@@ -1463,7 +1533,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
             >
               {t("fileBrowser.files")} ({pathsToMigrate.length})
             </button>
-            {supportsCalendars && (
+            {effectiveJobType !== "backup" && supportsCalendars && (
               <button
                 id="calendars-tab"
                 type="button"
@@ -1482,7 +1552,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 {Object.values(selectedCalendars).filter(Boolean).length})
               </button>
             )}
-            {supportsContacts && (
+            {effectiveJobType !== "backup" && supportsContacts && (
               <button
                 id="contacts-tab"
                 type="button"

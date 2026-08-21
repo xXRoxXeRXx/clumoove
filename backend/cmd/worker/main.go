@@ -7,8 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
+	"time"
 
+	"backend/internal/backup"
 	"backend/internal/config"
 	"backend/internal/db"
 	"backend/internal/oauth"
@@ -22,6 +25,7 @@ type workerConfig struct {
 	databaseURLDefaulted bool
 	redisURL             string
 	encryptionKey        string
+	maxBackupPackWriters int
 }
 
 func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
@@ -32,9 +36,17 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 		databaseURLDefaulted: databaseURLDefaulted,
 		redisURL:             redisURL,
 		encryptionKey:        getenv("ENCRYPTION_SECRET_KEY"),
+		maxBackupPackWriters: 1,
 	}
 	if workerCfg.encryptionKey == "" {
 		return workerConfig{}, errors.New("ENCRYPTION_SECRET_KEY is required")
+	}
+	if value := getenv("MAX_BACKUP_PACK_WRITERS"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 4 {
+			return workerConfig{}, errors.New("MAX_BACKUP_PACK_WRITERS must be an integer between 1 and 4")
+		}
+		workerCfg.maxBackupPackWriters = parsed
 	}
 	return workerCfg, nil
 }
@@ -102,6 +114,11 @@ func main() {
 	// by API instances and started exclusively by the API scheduler.
 	proc := processor.NewProcessor(database, q, workerID, config.encryptionKey)
 	proc.SetDBConnStr(config.databaseURL) // Enable pg_notify-based wake-up for idle worker threads
+	backupCoordinator, err := backup.NewCoordinator(database, config.encryptionKey, config.maxBackupPackWriters)
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "backup"), slog.String("reason", "invalid_pack_writer_limit"), observability.Error(err), slog.String("error_kind", "configuration"))
+		os.Exit(1)
+	}
 
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -113,6 +130,11 @@ func main() {
 
 	// A second signal lets an operator abort a potentially long task drain.
 	go watchShutdownSignals(sigChan, cancel, os.Exit)
+	go func() {
+		if err := backupCoordinator.Run(ctx, time.Second); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("backup_coordinator_stopped", slog.String("component", "backup"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		}
+	}()
 
 	// Block until context is cancelled AND all in-flight tasks have finished.
 	proc.Start(ctx)

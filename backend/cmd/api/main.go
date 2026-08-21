@@ -267,6 +267,17 @@ func main() {
 	mux.Handle("PUT /api/sync/{id}/schedule", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncSchedule)))
 	mux.Handle("PUT /api/sync/{id}/scope", jwtMiddleware(http.HandlerFunc(server.handleUpdateSyncScope)))
 
+	// Backup Routes
+	mux.Handle("GET /api/backup", jwtMiddleware(http.HandlerFunc(server.handleListBackups)))
+	mux.Handle("POST /api/backup", jwtMiddleware(http.HandlerFunc(server.handleCreateBackup)))
+	mux.Handle("GET /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetBackup)))
+	mux.Handle("POST /api/backup/{id}/run", jwtMiddleware(http.HandlerFunc(server.handleRunBackup)))
+	mux.Handle("POST /api/backup/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePauseBackup)))
+	mux.Handle("POST /api/backup/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResumeBackup)))
+	mux.Handle("DELETE /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteBackup)))
+	mux.Handle("GET /api/backup/{id}/snapshots", jwtMiddleware(http.HandlerFunc(server.handleListBackupSnapshots)))
+	mux.Handle("GET /api/backup/{id}/snapshots/{snapshotID}/items", jwtMiddleware(http.HandlerFunc(server.handleListBackupSnapshotItems)))
+
 	// Schedule Management Routes (Protected)
 	mux.Handle("GET /api/schedule", jwtMiddleware(http.HandlerFunc(server.handleListSchedules)))
 	mux.Handle("GET /api/schedule/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetSchedule)))

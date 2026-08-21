@@ -111,6 +111,29 @@ func TestNextRunIsStrictlyInTheFuture(t *testing.T) {
 	}
 }
 
+func TestNextRunInLocationPersistsUTC(t *testing.T) {
+	from := time.Date(2026, 7, 11, 23, 30, 0, 0, time.UTC)
+	next, err := NextRunInLocation("0 2 * * *", "Europe/Berlin", from)
+	if err != nil {
+		t.Fatalf("NextRunInLocation returned error: %v", err)
+	}
+
+	// 23:30 UTC is 01:30 CEST, so the next 02:00 local run is 00:00 UTC.
+	want := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
+	if !next.Equal(want) {
+		t.Errorf("NextRunInLocation() = %s, want %s", next.Format(time.RFC3339), want.Format(time.RFC3339))
+	}
+	if next.Location() != time.UTC {
+		t.Errorf("NextRunInLocation returned %s, want UTC", next.Location())
+	}
+}
+
+func TestNextRunInLocationRejectsInvalidTimezone(t *testing.T) {
+	if _, err := NextRunInLocation("0 2 * * *", "not/a-timezone", time.Now()); err == nil {
+		t.Fatal("NextRunInLocation accepted an invalid timezone")
+	}
+}
+
 func TestNextSyncRunAtSupportsNinetyMinutes(t *testing.T) {
 	from := time.Date(2026, 7, 11, 10, 5, 0, 0, time.UTC)
 	next, err := nextSyncRunAt(90, from)

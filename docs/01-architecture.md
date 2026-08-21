@@ -161,8 +161,8 @@ verdicts on transient provider errors.
 ## 6. Scheduler Engine (planned & periodic)
 
 The API gateway runs a background daemon (`scheduler.Run`) that checks for due schedules every minute
-and triggers linked migration and sync jobs. Schedules live in the `schedules` table; the schema reserves
-the `backup` task type, but backup triggering is not implemented.
+and triggers linked migration, sync, and backup jobs. Backup schedules use a five-field cron expression in
+the job's IANA timezone; the API atomically queues a fenced backup run and worker replicas execute it.
 
 - **One-shot (deferred start):** `POST /api/migration/start` with `scheduled_time` creates the
   migration in `SCHEDULED` status plus a one-shot schedule. At execution time the scheduler's

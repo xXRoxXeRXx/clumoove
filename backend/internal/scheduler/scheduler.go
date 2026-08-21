@@ -109,7 +109,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 	if isActive {
 		logger.InfoContext(ctx, "schedule_overlap_skipped")
 		// For recurring jobs, still update next_run_at even if skipped
-		if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
+		if schedule.CronExpression.Valid || schedule.TaskType == "sync" || schedule.TaskType == "backup" {
 			nextRun, err := s.nextRunForSchedule(ctx, schedule)
 			if err == nil {
 				if err := db.UpdateNextRunAtContext(ctx, s.db, schedule.ID, nextRun); err != nil {
@@ -144,7 +144,7 @@ func (s *Scheduler) processSchedule(ctx context.Context, schedule *db.Schedule) 
 	logger.InfoContext(ctx, "schedule_triggered")
 
 	// 3. Update schedule lifecycle
-	if schedule.CronExpression.Valid || schedule.TaskType == "sync" {
+	if schedule.CronExpression.Valid || schedule.TaskType == "sync" || schedule.TaskType == "backup" {
 		// Recurring: calculate next run time
 		nextRun, err := s.nextRunForSchedule(ctx, schedule)
 		if err != nil {
@@ -180,6 +180,13 @@ func (s *Scheduler) nextRunForSchedule(ctx context.Context, schedule *db.Schedul
 			return time.Time{}, fmt.Errorf("get sync job interval: %w", err)
 		}
 		return nextSyncRunAt(job.IntervalMinutes, time.Now())
+	}
+	if schedule.TaskType == "backup" {
+		job, err := db.GetBackupScheduleInfoContext(ctx, s.db, schedule.TaskID)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("get backup job schedule: %w", err)
+		}
+		return NextRunInLocation(job.CronExpression, job.Timezone, time.Now())
 	}
 	if !schedule.CronExpression.Valid {
 		return time.Time{}, fmt.Errorf("schedule %s has no recurrence", schedule.ID)
@@ -231,9 +238,14 @@ func (s *Scheduler) isJobActive(ctx context.Context, taskType, taskID string) (b
 		return isJobActiveStatus(job.Status), nil
 
 	case "backup":
-		// Future: Check backup_jobs table when implemented
-		// For now, return false to allow scheduling
-		return false, nil
+		job, err := db.GetBackupScheduleInfoContext(ctx, s.db, taskID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
+			return false, err
+		}
+		return job.Status == "QUEUED" || job.Status == "SCANNING" || job.Status == "RUNNING" || job.Status == "VERIFYING", nil
 
 	default:
 		return false, fmt.Errorf("unknown task type: %s", taskType)
@@ -248,7 +260,7 @@ func (s *Scheduler) triggerJob(ctx context.Context, schedule *db.Schedule) error
 	case "sync":
 		return s.triggerSync(ctx, schedule.TaskID)
 	case "backup":
-		return s.triggerBackup(ctx, schedule.TaskID)
+		return s.triggerBackup(ctx, schedule)
 	default:
 		return fmt.Errorf("unknown task type: %s", schedule.TaskType)
 	}
@@ -321,10 +333,38 @@ func (s *Scheduler) triggerSync(ctx context.Context, syncJobID string) error {
 	return nil
 }
 
-// triggerBackup is a placeholder for future backup job implementation
-func (s *Scheduler) triggerBackup(ctx context.Context, backupJobID string) error {
-	// Future: Implement backup job triggering
-	return fmt.Errorf("backup scheduling is not implemented for job %s", backupJobID)
+// triggerBackup atomically queues a backup run. Execution is intentionally
+// worker-owned so the API scheduler never handles decrypted credentials.
+func (s *Scheduler) triggerBackup(ctx context.Context, schedule *db.Schedule) error {
+	job, err := db.GetBackupScheduleInfoContext(ctx, s.db, schedule.TaskID)
+	if err != nil {
+		return fmt.Errorf("get backup job %s: %w", schedule.TaskID, err)
+	}
+	if job.Status == "PAUSED" || job.Status == "DELETING" {
+		return fmt.Errorf("backup job %s is administratively blocked", schedule.TaskID)
+	}
+
+	dueAt := time.Now().UTC()
+	if schedule.NextRunAt.Valid {
+		dueAt = schedule.NextRunAt.Time.UTC()
+	}
+	location, err := time.LoadLocation(job.Timezone)
+	if err != nil {
+		return fmt.Errorf("load backup timezone: %w", err)
+	}
+	localKey := dueAt.In(location).Format("2006-01-02T15:04")
+	claim, err := db.ClaimBackupJobPassContext(ctx, s.db, schedule.TaskID, "schedule", &localKey)
+	if err != nil {
+		return fmt.Errorf("claim backup job %s: %w", schedule.TaskID, err)
+	}
+	switch claim.Outcome {
+	case db.BackupClaimed, db.BackupClaimOverlap, db.BackupClaimDuplicate:
+		return nil
+	case db.BackupClaimBlocked:
+		return fmt.Errorf("backup job %s is administratively blocked", schedule.TaskID)
+	default:
+		return fmt.Errorf("unknown backup claim outcome %q", claim.Outcome)
+	}
 }
 
 // RunOrphanedSyncJobRecovery periodically frees sync jobs whose API-side

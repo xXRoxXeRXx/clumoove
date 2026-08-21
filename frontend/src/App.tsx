@@ -356,11 +356,13 @@ function App() {
     navigate('select');
   };
 
-  const handleStartSuccess = (id: string, isSync?: boolean) => {
+  const handleStartSuccess = (id: string, isSync?: boolean, isBackup?: boolean) => {
     // Secrets (source/target passwords, OAuth tokens, SFTP keys) are no longer
     // needed once the migration is created — drop them from memory.
     clearCreationState();
-    if (isSync) {
+    if (isBackup) {
+      navigate('history');
+    } else if (isSync) {
       navigate('syncdetail', id);
     } else {
       navigate('dashboard', id);

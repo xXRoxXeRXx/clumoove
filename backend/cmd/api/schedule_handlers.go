@@ -84,6 +84,18 @@ func (s *APIServer) handleDeleteSchedule(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusNotFound, ErrScheduleNotFound)
 		return
 	}
+	schedule, err := db.GetScheduleContext(r.Context(), s.db, id)
+	if err != nil {
+		s.logf(r, "handleDeleteSchedule: failed to get schedule %s: %v", id, err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if schedule.TaskType == "backup" {
+		// Backup schedules are coupled to their repository lifecycle and must be
+		// paused/resumed through the backup API rather than orphaned here.
+		writeConflictError(w, ErrBackupInvalidState)
+		return
+	}
 
 	err = db.DeleteSchedule(s.db, id)
 	if err != nil {

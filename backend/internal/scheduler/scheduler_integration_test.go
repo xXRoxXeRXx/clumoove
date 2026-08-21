@@ -48,10 +48,3 @@ func TestTriggerMigrationInvalidClaimIsNotFound(t *testing.T) {
 		t.Fatalf("triggerMigration error = %v, want errors.Is(sql.ErrNoRows)", err)
 	}
 }
-
-func TestTriggerBackupReturnsNotImplementedError(t *testing.T) {
-	s := NewScheduler(nil, nil, nil)
-	if err := s.triggerBackup(context.Background(), "backup-job"); err == nil {
-		t.Fatal("triggerBackup unexpectedly succeeded")
-	}
-}

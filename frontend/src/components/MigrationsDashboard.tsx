@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { User, Migration, SyncJob } from '../types';
+import type { User, Migration, SyncJob, BackupJob } from '../types';
 import { useTranslation } from 'react-i18next';
 import { useFormat } from '../utils/format';
 import { useApiError } from '../utils/apiError';
@@ -18,6 +18,7 @@ import {
   TrashIcon,
 } from './icons';
 import { ProgressBar } from './ProgressBar';
+import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -30,7 +31,7 @@ interface MigrationsDashboardProps {
   onOpenFilemanagerRoot?: () => void;
 }
 
-type DashboardTab = 'migrations' | 'sync' | 'fileManager';
+type DashboardTab = 'migrations' | 'sync' | 'backup' | 'fileManager';
 
 function commonParentPath(paths: string[] | undefined): string {
   if (!paths?.length) return '/';
@@ -65,12 +66,16 @@ export function MigrationsDashboard({
   const [syncJobs, setSyncJobs] = useState<SyncJob[]>([]);
   const [syncLoading, setSyncLoading] = useState<boolean>(true);
   const [syncError, setSyncError] = useState<string>('');
+  const [backupJobs, setBackupJobs] = useState<BackupJob[]>([]);
+  const [backupLoading, setBackupLoading] = useState<boolean>(true);
+  const [backupError, setBackupError] = useState<string>('');
 
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const tabRefs = useRef<Record<DashboardTab, HTMLButtonElement | null>>({
     migrations: null,
     sync: null,
+    backup: null,
     fileManager: null,
   });
   // A live stream frame is newer than the initial HTTP snapshot, regardless of
@@ -148,6 +153,24 @@ export function MigrationsDashboard({
     }
   }, [apiUrl, token, t, translateApiError]);
 
+  const fetchBackupJobs = useCallback(async (signal: AbortSignal) => {
+    try {
+      const result = await apiJson<BackupJob[]>(`${apiUrl}/api/backup`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+      });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.loadFailed')));
+      if (!signal.aborted) {
+        setBackupJobs(result.data || []);
+        setBackupError('');
+      }
+    } catch (err: unknown) {
+      if (!signal.aborted) setBackupError(err instanceof Error ? err.message : t('backup.loadFailed'));
+    } finally {
+      if (!signal.aborted) setBackupLoading(false);
+    }
+  }, [apiUrl, token, t, translateApiError]);
+
   // Load both lists immediately instead of waiting for the initial SSE frames.
   // The streams remain responsible for live updates after this first snapshot.
   useEffect(() => {
@@ -193,6 +216,18 @@ export function MigrationsDashboard({
       }
     };
   }, [fetchMigrations, fetchSyncJobs]);
+
+  useEffect(() => {
+    if (activeTab !== 'backup') return;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      void fetchBackupJobs(controller.signal);
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
+  }, [activeTab, fetchBackupJobs]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -377,12 +412,14 @@ export function MigrationsDashboard({
 
   const totalMigrations = migrations.length;
   const totalSyncs = syncJobs.length;
-  const totalTransfers = totalMigrations + totalSyncs;
+  const totalBackups = backupJobs.length;
+  const totalTransfers = totalMigrations + totalSyncs + totalBackups;
   const initialDataLoading = loading || syncLoading;
 
   const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING').length;
   const activeSyncs = syncJobs.filter(s => s.status === 'RUNNING' || s.status === 'INDEXING').length;
-  const activeTotal = activeMigrations + activeSyncs;
+  const activeBackups = backupJobs.filter((job) => ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status)).length;
+  const activeTotal = activeMigrations + activeSyncs + activeBackups;
 
   const completedMigrations = migrations.filter(m => m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS').length;
   const failedMigrations = migrations.filter(m => m.status === 'FAILED' || m.status === 'CANCELLED').length;
@@ -398,7 +435,8 @@ export function MigrationsDashboard({
     : 100;
 
   const totalBytesMigrated = migrations.reduce((acc, m) => acc + (m.processed_bytes || 0), 0)
-    + syncJobs.reduce((acc, s) => acc + (s.processed_bytes || 0), 0);
+    + syncJobs.reduce((acc, s) => acc + (s.processed_bytes || 0), 0)
+    + backupJobs.reduce((acc, job) => acc + (job.processed_bytes || 0), 0);
 
   // The shared Tabs component cannot yet preserve this tablist's count badges and adjacent filters.
   // Keep its horizontal keyboard contract in sync when those extension points are added.
@@ -416,10 +454,10 @@ export function MigrationsDashboard({
 
     switch (event.key) {
       case 'ArrowRight':
-        nextTab = tab === 'migrations' ? 'sync' : tab === 'sync' ? 'fileManager' : 'migrations';
+        nextTab = tab === 'migrations' ? 'sync' : tab === 'sync' ? 'backup' : tab === 'backup' ? 'fileManager' : 'migrations';
         break;
       case 'ArrowLeft':
-        nextTab = tab === 'migrations' ? 'fileManager' : tab === 'sync' ? 'migrations' : 'sync';
+        nextTab = tab === 'migrations' ? 'fileManager' : tab === 'sync' ? 'migrations' : tab === 'backup' ? 'sync' : 'backup';
         break;
       case 'Home':
         nextTab = 'migrations';
@@ -557,6 +595,26 @@ export function MigrationsDashboard({
               </span>
             </button>
             <button
+              ref={(node) => { tabRefs.current.backup = node; }}
+              id="backup-tab"
+              onClick={() => setActiveTab('backup')}
+              role="tab"
+              aria-selected={activeTab === 'backup'}
+              aria-controls="backup-panel"
+              tabIndex={activeTab === 'backup' ? 0 : -1}
+              onKeyDown={(event) => handleTabKeyDown(event, 'backup')}
+              className={`flex items-center gap-2 px-3 py-2 text-sm ${
+                activeTab === 'backup'
+                  ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <span>{t('backup.tab')}</span>
+              <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'backup' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+                {backupJobs.length}
+              </span>
+            </button>
+            <button
               ref={(node) => { tabRefs.current.fileManager = node; }}
               id="filemanager-tab"
               onClick={() => onOpenFilemanagerRoot?.()}
@@ -601,9 +659,9 @@ export function MigrationsDashboard({
 
         {/* Filtered Data Rendering */}
         <div
-          id={activeTab === 'sync' ? 'sync-panel' : 'migrations-panel'}
+          id={activeTab === 'sync' ? 'sync-panel' : activeTab === 'backup' ? 'backup-panel' : 'migrations-panel'}
           role="tabpanel"
-          aria-labelledby={activeTab === 'sync' ? 'sync-tab' : 'migrations-tab'}
+          aria-labelledby={activeTab === 'sync' ? 'sync-tab' : activeTab === 'backup' ? 'backup-tab' : 'migrations-tab'}
           className="min-h-[360px]"
         >
         {(() => {
@@ -624,6 +682,19 @@ export function MigrationsDashboard({
                 onSelectActiveSync={onSelectActiveSync}
                 onStartNewSync={onStartNewMigration}
                 onOpenFileManager={onOpenFileManager}
+              />
+            );
+          }
+
+          if (activeTab === 'backup') {
+            return (
+              <BackupList
+                apiUrl={apiUrl}
+                token={token}
+                backupJobs={backupJobs}
+                loading={backupLoading}
+                error={backupError}
+                setBackupJobs={setBackupJobs}
               />
             );
           }
@@ -1175,6 +1246,125 @@ function SyncList({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function BackupList({
+  apiUrl,
+  token,
+  backupJobs,
+  loading,
+  error,
+  setBackupJobs,
+}: {
+  apiUrl: string;
+  token: string;
+  backupJobs: BackupJob[];
+  loading: boolean;
+  error: string;
+  setBackupJobs: React.Dispatch<React.SetStateAction<BackupJob[]>>;
+}) {
+  const { t } = useTranslation();
+  const { formatBytes, formatDateTime } = useFormat();
+  const translateApiError = useApiError();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [controlLoading, setControlLoading] = useState<string | null>(null);
+  const [browseJobID, setBrowseJobID] = useState<string | null>(null);
+
+  const handleAction = async (job: BackupJob, action: 'run' | 'pause' | 'resume') => {
+    setControlLoading(`${job.id}:${action}`);
+    try {
+      const result = await apiJson(`${apiUrl}/api/backup/${job.id}/${action}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
+      setBackupJobs((current) => current.map((item) => item.id === job.id
+        ? { ...item, status: action === 'pause' ? 'PAUSED' : action === 'resume' ? 'IDLE' : 'QUEUED' }
+        : item));
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : t('backup.actionFailed'), 'error');
+    } finally {
+      setControlLoading(null);
+    }
+  };
+
+  const handleDelete = async (job: BackupJob) => {
+    const accepted = await confirm({ title: t('backup.deleteTitle'), message: t('backup.deleteConfirm'), confirmLabel: t('backup.deleteRepository') });
+    if (!accepted) return;
+    setControlLoading(`${job.id}:delete`);
+    try {
+      const result = await apiJson(`${apiUrl}/api/backup/${job.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+      if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.actionFailed')));
+      setBackupJobs((current) => current.map((item) => item.id === job.id ? { ...item, status: 'DELETING' } : item));
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : t('backup.actionFailed'), 'error');
+    } finally {
+      setControlLoading(null);
+    }
+  };
+
+  if (browseJobID) return <BackupSnapshotBrowser apiUrl={apiUrl} token={token} jobID={browseJobID} onBack={() => setBrowseJobID(null)} />;
+  if (loading) return <div className="py-20 text-center text-xs text-[var(--color-text-muted)]">{t('common.loading')}</div>;
+  if (error) return <div className="ui-alert ui-alert-error p-4 text-sm" role="alert">{error}</div>;
+  if (backupJobs.length === 0) {
+    return (
+      <div className="ui-card border-2 border-dashed bg-[var(--color-bg-tertiary)] py-16 text-center">
+        <p className="font-display font-bold text-[var(--color-text-secondary)]">{t('backup.none')}</p>
+        <p className="mt-1 text-xs text-[var(--color-text-muted)]">{t('backup.noneHint')}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="ui-responsive-table w-full border-collapse text-left">
+        <thead>
+          <tr className="border-b border-[var(--color-border)]/60 text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+            <th className="px-4 py-4 font-semibold">{t('migrations.sourceTarget')}</th>
+            <th className="px-4 py-4 font-semibold">{t('migrations.status')}</th>
+            <th className="px-4 py-4 font-semibold">{t('backup.metrics')}</th>
+            <th className="px-4 py-4 font-semibold">{t('backup.nextSchedule')}</th>
+            <th className="px-4 py-4 text-right font-semibold">{t('migrations.actions')}</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--color-border-light)]">
+          {backupJobs.map((job) => {
+            const isPaused = job.status === 'PAUSED';
+            const running = ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status);
+            const badgeStatus = job.status === 'QUEUED' ? 'PENDING' : job.status === 'SCANNING' ? 'INDEXING' : job.status;
+            const pauseLabel = isPaused ? t('backup.resume') : t('backup.pause');
+            return (
+              <tr key={job.id} className="hover:bg-[var(--color-bg-tertiary)]">
+                <td data-label={t('migrations.sourceTarget')} className="px-4 py-4">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text-primary)]">
+                    <span className="capitalize">{job.source_provider}</span><span aria-hidden="true">→</span><span className="capitalize">{job.target_provider}</span>
+                  </div>
+                  <p className="mt-1 max-w-48 truncate text-[10px] font-mono text-[var(--color-text-muted)]" title={job.selected_paths.join(', ')}>{job.selected_paths.join(', ')}</p>
+                </td>
+                <td data-label={t('migrations.status')} className="px-4 py-4"><StatusBadge status={badgeStatus} size="sm" /></td>
+                <td data-label={t('backup.metrics')} className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
+                  <div>{t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })}</div>
+                  <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{formatBytes(job.processed_bytes)} · {t('backup.deduplicated', { value: formatBytes(job.deduplicated_bytes) })}</div>
+                </td>
+                <td data-label={t('backup.nextSchedule')} className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
+                  <div>{job.cron_expression}</div><div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{job.timezone}{job.last_run_at ? ` · ${formatDateTime(job.last_run_at)}` : ''}</div>
+                </td>
+                <td data-label={t('migrations.actions')} className="px-4 py-4 text-right">
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => void handleAction(job, 'run')} disabled={running || controlLoading !== null} className="ui-button-secondary px-3 py-2 text-xs disabled:opacity-40">{controlLoading === `${job.id}:run` ? <ArrowPathIcon className="size-4 animate-spin" /> : t('backup.run')}</button>
+                    <button type="button" onClick={() => setBrowseJobID(job.id)} className="ui-button-secondary px-3 py-2 text-xs">{t('backup.browseSnapshots')}</button>
+                    <button type="button" onClick={() => void handleAction(job, isPaused ? 'resume' : 'pause')} disabled={controlLoading !== null || (!isPaused && !['IDLE', 'FAILED', 'QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status))} className="ui-button-secondary px-3 py-2 text-xs disabled:opacity-40" aria-label={pauseLabel} title={pauseLabel}>{controlLoading?.startsWith(`${job.id}:`) ? <ArrowPathIcon className="size-4 animate-spin" /> : isPaused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />}</button>
+                    <button type="button" onClick={() => void handleDelete(job)} disabled={controlLoading !== null || job.status === 'DELETING'} className="ui-button-secondary px-3 py-2 text-xs text-[var(--color-error-text)] disabled:opacity-40">{t('backup.deleteRepository')}</button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

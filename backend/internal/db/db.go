@@ -954,6 +954,126 @@ func InitDB(connStr string) (*sql.DB, error) {
 			if err != nil {
 				log.Printf("Failed schema migration (idx_notification_deliveries_pending): %v\n", err)
 			}
+
+			// Keep this backup repository catalog DDL in sync with db/schema.sql.
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_jobs (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				lock_id BIGSERIAL UNIQUE NOT NULL, source_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL, target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
+				source_url TEXT NOT NULL, source_username TEXT NOT NULL, source_password_encrypted TEXT NOT NULL, source_refresh_token_encrypted TEXT, source_token_expires_at TIMESTAMP WITH TIME ZONE, source_mega_session_id_encrypted TEXT, source_mega_master_key_encrypted TEXT,
+				target_url TEXT NOT NULL, target_username TEXT NOT NULL, target_password_encrypted TEXT NOT NULL, target_refresh_token_encrypted TEXT, target_token_expires_at TIMESTAMP WITH TIME ZONE, target_mega_session_id_encrypted TEXT, target_mega_master_key_encrypted TEXT,
+				source_provider TEXT NOT NULL, target_provider TEXT NOT NULL, selected_paths JSONB NOT NULL DEFAULT '[]'::jsonb, target_dir TEXT NOT NULL,
+				repository_id UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE, repository_root TEXT NOT NULL, cron_expression TEXT NOT NULL, timezone TEXT NOT NULL,
+				retention_count INT NOT NULL DEFAULT 30 CHECK (retention_count >= 1), threads INT NOT NULL DEFAULT 8 CHECK (threads BETWEEN 1 AND 16),
+				status TEXT NOT NULL DEFAULT 'IDLE' CHECK (status IN ('IDLE','QUEUED','SCANNING','RUNNING','VERIFYING','PAUSED','FAILED','DELETING')), run_generation INT NOT NULL DEFAULT 0 CHECK (run_generation >= 0),
+				last_run_at TIMESTAMP WITH TIME ZONE, last_run_status TEXT, total_files INT NOT NULL DEFAULT 0 CHECK (total_files >= 0), total_bytes BIGINT NOT NULL DEFAULT 0 CHECK (total_bytes >= 0), processed_files INT NOT NULL DEFAULT 0 CHECK (processed_files >= 0), processed_bytes BIGINT NOT NULL DEFAULT 0 CHECK (processed_bytes >= 0), deduplicated_bytes BIGINT NOT NULL DEFAULT 0 CHECK (deduplicated_bytes >= 0), failed_files INT NOT NULL DEFAULT 0 CHECK (failed_files >= 0), error_code TEXT,
+				deletion_state TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (deletion_state IN ('ACTIVE','REQUESTED','DELETING','DELETED')), created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_jobs): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_jobs_user_created ON backup_jobs(user_id, created_at DESC); CREATE INDEX IF NOT EXISTS idx_backup_jobs_status ON backup_jobs(status)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_jobs indexes): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_runs (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), backup_job_id UUID NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE, generation INT NOT NULL CHECK (generation > 0),
+				trigger TEXT NOT NULL CHECK (trigger IN ('manual','schedule','catch_up')), scheduled_local_key TEXT,
+				state TEXT NOT NULL DEFAULT 'QUEUED' CHECK (state IN ('QUEUED','SCANNING','RUNNING','VERIFYING','COMPLETED','PARTIAL','FAILED','CANCELLED')),
+				total_files INT NOT NULL DEFAULT 0 CHECK (total_files >= 0), total_bytes BIGINT NOT NULL DEFAULT 0 CHECK (total_bytes >= 0), processed_files INT NOT NULL DEFAULT 0 CHECK (processed_files >= 0), processed_bytes BIGINT NOT NULL DEFAULT 0 CHECK (processed_bytes >= 0), deduplicated_bytes BIGINT NOT NULL DEFAULT 0 CHECK (deduplicated_bytes >= 0), failed_files INT NOT NULL DEFAULT 0 CHECK (failed_files >= 0), error_code TEXT,
+				started_at TIMESTAMP WITH TIME ZONE, finished_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (backup_job_id, generation), UNIQUE (backup_job_id, id)
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_runs): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_backup_runs_scheduled_local_key ON backup_runs(backup_job_id, scheduled_local_key) WHERE scheduled_local_key IS NOT NULL; CREATE INDEX IF NOT EXISTS idx_backup_runs_queued ON backup_runs(created_at) WHERE state = 'QUEUED'; CREATE INDEX IF NOT EXISTS idx_backup_runs_job_created ON backup_runs(backup_job_id, created_at DESC)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_runs indexes): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_snapshots (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), backup_job_id UUID NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE, backup_run_id UUID NOT NULL,
+				state TEXT NOT NULL DEFAULT 'PUBLISHING' CHECK (state IN ('PUBLISHING','READY','PARTIAL','EXPIRED','DELETING','DAMAGED')), selected_roots JSONB NOT NULL DEFAULT '[]'::jsonb,
+				total_files INT NOT NULL DEFAULT 0 CHECK (total_files >= 0), total_dirs INT NOT NULL DEFAULT 0 CHECK (total_dirs >= 0), total_bytes BIGINT NOT NULL DEFAULT 0 CHECK (total_bytes >= 0), omitted_unstable_count INT NOT NULL DEFAULT 0 CHECK (omitted_unstable_count >= 0), omitted_error_count INT NOT NULL DEFAULT 0 CHECK (omitted_error_count >= 0), integrity_state TEXT NOT NULL DEFAULT 'UNKNOWN' CHECK (integrity_state IN ('UNKNOWN','VALID','DAMAGED')),
+				expires_at TIMESTAMP WITH TIME ZONE, deletion_started_at TIMESTAMP WITH TIME ZONE, deleted_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (backup_job_id, backup_run_id), FOREIGN KEY (backup_job_id, backup_run_id) REFERENCES backup_runs(backup_job_id, id) ON DELETE CASCADE
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_snapshots): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_snapshots_job_created ON backup_snapshots(backup_job_id, created_at DESC); CREATE INDEX IF NOT EXISTS idx_backup_snapshots_visible ON backup_snapshots(backup_job_id, created_at DESC) WHERE state IN ('READY','PARTIAL','DAMAGED')`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_snapshots indexes): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_packs (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), backup_job_id UUID NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE, remote_rel_path TEXT NOT NULL, sha256 BYTEA NOT NULL CHECK (octet_length(sha256) = 32), size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+				state TEXT NOT NULL DEFAULT 'UPLOADING' CHECK (state IN ('UPLOADING','READY','REPLACING','DELETE_PENDING','DELETED','DAMAGED')), generation INT NOT NULL DEFAULT 0 CHECK (generation >= 0), last_checked_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE (backup_job_id, id), UNIQUE (backup_job_id, remote_rel_path), UNIQUE (backup_job_id, sha256)
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_packs): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_packs_job_state ON backup_packs(backup_job_id, state)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_packs index): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_blocks (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), backup_job_id UUID NOT NULL, sha256 BYTEA NOT NULL CHECK (octet_length(sha256) = 32), plaintext_size INT NOT NULL CHECK (plaintext_size BETWEEN 1 AND 4194304), backup_pack_id UUID NOT NULL, payload_offset BIGINT NOT NULL CHECK (payload_offset >= 0), payload_length INT NOT NULL CHECK (payload_length BETWEEN 1 AND 4194304), created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE (backup_job_id, sha256), UNIQUE (backup_job_id, id), FOREIGN KEY (backup_job_id, backup_pack_id) REFERENCES backup_packs(backup_job_id, id) ON DELETE RESTRICT
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_blocks): %v\n", err)
+			}
+			// v1 payloads match plaintext, but future compressed formats may not.
+			_, err = db.Exec(`ALTER TABLE backup_blocks DROP CONSTRAINT IF EXISTS backup_blocks_check`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_blocks payload constraint): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_blocks_job_pack ON backup_blocks(backup_job_id, backup_pack_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_blocks index): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_snapshot_items (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), backup_snapshot_id UUID NOT NULL REFERENCES backup_snapshots(id) ON DELETE CASCADE, relative_path TEXT NOT NULL, is_dir BOOLEAN NOT NULL, size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (size_bytes >= 0), mtime TIMESTAMP WITH TIME ZONE, metadata JSONB, file_sha256 BYTEA CHECK (file_sha256 IS NULL OR octet_length(file_sha256) = 32), state TEXT NOT NULL DEFAULT 'AVAILABLE' CHECK (state IN ('AVAILABLE','UNSTABLE','ERROR')), error_code TEXT, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE (backup_snapshot_id, relative_path), CHECK ((is_dir AND size_bytes = 0 AND file_sha256 IS NULL) OR (NOT is_dir AND file_sha256 IS NOT NULL))
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_snapshot_items): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_snapshot_items_snapshot ON backup_snapshot_items(backup_snapshot_id, relative_path)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_snapshot_items index): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_snapshot_item_blocks (
+				backup_snapshot_item_id UUID NOT NULL REFERENCES backup_snapshot_items(id) ON DELETE CASCADE, ordinal INT NOT NULL CHECK (ordinal >= 0), backup_block_id UUID NOT NULL REFERENCES backup_blocks(id) ON DELETE RESTRICT,
+				PRIMARY KEY (backup_snapshot_item_id, ordinal), UNIQUE (backup_snapshot_item_id, backup_block_id)
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_snapshot_item_blocks): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_snapshot_item_blocks_block ON backup_snapshot_item_blocks(backup_block_id)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_snapshot_item_blocks index): %v\n", err)
+			}
+
+			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_maintenance (
+				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), backup_job_id UUID NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE, kind TEXT NOT NULL CHECK (kind IN ('RETENTION','COMPACTION','DELETE_REPOSITORY','VERIFY')), state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','RUNNING','RETRY_WAIT','COMPLETED','FAILED')), byte_budget BIGINT CHECK (byte_budget IS NULL OR byte_budget > 0), claim_deadline TIMESTAMP WITH TIME ZONE, cursor JSONB NOT NULL DEFAULT '{}'::jsonb, attempts INT NOT NULL DEFAULT 0 CHECK (attempts >= 0), next_retry_at TIMESTAMP WITH TIME ZONE, error_code TEXT, started_at TIMESTAMP WITH TIME ZONE, finished_at TIMESTAMP WITH TIME ZONE, created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_maintenance): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_maintenance_pending ON backup_maintenance(next_retry_at, created_at) WHERE state IN ('PENDING','RETRY_WAIT') AND kind <> 'VERIFY'; CREATE INDEX IF NOT EXISTS idx_backup_maintenance_job ON backup_maintenance(backup_job_id, created_at DESC)`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup_maintenance indexes): %v\n", err)
+			}
+
+			_, err = db.Exec(`DROP TRIGGER IF EXISTS update_backup_jobs_updated_at ON backup_jobs; CREATE TRIGGER update_backup_jobs_updated_at BEFORE UPDATE ON backup_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); DROP TRIGGER IF EXISTS update_backup_runs_updated_at ON backup_runs; CREATE TRIGGER update_backup_runs_updated_at BEFORE UPDATE ON backup_runs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); DROP TRIGGER IF EXISTS update_backup_snapshots_updated_at ON backup_snapshots; CREATE TRIGGER update_backup_snapshots_updated_at BEFORE UPDATE ON backup_snapshots FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); DROP TRIGGER IF EXISTS update_backup_packs_updated_at ON backup_packs; CREATE TRIGGER update_backup_packs_updated_at BEFORE UPDATE ON backup_packs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); DROP TRIGGER IF EXISTS update_backup_blocks_updated_at ON backup_blocks; CREATE TRIGGER update_backup_blocks_updated_at BEFORE UPDATE ON backup_blocks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); DROP TRIGGER IF EXISTS update_backup_snapshot_items_updated_at ON backup_snapshot_items; CREATE TRIGGER update_backup_snapshot_items_updated_at BEFORE UPDATE ON backup_snapshot_items FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); DROP TRIGGER IF EXISTS update_backup_maintenance_updated_at ON backup_maintenance; CREATE TRIGGER update_backup_maintenance_updated_at BEFORE UPDATE ON backup_maintenance FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup triggers): %v\n", err)
+			}
 			// notification_deliveries has an updated_at column: add the trigger that was
 			// missing from the original schema so every UPDATE reflects actual modification time.
 			_, err = db.Exec(`DROP TRIGGER IF EXISTS update_notification_deliveries_updated_at ON notification_deliveries;

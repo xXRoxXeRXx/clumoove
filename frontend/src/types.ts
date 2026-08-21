@@ -134,3 +134,29 @@ export interface SyncJob {
   created_at: string;
 }
 
+export interface BackupJob {
+  id: string;
+  status: string;
+  source_provider: string;
+  source_url: string | null;
+  target_provider: string;
+  target_url: string | null;
+  source_profile_id?: string | null;
+  target_profile_id?: string | null;
+  selected_paths: string[];
+  target_dir: string;
+  cron_expression: string;
+  timezone: string;
+  retention_count: number;
+  threads: number;
+  total_files: number;
+  total_bytes: number;
+  processed_files: number;
+  processed_bytes: number;
+  deduplicated_bytes: number;
+  failed_files: number;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  created_at: string;
+}
+

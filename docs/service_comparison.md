@@ -11,12 +11,12 @@ Obwohl alle drei Dienste Daten über das [StorageProvider-Interface](file:///c:/
 | Kriterium | Migration (One-Shot) | Synchronisation (Sync) | Backup-Dienst (Versionierung) |
 | :--- | :--- | :--- | :--- |
 | **Zweck** | Einmaliger oder geplanter Umzug von Daten von A nach B. | Fortlaufender, zeitgesteuerter Abgleich zweier Speicher. | Erstellung historischer, unveränderlicher Snapshots zum Schutz vor Datenverlust. |
-| **Lebenszyklus** | Temporär. Endet mit Erfolg (`COMPLETED`) oder Abbruch. | Dauerhaft. Läuft wiederkehrend, bis der Job gelöscht wird. | Dauerhaft. Läuft wiederkehrend, bis der Job gelöscht wird. |
-| **Speicherung von Zugangsdaten** | **Temporär (max. 24h nach Abschluss).** Danach greift der automatische DSGVO-Clean. | **Dauerhaft.** Bleibt verschlüsselt gespeichert, solange der Job aktiv ist. | **Dauerhaft.** Bleibt verschlüsselt gespeichert, solange der Job aktiv ist. |
-| **Datenbereinigung (Cleanup)** | Löscht alle Transfer-Logs und Credentials 24 Stunden nach Abschluss. | Löscht nur alte Ausführungsberichte (z. B. nach 30 Tagen). Job bleibt aktiv. | Löscht alte Snapshots basierend auf der Retention Policy (z. B. GFS-Rotation). |
-| **Umgang mit Löschungen** | Ignoriert. Löschungen an der Quelle haben keinen Einfluss auf bereits kopierte Dateien. | **Wird propagiert.** Löschungen an der Quelle (A) entfernen die Datei auch am Ziel (B) (Mirror-Mode). | **Unveränderlich.** Gelöschte Dateien an der Quelle bleiben in älteren Snapshots erhalten. |
-| **Versionierung** | Nein (nur Überschreiben, Überspringen oder Umbenennen bei Konflikten). | Nein (nur ein aktiver Zustand auf beiden Seiten). | **Ja.** Ermöglicht das Zurückrollen auf beliebige Zeitpunkte in der Vergangenheit. |
-| **Konfliktbehandlung** | Konflikt-Strategie (`OVERWRITE`, `SKIP`, `RENAME`). | Konflikt-Richtlinie (`A_wins`, `B_wins`, `rename`, `manual`). | Keine Konflikte, da das Backup-Ziel ein schreibgeschütztes Archiv ist. |
+| **Lebenszyklus** | Temporär. Endet mit Erfolg (`COMPLETED`) oder Abbruch. | Dauerhaft. Läuft wiederkehrend, bis der Job gelöscht wird. | Geplant. Die Ausführung ist noch nicht verfügbar. |
+| **Speicherung von Zugangsdaten** | Verschlüsselt für die Lebensdauer der Migration gespeichert. Terminale Migrationen werden nach 30 Tagen gelöscht. | **Dauerhaft.** Bleibt verschlüsselt gespeichert, solange der Job aktiv ist. | Noch nicht implementiert. |
+| **Datenbereinigung (Cleanup)** | Löscht terminale Migrationen samt Task-Historie nach 30 Tagen. | Der Job bleibt aktiv; die aktuelle Delta-Basis wird nach einem erfolgreichen Pass atomar aktualisiert. | Noch nicht implementiert; weder Retention noch GFS existieren. |
+| **Umgang mit Löschungen** | Ignoriert. Löschungen an der Quelle haben keinen Einfluss auf bereits kopierte Dateien. | Optional. Die konfigurierbare Löschpropagierung ist standardmäßig deaktiviert. | Geplant: Snapshots sollen unveränderlich sein. |
+| **Versionierung** | Nein (nur Überschreiben, Überspringen oder Umbenennen bei Konflikten). | Nein (nur ein aktiver Zustand auf beiden Seiten). | Geplant; Wiederherstellung ist noch nicht verfügbar. |
+| **Konfliktbehandlung** | Konflikt-Strategie (`OVERWRITE`, `SKIP`, `RENAME`). | Konflikt-Strategie (`OVERWRITE`, `SKIP`, `RENAME`) je nach Richtung; kein Restore-Modus. | Geplant. |
 
 ---
 
@@ -33,7 +33,7 @@ Obwohl alle drei Dienste Daten über das [StorageProvider-Interface](file:///c:/
 
 ### 2.2. Synchronisation (Sync)
 1. **Initiierung:** Der Benutzer konfiguriert einen Sync-Job (z. B. stündlicher Sync zwischen Nextcloud und Google Drive).
-2. **Scheduler-Eintrag:** Ein Eintrag in `schedules` mit `cron_expression = "0 * * * *"` (jede Stunde) wird angelegt.
+2. **Scheduler-Eintrag:** Ein Eintrag in `schedules` ohne Cron-Ausdruck wird angelegt; der nächste Lauf wird aus `interval_minutes` berechnet, sodass auch Intervalle wie 90 Minuten möglich sind.
 3. **Zustandsabgleich (State Engine):** 
    - Bei jedem Start scannt die Engine beide Verzeichnisse (BFS-Scan).
    - Sie vergleicht die Dateistände mit der Tabelle `sync_state`.
@@ -42,14 +42,12 @@ Obwohl alle drei Dienste Daten über das [StorageProvider-Interface](file:///c:/
 5. **Erneutes Scheduling:** Der Scheduler berechnet `next_run_at` für die nächste Stunde. Die Zugangsdaten bleiben verschlüsselt in der DB.
 
 ### 2.3. Backup-Dienst (Point-in-Time Snapshot)
-1. **Initiierung:** Der Benutzer konfiguriert ein wöchentliches Backup mit einer Aufbewahrungsregel (z. B. "Behalte 4 wöchentliche Backups").
-2. **Scheduler-Eintrag:** Ein Eintrag in `schedules` mit `cron_expression = "0 2 * * 0"` (jeden Sonntag um 02:00 Uhr) wird angelegt.
-3. **Snapshot-Erstellung (Deduplizierung):**
-   - Die Engine liest das Quellverzeichnis ein.
-   - Für jede Datei wird geprüft, ob ihr Hash bereits in der globalen Tabelle `backup_files` für diesen Job existiert.
-   - *Existiert bereits:* Es wird lediglich ein neuer Verweis in `backup_snapshot_items` angelegt. Es findet **kein** physischer Upload statt (Deduplizierung).
-   - *Existiert nicht:* Die Datei wird (optional clientseitig verschlüsselt) auf den Backup-Server hochgeladen und neu registriert.
-4. **Retention-Bereinigung:** Nach dem Backup prüft die Engine die GFS-Regeln. Snapshots, die außerhalb des Fensters liegen, werden gelöscht. Physische Dateien in `backup_files`, die von keinem verbleibenden Snapshot mehr referenziert werden, werden vom Ziel-Server gelöscht.
+1. **Initiierung:** Ein Backup verwendet ausschließlich gespeicherte Verbindungsprofile, Quellpfade, ein fünf-Feld-Cron mit IANA-Zeitzone sowie eine Retention von 1 bis 365 Snapshots. Immich ist ausgeschlossen.
+2. **Repository:** Das Ziel bleibt nach dem Erstellen unveränderlich. Clumoove legt darunter einen privaten `.clumoove-backup/<repository-id>`-Pfad mit `format-v1.json` an.
+3. **Ausführung:** Der Scheduler erzeugt nur einen generation-gefenceten Run. Ein Worker übernimmt ihn, hält einen PostgreSQL-Advisory-Lock, zerlegt Dateien in 4-MiB-SHA-256-Blöcke und speichert deduplizierte, unveränderliche Packs im Clumoove-Format v1.
+4. **Publishing:** Ein Snapshot bleibt bis zur Verifikation unsichtbar. Erst nach Größenprüfung der hochgeladenen Packs werden Katalog, Snapshot und Run atomar als `READY` oder `PARTIAL` veröffentlicht.
+
+Restore, eine vollständige Repository-Prüfung, Kompression, Verschlüsselung des Archivformats und GFS-Retention gehören weiterhin zu Release 2 beziehungsweise späteren Formatversionen. Das Repository ist nicht kompatibel mit Restic oder Duplicati.
 
 ---
 
@@ -63,8 +61,7 @@ Das folgende Diagramm zeigt den Unterschied in der Datenaufbewahrung und dem Dat
     ┌───────────────────────────────┴──────────────────────────────┐
     ▼                               ▼                              ▼
 [ Migration ]                  [ Sync ]                       [ Backup ]
- - Keine Historie               - Prüft sync_state             - Erstellt Snapshot-Eintrag
- - Log-Wipe nach 24h            - Aktualisiert Hashes          - Dedupliziert über Hash
- - Credentials-Wipe             - Credentials bleiben          - Bereinigt nach GFS-Regel
-                                                               - Credentials bleiben
+ - Keine Historie               - Prüft sync_state             - Erstellt Snapshots
+ - Löschung nach 30 Tagen       - Aktualisiert Hashes          - Dedupliziert Blöcke je Job
+ - Credentials bis zur Löschung - Credentials bleiben          - Kein Restore/GFS in Release 1
 ```

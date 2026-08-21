@@ -244,7 +244,8 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 - `triggerMigration` verifies `SCHEDULED` state and delegates to the shared `indexer.Start` in a
   goroutine (indexing can take up to 20 min). `triggerSync` atomically claims an `IDLE`/`FAILED`
   job and starts the sync-pass coordinator; it is the exclusive starter, including after worker
-  connection recovery. Backup triggers remain placeholders for future work.
+  connection recovery. Backup triggers atomically create a queued backup run; credentials and repository
+  access remain worker-only.
 - `RunOrphanedMigrationIndexingRecovery` repairs API-crash leftovers: stale scheduled migrations are
   made due for a fresh `SCHEDULED` attempt, while stale immediate migrations become visibly `FAILED`.
 - **Operations note:** connection recovery is detected by workers every 60 seconds; the API scheduler
