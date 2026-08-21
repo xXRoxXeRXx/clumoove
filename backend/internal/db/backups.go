@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -55,6 +56,32 @@ type BackupJob struct {
 	UpdatedAt                    time.Time      `json:"updated_at"`
 }
 
+// MarshalJSON serializes the backup job with nullable columns (sql.NullString,
+// sql.NullTime) resolved to plain JSON strings/null so frontend consumers don't
+// receive raw driver structs like {"String":"...","Valid":true}.
+func (b BackupJob) MarshalJSON() ([]byte, error) {
+	type alias BackupJob
+	return json.Marshal(&struct {
+		*alias
+		SourceProfileID      *string `json:"source_profile_id,omitempty"`
+		TargetProfileID      *string `json:"target_profile_id,omitempty"`
+		SourceTokenExpiresAt *string `json:"source_token_expires_at,omitempty"`
+		TargetTokenExpiresAt *string `json:"target_token_expires_at,omitempty"`
+		LastRunAt            *string `json:"last_run_at,omitempty"`
+		LastRunStatus        *string `json:"last_run_status,omitempty"`
+		ErrorCode            *string `json:"error_code,omitempty"`
+	}{
+		alias:                (*alias)(&b),
+		SourceProfileID:      nullStringPtr(b.SourceProfileID),
+		TargetProfileID:      nullStringPtr(b.TargetProfileID),
+		SourceTokenExpiresAt: nullTimeISO(b.SourceTokenExpiresAt),
+		TargetTokenExpiresAt: nullTimeISO(b.TargetTokenExpiresAt),
+		LastRunAt:            nullTimeISO(b.LastRunAt),
+		LastRunStatus:        nullStringPtr(b.LastRunStatus),
+		ErrorCode:            nullStringPtr(b.ErrorCode),
+	})
+}
+
 type BackupRun struct {
 	ID                string         `json:"id"`
 	BackupJobID       string         `json:"backup_job_id"`
@@ -73,6 +100,34 @@ type BackupRun struct {
 	FinishedAt        sql.NullTime   `json:"finished_at,omitempty"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
+}
+
+// MarshalJSON serializes the backup run with nullable columns (sql.NullString,
+// sql.NullTime) resolved to plain JSON strings/null so frontend consumers don't
+// receive raw driver structs like {"String":"...","Valid":true}.
+func (r BackupRun) MarshalJSON() ([]byte, error) {
+	type alias BackupRun
+	return json.Marshal(&struct {
+		*alias
+		ScheduledLocalKey *string `json:"scheduled_local_key,omitempty"`
+		ErrorCode         *string `json:"error_code,omitempty"`
+		StartedAt         *string `json:"started_at,omitempty"`
+		FinishedAt        *string `json:"finished_at,omitempty"`
+	}{
+		alias:             (*alias)(&r),
+		ScheduledLocalKey: nullStringPtr(r.ScheduledLocalKey),
+		ErrorCode:         nullStringPtr(r.ErrorCode),
+		StartedAt:         nullTimeISO(r.StartedAt),
+		FinishedAt:        nullTimeISO(r.FinishedAt),
+	})
+}
+
+func nullTimeISO(nt sql.NullTime) *string {
+	if nt.Valid {
+		iso := nt.Time.Format(time.RFC3339)
+		return &iso
+	}
+	return nil
 }
 
 // BackupSnapshot is the public, immutable snapshot catalog view. Repository

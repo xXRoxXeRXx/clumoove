@@ -1346,7 +1346,7 @@ function BackupList({
                 </td>
                 <td data-label={t('migrations.status')} className="px-4 py-4">
                   <StatusBadge status={badgeStatus} size="sm" />
-                  {job.error_code && (
+                  {typeof job.error_code === 'string' && job.error_code.trim() !== '' && (
                     <p className="mt-2 max-w-64 text-xs text-[var(--color-error-text)]" role="alert">
                       {translateApiError(job.error_code)}
                     </p>
