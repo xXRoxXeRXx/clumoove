@@ -45,10 +45,14 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
 
   useEffect(() => {
     let disposed = false;
-    void apiJson(`${apiUrl}/api/backup/${jobID}/snapshots`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((data) => {
-        if (disposed || !Array.isArray(data)) return;
-        setSnapshots(data as Snapshot[]);
+    void apiJson<Snapshot[]>(`${apiUrl}/api/backup/${jobID}/snapshots`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((result) => {
+        if (disposed) return;
+        if (result.ok === false) {
+          setError(t('backup.snapshotLoadFailed'));
+          return;
+        }
+        setSnapshots(result.data || []);
       })
       .catch(() => !disposed && setError(t('backup.snapshotLoadFailed')))
       .finally(() => !disposed && setLoading(false));
@@ -59,10 +63,14 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
     if (!snapshot) return;
     let disposed = false;
     const query = directory ? `?path=${encodeURIComponent(directory)}` : '';
-    void apiJson(`${apiUrl}/api/backup/${jobID}/snapshots/${snapshot.id}/items${query}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((data) => {
-        if (disposed || !Array.isArray(data)) return;
-        setItems(data as SnapshotItem[]);
+    void apiJson<SnapshotItem[]>(`${apiUrl}/api/backup/${jobID}/snapshots/${snapshot.id}/items${query}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((result) => {
+        if (disposed) return;
+        if (result.ok === false) {
+          setError(t('backup.snapshotLoadFailed'));
+          return;
+        }
+        setItems(result.data || []);
       })
       .catch(() => !disposed && setError(t('backup.snapshotLoadFailed')))
       .finally(() => !disposed && setLoading(false));
