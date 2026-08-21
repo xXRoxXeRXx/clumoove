@@ -541,8 +541,7 @@ CREATE TABLE IF NOT EXISTS backup_snapshot_item_blocks (
     backup_snapshot_item_id UUID NOT NULL REFERENCES backup_snapshot_items(id) ON DELETE CASCADE,
     ordinal INT NOT NULL CHECK (ordinal >= 0),
     backup_block_id UUID NOT NULL REFERENCES backup_blocks(id) ON DELETE RESTRICT,
-    PRIMARY KEY (backup_snapshot_item_id, ordinal),
-    UNIQUE (backup_snapshot_item_id, backup_block_id)
+    PRIMARY KEY (backup_snapshot_item_id, ordinal)
 );
 CREATE INDEX IF NOT EXISTS idx_backup_snapshot_item_blocks_block ON backup_snapshot_item_blocks(backup_block_id);
 

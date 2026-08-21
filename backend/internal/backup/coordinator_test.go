@@ -3,12 +3,14 @@ package backup
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"testing"
 
+	"backend/internal/backuprepo"
 	"backend/internal/db"
 	"backend/internal/observability"
 )
@@ -79,6 +81,34 @@ func TestFailureCodeForState(t *testing.T) {
 				t.Fatalf("failureCodeForState(%q) = %q, want %q", test.state, got, test.want)
 			}
 		})
+	}
+}
+
+func TestPackBuilderDeduplicatesPendingBlocksAndPreservesCatalogIDs(t *testing.T) {
+	builder := newPackBuilder(nil, nil, nil)
+	entry := backuprepo.Entry{Data: []byte("repeated backup data")}
+	entry.Hash = sha256.Sum256(entry.Data)
+	hashKey := string(entry.Hash[:])
+
+	if err := builder.add(context.Background(), entry); err != nil {
+		t.Fatalf("first add() error = %v", err)
+	}
+	if err := builder.add(context.Background(), entry); err != nil {
+		t.Fatalf("duplicate add() error = %v", err)
+	}
+	if len(builder.entries) != 1 {
+		t.Fatalf("pending entries = %d, want 1", len(builder.entries))
+	}
+	if !builder.hasPendingBlock(hashKey) {
+		t.Fatal("pending block was not tracked")
+	}
+
+	builder.ids[hashKey] = "catalog-block-id"
+	if got := builder.resolveBlockID(hashKey); got != "catalog-block-id" {
+		t.Fatalf("resolveBlockID(hash) = %q, want catalog ID", got)
+	}
+	if got := builder.resolveBlockID("existing-catalog-block-id"); got != "existing-catalog-block-id" {
+		t.Fatalf("resolveBlockID(existing ID) = %q, want unchanged ID", got)
 	}
 }
 

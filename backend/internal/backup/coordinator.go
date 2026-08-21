@@ -510,7 +510,7 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	}
 	for _, item := range pending {
 		for i, id := range item.blockIDs {
-			item.blockIDs[i] = builder.blockID(id)
+			item.blockIDs[i] = builder.resolveBlockID(id)
 		}
 		itemID, err := db.CreateBackupSnapshotItemContext(ctx, c.db, snapshotID, item.file.relativePath, item.file.size, item.file.mtime, item.fileHash[:], "AVAILABLE", "")
 		if err != nil || db.LinkBackupSnapshotItemBlocksContext(ctx, c.db, itemID, item.blockIDs) != nil {
@@ -712,6 +712,20 @@ func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source 
 		}
 		blockIDs := make([]string, 0)
 		fileHash, err := backuprepo.SplitBlocks(ctx, reader, func(entry backuprepo.Entry) error {
+			hashKey := string(entry.Hash[:])
+			if blockID, found := builder.catalogBlockID(hashKey); found {
+				blockIDs = append(blockIDs, blockID)
+				stats.deduplicatedBytes += int64(len(entry.Data))
+				return nil
+			}
+			if builder.hasPendingBlock(hashKey) {
+				// A block can recur in a file or in another file before the
+				// current pack is flushed. Keep its placeholder so every
+				// ordinal can reference the one catalog entry after the flush.
+				blockIDs = append(blockIDs, hashKey)
+				stats.deduplicatedBytes += int64(len(entry.Data))
+				return nil
+			}
 			blockID, found, err := db.FindBackupBlockContext(ctx, c.db, job.ID, entry.Hash[:])
 			if err != nil {
 				return err
@@ -724,7 +738,7 @@ func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source 
 			if err := builder.add(ctx, entry); err != nil {
 				return err
 			}
-			blockIDs = append(blockIDs, string(entry.Hash[:]))
+			blockIDs = append(blockIDs, hashKey)
 			return nil
 		})
 		closeErr := reader.Close()
@@ -756,13 +770,25 @@ type packBuilder struct {
 	entries     []backuprepo.Entry
 	encodedSize int64
 	ids         map[string]string
+	pending     map[string]struct{}
 }
 
 func newPackBuilder(coordinator *Coordinator, job *db.BackupJob, target storage.StorageProvider) *packBuilder {
-	return &packBuilder{coordinator: coordinator, job: job, target: target, encodedSize: 16 + 20, ids: make(map[string]string)}
+	return &packBuilder{
+		coordinator: coordinator,
+		job:         job,
+		target:      target,
+		encodedSize: 16 + 20,
+		ids:         make(map[string]string),
+		pending:     make(map[string]struct{}),
+	}
 }
 
 func (b *packBuilder) add(ctx context.Context, entry backuprepo.Entry) error {
+	hashKey := string(entry.Hash[:])
+	if _, found := b.pending[hashKey]; found {
+		return nil
+	}
 	entrySize := int64(sha256.Size + 4 + len(entry.Data))
 	if b.encodedSize+entrySize > backuprepo.MaxPackSize && len(b.entries) > 0 {
 		if err := b.flush(ctx); err != nil {
@@ -770,11 +796,29 @@ func (b *packBuilder) add(ctx context.Context, entry backuprepo.Entry) error {
 		}
 	}
 	b.entries = append(b.entries, entry)
+	b.pending[hashKey] = struct{}{}
 	b.encodedSize += entrySize
 	return nil
 }
 
-func (b *packBuilder) blockID(key string) string { return b.ids[key] }
+func (b *packBuilder) catalogBlockID(key string) (string, bool) {
+	id, found := b.ids[key]
+	return id, found
+}
+
+func (b *packBuilder) hasPendingBlock(key string) bool {
+	_, found := b.pending[key]
+	return found
+}
+
+// resolveBlockID replaces an unflushed block-hash placeholder with its catalog
+// ID. Existing catalog IDs must pass through unchanged.
+func (b *packBuilder) resolveBlockID(reference string) string {
+	if id, found := b.catalogBlockID(reference); found {
+		return id
+	}
+	return reference
+}
 
 func (b *packBuilder) flush(ctx context.Context) error {
 	if len(b.entries) == 0 {
@@ -823,6 +867,7 @@ func (b *packBuilder) flush(ctx context.Context) error {
 	}
 	for hash, id := range ids {
 		b.ids[hash] = id
+		delete(b.pending, hash)
 	}
 	b.entries = nil
 	b.encodedSize = 16 + 20

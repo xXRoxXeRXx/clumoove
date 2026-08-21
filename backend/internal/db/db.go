@@ -1049,10 +1049,16 @@ func InitDB(connStr string) (*sql.DB, error) {
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS backup_snapshot_item_blocks (
 				backup_snapshot_item_id UUID NOT NULL REFERENCES backup_snapshot_items(id) ON DELETE CASCADE, ordinal INT NOT NULL CHECK (ordinal >= 0), backup_block_id UUID NOT NULL REFERENCES backup_blocks(id) ON DELETE RESTRICT,
-				PRIMARY KEY (backup_snapshot_item_id, ordinal), UNIQUE (backup_snapshot_item_id, backup_block_id)
+				PRIMARY KEY (backup_snapshot_item_id, ordinal)
 			)`)
 			if err != nil {
 				log.Printf("Failed schema migration (backup_snapshot_item_blocks): %v\n", err)
+			}
+			// A content-addressed block may occur at several offsets within the
+			// same file. Ordinal is the only uniqueness requirement here.
+			_, err = db.Exec(`ALTER TABLE backup_snapshot_item_blocks DROP CONSTRAINT IF EXISTS backup_snapshot_item_blocks_backup_snapshot_item_id_backup_block_id_key`)
+			if err != nil {
+				log.Printf("Failed schema migration (backup snapshot repeated blocks): %v\n", err)
 			}
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_backup_snapshot_item_blocks_block ON backup_snapshot_item_blocks(backup_block_id)`)
 			if err != nil {
