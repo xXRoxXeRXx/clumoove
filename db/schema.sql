@@ -549,13 +549,29 @@ CREATE TABLE IF NOT EXISTS backup_maintenance (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     backup_job_id UUID NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE,
     kind TEXT NOT NULL CHECK (kind IN ('RETENTION','COMPACTION','DELETE_REPOSITORY','VERIFY')),
-    state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','RUNNING','RETRY_WAIT','COMPLETED','FAILED')),
+    state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','RUNNING','RETRY_WAIT','CANCELLING','CANCELLED','COMPLETED','FAILED')),
     byte_budget BIGINT CHECK (byte_budget IS NULL OR byte_budget > 0),
     claim_deadline TIMESTAMP WITH TIME ZONE,
     cursor JSONB NOT NULL DEFAULT '{}'::jsonb,
     attempts INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     next_retry_at TIMESTAMP WITH TIME ZONE,
     error_code TEXT,
+    verify_mode TEXT CHECK (verify_mode IS NULL OR verify_mode IN ('METADATA','BUDGETED','FULL')),
+    processed_bytes BIGINT NOT NULL DEFAULT 0 CHECK (processed_bytes >= 0),
+    total_packs INT NOT NULL DEFAULT 0 CHECK (total_packs >= 0),
+    checked_packs INT NOT NULL DEFAULT 0 CHECK (checked_packs >= 0),
+    missing_packs INT NOT NULL DEFAULT 0 CHECK (missing_packs >= 0),
+    damaged_packs INT NOT NULL DEFAULT 0 CHECK (damaged_packs >= 0),
+    coordinator_generation INT NOT NULL DEFAULT 0 CHECK (coordinator_generation >= 0),
+    coordinator_lease_until TIMESTAMP WITH TIME ZONE,
+    worker_hash TEXT,
+    CONSTRAINT chk_backup_maintenance_verify_mode CHECK (
+        (kind = 'VERIFY' AND (
+            (verify_mode IN ('METADATA', 'FULL') AND byte_budget IS NULL) OR
+            (verify_mode = 'BUDGETED' AND byte_budget BETWEEN 67108864 AND 1099511627776)
+        )) OR
+        (kind <> 'VERIFY' AND verify_mode IS NULL)
+    ),
     started_at TIMESTAMP WITH TIME ZONE,
     finished_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -565,6 +581,187 @@ CREATE INDEX IF NOT EXISTS idx_backup_maintenance_pending
     ON backup_maintenance(next_retry_at, created_at)
     WHERE state IN ('PENDING','RETRY_WAIT') AND kind <> 'VERIFY';
 CREATE INDEX IF NOT EXISTS idx_backup_maintenance_job ON backup_maintenance(backup_job_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_backup_maintenance_active_verify
+    ON backup_maintenance(backup_job_id) WHERE kind = 'VERIFY' AND state IN ('PENDING','RUNNING','RETRY_WAIT','CANCELLING');
+
+CREATE TABLE IF NOT EXISTS backup_verify_targets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    backup_maintenance_id UUID NOT NULL REFERENCES backup_maintenance(id) ON DELETE CASCADE,
+    backup_pack_id UUID CONSTRAINT fk_backup_verify_targets_live_pack REFERENCES backup_packs(id) ON DELETE RESTRICT,
+    pack_remote_path TEXT NOT NULL,
+    pack_sha256 BYTEA NOT NULL CHECK (octet_length(pack_sha256) = 32),
+    pack_size_bytes BIGINT NOT NULL CHECK (pack_size_bytes > 0),
+    state TEXT NOT NULL DEFAULT 'PENDING' CHECK (state IN ('PENDING','RUNNING','COMPLETED','MISSING','DAMAGED','FAILED','CANCELLED')),
+    claim_epoch BIGINT NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+    claim_deadline TIMESTAMP WITH TIME ZONE,
+    worker_hash TEXT,
+    cursor JSONB NOT NULL DEFAULT '{}'::jsonb,
+    bytes_read BIGINT NOT NULL DEFAULT 0 CHECK (bytes_read >= 0),
+    error_code TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (backup_maintenance_id, pack_remote_path)
+);
+CREATE INDEX IF NOT EXISTS idx_backup_verify_targets_claim ON backup_verify_targets(backup_maintenance_id, state);
+
+CREATE TABLE IF NOT EXISTS restore_previews (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    backup_job_id UUID NOT NULL REFERENCES backup_jobs(id) ON DELETE CASCADE,
+    backup_snapshot_id UUID NOT NULL REFERENCES backup_snapshots(id) ON DELETE CASCADE,
+    retry_restore_job_id UUID,
+    target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
+    selected_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+    target_provider TEXT NOT NULL,
+    target_url TEXT NOT NULL DEFAULT '',
+    target_username TEXT NOT NULL DEFAULT '',
+    target_password_encrypted TEXT,
+    target_refresh_token_encrypted TEXT,
+    target_token_expires_at TIMESTAMP WITH TIME ZONE,
+    target_mega_session_id_encrypted TEXT,
+    target_mega_master_key_encrypted TEXT,
+    target_connection_identity TEXT NOT NULL DEFAULT '',
+    target_root TEXT NOT NULL,
+    conflict_strategy TEXT NOT NULL DEFAULT 'RENAME' CHECK (conflict_strategy IN ('SKIP','OVERWRITE','RENAME')),
+    threads INT NOT NULL DEFAULT 8 CHECK (threads BETWEEN 1 AND 16),
+    bandwidth_mbps INT NOT NULL DEFAULT 0 CHECK (bandwidth_mbps BETWEEN 0 AND 1000),
+    config_fingerprint BYTEA NOT NULL CHECK (octet_length(config_fingerprint) = 32),
+    status TEXT NOT NULL DEFAULT 'QUEUED' CHECK (status IN ('QUEUED','RUNNING','READY','FAILED','EXPIRED','CONSUMED','CANCELLED')),
+    total_files INT NOT NULL DEFAULT 0 CHECK (total_files >= 0),
+    total_directories INT NOT NULL DEFAULT 0 CHECK (total_directories >= 0),
+    total_bytes BIGINT NOT NULL DEFAULT 0 CHECK (total_bytes >= 0),
+    existing_file_conflicts INT NOT NULL DEFAULT 0 CHECK (existing_file_conflicts >= 0),
+    mergeable_directories INT NOT NULL DEFAULT 0 CHECK (mergeable_directories >= 0),
+    type_conflicts INT NOT NULL DEFAULT 0 CHECK (type_conflicts >= 0),
+    unavailable_items INT NOT NULL DEFAULT 0 CHECK (unavailable_items >= 0),
+    expected_skips INT NOT NULL DEFAULT 0 CHECK (expected_skips >= 0),
+    expected_renames INT NOT NULL DEFAULT 0 CHECK (expected_renames >= 0),
+    metadata_warnings INT NOT NULL DEFAULT 0 CHECK (metadata_warnings >= 0),
+    conflict_examples JSONB NOT NULL DEFAULT '[]'::jsonb,
+    error_code TEXT,
+    coordinator_generation INT NOT NULL DEFAULT 0 CHECK (coordinator_generation >= 0),
+    coordinator_lease_until TIMESTAMP WITH TIME ZONE,
+    worker_hash TEXT,
+    ready_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_restore_previews_claim ON restore_previews(created_at) WHERE status = 'QUEUED';
+CREATE INDEX IF NOT EXISTS idx_restore_previews_owner ON restore_previews(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS restore_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    backup_job_id UUID REFERENCES backup_jobs(id) ON DELETE SET NULL,
+    backup_snapshot_id UUID REFERENCES backup_snapshots(id) ON DELETE SET NULL,
+    source_backup_ref UUID NOT NULL,
+    source_snapshot_ref UUID NOT NULL,
+    target_profile_id UUID REFERENCES connection_profiles(id) ON DELETE SET NULL,
+    selected_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+    target_provider TEXT NOT NULL,
+    target_url TEXT NOT NULL DEFAULT '',
+    target_username TEXT NOT NULL DEFAULT '',
+    target_connection_identity TEXT NOT NULL DEFAULT '',
+    target_root TEXT NOT NULL,
+    conflict_strategy TEXT NOT NULL CHECK (conflict_strategy IN ('SKIP','OVERWRITE','RENAME')),
+    threads INT NOT NULL DEFAULT 8 CHECK (threads BETWEEN 1 AND 16),
+    bandwidth_mbps INT NOT NULL DEFAULT 0 CHECK (bandwidth_mbps BETWEEN 0 AND 1000),
+    config_fingerprint BYTEA NOT NULL CHECK (octet_length(config_fingerprint) = 32),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_restore_jobs_owner ON restore_jobs(user_id, created_at DESC);
+ALTER TABLE restore_previews DROP CONSTRAINT IF EXISTS fk_restore_previews_retry_job;
+ALTER TABLE restore_previews ADD CONSTRAINT fk_restore_previews_retry_job
+    FOREIGN KEY (retry_restore_job_id) REFERENCES restore_jobs(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS restore_runs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    restore_job_id UUID NOT NULL REFERENCES restore_jobs(id) ON DELETE CASCADE,
+    generation INT NOT NULL CHECK (generation > 0),
+    status TEXT NOT NULL DEFAULT 'QUEUED' CHECK (status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING','COMPLETED','PARTIAL','FAILED','CANCELLED')),
+    threads INT NOT NULL DEFAULT 8 CHECK (threads BETWEEN 1 AND 16),
+    bandwidth_mbps INT NOT NULL DEFAULT 0 CHECK (bandwidth_mbps BETWEEN 0 AND 1000),
+    target_password_encrypted TEXT,
+    target_refresh_token_encrypted TEXT,
+    target_token_expires_at TIMESTAMP WITH TIME ZONE,
+    target_mega_session_id_encrypted TEXT,
+    target_mega_master_key_encrypted TEXT,
+    coordinator_generation INT NOT NULL DEFAULT 0 CHECK (coordinator_generation >= 0),
+    coordinator_lease_until TIMESTAMP WITH TIME ZONE,
+    worker_hash TEXT,
+    total_files INT NOT NULL DEFAULT 0 CHECK (total_files >= 0),
+    total_bytes BIGINT NOT NULL DEFAULT 0 CHECK (total_bytes >= 0),
+    processed_files INT NOT NULL DEFAULT 0 CHECK (processed_files >= 0),
+    processed_bytes BIGINT NOT NULL DEFAULT 0 CHECK (processed_bytes >= 0),
+    failed_files INT NOT NULL DEFAULT 0 CHECK (failed_files >= 0),
+    error_code TEXT,
+    started_at TIMESTAMP WITH TIME ZONE,
+    finished_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (restore_job_id, generation)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_restore_runs_active ON restore_runs(restore_job_id) WHERE status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING');
+CREATE INDEX IF NOT EXISTS idx_restore_runs_claim ON restore_runs(created_at) WHERE status = 'QUEUED';
+
+CREATE TABLE IF NOT EXISTS restore_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    restore_run_id UUID NOT NULL REFERENCES restore_runs(id) ON DELETE CASCADE,
+    parent_item_id UUID,
+    snapshot_relative_path TEXT NOT NULL,
+    is_dir BOOLEAN NOT NULL,
+    size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+    file_sha256 BYTEA CHECK (file_sha256 IS NULL OR octet_length(file_sha256) = 32),
+    source_mtime TIMESTAMP WITH TIME ZONE,
+    source_metadata JSONB,
+    target_path TEXT NOT NULL,
+    resolved_target_path TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','RUNNING','COMPLETED','SKIPPED','WARNING','FAILED','CANCELLED')),
+    verification_kind TEXT CHECK (verification_kind IS NULL OR verification_kind IN ('HASH_VERIFIED','SIZE_VERIFIED')),
+    outcome_code TEXT,
+    attempts INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_retry_at TIMESTAMP WITH TIME ZONE,
+    claim_epoch BIGINT NOT NULL DEFAULT 0 CHECK (claim_epoch >= 0),
+    worker_hash TEXT,
+    claim_deadline TIMESTAMP WITH TIME ZONE,
+    error_code TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (restore_run_id, snapshot_relative_path),
+    UNIQUE (restore_run_id, id),
+    FOREIGN KEY (restore_run_id, parent_item_id) REFERENCES restore_items(restore_run_id, id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_restore_items_run_status ON restore_items(restore_run_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_restore_items_retry ON restore_items(next_retry_at) WHERE status = 'PENDING' AND next_retry_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS restore_path_reservations (
+    restore_run_id UUID NOT NULL REFERENCES restore_runs(id) ON DELETE CASCADE,
+    canonical_path TEXT NOT NULL,
+    restore_item_id UUID NOT NULL REFERENCES restore_items(id) ON DELETE CASCADE,
+    PRIMARY KEY (restore_run_id, canonical_path),
+    UNIQUE (restore_run_id, restore_item_id)
+);
+
+CREATE TABLE IF NOT EXISTS restore_item_blocks (
+    restore_item_id UUID NOT NULL REFERENCES restore_items(id) ON DELETE CASCADE,
+    ordinal INT NOT NULL CHECK (ordinal >= 0),
+    pack_remote_path TEXT NOT NULL,
+    pack_sha256 BYTEA NOT NULL CHECK (octet_length(pack_sha256) = 32),
+    pack_size_bytes BIGINT NOT NULL CHECK (pack_size_bytes > 0),
+    payload_offset BIGINT NOT NULL CHECK (payload_offset >= 0),
+    payload_length INT NOT NULL CHECK (payload_length BETWEEN 1 AND 4194304),
+    block_sha256 BYTEA NOT NULL CHECK (octet_length(block_sha256) = 32),
+    plaintext_size INT NOT NULL CHECK (plaintext_size BETWEEN 1 AND 4194304),
+    PRIMARY KEY (restore_item_id, ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS restore_pack_pins (
+    restore_run_id UUID NOT NULL REFERENCES restore_runs(id) ON DELETE CASCADE,
+    backup_pack_id UUID NOT NULL REFERENCES backup_packs(id) ON DELETE RESTRICT,
+    PRIMARY KEY (restore_run_id, backup_pack_id)
+);
 
 CREATE OR REPLACE TRIGGER update_backup_jobs_updated_at
     BEFORE UPDATE ON backup_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -580,6 +777,14 @@ CREATE OR REPLACE TRIGGER update_backup_snapshot_items_updated_at
     BEFORE UPDATE ON backup_snapshot_items FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE OR REPLACE TRIGGER update_backup_maintenance_updated_at
     BEFORE UPDATE ON backup_maintenance FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_restore_previews_updated_at
+    BEFORE UPDATE ON restore_previews FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_restore_jobs_updated_at
+    BEFORE UPDATE ON restore_jobs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_restore_runs_updated_at
+    BEFORE UPDATE ON restore_runs FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE OR REPLACE TRIGGER update_restore_items_updated_at
+    BEFORE UPDATE ON restore_items FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Modify Tasks table to support Sync Jobs
 ALTER TABLE tasks ALTER COLUMN migration_id DROP NOT NULL;
@@ -634,17 +839,19 @@ END $$;
 CREATE TABLE IF NOT EXISTS notification_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('migration','sync')),
+    kind TEXT NOT NULL CHECK (kind IN ('migration','sync','restore')),
     migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE,
     run_generation INT NOT NULL DEFAULT 0,
     sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE,
+    restore_run_id UUID REFERENCES restore_runs(id) ON DELETE CASCADE,
     run_at TIMESTAMP WITH TIME ZONE NOT NULL,
     payload JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    -- XOR: exactly one of migration_id / sync_job_id must be set
+    -- XOR: exactly one parent must be set.
     CHECK (
-        (kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL) OR
-        (kind = 'sync'      AND sync_job_id  IS NOT NULL AND migration_id IS NULL)
+        (kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL AND restore_run_id IS NULL) OR
+        (kind = 'sync'      AND sync_job_id  IS NOT NULL AND migration_id IS NULL AND restore_run_id IS NULL) OR
+        (kind = 'restore'   AND restore_run_id IS NOT NULL AND migration_id IS NULL AND sync_job_id IS NULL)
     )
 );
 
@@ -652,7 +859,17 @@ ALTER TABLE migrations ADD COLUMN IF NOT EXISTS notification_generation INT NOT 
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_generation INT NOT NULL DEFAULT 0;
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_lease_until TIMESTAMP WITH TIME ZONE;
 ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0;
+ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS restore_run_id UUID REFERENCES restore_runs(id) ON DELETE CASCADE;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_migration_id_key;
+ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_kind_check;
+ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_check;
+ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS chk_notification_events_kind;
+ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS chk_notification_events_parent;
+ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_kind CHECK (kind IN ('migration','sync','restore'));
+ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_parent CHECK (
+    num_nonnulls(migration_id, sync_job_id, restore_run_id) = 1 AND
+    ((kind = 'migration' AND migration_id IS NOT NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL) OR (kind = 'restore' AND restore_run_id IS NOT NULL))
+);
 
 -- Partial unique indexes replace the old table-level UNIQUE (sync_job_id, run_at).
 -- NULL != NULL in SQL unique constraints, so the table constraint was toothless
@@ -664,6 +881,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_migration_uniq
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_sync_uniq
     ON notification_events(sync_job_id, run_at)
     WHERE sync_job_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_restore_uniq
+    ON notification_events(restore_run_id)
+    WHERE restore_run_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS notification_deliveries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

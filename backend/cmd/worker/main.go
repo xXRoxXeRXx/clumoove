@@ -18,25 +18,28 @@ import (
 	"backend/internal/observability"
 	"backend/internal/processor"
 	"backend/internal/queue"
+	"backend/internal/restore"
 )
 
 type workerConfig struct {
-	databaseURL          string
-	databaseURLDefaulted bool
-	redisURL             string
-	encryptionKey        string
-	maxBackupPackWriters int
+	databaseURL           string
+	databaseURLDefaulted  bool
+	redisURL              string
+	encryptionKey         string
+	maxBackupPackWriters  int
+	maxRestorePackReaders int
 }
 
 func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 	databaseURL, databaseURLDefaulted := config.DatabaseURL(getenv("DATABASE_URL"))
 	redisURL, _ := config.RedisURL(getenv("REDIS_URL"))
 	workerCfg := workerConfig{
-		databaseURL:          databaseURL,
-		databaseURLDefaulted: databaseURLDefaulted,
-		redisURL:             redisURL,
-		encryptionKey:        getenv("ENCRYPTION_SECRET_KEY"),
-		maxBackupPackWriters: 1,
+		databaseURL:           databaseURL,
+		databaseURLDefaulted:  databaseURLDefaulted,
+		redisURL:              redisURL,
+		encryptionKey:         getenv("ENCRYPTION_SECRET_KEY"),
+		maxBackupPackWriters:  1,
+		maxRestorePackReaders: 1,
 	}
 	if workerCfg.encryptionKey == "" {
 		return workerConfig{}, errors.New("ENCRYPTION_SECRET_KEY is required")
@@ -47,6 +50,13 @@ func loadWorkerConfig(getenv func(string) string) (workerConfig, error) {
 			return workerConfig{}, errors.New("MAX_BACKUP_PACK_WRITERS must be an integer between 1 and 4")
 		}
 		workerCfg.maxBackupPackWriters = parsed
+	}
+	if value := getenv("MAX_RESTORE_PACK_READERS"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 4 {
+			return workerConfig{}, errors.New("MAX_RESTORE_PACK_READERS must be an integer between 1 and 4")
+		}
+		workerCfg.maxRestorePackReaders = parsed
 	}
 	return workerCfg, nil
 }
@@ -114,11 +124,23 @@ func main() {
 	// by API instances and started exclusively by the API scheduler.
 	proc := processor.NewProcessor(database, q, workerID, config.encryptionKey)
 	proc.SetDBConnStr(config.databaseURL) // Enable pg_notify-based wake-up for idle worker threads
-	backupCoordinator, err := backup.NewCoordinator(database, config.encryptionKey, config.maxBackupPackWriters)
+	packReaders, err := restore.NewPackReaderLimiter(config.maxRestorePackReaders)
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))
+		os.Exit(1)
+	}
+	backupCoordinator, err := backup.NewCoordinator(database, config.encryptionKey, config.maxBackupPackWriters, packReaders)
 	if err != nil {
 		slog.Error("startup_failed", slog.String("component", "backup"), slog.String("reason", "invalid_pack_writer_limit"), observability.Error(err), slog.String("error_kind", "configuration"))
 		os.Exit(1)
 	}
+	backupCoordinator.SetWorkerID(workerID)
+	restoreCoordinator, err := restore.NewCoordinator(database, config.encryptionKey, packReaders)
+	if err != nil {
+		slog.Error("startup_failed", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", "configuration"))
+		os.Exit(1)
+	}
+	restoreCoordinator.SetWorkerID(workerID)
 
 	// Context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -133,6 +155,11 @@ func main() {
 	go func() {
 		if err := backupCoordinator.Run(ctx, time.Second); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("backup_coordinator_stopped", slog.String("component", "backup"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		}
+	}()
+	go func() {
+		if err := restoreCoordinator.Run(ctx, time.Second); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("restore_coordinator_stopped", slog.String("component", "restore"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
 		}
 	}()
 

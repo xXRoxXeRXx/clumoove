@@ -643,6 +643,70 @@ func (p *SeafileProvider) StreamDownload(ctx context.Context, resourceType, file
 	return dlResp.Body, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for SeafileProvider.
+func (p *SeafileProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, ErrUnsupportedResourceType
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	repoID, repoPath, _, err := p.resolveRepoAndPath(ctx, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	reqURL := fmt.Sprintf("%s/api2/repos/%s/file/?p=%s&reuse=1", p.BaseURL, repoID, url.QueryEscape(repoPath))
+	req, err := p.newAuthRequest(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get seafile download link: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrNotFound
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		p.invalidateToken()
+		return nil, ErrAuth
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("seafile download link request status %d", resp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read download link response: %w", err)
+	}
+
+	downloadURL := strings.Trim(string(bodyBytes), `"`)
+	linkClient, _, err := p.issuedLinkClient(downloadURL)
+	if err != nil {
+		return nil, fmt.Errorf("seafile download URL failed egress check: %w", err)
+	}
+
+	downloadReq, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	if err != nil {
+		linkClient.CloseIdleConnections()
+		return nil, fmt.Errorf("failed to create download stream request: %w", err)
+	}
+	downloadReq.Header.Set("Range", rangeHeader)
+
+	dlResp, err := linkClient.Do(downloadReq)
+	if err != nil {
+		linkClient.CloseIdleConnections()
+		return nil, fmt.Errorf("failed to execute seafile download stream: %w", err)
+	}
+
+	return ValidateHTTPRangeResponse(dlResp, offset, length)
+}
+
 func (p *SeafileProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return ErrUnsupportedResourceType

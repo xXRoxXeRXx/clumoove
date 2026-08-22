@@ -299,3 +299,24 @@ func TestEnsureDedicatedTarget(t *testing.T) {
 		}
 	})
 }
+
+func TestIsRetryableVerifyReadError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "EOF is retryable", err: io.EOF, want: true},
+		{name: "UnexpectedEOF is retryable", err: io.ErrUnexpectedEOF, want: true},
+		{name: "Corrupt data error is permanent", err: errors.New("invalid pack checksum"), want: false},
+		{name: "Nil error is not retryable", err: nil, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isRetryableVerifyReadError(tt.err); got != tt.want {
+				t.Fatalf("isRetryableVerifyReadError(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+

@@ -129,6 +129,7 @@
 ### Threads & Parallelism
 - `threads` per migration or sync job is capped at 1–16. The worker respects this via the SQL dequeue query (`COUNT(*) < m.threads`). Sync jobs also persist a 0–1000 Mbps bandwidth limit (0 is unlimited), which can be updated live.
 - Worker-level concurrency is set by `MAX_THREADS` env var (default: 16, matching the max selectable per-migration threads slider). This is the total parallel tasks per worker process, not per migration.
+- Restore and repository-check full-pack reads share the worker-local `MAX_RESTORE_PACK_READERS` cap (default 1, valid 1–4). A worker can therefore hold at most `64 MiB * MAX_RESTORE_PACK_READERS` of v1 pack data in its application reader budget; cluster capacity is the sum of all replicas. Range-capable providers use exact block ranges while other providers use bounded full-pack rereads.
 
 ### Retry & Backoff
 - Exponential backoff: $10 \times 3^{\text{attempt}}$ seconds (10 s → 30 s → 90 s), max 3 attempts.

@@ -502,6 +502,55 @@ func (p *SFTPProvider) StreamDownload(ctx context.Context, resourceType, filePat
 	return &sftpDownload{file: file, provider: p, ctx: ctx, stop: stop}, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for SFTPProvider.
+func (p *SFTPProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, fmt.Errorf("resource type %s not supported by SFTP", resourceType)
+	}
+	if _, err := ValidateByteRange(offset, length); err != nil {
+		return nil, err
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return nil, err
+	}
+
+	if err := p.lock(ctx); err != nil {
+		return nil, err
+	}
+	if err := p.ensureConnected(ctx); err != nil {
+		err = p.handleError(err)
+		p.unlock()
+		return nil, err
+	}
+	cleanPath := p.cleanPath(filePath)
+	stop := closeWhenDone(ctx, p.sshClient)
+	file, err := p.sftpClient.Open(cleanPath)
+	if err != nil {
+		stop()
+		err = p.handleError(fmt.Errorf("sftp open file range failed: %w", err))
+		p.unlock()
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || info.IsDir() || offset > info.Size() || length > info.Size()-offset {
+		_ = file.Close()
+		stop()
+		p.unlock()
+		if err != nil {
+			return nil, p.handleError(err)
+		}
+		return nil, ErrInvalidByteRange
+	}
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		_ = file.Close()
+		stop()
+		p.unlock()
+		return nil, p.handleError(err)
+	}
+
+	return newRangedReadCloser(&sftpDownload{file: file, provider: p, ctx: ctx, stop: stop}, length), nil
+}
+
 func (p *SFTPProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SFTP", resourceType)

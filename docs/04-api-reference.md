@@ -4,6 +4,33 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 **only** a machine-readable `error_code` (localized on the client via `translateApiError`); raw
 `err.Error()` strings are never forwarded to the client for connection failures.
 
+## Backup Restore And Repository Checks
+
+All restore and repository-check routes are JWT-protected and owner-scoped. An unknown or foreign restore preview, run, job, or check returns a non-leaking `404`.
+
+| Method | Path | Purpose |
+| :----- | :--- | :------ |
+| `POST` | `/backup/{id}/snapshots/{snapshotID}/restore/previews` | Queues a mandatory async preview. The body accepts selected non-overlapping paths, either an owned `target_profile_id` or direct `target_provider`/URL/username/password-or-access-token (+ OAuth refresh token), root, conflict strategy, `threads` (`1..16`), and `bandwidth_mbps` (`0..1000`). `retry_restore_job_id` is accepted only for the same owner, immutable snapshot, and fingerprint. |
+| `GET` | `/restore/previews/{previewID}` | Reads preview status and advisory totals. Ready previews expire after 30 minutes. |
+| `POST` | `/restore/previews/{previewID}/cancel` | Cancels an unconsumed preview. |
+| `POST` | `/restore/previews/{previewID}/consume` | Consumes one ready preview and creates a queued restore run. |
+| `GET` | `/restore` | Lists restore-run history for the caller. |
+| `GET` | `/restore/{runID}` | Reads one restore run and progress counters. |
+| `GET` | `/restore/{runID}/stream` | SSE stream for owner-scoped live run progress, including initial event and keepalives. |
+| `GET` | `/restore/{runID}/items` | Lists immutable run item outcomes. |
+| `POST` | `/restore/{runID}/cancel` | Requests durable cancellation; already verified target files are not rolled back. |
+| `DELETE` | `/restore/jobs/{jobID}` | Deletes a retained terminal restore job. |
+| `GET` | `/restore/{runID}/report` | Downloads a terminal run CSV report. |
+| `POST` | `/backup/{id}/verify` | Creates a metadata, byte-budgeted, or full repository check. `BUDGETED` requires `byte_budget` from 64 MiB through 1 TiB; `FULL` requires `confirm_full: true`. |
+| `GET` | `/backup/{id}/verify` | Lists check history and progress. |
+| `GET` | `/backup/verify/{verifyID}` | Reads one owner-scoped repository check. |
+| `GET` | `/backup/verify/{verifyID}/stream` | SSE stream for owner-scoped repository-check progress and keepalives. |
+| `POST` | `/backup/verify/{verifyID}/cancel` | Cancels a queued or running repository check. |
+
+Restore targets cannot be Immich or overlap the backup repository or its `.clumoove-backup` tree. Repository checks snapshot their pack catalog at start, pin active packs against deletion, and release those live references only at terminalization.
+
+The server computes a versioned SHA-256 restore configuration fingerprint from the immutable snapshot, normalized selected paths, target provider/profile identity/root, and conflict strategy. Resource limits and credentials are excluded, so future retry runs can require the same data-placement configuration while receiving fresh credentials.
+
 **Response conventions**
 - Success: `200 OK` JSON (`{ "success": true, … }` for action endpoints).
 - Connection-test/browse/mkdir logical failures: `200 OK` with `{ "success": false, "error_code": "…" }`

@@ -508,6 +508,40 @@ func (p *DropboxProvider) StreamDownload(ctx context.Context, resourceType, file
 	return resp.Body, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for DropboxProvider.
+func (p *DropboxProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, fmt.Errorf("resource type %s not supported by Dropbox", resourceType)
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	pathArg := p.cleanPath(filePath)
+	apiArg, err := escapeAPIArg(map[string]string{"path": pathArg})
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := p.newRequest("POST", "https://content.dropboxapi.com/2/files/download", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Dropbox-API-Arg", apiArg)
+	req.Header.Set("Range", rangeHeader)
+	req = req.WithContext(ctx)
+
+	resp, err := p.do(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, fmt.Errorf("dropbox download range: %w", ErrAuth)
+	}
+	return ValidateHTTPRangeResponse(resp, offset, length)
+}
+
 func (p *DropboxProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by Dropbox", resourceType)

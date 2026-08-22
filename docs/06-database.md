@@ -261,6 +261,25 @@ Administrator-managed OAuth2 client credentials (no environment variables). `cli
 
 ## 3. Queue Semantics (in `tasks`)
 
+## Restore and repository-check state
+
+`restore_previews` holds the one-time, expiring configuration and encrypted preview credential snapshot;
+`restore_jobs` retains only immutable non-secret configuration and history; `restore_runs` holds the
+generation-specific resource limits and active encrypted credential snapshot. `restore_items` is its own
+durable queue with `claim_epoch`, `worker_hash`, and `claim_deadline`; it is not part of the migration/sync
+`tasks` XOR. Frozen `restore_item_blocks` make compaction-safe pack locators immutable, while
+`restore_pack_pins` and `restore_path_reservations` protect active pack objects and target names.
+
+Repository verification uses `backup_maintenance` (`VERIFY`) as a fenced coordinator record and
+`backup_verify_targets` as one copied pack catalog per check. A target's live pack foreign key is retained
+until terminalization, so retention, compaction, repository deletion, account cleanup, and restores cannot
+delete an object with active restore/check evidence. Confirmed pack damage propagates only to snapshots
+referencing that pack.
+
+---
+
+## 3. Queue Semantics (in `tasks`)
+
 The dequeue (`queue.DequeueSQL`) selects `PENDING` migration tasks while their
 migration is `RUNNING`/`INDEXING`, and `PENDING` sync tasks only while their
 sync job is `RUNNING`. A sync job remains `INDEXING` while it lists both sides,

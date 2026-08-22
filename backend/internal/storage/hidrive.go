@@ -337,6 +337,37 @@ func (p *HiDriveProvider) StreamDownload(ctx context.Context, resourceType, file
 	return resp.Body, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for HiDriveProvider.
+func (p *HiDriveProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if err := p.validateResourceType(resourceType); err != nil {
+		return nil, err
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	hdPath := p.cleanPath(filePath)
+	req, err := http.NewRequestWithContext(ctx, "GET", p.apiURL("/file"), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.AccessToken)
+	req.Header.Set("Range", rangeHeader)
+	q := req.URL.Query()
+	q.Set("path", hdPath)
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		resp.Body.Close()
+		return nil, fmt.Errorf("hidrive download range: %w", ErrAuth)
+	}
+	return ValidateHTTPRangeResponse(resp, offset, length)
+}
+
 func (p *HiDriveProvider) uploadFile(ctx context.Context, filePath string, stream io.Reader, size int64) error {
 	filePath = p.cleanPath(filePath)
 	dir := path.Dir(filePath)

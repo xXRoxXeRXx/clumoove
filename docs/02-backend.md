@@ -231,6 +231,22 @@ For each task:
 
 `RunNotifier` drains durable per-channel notification deliveries (email, Gotify, ntfy, Telegram, Discord), retries each channel independently, and cleans expired reset/email-change tokens and throttlers. When an instance mailer exists, completion email is enabled by default unless a user has explicitly saved an email preference (including an opt-out). Email deliveries do not snapshot SMTP credentials: the worker loads the current instance mailer immediately before sending. The legacy `email_sent` column remains for compatibility; it no longer drives delivery. It selects the recipient's persisted `users.language` value for every channel.
 
+### Restore and repository verification
+
+Restore previews are worker-owned, read-only target-tree enumerations. They persist only aggregate
+conflict statistics and at most 100 sanitized examples, expire after 30 minutes, and are consumed once.
+A preview may use an owned profile or a direct target connection; every direct password/access token,
+refresh token, and MEGA session is encrypted immediately. Consumption copies those secrets into the
+active `restore_runs` row only. Terminalization clears them atomically with pack-pin release and the
+restore notification event. Retry previews explicitly identify a terminal restore job and must reproduce
+the server-computed configuration fingerprint.
+
+Restore item claims carry a worker ID, epoch, and deadline. Item status/path/progress writes fence on
+that epoch, stale claims are reclaimed, and path reservations serialize case-insensitive target names
+across workers. Repository checks similarly persist a maintenance lease plus a per-pack target epoch,
+deadline, and cursor. An expired lease is resumable: copied locator evidence and live pack pins remain
+until the check reaches a terminal state.
+
 ---
 
 ## 6. Scheduler (`internal/scheduler`)

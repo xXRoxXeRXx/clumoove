@@ -426,6 +426,54 @@ func (p *SMBProvider) StreamDownload(ctx context.Context, resourceType, filePath
 	return &smbDownload{file: file, provider: p, ctx: ctx, stop: stop}, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for SMBProvider.
+func (p *SMBProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, fmt.Errorf("resource type %s not supported by SMB", resourceType)
+	}
+	if _, err := ValidateByteRange(offset, length); err != nil {
+		return nil, err
+	}
+	if err := validateStoragePath(filePath); err != nil {
+		return nil, err
+	}
+
+	p.mu.Lock()
+	if err := p.ensureConnected(ctx); err != nil {
+		err = p.handleError(err)
+		p.mu.Unlock()
+		return nil, err
+	}
+
+	cleanPath := p.cleanPath(filePath)
+	stop := closeSMBConnectionWhenDone(ctx, p.conn)
+	file, err := p.fs.WithContext(ctx).Open(cleanPath)
+	if err != nil {
+		stop()
+		err = p.handleError(fmt.Errorf("smb open file range failed: %w", err))
+		p.mu.Unlock()
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil || info.IsDir() || offset > info.Size() || length > info.Size()-offset {
+		_ = file.Close()
+		stop()
+		p.mu.Unlock()
+		if err != nil {
+			return nil, p.handleError(err)
+		}
+		return nil, ErrInvalidByteRange
+	}
+	if _, err = file.Seek(offset, io.SeekStart); err != nil {
+		_ = file.Close()
+		stop()
+		p.mu.Unlock()
+		return nil, p.handleError(err)
+	}
+
+	return newRangedReadCloser(&smbDownload{file: file, provider: p, ctx: ctx, stop: stop}, length), nil
+}
+
 func (p *SMBProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by SMB", resourceType)

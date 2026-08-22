@@ -204,6 +204,19 @@ half the width.
 
 ## 9. Frontend Validation
 
+## Restore and repository-check UI
+
+The snapshot browser supports a saved target profile or a direct files target. Direct passwords/access
+tokens and OAuth refresh tokens exist only in component state until preview submission, then the browser
+clears them. Immich is omitted from both pickers. The mandatory preview dialog presents point-in-time
+conflict counts, type conflicts, expected skips/renames, unavailable items, metadata warnings, and a bounded
+example list before the one-time start action. Restore and repository-check history expose cancellation,
+progress, reports, and damage counters; all progress state is safe to refresh after a reconnect.
+
+---
+
+## 9. Frontend Validation
+
 Run the standard typecheck and lint commands from [Development §2](./09-development.md#2-code-quality--checks),
 then run `npm test` and `npm run build` for a complete frontend change. UI changes additionally require:
 

@@ -172,6 +172,43 @@ func (p *LocalProvider) StreamDownload(ctx context.Context, resourceType, filePa
 	return f, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for the local provider. The
+// already-open, root-anchored file descriptor preserves the provider's
+// symlink-race protections while seeking, so no second path resolution occurs.
+func (p *LocalProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
+	}
+	if offset < 0 || length <= 0 {
+		return nil, fmt.Errorf("invalid byte range")
+	}
+	root, err := p.localRoot()
+	if err != nil {
+		return nil, err
+	}
+	parts, err := localPathComponents(filePath)
+	if err != nil {
+		return nil, err
+	}
+	f, err := root.open(parts)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil || info.IsDir() || offset > info.Size() || length > info.Size()-offset {
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("invalid byte range")
+	}
+	if _, err = f.Seek(offset, io.SeekStart); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return newRangedReadCloser(f, length), nil
+}
+
 func (p *LocalProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)

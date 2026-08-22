@@ -492,6 +492,40 @@ func (p *OneDriveProvider) StreamDownload(ctx context.Context, resourceType, fil
 	return resp.Body, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for OneDriveProvider.
+func (p *OneDriveProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if err := oneDriveFilesOnly(resourceType); err != nil {
+		return nil, err
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	itemURL, err := p.resourceURL(ctx, filePath)
+	if err != nil {
+		return nil, err
+	}
+	client := *p.httpClient
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		req.Header.Del("Authorization")
+		return nil
+	}
+	req, err := p.request(ctx, http.MethodGet, itemURL+"/content", nil, true)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Range", rangeHeader)
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, ErrAuth
+	}
+	return ValidateHTTPRangeResponse(resp, offset, length)
+}
+
 func (p *OneDriveProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	return p.StreamUploadChunked(ctx, resourceType, filePath, stream, size, nil)
 }

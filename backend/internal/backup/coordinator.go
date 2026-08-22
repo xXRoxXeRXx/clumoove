@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"math/big"
+	"net"
 	"path"
 	"strings"
 	"time"
@@ -23,8 +24,11 @@ import (
 	"backend/internal/megasecret"
 	"backend/internal/oauth"
 	"backend/internal/observability"
+	"backend/internal/restore"
 	"backend/internal/storage"
 )
+
+var errVerifyMoreWork = errors.New("repository check has more bounded work")
 
 // Coordinator owns only backup worker execution. Its pack semaphore is process
 // scoped, preventing independently claimed jobs from exhausting memory/network.
@@ -32,6 +36,8 @@ type Coordinator struct {
 	db              *sql.DB
 	encryptionKey   string
 	packWriterSlots chan struct{}
+	packReaderSlots *restore.PackReaderLimiter
+	workerID        string
 }
 
 // backupRunLogger supplies the stable correlation fields used by every
@@ -65,14 +71,27 @@ func backupFailureAttrs(code string, cause error) []slog.Attr {
 
 // NewCoordinator configures a worker-side coordinator. maxPackWriters is the
 // validated value of MAX_BACKUP_PACK_WRITERS supplied by worker configuration.
-func NewCoordinator(database *sql.DB, encryptionKey string, maxPackWriters int) (*Coordinator, error) {
+func NewCoordinator(database *sql.DB, encryptionKey string, maxPackWriters int, packReaders ...*restore.PackReaderLimiter) (*Coordinator, error) {
 	if database == nil {
 		return nil, errors.New("backup database is required")
 	}
 	if maxPackWriters < 1 || maxPackWriters > 4 {
 		return nil, fmt.Errorf("MAX_BACKUP_PACK_WRITERS must be between 1 and 4")
 	}
-	return &Coordinator{db: database, encryptionKey: encryptionKey, packWriterSlots: make(chan struct{}, maxPackWriters)}, nil
+	if len(packReaders) > 1 {
+		return nil, errors.New("only one restore pack reader limiter may be configured")
+	}
+	var limiter *restore.PackReaderLimiter
+	if len(packReaders) == 1 {
+		limiter = packReaders[0]
+	}
+	return &Coordinator{db: database, encryptionKey: encryptionKey, packWriterSlots: make(chan struct{}, maxPackWriters), packReaderSlots: limiter, workerID: "backup-worker"}, nil
+}
+
+func (c *Coordinator) SetWorkerID(workerID string) {
+	if strings.TrimSpace(workerID) != "" {
+		c.workerID = workerID
+	}
 }
 
 // PollOnce claims and executes at most one queued run. Callers can invoke it
@@ -104,7 +123,7 @@ func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
 }
 
 func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
-	maintenance, err := db.ClaimNextBackupMaintenanceContext(ctx, c.db)
+	maintenance, err := db.ClaimNextBackupMaintenanceForWorkerContext(ctx, c.db, c.workerID)
 	if err != nil || maintenance == nil {
 		return maintenance != nil, err
 	}
@@ -128,6 +147,12 @@ func (c *Coordinator) pollMaintenance(ctx context.Context) (bool, error) {
 	}
 	defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, maintenance.LockID)
 	if err := c.executeMaintenance(ctx, maintenance); err != nil {
+		if errors.Is(err, errVerifyMoreWork) {
+			if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_VERIFY_CONTINUING"); retryErr != nil {
+				return true, retryErr
+			}
+			return true, nil
+		}
 		logger.LogAttrs(ctx, slog.LevelError, "backup_maintenance_failed", backupFailureAttrs("BACKUP_MAINTENANCE_FAILED", err)...)
 		if retryErr := db.RetryBackupMaintenanceContext(context.Background(), c.db, maintenance.ID, "BACKUP_MAINTENANCE_FAILED"); retryErr != nil {
 			logger.Error("backup_maintenance_retry_persist_failed", observability.Error(retryErr), slog.String("error_kind", observability.ErrorKind(retryErr)))
@@ -163,9 +188,137 @@ func (c *Coordinator) executeMaintenance(ctx context.Context, maintenance *db.Ba
 		return c.compactOnePack(ctx, job, target)
 	case "DELETE_REPOSITORY":
 		return c.deleteRepository(ctx, maintenance, job, target)
+	case "VERIFY":
+		return c.verifyRepositoryMetadata(ctx, maintenance, job, target)
 	default:
 		return fmt.Errorf("unsupported backup maintenance %q", maintenance.Kind)
 	}
+}
+
+func (c *Coordinator) verifyRepositoryMetadata(ctx context.Context, maintenance *db.BackupMaintenance, job *db.BackupJob, target storage.StorageProvider) error {
+	if maintenance.VerifyMode.String != db.BackupVerifyMetadata && maintenance.VerifyMode.String != db.BackupVerifyFull && maintenance.VerifyMode.String != db.BackupVerifyBudgeted {
+		return errors.New("invalid repository check mode")
+	}
+	if err := db.SnapshotBackupVerifyTargetsContext(ctx, c.db, maintenance.ID, job.ID); err != nil {
+		return err
+	}
+	const maxVerifyClaimBytes int64 = 512 << 20
+	deadline := time.Now().Add(10 * time.Minute)
+	claimRead := int64(0)
+	totalRead := maintenance.ProcessedBytes
+	for {
+		verifyTarget, err := db.ClaimNextBackupVerifyTargetContext(ctx, c.db, maintenance.ID, c.workerID)
+		if err != nil {
+			return err
+		}
+		if verifyTarget == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = db.ReleaseBackupVerifyTargetClaimContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			return errVerifyMoreWork
+		}
+		cancelling, err := db.IsBackupMaintenanceCancellingContext(ctx, c.db, maintenance.ID)
+		if err != nil {
+			return err
+		}
+		if cancelling {
+			_ = db.ReleaseBackupVerifyTargetClaimContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			return nil
+		}
+		exists, size, err := target.FileExists(ctx, "files", verifyTarget.RemotePath)
+		if err != nil {
+			_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+			return err
+		}
+		state := "COMPLETED"
+		if !exists || size != verifyTarget.SizeBytes {
+			state, err = db.CompleteBackupVerifyTargetContext(ctx, c.db, verifyTarget.ID, exists, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+			if err != nil {
+				return err
+			}
+		} else if maintenance.VerifyMode.String == db.BackupVerifyFull || (maintenance.VerifyMode.String == db.BackupVerifyBudgeted && totalRead < maintenance.ByteBudget.Int64) {
+			if claimRead > 0 && claimRead+verifyTarget.SizeBytes > maxVerifyClaimBytes {
+				_ = db.ReleaseBackupVerifyTargetClaimContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+				return errVerifyMoreWork
+			}
+			if err := c.packReaderSlots.Acquire(ctx); err != nil {
+				_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+				return err
+			}
+			reader, err := target.StreamDownload(ctx, "files", verifyTarget.RemotePath)
+			if err != nil {
+				c.packReaderSlots.Release()
+				_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+				// A provider/network failure is retryable maintenance work, not
+				// evidence that an immutable repository pack is damaged.
+				return err
+			}
+			var expected [sha256.Size]byte
+			if len(verifyTarget.SHA256) != sha256.Size {
+				_ = reader.Close()
+				c.packReaderSlots.Release()
+				return errors.New("invalid backup verify pack hash")
+			}
+			copy(expected[:], verifyTarget.SHA256)
+			validationErr := func() error {
+				defer reader.Close()
+				_, err := backuprepo.ValidatePack(reader, expected, nil)
+				return err
+			}()
+			c.packReaderSlots.Release()
+			if validationErr != nil {
+				if isRetryableVerifyReadError(validationErr) {
+					_ = db.ReleaseBackupVerifyTargetClaimContext(context.Background(), c.db, verifyTarget.ID, verifyTarget.ClaimEpoch)
+					return validationErr
+				}
+				state = "DAMAGED"
+				if err := db.MarkBackupVerifyTargetDamagedContext(ctx, c.db, verifyTarget.ID, verifyTarget.ClaimEpoch); err != nil {
+					return err
+				}
+			} else {
+				claimRead += verifyTarget.SizeBytes
+				totalRead += verifyTarget.SizeBytes
+				if err := db.AddBackupVerifyProcessedBytesContext(ctx, c.db, maintenance.ID, verifyTarget.SizeBytes); err != nil {
+					return err
+				}
+				if err := db.MarkBackupVerifyTargetReadContext(ctx, c.db, verifyTarget.ID, verifyTarget.SizeBytes, verifyTarget.ClaimEpoch); err != nil {
+					return err
+				}
+				if verifyTarget.PackID.Valid {
+					if err := db.MarkBackupPacksCheckedContext(ctx, c.db, job.ID, []string{verifyTarget.PackID.String}); err != nil {
+						return err
+					}
+				}
+				state, err = db.CompleteBackupVerifyTargetContext(ctx, c.db, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+				if err != nil {
+					return err
+				}
+			}
+		} else {
+			state, err = db.CompleteBackupVerifyTargetContext(ctx, c.db, verifyTarget.ID, true, verifyTarget.SizeBytes, size, verifyTarget.ClaimEpoch)
+			if err != nil {
+				return err
+			}
+		}
+		if state != "COMPLETED" && verifyTarget.PackID.Valid {
+			if err := db.MarkBackupPackDamagedContext(ctx, c.db, job.ID, verifyTarget.PackID.String); err != nil {
+				return err
+			}
+		}
+		if err := db.AdvanceBackupVerifyCursorContext(ctx, c.db, maintenance.ID, verifyTarget.ID); err != nil {
+			return err
+		}
+	}
+	return db.CompleteBackupVerifyContext(ctx, c.db, maintenance.ID)
+}
+
+func isRetryableVerifyReadError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr)
 }
 
 func deleteRemotePack(ctx context.Context, target storage.StorageProvider, pack db.BackupPack) error {

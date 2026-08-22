@@ -641,6 +641,30 @@ func (p *GoogleProvider) StreamDownload(ctx context.Context, resourceType, fileP
 	}
 }
 
+// StreamDownloadRange implements RangeDownloader for GoogleProvider.
+func (p *GoogleProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, fmt.Errorf("resource type %s not supported for range download", resourceType)
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	id, err := p.resolveDriveFileID(ctx, filePath)
+	if err != nil {
+		return nil, err
+	}
+
+	call := p.driveService.Files.Get(id).Context(ctx)
+	call.Header().Set("Range", rangeHeader)
+	resp, err := call.Download()
+	if err != nil {
+		return nil, wrapGoogleError("google drive download range", err)
+	}
+
+	return ValidateHTTPRangeResponse(resp, offset, length)
+}
+
 func (p *GoogleProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	return p.StreamUploadChunked(ctx, resourceType, filePath, stream, size, nil)
 }

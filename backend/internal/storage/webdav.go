@@ -359,6 +359,34 @@ func (p *WebDAVProvider) StreamDownload(ctx context.Context, resourceType, fileP
 	return resp.Body, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for WebDAV.
+func (p *WebDAVProvider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if err := p.assertFilesOnly(resourceType); err != nil {
+		return nil, err
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	u := p.buildResourceURL(filePath)
+	req, err := p.newRequest("GET", u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Range", rangeHeader)
+	req = req.WithContext(ctx)
+
+	resp, err := p.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		return nil, fmt.Errorf("webdav download range: %w", ErrAuth)
+	}
+	return ValidateHTTPRangeResponse(resp, offset, length)
+}
+
 func (p *WebDAVProvider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if err := p.assertFilesOnly(resourceType); err != nil {
 		return err

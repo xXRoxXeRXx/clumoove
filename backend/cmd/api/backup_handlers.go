@@ -1,13 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/csv"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
+	"backend/internal/crypto"
 	"backend/internal/db"
+	"backend/internal/oauth"
 	"backend/internal/scheduler"
 	"backend/internal/storage"
 )
@@ -21,6 +29,28 @@ type createBackupRequest struct {
 	Timezone        string   `json:"timezone"`
 	RetentionCount  int      `json:"retention_count"`
 	Threads         int      `json:"threads"`
+}
+
+type createRestorePreviewRequest struct {
+	RetryRestoreJobID    string   `json:"retry_restore_job_id"`
+	TargetProfileID      string   `json:"target_profile_id"`
+	TargetProvider       string   `json:"target_provider"`
+	TargetURL            string   `json:"target_url"`
+	TargetUsername       string   `json:"target_username"`
+	TargetPassword       string   `json:"target_password"`
+	TargetRefreshToken   string   `json:"target_refresh_token"`
+	TargetTokenExpiresIn int      `json:"target_token_expires_in"`
+	SelectedPaths        []string `json:"selected_paths"`
+	TargetRoot           string   `json:"target_root"`
+	ConflictStrategy     string   `json:"conflict_strategy"`
+	Threads              int      `json:"threads"`
+	BandwidthMbps        int      `json:"bandwidth_mbps"`
+}
+
+type createBackupVerifyRequest struct {
+	Mode        string `json:"mode"`
+	ByteBudget  *int64 `json:"byte_budget"`
+	ConfirmFull bool   `json:"confirm_full"`
 }
 
 func (s *APIServer) requireBackupOwnership(w http.ResponseWriter, r *http.Request, id, userID string) bool {
@@ -133,6 +163,468 @@ func (s *APIServer) handleListBackupSnapshotItems(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, items)
 }
 
+func (s *APIServer) handleCreateRestorePreview(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "restore-preview", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	backupID, snapshotID := r.PathValue("id"), r.PathValue("snapshotID")
+	if backupID == "" || snapshotID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+		return
+	}
+	var req createRestorePreviewRequest
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+	var targetProfileID sql.NullString
+	targetCreds, err := s.loadProfile(r, req.TargetProfileID, profileCreds{
+		Provider: req.TargetProvider, URL: req.TargetURL, Username: req.TargetUsername,
+		Password: req.TargetPassword, RefreshToken: req.TargetRefreshToken,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		return
+	}
+	if req.TargetProfileID != "" {
+		targetProfileID = sql.NullString{String: req.TargetProfileID, Valid: true}
+	}
+	if targetCreds.Provider == "" {
+		writeValidationError(w, ErrProviderUnsupported)
+		return
+	}
+	targetCreds.URL = normalizeProviderURL(targetCreds.Provider, targetCreds.URL)
+	if targetCreds.Provider == "immich" {
+		writeValidationError(w, ErrImmichBackupUnsupported)
+		return
+	}
+	if !storage.IsValidProvider(targetCreds.Provider) || !storage.ProviderSupportsResourceType(targetCreds.Provider, "files") || storage.ValidateProviderURL(targetCreds.Provider, targetCreds.URL) != nil {
+		writeValidationError(w, ErrProviderUnsupported)
+		return
+	}
+	if oauth.IsProvider(targetCreds.Provider) && targetCreds.RefreshToken == "" {
+		writeValidationError(w, ErrRefreshTokenMissing)
+		return
+	}
+	if req.TargetProfileID == "" && targetCreds.Provider != "local" && targetCreds.Password == "" {
+		writeValidationError(w, ErrMissingRequiredFields)
+		return
+	}
+	paths, valid := normalizeRestoreSnapshotPaths(req.SelectedPaths)
+	if !valid {
+		writeValidationError(w, ErrBackupPathsInvalid)
+		return
+	}
+	targetRoot, valid := normalizeBackupPath(req.TargetRoot)
+	if !valid {
+		writeValidationError(w, ErrFolderPathInvalid)
+		return
+	}
+	if strings.Contains("/"+strings.Trim(targetRoot, "/")+"/", "/.clumoove-backup/") {
+		writeValidationError(w, ErrRestoreRepositoryOverlap)
+		return
+	}
+	backupJob, err := db.GetBackupJobForOwnerContext(r.Context(), s.db, backupID, userID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	sameRepositoryAccount := backupJob.TargetProfileID.Valid && targetProfileID.Valid && backupJob.TargetProfileID.String == targetProfileID.String
+	if !sameRepositoryAccount {
+		sameRepositoryAccount = strings.EqualFold(backupJob.TargetProvider, targetCreds.Provider) && strings.EqualFold(strings.TrimSpace(backupJob.TargetURL), strings.TrimSpace(targetCreds.URL)) && strings.EqualFold(strings.TrimSpace(backupJob.TargetUsername), strings.TrimSpace(targetCreds.Username))
+	}
+	if sameRepositoryAccount && (targetRoot == backupJob.RepositoryRoot || strings.HasPrefix(targetRoot, backupJob.RepositoryRoot+"/") || strings.HasPrefix(backupJob.RepositoryRoot, targetRoot+"/")) {
+		writeValidationError(w, ErrRestoreRepositoryOverlap)
+		return
+	}
+	if req.ConflictStrategy == "" {
+		req.ConflictStrategy = "RENAME"
+	}
+	if req.ConflictStrategy != "SKIP" && req.ConflictStrategy != "OVERWRITE" && req.ConflictStrategy != "RENAME" {
+		writeValidationError(w, ErrConflictStrategyInvalid)
+		return
+	}
+	if req.Threads == 0 {
+		req.Threads = 8
+	}
+	if req.Threads < 1 || req.Threads > 16 {
+		writeValidationError(w, ErrThreadsOutOfRange)
+		return
+	}
+	if req.BandwidthMbps < 0 || req.BandwidthMbps > 1000 {
+		writeValidationError(w, ErrBandwidthOutOfRange)
+		return
+	}
+	var exists bool
+	err = s.db.QueryRowContext(r.Context(), `SELECT EXISTS (SELECT 1 FROM backup_snapshots WHERE id = $1 AND backup_job_id = $2 AND state IN ('READY','PARTIAL') AND integrity_state <> 'DAMAGED')`, snapshotID, backupID).Scan(&exists)
+	if err != nil {
+		s.logf(r, "check restore snapshot failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, ErrRestoreSnapshotUnavailable)
+		return
+	}
+	passwordEncrypted, err := crypto.EncryptWithDomain(targetCreds.Password, s.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(targetCreds.Provider)))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
+	var refreshEncrypted sql.NullString
+	var expiresAt sql.NullTime
+	if targetCreds.RefreshToken != "" {
+		value, encryptErr := crypto.EncryptWithDomain(targetCreds.RefreshToken, s.encryptionKey, crypto.DomainOAuthRefreshToken)
+		if encryptErr != nil {
+			writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+			return
+		}
+		refreshEncrypted = sql.NullString{String: value, Valid: true}
+		expiresIn := req.TargetTokenExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 3600
+		}
+		expiresAt = sql.NullTime{Time: time.Now().Add(time.Duration(expiresIn) * time.Second), Valid: true}
+	}
+	megaSessionID, megaMasterKey, err := s.encryptMegaSession(targetCreds.MegaSession)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrEncryptionFailed)
+		return
+	}
+	identity := "direct:" + strings.ToLower(targetCreds.Provider) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.URL)) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.Username))
+	if targetProfileID.Valid {
+		identity = "profile:" + targetProfileID.String + ":" + strings.ToLower(targetCreds.Provider) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.URL)) + ":" + strings.ToLower(strings.TrimSpace(targetCreds.Username))
+	}
+	retryJobID := sql.NullString{}
+	if req.RetryRestoreJobID != "" {
+		var existingFingerprint []byte
+		var retryBackupID, retrySnapshotID string
+		var active bool
+		err = s.db.QueryRowContext(r.Context(), `
+			SELECT j.config_fingerprint, j.source_backup_ref, j.source_snapshot_ref,
+				EXISTS (SELECT 1 FROM restore_runs r WHERE r.restore_job_id = j.id AND r.status IN ('QUEUED','PLANNING','RUNNING','VERIFYING','CANCELLING'))
+			FROM restore_jobs j WHERE j.id = $1 AND j.user_id = $2`, req.RetryRestoreJobID, userID).Scan(&existingFingerprint, &retryBackupID, &retrySnapshotID, &active)
+		if err != nil || active || retryBackupID != backupID || retrySnapshotID != snapshotID {
+			writeConflictError(w, ErrRestorePreviewInvalidState)
+			return
+		}
+		fingerprint, fingerprintErr := db.RestoreConfigFingerprintWithIdentity(snapshotID, db.StringArray(paths), targetCreds.Provider, targetRoot, identity, req.ConflictStrategy)
+		if fingerprintErr != nil || !bytes.Equal(fingerprint[:], existingFingerprint) {
+			writeConflictError(w, ErrRestorePreviewInvalidState)
+			return
+		}
+		retryJobID = sql.NullString{String: req.RetryRestoreJobID, Valid: true}
+	}
+	previewID, err := db.CreateRestorePreviewContext(r.Context(), s.db, &db.RestorePreview{UserID: userID, BackupJobID: backupID, BackupSnapshotID: snapshotID, RetryRestoreJobID: retryJobID, TargetProfileID: targetProfileID, SelectedPaths: db.StringArray(paths), TargetProvider: targetCreds.Provider, TargetURL: targetCreds.URL, TargetUsername: targetCreds.Username, TargetPasswordEncrypted: sql.NullString{String: passwordEncrypted, Valid: passwordEncrypted != ""}, TargetRefreshTokenEncrypted: refreshEncrypted, TargetTokenExpiresAt: expiresAt, TargetMegaSessionIDEncrypted: sql.NullString{String: megaSessionID, Valid: megaSessionID != ""}, TargetMegaMasterKeyEncrypted: sql.NullString{String: megaMasterKey, Valid: megaMasterKey != ""}, TargetConnectionIdentity: identity, TargetRoot: targetRoot, ConflictStrategy: req.ConflictStrategy, Threads: req.Threads, BandwidthMbps: req.BandwidthMbps})
+	if err != nil {
+		s.logf(r, "create restore preview failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	s.writeAudit(r, db.AuditRestorePreviewCreated, previewID, userID, nil)
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": previewID})
+}
+
+func (s *APIServer) handleGetRestorePreview(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	preview, err := db.GetRestorePreviewForOwnerContext(r.Context(), s.db, r.PathValue("previewID"), userID)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+		return
+	}
+	if err != nil {
+		s.logf(r, "get restore preview failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *APIServer) handleCancelRestorePreview(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "restore-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	cancelled, err := db.CancelRestorePreviewForOwnerContext(r.Context(), s.db, r.PathValue("previewID"), userID)
+	if err != nil {
+		s.logf(r, "cancel restore preview failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !cancelled {
+		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+		return
+	}
+	s.writeAudit(r, db.AuditRestorePreviewCancelled, r.PathValue("previewID"), userID, nil)
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *APIServer) handleConsumeRestorePreview(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "restore-consume", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	job, run, err := db.ConsumeRestorePreviewContext(r.Context(), s.db, r.PathValue("previewID"), userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, db.ErrRestorePreviewNotFound) {
+			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+		} else if errors.Is(err, db.ErrRestorePreviewExpired) {
+			writeConflictError(w, ErrRestorePreviewExpired)
+		} else if errors.Is(err, db.ErrRestoreSnapshotUnavailable) || errors.Is(err, db.ErrRestorePreviewStale) || errors.Is(err, db.ErrRestoreRetryMismatch) {
+			writeConflictError(w, ErrRestorePreviewStale)
+		} else {
+			writeConflictError(w, ErrRestorePreviewInvalidState)
+		}
+		return
+	}
+	s.writeAudit(r, db.AuditRestoreCreated, job.ID, userID, nil)
+	s.writeAudit(r, db.AuditRestoreStarted, run.ID, userID, nil)
+	writeJSON(w, http.StatusAccepted, map[string]string{"restore_job_id": job.ID, "restore_run_id": run.ID})
+}
+
+func (s *APIServer) handleListRestoreRuns(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	runs, err := db.ListRestoreRunsForOwnerContext(r.Context(), s.db, userID)
+	if err != nil {
+		s.logf(r, "list restore runs failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, runs)
+}
+
+func (s *APIServer) handleGetRestoreRun(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	run, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, r.PathValue("runID"), userID)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
+}
+
+func (s *APIServer) handleRestoreRunStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	if !s.acquireStream(w, r, userID, "restore-stream") {
+		return
+	}
+	defer s.releaseMigrationStream(userID)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	runID := r.PathValue("runID")
+	run, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		return
+	}
+	write := func(value *db.RestoreRun) ([]byte, error) {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fmt.Fprintf(w, "event: restore\ndata: %s\n\n", payload); err != nil {
+			return nil, err
+		}
+		flusher.Flush()
+		return payload, nil
+	}
+	previous, err := write(run)
+	if err != nil {
+		return
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	keepalive := time.NewTicker(20 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-keepalive.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			current, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID)
+			if err != nil {
+				return
+			}
+			payload, err := json.Marshal(current)
+			if err != nil {
+				return
+			}
+			if !bytes.Equal(payload, previous) {
+				if _, err := fmt.Fprintf(w, "event: restore\ndata: %s\n\n", payload); err != nil {
+					return
+				}
+				flusher.Flush()
+				previous = payload
+			}
+		}
+	}
+}
+
+func (s *APIServer) handleListRestoreRunItems(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	runID := r.PathValue("runID")
+	if _, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID); err != nil {
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	items, err := db.ListRestoreItemsForOwnerContext(r.Context(), s.db, runID, userID)
+	if err != nil {
+		s.logf(r, "list restore items failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *APIServer) handleCancelRestoreRun(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "restore-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	cancelled, err := db.CancelRestoreRunForOwnerContext(r.Context(), s.db, r.PathValue("runID"), userID)
+	if err != nil {
+		s.logf(r, "cancel restore run failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !cancelled {
+		writeConflictError(w, ErrRestorePreviewInvalidState)
+		return
+	}
+	s.writeAudit(r, db.AuditRestoreCancelled, r.PathValue("runID"), userID, nil)
+	writeJSON(w, http.StatusAccepted, map[string]bool{"success": true})
+}
+
+func (s *APIServer) handleDeleteRestoreJob(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "restore-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	deleted, err := db.DeleteRestoreJobForOwnerContext(r.Context(), s.db, r.PathValue("jobID"), userID)
+	if err != nil {
+		s.logf(r, "delete restore job failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !deleted {
+		writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+		return
+	}
+	s.writeAudit(r, db.AuditRestoreDeleted, r.PathValue("jobID"), userID, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *APIServer) handleDownloadRestoreReport(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	runID := r.PathValue("runID")
+	run, err := db.GetRestoreRunForOwnerContext(r.Context(), s.db, runID, userID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, ErrRestoreNotFound)
+			return
+		}
+		s.logf(r, "load restore report run failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if run.Status != "COMPLETED" && run.Status != "PARTIAL" && run.Status != "FAILED" && run.Status != "CANCELLED" {
+		writeConflictError(w, ErrRestorePreviewInvalidState)
+		return
+	}
+	items, err := db.ListRestoreItemsForRunOwnerContext(r.Context(), s.db, runID, userID)
+	if err != nil {
+		s.logf(r, "create restore report failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=restore-report.csv")
+	writer := csv.NewWriter(w)
+	if err := writer.Write([]string{"source_path", "target_path", "status", "verification", "size_bytes", "error_code"}); err != nil {
+		return
+	}
+	for _, item := range items {
+		if err := writer.Write([]string{neutralizeCSV(item.SnapshotRelativePath), neutralizeCSV(item.TargetPath), item.Status, neutralizeCSV(item.VerificationKind.String), fmt.Sprintf("%d", item.SizeBytes), neutralizeCSV(item.ErrorCode.String)}); err != nil {
+			return
+		}
+	}
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		s.logf(r, "write restore report failed: %v", err)
+	}
+}
+
+func neutralizeCSV(value string) string {
+	if value != "" && strings.ContainsRune("=+-@\t\r", rune(value[0])) {
+		return "'" + value
+	}
+	return value
+}
+
 func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
 		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
@@ -243,6 +735,183 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 
 func nullableEncrypted(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
+}
+
+func (s *APIServer) handleCreateBackupVerify(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "backup-verify", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	backupID := r.PathValue("id")
+	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+		return
+	}
+	var req createBackupVerifyRequest
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+	if req.Mode == db.BackupVerifyFull && !req.ConfirmFull {
+		writeValidationError(w, ErrBackupVerifyInvalid)
+		return
+	}
+	id, err := db.CreateBackupVerifyContext(r.Context(), s.db, backupID, userID, req.Mode, req.ByteBudget)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	if err != nil {
+		writeValidationError(w, ErrBackupVerifyInvalid)
+		return
+	}
+	s.writeAudit(r, db.AuditRepositoryCheckCreated, id, userID, nil)
+	writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
+}
+
+func (s *APIServer) handleCancelBackupVerify(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "backup-verify", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	verifyID := r.PathValue("verifyID")
+	if verifyID == "" {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	cancelled, err := db.CancelBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	if err != nil {
+		s.logf(r, "cancel repository check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if !cancelled {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	s.writeAudit(r, db.AuditRepositoryCheckCancelled, verifyID, userID, nil)
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+func (s *APIServer) handleListBackupVerifies(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	backupID := r.PathValue("id")
+	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+		return
+	}
+	checks, err := db.ListBackupVerifiesForOwnerContext(r.Context(), s.db, backupID, userID)
+	if err != nil {
+		s.logf(r, "list repository checks failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, checks)
+}
+
+func (s *APIServer) handleGetBackupVerify(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, r.PathValue("verifyID"), userID)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	if err != nil {
+		s.logf(r, "get repository check failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	writeJSON(w, http.StatusOK, check)
+}
+
+func (s *APIServer) handleBackupVerifyStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	if !s.acquireStream(w, r, userID, "backup-verify-stream") {
+		return
+	}
+	defer s.releaseMigrationStream(userID)
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	verifyID := r.PathValue("verifyID")
+	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	if err == sql.ErrNoRows {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		return
+	}
+	write := func(value *db.BackupMaintenance) ([]byte, error) {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fmt.Fprintf(w, "event: repository-check\ndata: %s\n\n", payload); err != nil {
+			return nil, err
+		}
+		flusher.Flush()
+		return payload, nil
+	}
+	previous, err := write(check)
+	if err != nil {
+		return
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	keepalive := time.NewTicker(20 * time.Second)
+	defer keepalive.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-keepalive.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			current, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+			if err != nil {
+				return
+			}
+			payload, err := json.Marshal(current)
+			if err != nil {
+				return
+			}
+			if !bytes.Equal(payload, previous) {
+				if _, err := fmt.Fprintf(w, "event: repository-check\ndata: %s\n\n", payload); err != nil {
+					return
+				}
+				flusher.Flush()
+				previous = payload
+			}
+		}
+	}
 }
 
 func (s *APIServer) handleRunBackup(w http.ResponseWriter, r *http.Request) {
@@ -444,4 +1113,36 @@ func normalizeBackupPath(value string) (string, bool) {
 		return "", false
 	}
 	return clean, true
+}
+
+func normalizeRestoreSnapshotPaths(paths []string) ([]string, bool) {
+	if len(paths) == 0 {
+		return nil, false
+	}
+	seen := make(map[string]struct{}, len(paths))
+	for _, value := range paths {
+		clean := strings.TrimPrefix(value, "/")
+		if clean != "" {
+			var err error
+			clean, err = db.NormalizeBackupSnapshotPath(clean)
+			if err != nil {
+				return nil, false
+			}
+		}
+		if _, exists := seen[clean]; exists {
+			return nil, false
+		}
+		seen[clean] = struct{}{}
+	}
+	normalized := make([]string, 0, len(seen))
+	for value := range seen {
+		for other := range seen {
+			if value != other && strings.HasPrefix(other, value+"/") {
+				return nil, false
+			}
+		}
+		normalized = append(normalized, value)
+	}
+	sort.Strings(normalized)
+	return normalized, true
 }

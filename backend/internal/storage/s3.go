@@ -366,6 +366,39 @@ func (p *S3Provider) StreamDownload(ctx context.Context, resourceType, filePath 
 	return resp.Body, nil
 }
 
+// StreamDownloadRange implements RangeDownloader for immutable backup packs.
+// S3-compatible endpoints must acknowledge the requested range; accepting a
+// full 200 response would silently hash the wrong bytes after a proxy strips
+// the Range header.
+func (p *S3Provider) StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error) {
+	if resourceType != "files" {
+		return nil, fmt.Errorf("resource type %s not supported by S3 provider", resourceType)
+	}
+	rangeHeader, err := FormatByteRangeHeader(offset, length)
+	if err != nil {
+		return nil, err
+	}
+	end, _ := ValidateByteRange(offset, length)
+	resp, err := p.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(p.bucket),
+		Key:    aws.String(p.cleanKey(filePath)),
+		Range:  aws.String(rangeHeader),
+	})
+	if err != nil {
+		if isS3AuthError(err) {
+			return nil, ErrAuth
+		}
+		return nil, fmt.Errorf("s3 get object range failed: %w", err)
+	}
+	expectedRange := fmt.Sprintf("bytes %d-%d/", offset, end)
+	expectedRangeNoTotal := fmt.Sprintf("bytes %d-%d", offset, end)
+	if resp.ContentLength == nil || *resp.ContentLength != length || resp.ContentRange == nil || (!strings.HasPrefix(*resp.ContentRange, expectedRange) && *resp.ContentRange != expectedRangeNoTotal) {
+		resp.Body.Close()
+		return nil, fmt.Errorf("s3 range response did not match request")
+	}
+	return newRangedReadCloser(resp.Body, length), nil
+}
+
 func (p *S3Provider) StreamUpload(ctx context.Context, resourceType, filePath string, stream io.Reader, size int64) error {
 	if resourceType != "files" {
 		return fmt.Errorf("resource type %s not supported by S3 provider", resourceType)

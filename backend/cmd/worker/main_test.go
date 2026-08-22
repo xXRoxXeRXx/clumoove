@@ -50,6 +50,35 @@ func TestLoadWorkerConfigRejectsMissingEncryptionKey(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerConfigValidatesRestorePackReaderLimit(t *testing.T) {
+	for _, value := range []string{"0", "5", "invalid"} {
+		_, err := loadWorkerConfig(func(key string) string {
+			if key == "ENCRYPTION_SECRET_KEY" {
+				return "encryption-secret"
+			}
+			if key == "MAX_RESTORE_PACK_READERS" {
+				return value
+			}
+			return ""
+		})
+		if err == nil {
+			t.Errorf("MAX_RESTORE_PACK_READERS=%q succeeded", value)
+		}
+	}
+	config, err := loadWorkerConfig(func(key string) string {
+		if key == "ENCRYPTION_SECRET_KEY" {
+			return "encryption-secret"
+		}
+		if key == "MAX_RESTORE_PACK_READERS" {
+			return "3"
+		}
+		return ""
+	})
+	if err != nil || config.maxRestorePackReaders != 3 {
+		t.Fatalf("restore reader limit = %d, error = %v", config.maxRestorePackReaders, err)
+	}
+}
+
 func TestWatchShutdownSignalsCancelsThenForcesExit(t *testing.T) {
 	signals := make(chan os.Signal, 2)
 	cancelled := make(chan struct{})

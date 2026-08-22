@@ -164,20 +164,334 @@ type BackupPack struct {
 	LastCheckedAt *time.Time
 }
 
+// BackupRepositoryConnection is the worker-only view needed to read immutable
+// repository packs. It intentionally excludes the backup source credentials.
+type BackupRepositoryConnection struct {
+	BackupJobID            string
+	UserID                 string
+	Provider               string
+	URL                    string
+	Username               string
+	PasswordEncrypted      string
+	RefreshTokenEncrypted  sql.NullString
+	TokenExpiresAt         sql.NullTime
+	MegaSessionIDEncrypted sql.NullString
+	MegaMasterKeyEncrypted sql.NullString
+}
+
+func GetBackupRepositoryConnectionContext(ctx context.Context, database *sql.DB, jobID string) (*BackupRepositoryConnection, error) {
+	connection := &BackupRepositoryConnection{}
+	err := database.QueryRowContext(ctx, `SELECT id, user_id, target_provider, target_url, target_username, target_password_encrypted, target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted, target_mega_master_key_encrypted FROM backup_jobs WHERE id = $1 AND deletion_state = 'ACTIVE'`, jobID).Scan(&connection.BackupJobID, &connection.UserID, &connection.Provider, &connection.URL, &connection.Username, &connection.PasswordEncrypted, &connection.RefreshTokenEncrypted, &connection.TokenExpiresAt, &connection.MegaSessionIDEncrypted, &connection.MegaMasterKeyEncrypted)
+	if err != nil {
+		return nil, err
+	}
+	return connection, nil
+}
+
+// UpdateBackupRepositoryOAuthTokens conditionally rotates the credentials of
+// the backup repository itself. Restore rows never copy these source secrets;
+// concurrent workers adopt the CAS winner instead of persisting a stale token.
+func UpdateBackupRepositoryOAuthTokens(ctx context.Context, database *sql.DB, backupJobID, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
+	if expectedRefreshEncrypted == "" {
+		return ErrOAuthTokenConflict
+	}
+	result, err := database.ExecContext(ctx, `UPDATE backup_jobs SET target_password_encrypted = $2, target_refresh_token_encrypted = $3, target_token_expires_at = $4 WHERE id = $1 AND target_refresh_token_encrypted = $5 AND deletion_state = 'ACTIVE'`, backupJobID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrOAuthTokenConflict
+	}
+	return nil
+}
+
+func UpdateBackupRepositoryMegaSessionContext(ctx context.Context, database *sql.DB, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error {
+	_, err := database.ExecContext(ctx, `UPDATE backup_jobs SET target_mega_session_id_encrypted = $2, target_mega_master_key_encrypted = $3 WHERE id = $1 AND deletion_state = 'ACTIVE'`, backupJobID, nullableBackupString(sessionIDEncrypted), nullableBackupString(masterKeyEncrypted))
+	return err
+}
+
 type BackupMaintenance struct {
-	ID          string
-	BackupJobID string
-	UserID      string
-	LockID      int64
-	Kind        string
-	State       string
-	ByteBudget  sql.NullInt64
+	ID                    string         `json:"id"`
+	BackupJobID           string         `json:"backup_job_id"`
+	UserID                string         `json:"-"`
+	LockID                int64          `json:"-"`
+	Kind                  string         `json:"kind"`
+	State                 string         `json:"state"`
+	ByteBudget            sql.NullInt64  `json:"byte_budget,omitempty"`
+	VerifyMode            sql.NullString `json:"verify_mode,omitempty"`
+	ProcessedBytes        int64          `json:"processed_bytes"`
+	TotalPacks            int            `json:"total_packs"`
+	CheckedPacks          int            `json:"checked_packs"`
+	MissingPacks          int            `json:"missing_packs"`
+	DamagedPacks          int            `json:"damaged_packs"`
+	CoordinatorGeneration int            `json:"-"`
+	CoordinatorLeaseUntil sql.NullTime   `json:"-"`
+	WorkerHash            sql.NullString `json:"-"`
+	ErrorCode             sql.NullString `json:"error_code,omitempty"`
+	StartedAt             sql.NullTime   `json:"started_at,omitempty"`
+	FinishedAt            sql.NullTime   `json:"finished_at,omitempty"`
+	CreatedAt             time.Time      `json:"created_at"`
+}
+
+func (m BackupMaintenance) MarshalJSON() ([]byte, error) {
+	type alias BackupMaintenance
+	var budget *int64
+	if m.ByteBudget.Valid {
+		value := m.ByteBudget.Int64
+		budget = &value
+	}
+	var mode, errorCode *string
+	if m.VerifyMode.Valid {
+		value := m.VerifyMode.String
+		mode = &value
+	}
+	if m.ErrorCode.Valid {
+		value := m.ErrorCode.String
+		errorCode = &value
+	}
+	return json.Marshal(&struct {
+		*alias
+		ByteBudget *int64  `json:"byte_budget,omitempty"`
+		VerifyMode *string `json:"verify_mode,omitempty"`
+		ErrorCode  *string `json:"error_code,omitempty"`
+		StartedAt  *string `json:"started_at,omitempty"`
+		FinishedAt *string `json:"finished_at,omitempty"`
+	}{alias: (*alias)(&m), ByteBudget: budget, VerifyMode: mode, ErrorCode: errorCode, StartedAt: nullTimeISO(m.StartedAt), FinishedAt: nullTimeISO(m.FinishedAt)})
+}
+
+const (
+	BackupVerifyMetadata = "METADATA"
+	BackupVerifyBudgeted = "BUDGETED"
+	BackupVerifyFull     = "FULL"
+)
+
+func CreateBackupVerifyContext(ctx context.Context, database *sql.DB, backupJobID, userID, mode string, byteBudget *int64) (string, error) {
+	if mode != BackupVerifyMetadata && mode != BackupVerifyBudgeted && mode != BackupVerifyFull {
+		return "", errors.New("invalid backup verify mode")
+	}
+	if (mode == BackupVerifyBudgeted && (byteBudget == nil || *byteBudget < 64<<20 || *byteBudget > 1<<40)) || (mode != BackupVerifyBudgeted && byteBudget != nil) {
+		return "", errors.New("invalid backup verify byte budget")
+	}
+	var id string
+	err := database.QueryRowContext(ctx, `
+		INSERT INTO backup_maintenance (backup_job_id, kind, verify_mode, byte_budget)
+		SELECT id, 'VERIFY', $3, $4 FROM backup_jobs
+		WHERE id = $1 AND user_id = $2 AND deletion_state = 'ACTIVE'
+		RETURNING id`, backupJobID, userID, mode, byteBudget).Scan(&id)
+	return id, err
+}
+
+func ListBackupVerifiesForOwnerContext(ctx context.Context, database *sql.DB, backupJobID, userID string) ([]BackupMaintenance, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT m.id, m.backup_job_id, m.kind, m.state, m.byte_budget, m.verify_mode, m.processed_bytes,
+			m.total_packs, m.checked_packs, m.missing_packs, m.damaged_packs, m.error_code,
+			m.started_at, m.finished_at, m.created_at
+		FROM backup_maintenance m JOIN backup_jobs j ON j.id = m.backup_job_id
+		WHERE m.backup_job_id = $1 AND j.user_id = $2 AND m.kind = 'VERIFY'
+		ORDER BY m.created_at DESC`, backupJobID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	checks := make([]BackupMaintenance, 0)
+	for rows.Next() {
+		var check BackupMaintenance
+		if err := rows.Scan(&check.ID, &check.BackupJobID, &check.Kind, &check.State, &check.ByteBudget, &check.VerifyMode, &check.ProcessedBytes, &check.TotalPacks, &check.CheckedPacks, &check.MissingPacks, &check.DamagedPacks, &check.ErrorCode, &check.StartedAt, &check.FinishedAt, &check.CreatedAt); err != nil {
+			return nil, err
+		}
+		checks = append(checks, check)
+	}
+	return checks, rows.Err()
+}
+
+func GetBackupVerifyForOwnerContext(ctx context.Context, database *sql.DB, maintenanceID, userID string) (*BackupMaintenance, error) {
+	check := &BackupMaintenance{}
+	err := database.QueryRowContext(ctx, `
+		SELECT m.id, m.backup_job_id, m.kind, m.state, m.byte_budget, m.verify_mode, m.processed_bytes,
+			m.total_packs, m.checked_packs, m.missing_packs, m.damaged_packs, m.error_code,
+			m.started_at, m.finished_at, m.created_at
+		FROM backup_maintenance m JOIN backup_jobs j ON j.id = m.backup_job_id
+		WHERE m.id = $1 AND j.user_id = $2 AND m.kind = 'VERIFY'`, maintenanceID, userID).Scan(
+		&check.ID, &check.BackupJobID, &check.Kind, &check.State, &check.ByteBudget, &check.VerifyMode,
+		&check.ProcessedBytes, &check.TotalPacks, &check.CheckedPacks, &check.MissingPacks, &check.DamagedPacks,
+		&check.ErrorCode, &check.StartedAt, &check.FinishedAt, &check.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return check, nil
 }
 
 type BackupLiveBlock struct {
 	ID   string
 	Hash []byte
 	Size int
+}
+
+type BackupVerifyTarget struct {
+	ID         string
+	PackID     sql.NullString
+	RemotePath string
+	SHA256     []byte
+	SizeBytes  int64
+	ClaimEpoch int64
+}
+
+func nullableBackupString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func SnapshotBackupVerifyTargetsContext(ctx context.Context, database *sql.DB, maintenanceID, backupJobID string) error {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO backup_verify_targets (backup_maintenance_id, backup_pack_id, pack_remote_path, pack_sha256, pack_size_bytes)
+		SELECT $1, p.id, p.remote_rel_path, p.sha256, p.size_bytes
+		FROM backup_packs p
+		WHERE p.backup_job_id = $2 AND p.state = 'READY' AND EXISTS (
+			SELECT 1 FROM backup_blocks b JOIN backup_snapshot_item_blocks sib ON sib.backup_block_id = b.id JOIN backup_snapshot_items i ON i.id = sib.backup_snapshot_item_id JOIN backup_snapshots s ON s.id = i.backup_snapshot_id
+			WHERE b.backup_pack_id = p.id AND s.state IN ('READY','PARTIAL')
+		)
+		ON CONFLICT (backup_maintenance_id, pack_remote_path) DO NOTHING`, maintenanceID, backupJobID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_maintenance SET total_packs = (SELECT COUNT(*) FROM backup_verify_targets WHERE backup_maintenance_id = $1) WHERE id = $1 AND state = 'RUNNING'`, maintenanceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func ListPendingBackupVerifyTargetsContext(ctx context.Context, database *sql.DB, maintenanceID string) ([]BackupVerifyTarget, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT t.id, t.backup_pack_id, t.pack_remote_path, t.pack_sha256, t.pack_size_bytes
+		FROM backup_verify_targets t
+		LEFT JOIN backup_packs p ON p.id = t.backup_pack_id
+		WHERE t.backup_maintenance_id = $1 AND t.state = 'PENDING'
+		ORDER BY p.last_checked_at NULLS FIRST, t.id`, maintenanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var targets []BackupVerifyTarget
+	for rows.Next() {
+		var target BackupVerifyTarget
+		if err := rows.Scan(&target.ID, &target.PackID, &target.RemotePath, &target.SHA256, &target.SizeBytes); err != nil {
+			return nil, err
+		}
+		targets = append(targets, target)
+	}
+	return targets, rows.Err()
+}
+
+// ClaimNextBackupVerifyTargetContext grants one bounded pack check. The
+// persisted target state, epoch, and deadline allow another worker to resume
+// after a crash without losing the live-pack pin or replaying a finished pack.
+func ClaimNextBackupVerifyTargetContext(ctx context.Context, database *sql.DB, maintenanceID, workerID string) (*BackupVerifyTarget, error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_verify_targets SET state = 'PENDING', worker_hash = NULL, claim_deadline = NULL WHERE backup_maintenance_id = $1 AND state = 'RUNNING' AND claim_deadline < CURRENT_TIMESTAMP`, maintenanceID); err != nil {
+		return nil, err
+	}
+	target := &BackupVerifyTarget{}
+	err = tx.QueryRowContext(ctx, `
+		SELECT t.id, t.backup_pack_id, t.pack_remote_path, t.pack_sha256, t.pack_size_bytes, t.claim_epoch
+		FROM backup_verify_targets t LEFT JOIN backup_packs p ON p.id = t.backup_pack_id
+		WHERE t.backup_maintenance_id = $1 AND t.state = 'PENDING'
+		ORDER BY p.last_checked_at NULLS FIRST, t.id FOR UPDATE OF t SKIP LOCKED LIMIT 1`, maintenanceID).Scan(&target.ID, &target.PackID, &target.RemotePath, &target.SHA256, &target.SizeBytes, &target.ClaimEpoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, tx.Commit()
+	}
+	if err != nil {
+		return nil, err
+	}
+	err = tx.QueryRowContext(ctx, `UPDATE backup_verify_targets SET state = 'RUNNING', claim_epoch = claim_epoch + 1, claim_deadline = CURRENT_TIMESTAMP + INTERVAL '10 minutes', worker_hash = $2 WHERE id = $1 AND state = 'PENDING' RETURNING claim_epoch`, target.ID, nullableBackupString(workerID)).Scan(&target.ClaimEpoch)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return target, nil
+}
+
+func ReleaseBackupVerifyTargetClaimContext(ctx context.Context, database *sql.DB, targetID string, claimEpoch int64) error {
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = 'PENDING', worker_hash = NULL, claim_deadline = NULL WHERE id = $1 AND state = 'RUNNING' AND claim_epoch = $2`, targetID, claimEpoch)
+	return err
+}
+
+func CompleteBackupVerifyTargetContext(ctx context.Context, database *sql.DB, targetID string, exists bool, expectedSize, actualSize int64, claimEpoch ...int64) (string, error) {
+	state := "COMPLETED"
+	if !exists || actualSize < 0 {
+		state = "MISSING"
+	} else if actualSize != expectedSize {
+		state = "DAMAGED"
+	}
+	epoch := int64(0)
+	if len(claimEpoch) > 0 {
+		epoch = claimEpoch[0]
+	}
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = $2, error_code = CASE WHEN $2 = 'COMPLETED' THEN NULL ELSE 'BACKUP_PACK_DAMAGED' END, worker_hash = NULL, claim_deadline = NULL, cursor = jsonb_build_object('completed', true) WHERE id = $1 AND state IN ('PENDING','RUNNING') AND ($3 = 0 OR claim_epoch = $3)`, targetID, state, epoch)
+	return state, err
+}
+
+func CompleteBackupVerifyContext(ctx context.Context, database *sql.DB, maintenanceID string) error {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE backup_maintenance m SET state = CASE WHEN state = 'CANCELLING' THEN 'CANCELLED' ELSE 'COMPLETED' END, finished_at = CURRENT_TIMESTAMP, claim_deadline = NULL, checked_packs = (SELECT COUNT(*) FROM backup_verify_targets t WHERE t.backup_maintenance_id = m.id AND t.state = 'COMPLETED'), missing_packs = (SELECT COUNT(*) FROM backup_verify_targets t WHERE t.backup_maintenance_id = m.id AND t.state = 'MISSING'), damaged_packs = (SELECT COUNT(*) FROM backup_verify_targets t WHERE t.backup_maintenance_id = m.id AND t.state = 'DAMAGED') WHERE id = $1 AND state IN ('RUNNING', 'CANCELLING')`, maintenanceID)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err != nil || count != 1 {
+		return errors.New("repository check changed during finalization")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_verify_targets SET backup_pack_id = NULL WHERE backup_maintenance_id = $1`, maintenanceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func MarkBackupVerifyTargetDamagedContext(ctx context.Context, database *sql.DB, targetID string, claimEpoch ...int64) error {
+	epoch := int64(0)
+	if len(claimEpoch) > 0 {
+		epoch = claimEpoch[0]
+	}
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET state = 'DAMAGED', error_code = 'BACKUP_PACK_DAMAGED', worker_hash = NULL, claim_deadline = NULL, cursor = jsonb_build_object('completed', true) WHERE id = $1 AND state IN ('PENDING','RUNNING') AND ($2 = 0 OR claim_epoch = $2)`, targetID, epoch)
+	return err
+}
+
+func AddBackupVerifyProcessedBytesContext(ctx context.Context, database *sql.DB, maintenanceID string, bytes int64) error {
+	_, err := database.ExecContext(ctx, `UPDATE backup_maintenance SET processed_bytes = processed_bytes + $2 WHERE id = $1 AND state = 'RUNNING'`, maintenanceID, bytes)
+	return err
+}
+
+func MarkBackupVerifyTargetReadContext(ctx context.Context, database *sql.DB, targetID string, bytes int64, claimEpoch ...int64) error {
+	epoch := int64(0)
+	if len(claimEpoch) > 0 {
+		epoch = claimEpoch[0]
+	}
+	_, err := database.ExecContext(ctx, `UPDATE backup_verify_targets SET bytes_read = $2 WHERE id = $1 AND state IN ('PENDING','RUNNING') AND ($3 = 0 OR claim_epoch = $3)`, targetID, bytes, epoch)
+	return err
+}
+
+func AdvanceBackupVerifyCursorContext(ctx context.Context, database *sql.DB, maintenanceID, targetID string) error {
+	_, err := database.ExecContext(ctx, `UPDATE backup_maintenance SET cursor = jsonb_build_object('last_completed_target_id', $2), claim_deadline = CURRENT_TIMESTAMP + INTERVAL '10 minutes', coordinator_lease_until = CURRENT_TIMESTAMP + INTERVAL '2 minutes' WHERE id = $1 AND state = 'RUNNING'`, maintenanceID, targetID)
+	return err
 }
 
 type BackupClaimOutcome string
@@ -539,6 +853,10 @@ func MarkBackupPackDamagedContext(ctx context.Context, database *sql.DB, jobID, 
 		return err
 	}
 	defer tx.Rollback()
+	var userID string
+	if err := tx.QueryRowContext(ctx, `SELECT user_id FROM backup_jobs WHERE id = $1 FOR UPDATE`, jobID).Scan(&userID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE backup_packs SET state = 'DAMAGED' WHERE id = $1 AND backup_job_id = $2`, packID, jobID); err != nil {
 		return err
 	}
@@ -553,7 +871,11 @@ func MarkBackupPackDamagedContext(ctx context.Context, database *sql.DB, jobID, 
 			)`, jobID, packID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	WriteAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: AuditRepositoryDamageDetected, Target: packID})
+	return nil
 }
 
 // RequestBackupRepositoryDeletionContext blocks all future runs, disables the
@@ -592,36 +914,109 @@ func RequestBackupRepositoryDeletionContext(ctx context.Context, database *sql.D
 
 // ClaimNextBackupMaintenanceContext leases one pending maintenance request.
 func ClaimNextBackupMaintenanceContext(ctx context.Context, database *sql.DB) (*BackupMaintenance, error) {
+	return ClaimNextBackupMaintenanceForWorkerContext(ctx, database, "")
+}
+
+func ClaimNextBackupMaintenanceForWorkerContext(ctx context.Context, database *sql.DB, workerID string) (*BackupMaintenance, error) {
 	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	// A missed worker heartbeat is a takeover signal, not a terminal error.
+	// Verify targets retain their copied locators and cursor, so the next owner
+	// can resume without unpinning packs or repeating completed work.
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_maintenance SET state = 'PENDING', claim_deadline = NULL, coordinator_lease_until = NULL, worker_hash = NULL, error_code = 'REPOSITORY_CHECK_RECOVERED' WHERE kind = 'VERIFY' AND state = 'RUNNING' AND (coordinator_lease_until < CURRENT_TIMESTAMP OR (coordinator_lease_until IS NULL AND claim_deadline < CURRENT_TIMESTAMP))`); err != nil {
+		return nil, err
+	}
 	maintenance := &BackupMaintenance{}
 	err = tx.QueryRowContext(ctx, `
-		SELECT m.id, m.backup_job_id, j.user_id, j.lock_id, m.kind, m.state, m.byte_budget
+		SELECT m.id, m.backup_job_id, j.user_id, j.lock_id, m.kind, m.state, m.byte_budget, m.verify_mode, m.processed_bytes, m.coordinator_generation, m.coordinator_lease_until, m.worker_hash
 		FROM backup_maintenance m JOIN backup_jobs j ON j.id = m.backup_job_id
 		WHERE m.state IN ('PENDING', 'RETRY_WAIT') AND (m.next_retry_at IS NULL OR m.next_retry_at <= CURRENT_TIMESTAMP)
-		ORDER BY m.created_at FOR UPDATE OF m SKIP LOCKED LIMIT 1`).Scan(&maintenance.ID, &maintenance.BackupJobID, &maintenance.UserID, &maintenance.LockID, &maintenance.Kind, &maintenance.State, &maintenance.ByteBudget)
+		ORDER BY m.created_at FOR UPDATE OF m SKIP LOCKED LIMIT 1`).Scan(&maintenance.ID, &maintenance.BackupJobID, &maintenance.UserID, &maintenance.LockID, &maintenance.Kind, &maintenance.State, &maintenance.ByteBudget, &maintenance.VerifyMode, &maintenance.ProcessedBytes, &maintenance.CoordinatorGeneration, &maintenance.CoordinatorLeaseUntil, &maintenance.WorkerHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE backup_maintenance SET state = 'RUNNING', attempts = attempts + 1, started_at = COALESCE(started_at, CURRENT_TIMESTAMP), claim_deadline = CURRENT_TIMESTAMP + INTERVAL '10 minutes' WHERE id = $1`, maintenance.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_maintenance SET state = 'RUNNING', attempts = attempts + 1, started_at = COALESCE(started_at, CURRENT_TIMESTAMP), claim_deadline = CURRENT_TIMESTAMP + INTERVAL '10 minutes', coordinator_generation = coordinator_generation + 1, coordinator_lease_until = CURRENT_TIMESTAMP + INTERVAL '2 minutes', worker_hash = $2 WHERE id = $1`, maintenance.ID, nullableBackupString(workerID)); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	maintenance.State = "RUNNING"
+	maintenance.CoordinatorGeneration++
+	maintenance.WorkerHash = sql.NullString{String: workerID, Valid: workerID != ""}
 	return maintenance, nil
 }
 
 func CompleteBackupMaintenanceContext(ctx context.Context, database *sql.DB, maintenanceID string) error {
-	_, err := database.ExecContext(ctx, `UPDATE backup_maintenance SET state = 'COMPLETED', finished_at = CURRENT_TIMESTAMP, claim_deadline = NULL, error_code = NULL WHERE id = $1 AND state = 'RUNNING'`, maintenanceID)
-	return err
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var userID, kind, previousState string
+	if err := tx.QueryRowContext(ctx, `SELECT j.user_id, m.kind, m.state FROM backup_maintenance m JOIN backup_jobs j ON j.id = m.backup_job_id WHERE m.id = $1 FOR UPDATE`, maintenanceID).Scan(&userID, &kind, &previousState); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE backup_maintenance SET state = CASE WHEN state = 'CANCELLING' THEN 'CANCELLED' ELSE 'COMPLETED' END, finished_at = CURRENT_TIMESTAMP, claim_deadline = NULL, error_code = CASE WHEN state = 'CANCELLING' THEN 'BACKUP_VERIFY_CANCELLED' ELSE NULL END WHERE id = $1 AND state IN ('RUNNING', 'CANCELLING')`, maintenanceID)
+	if err != nil {
+		return err
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		return err
+	} else if count == 0 {
+		// VERIFY finalizes its own counters and pins before this generic
+		// maintenance completion hook runs.
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE backup_verify_targets SET backup_pack_id = NULL WHERE backup_maintenance_id = $1`, maintenanceID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if kind == "VERIFY" {
+		action := AuditRepositoryCheckCompleted
+		if previousState == "CANCELLING" {
+			action = AuditRepositoryCheckCancelled
+		}
+		WriteAuditLog(database, AuditEntry{UserID: sql.NullString{String: userID, Valid: true}, Action: action, Target: maintenanceID})
+	}
+	return nil
+}
+
+// CancelBackupVerifyForOwnerContext is owner-scoped and idempotently requests
+// cancellation. Work not yet claimed becomes terminal immediately; active work
+// sees CANCELLING at its next durable progress boundary.
+func CancelBackupVerifyForOwnerContext(ctx context.Context, database *sql.DB, maintenanceID, userID string) (bool, error) {
+	result, err := database.ExecContext(ctx, `
+		UPDATE backup_maintenance m
+		SET state = CASE WHEN state IN ('PENDING', 'RETRY_WAIT') THEN 'CANCELLED' ELSE 'CANCELLING' END,
+			finished_at = CASE WHEN state IN ('PENDING', 'RETRY_WAIT') THEN CURRENT_TIMESTAMP ELSE finished_at END,
+			claim_deadline = CASE WHEN state IN ('PENDING', 'RETRY_WAIT') THEN NULL ELSE claim_deadline END,
+			error_code = 'BACKUP_VERIFY_CANCELLED'
+		FROM backup_jobs j
+		WHERE m.id = $1 AND m.backup_job_id = j.id AND j.user_id = $2 AND m.kind = 'VERIFY'
+		AND m.state IN ('PENDING', 'RETRY_WAIT', 'RUNNING')`, maintenanceID, userID)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	return count == 1, err
+}
+
+func IsBackupMaintenanceCancellingContext(ctx context.Context, database *sql.DB, maintenanceID string) (bool, error) {
+	var cancelling bool
+	err := database.QueryRowContext(ctx, `SELECT state = 'CANCELLING' FROM backup_maintenance WHERE id = $1`, maintenanceID).Scan(&cancelling)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return cancelling, err
 }
 
 func RetryBackupMaintenanceContext(ctx context.Context, database *sql.DB, maintenanceID, errorCode string) error {
@@ -630,7 +1025,7 @@ func RetryBackupMaintenanceContext(ctx context.Context, database *sql.DB, mainte
 }
 
 func ListBackupPacksForDeletionContext(ctx context.Context, database *sql.DB, jobID string, limit int) ([]BackupPack, error) {
-	rows, err := database.QueryContext(ctx, `SELECT id, remote_rel_path, sha256, size_bytes, state, last_checked_at FROM backup_packs WHERE backup_job_id = $1 AND state <> 'DELETED' ORDER BY created_at LIMIT $2`, jobID, limit)
+	rows, err := database.QueryContext(ctx, `SELECT id, remote_rel_path, sha256, size_bytes, state, last_checked_at FROM backup_packs p WHERE backup_job_id = $1 AND state <> 'DELETED' AND NOT EXISTS (SELECT 1 FROM restore_pack_pins pin WHERE pin.backup_pack_id = p.id) AND NOT EXISTS (SELECT 1 FROM backup_verify_targets t JOIN backup_maintenance m ON m.id = t.backup_maintenance_id WHERE t.backup_pack_id = p.id AND m.kind = 'VERIFY' AND m.state IN ('PENDING','RUNNING','RETRY_WAIT','CANCELLING')) ORDER BY created_at LIMIT $2`, jobID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -663,8 +1058,12 @@ func MarkBackupPackDeletedContext(ctx context.Context, database *sql.DB, jobID, 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM backup_blocks b WHERE b.backup_job_id = $1 AND b.backup_pack_id = $2 AND NOT EXISTS (SELECT 1 FROM backup_snapshot_item_blocks ib WHERE ib.backup_block_id = b.id)`, jobID, packID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE backup_packs SET state = 'DELETED' WHERE id = $1 AND backup_job_id = $2`, packID, jobID); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE backup_packs SET state = 'DELETED' WHERE id = $1 AND backup_job_id = $2 AND NOT EXISTS (SELECT 1 FROM restore_pack_pins WHERE backup_pack_id = backup_packs.id) AND NOT EXISTS (SELECT 1 FROM backup_verify_targets t JOIN backup_maintenance m ON m.id = t.backup_maintenance_id WHERE t.backup_pack_id = backup_packs.id AND m.kind = 'VERIFY' AND m.state IN ('PENDING','RUNNING','RETRY_WAIT','CANCELLING'))`, packID, jobID)
+	if err != nil {
 		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n != 1 {
+		return errors.New("backup pack is pinned by an active restore")
 	}
 	return tx.Commit()
 }
@@ -694,6 +1093,13 @@ func ListBackupReclaimablePacksContext(ctx context.Context, database *sql.DB, jo
 		SELECT p.id, p.remote_rel_path, p.sha256, p.size_bytes, p.state, p.last_checked_at
 		FROM backup_packs p
 		WHERE p.backup_job_id = $1 AND p.state IN ('READY', 'DELETE_PENDING')
+			AND NOT EXISTS (SELECT 1 FROM restore_pack_pins pin WHERE pin.backup_pack_id = p.id)
+			AND NOT EXISTS (
+				SELECT 1 FROM backup_verify_targets t
+				JOIN backup_maintenance m ON m.id = t.backup_maintenance_id
+				WHERE t.backup_pack_id = p.id AND m.kind = 'VERIFY'
+				AND m.state IN ('PENDING','RUNNING','RETRY_WAIT','CANCELLING')
+			)
 			AND NOT EXISTS (
 				SELECT 1 FROM backup_blocks b
 				JOIN backup_snapshot_item_blocks ib ON ib.backup_block_id = b.id

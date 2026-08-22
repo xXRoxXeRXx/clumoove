@@ -120,6 +120,16 @@ type ResourceSizeResolver interface {
 	ResolveResourceSize(ctx context.Context, resourceType, resourcePath string) (int64, error)
 }
 
+// RangeDownloader is an optional capability for immutable objects such as
+// backup packs. Implementations must reject invalid ranges and return exactly
+// length bytes. HTTP implementations must require a matching 206 response and
+// Content-Range rather than silently accepting a 200 response from offset zero.
+// It deliberately remains separate from StorageProvider so existing providers
+// continue to use the bounded full-pack fallback.
+type RangeDownloader interface {
+	StreamDownloadRange(ctx context.Context, resourceType, filePath string, offset, length int64) (io.ReadCloser, error)
+}
+
 // IsPersonalVault reports whether a resource is OneDrive's special Personal
 // Vault. Its contents require an interactive unlock and cannot be transferred
 // by the background Microsoft Graph OAuth flow.

@@ -484,6 +484,71 @@ func SuspendUser(database *sql.DB, id string) ([]string, error) {
 			return nil, err
 		}
 	}
+	if _, err := tx.Exec(`
+		UPDATE restore_previews
+		SET status = 'CANCELLED', error_code = 'RESTORE_PREVIEW_CANCELLED',
+		    target_password_encrypted = NULL, target_refresh_token_encrypted = NULL,
+		    target_mega_session_id_encrypted = NULL, target_mega_master_key_encrypted = NULL,
+		    coordinator_lease_until = NULL, worker_hash = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = $1 AND status IN ('QUEUED', 'RUNNING', 'READY')
+	`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`
+		UPDATE restore_runs r
+		SET status = 'CANCELLED', finished_at = CURRENT_TIMESTAMP,
+		    target_password_encrypted = NULL, target_refresh_token_encrypted = NULL,
+		    target_mega_session_id_encrypted = NULL, target_mega_master_key_encrypted = NULL,
+		    target_token_expires_at = NULL, coordinator_lease_until = NULL, worker_hash = NULL,
+		    updated_at = CURRENT_TIMESTAMP
+		FROM restore_jobs j
+		WHERE r.restore_job_id = j.id AND j.user_id = $1 AND r.status IN ('QUEUED', 'PLANNING', 'RUNNING', 'VERIFYING', 'CANCELLING')
+	`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`
+		UPDATE restore_items i
+		SET status = 'CANCELLED', error_code = 'RESTORE_CANCELLED', updated_at = CURRENT_TIMESTAMP
+		FROM restore_runs r
+		JOIN restore_jobs j ON j.id = r.restore_job_id
+		WHERE i.restore_run_id = r.id AND j.user_id = $1 AND i.status IN ('PENDING', 'RUNNING')
+	`, id); err != nil {
+		return nil, err
+	}
+	// Suspension cancels all restore activity immediately. Pins are safely released
+	// because all items were marked CANCELLED above in the same transaction.
+	if _, err := tx.Exec(`
+		DELETE FROM restore_pack_pins p
+		USING restore_runs r
+		JOIN restore_jobs j ON j.id = r.restore_job_id
+		WHERE p.restore_run_id = r.id AND j.user_id = $1 AND r.status = 'CANCELLED'
+		  AND NOT EXISTS (SELECT 1 FROM restore_items i WHERE i.restore_run_id = r.id AND i.status = 'RUNNING')
+	`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`
+		UPDATE backup_jobs
+		SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = $1 AND status IN ('QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING')
+	`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`
+		UPDATE backup_runs
+		SET state = 'CANCELLED', finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE backup_job_id IN (SELECT id FROM backup_jobs WHERE user_id = $1)
+		  AND state IN ('QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING')
+	`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`
+		UPDATE backup_maintenance
+		SET state = 'CANCELLED', finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+		WHERE backup_job_id IN (SELECT id FROM backup_jobs WHERE user_id = $1)
+		  AND state IN ('PENDING', 'RUNNING', 'RETRY_WAIT', 'CANCELLING')
+	`, id); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(`UPDATE schedules SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1`, id); err != nil {
 		return nil, err
 	}
@@ -517,6 +582,23 @@ func DeleteUser(database *sql.DB, id string) error {
 	defer tx.Rollback()
 	if err := ensureNotLastActiveAdmin(tx, id); err != nil {
 		return err
+	}
+	var activeRestore bool
+	err = tx.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1 FROM restore_runs r
+			JOIN restore_jobs j ON j.id = r.restore_job_id
+			WHERE j.user_id = $1 AND (
+				r.status IN ('PLANNING', 'RUNNING', 'VERIFYING', 'CANCELLING')
+				OR EXISTS (SELECT 1 FROM restore_items i WHERE i.restore_run_id = r.id AND i.status = 'RUNNING')
+			)
+		)
+	`, id).Scan(&activeRestore)
+	if err != nil {
+		return err
+	}
+	if activeRestore {
+		return errors.New("cannot delete user while active restore operations are in flight")
 	}
 	if _, err := tx.Exec(`DELETE FROM users WHERE id = $1`, id); err != nil {
 		return err

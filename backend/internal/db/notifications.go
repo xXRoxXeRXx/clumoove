@@ -113,6 +113,40 @@ func createMigrationNotificationEventTx(tx *sql.Tx, migrationID string) error {
 	return nil
 }
 
+// createRestoreNotificationEventTx snapshots terminal restore outcomes in the
+// same transaction that clears the active credential snapshot and releases
+// pack pins. Cancellation is intentionally audit-only; completed, partial,
+// and failed restores receive normal completion notifications.
+func createRestoreNotificationEventTx(tx *sql.Tx, restoreRunID string) error {
+	var userID, status string
+	var generation, total, processed, failed int
+	var bytes int64
+	err := tx.QueryRow(`
+		SELECT j.user_id, r.status, r.generation, r.total_files, r.processed_files, r.failed_files, r.processed_bytes
+		FROM restore_runs r JOIN restore_jobs j ON j.id = r.restore_job_id
+		WHERE r.id = $1 FOR UPDATE`, restoreRunID).Scan(&userID, &status, &generation, &total, &processed, &failed, &bytes)
+	if err != nil {
+		return err
+	}
+	if status != "COMPLETED" && status != "PARTIAL" && status != "FAILED" {
+		return nil
+	}
+	payload, _ := json.Marshal(map[string]any{"kind": "restore", "name": restoreRunID, "status": status, "total": total, "processed": processed, "failed": failed, "skipped": 0, "bytes": bytes, "generation": generation})
+	var eventID string
+	err = tx.QueryRow(`
+		INSERT INTO notification_events (user_id, kind, restore_run_id, run_generation, run_at, payload)
+		VALUES ($1, 'restore', $2, $3, CURRENT_TIMESTAMP, $4)
+		ON CONFLICT (restore_run_id) WHERE restore_run_id IS NOT NULL DO NOTHING
+		RETURNING id`, userID, restoreRunID, generation, payload).Scan(&eventID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return createNotificationDeliveries(tx, eventID, userID)
+}
+
 // RepairMissingMigrationNotificationEvents repairs legacy or interrupted
 // terminal transitions. Normal paths write state and the event together.
 func RepairMissingMigrationNotificationEvents(database *sql.DB, limit int) (int, error) {

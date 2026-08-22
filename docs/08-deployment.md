@@ -36,6 +36,7 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 | `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `60` |
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |
 | `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` (`50` in production Compose) |
+| `MAX_RESTORE_PACK_READERS` | Concurrent full-pack readers shared by restore execution and repository checks; values outside `1..4` refuse worker startup. | `1` |
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
 | `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting and lets the OAuth callback host follow `X-Forwarded-Host`). The callback **scheme** is taken from `X-Forwarded-Proto` regardless, so a TLS-terminating proxy that forwards that header yields an `https://` redirect URI without `TRUSTED_PROXY`. | off |
 | `FRONTEND_URL` | Frontend base URL (used in reset/email-change links). | `http://localhost:5173` |
@@ -132,6 +133,8 @@ custom-domain proxying, then `http://<hostname>:8001` locally.
 ---
 
 ## 6. Scaling Workers
+
+Restore and repository-check full-pack reads are bounded per worker by `MAX_RESTORE_PACK_READERS`. A v1 pack is capped at 64 MiB, so the application-owned full-pack reader budget is at most `64 MiB * MAX_RESTORE_PACK_READERS` per worker, plus a 4 MiB block/range buffer per admitted restore reader. Cluster-wide capacity is the sum across worker replicas. Range-capable providers avoid full-pack reads for restore blocks; other providers deliberately use bounded rereads and can therefore incur physical-read amplification for deduplicated files.
 
 Stateless workers can be scaled horizontally at runtime:
 
