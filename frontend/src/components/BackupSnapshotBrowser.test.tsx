@@ -332,6 +332,6 @@ describe('BackupSnapshotBrowser', () => {
       reportBtn?.click();
     });
 
-    expect(apiFetch).toHaveBeenCalledWith('http://localhost:8080/api/restore/run-done/report', expect.anything());
+    expect(apiFetch).toHaveBeenCalledWith('http://localhost:8080/api/restore/runs/run-done/report', expect.anything());
   });
 });

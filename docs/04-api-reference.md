@@ -14,18 +14,18 @@ All restore and repository-check routes are JWT-protected and owner-scoped. An u
 | `GET` | `/restore/previews/{previewID}` | Reads preview status and advisory totals. Ready previews expire after 30 minutes. |
 | `POST` | `/restore/previews/{previewID}/cancel` | Cancels an unconsumed preview. |
 | `POST` | `/restore/previews/{previewID}/consume` | Consumes one ready preview and creates a queued restore run. |
-| `GET` | `/restore` | Lists restore-run history for the caller. |
-| `GET` | `/restore/{runID}` | Reads one restore run and progress counters. |
-| `GET` | `/restore/{runID}/stream` | SSE stream for owner-scoped live run progress, including initial event and keepalives. |
-| `GET` | `/restore/{runID}/items` | Lists immutable run item outcomes. |
-| `POST` | `/restore/{runID}/cancel` | Requests durable cancellation; already verified target files are not rolled back. |
+| `GET` | `/restore` or `/restore/runs` | Lists restore-run history for the caller. |
+| `GET` | `/restore/runs/{runID}` | Reads one restore run and progress counters. |
+| `GET` | `/restore/runs/{runID}/stream` | SSE stream for owner-scoped live run progress, including initial event and keepalives. |
+| `GET` | `/restore/runs/{runID}/items` | Lists immutable run item outcomes. |
+| `POST` | `/restore/runs/{runID}/cancel` | Requests durable cancellation; already verified target files are not rolled back. |
 | `DELETE` | `/restore/jobs/{jobID}` | Deletes a retained terminal restore job. |
-| `GET` | `/restore/{runID}/report` | Downloads a terminal run CSV report. |
+| `GET` | `/restore/runs/{runID}/report` | Downloads a terminal run CSV report. |
 | `POST` | `/backup/{id}/verify` | Creates a metadata, byte-budgeted, or full repository check. `BUDGETED` requires `byte_budget` from 64 MiB through 1 TiB; `FULL` requires `confirm_full: true`. |
 | `GET` | `/backup/{id}/verify` | Lists check history and progress. |
-| `GET` | `/backup/verify/{verifyID}` | Reads one owner-scoped repository check. |
-| `GET` | `/backup/verify/{verifyID}/stream` | SSE stream for owner-scoped repository-check progress and keepalives. |
-| `POST` | `/backup/verify/{verifyID}/cancel` | Cancels a queued or running repository check. |
+| `GET` | `/backup/{id}/verify/{verifyID}` | Reads one owner-scoped repository check. |
+| `GET` | `/backup/{id}/verify/{verifyID}/stream` | SSE stream for owner-scoped repository-check progress and keepalives. |
+| `POST` | `/backup/{id}/verify/{verifyID}/cancel` | Cancels a queued or running repository check. |
 
 Restore targets cannot be Immich or overlap the backup repository or its `.clumoove-backup` tree. Repository checks snapshot their pack catalog at start, pin active packs against deletion, and release those live references only at terminalization.
 

@@ -179,7 +179,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   useEffect(() => {
     if (!restoreRun || ['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(restoreRun.status)) return;
     const timer = window.setInterval(() => {
-      void apiJson<RestoreRun>(`${apiUrl}/api/restore/${restoreRun.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      void apiJson<RestoreRun>(`${apiUrl}/api/restore/runs/${restoreRun.id}`, { headers: { Authorization: `Bearer ${token}` } })
         .then((result) => result.ok !== false && result.data && setRestoreRun(result.data));
     }, 1500);
     return () => window.clearInterval(timer);
@@ -192,7 +192,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
     return [...current.filter((selected) => !selected.startsWith(`${value}/`)), value];
   });
   const createPreview = async () => {
-    if (!snapshot || selectedPaths.length === 0 || (targetMode === 'profile' && !targetProfileID) || (targetMode === 'direct' && !directPassword && directProvider !== 'local')) return;
+    if (!snapshot || selectedPaths.length === 0 || (targetMode === 'profile' ? !targetProfileID : (!directPassword && directProvider !== 'local'))) return;
     setRestoreLoading(true); setError('');
     try {
       const target = targetMode === 'profile'
@@ -233,14 +233,14 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   const cancelVerify = async (verifyID: string) => {
     setVerifyLoading(true);
     try {
-      const result = await apiJson(`${apiUrl}/api/backup/verify/${verifyID}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const result = await apiJson(`${apiUrl}/api/backup/${jobID}/verify/${verifyID}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
       await loadVerifies();
     } catch { setError(t('backup.verifyFailed')); } finally { setVerifyLoading(false); }
   };
   const downloadRestoreReport = async (runID: string) => {
     try {
-      const response = await apiFetch(`${apiUrl}/api/restore/${runID}/report`, { headers: { Authorization: `Bearer ${token}` } });
+      const response = await apiFetch(`${apiUrl}/api/restore/runs/${runID}/report`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) {
         const body = await response.json().catch(() => ({} as { error_code?: string }));
         setError(translateApiError(body.error_code));
@@ -256,12 +256,12 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
   };
   const loadRestoreItems = async (runID: string) => {
     setSelectedRestoreRunID(runID);
-    const result = await apiJson<RestoreItem[]>(`${apiUrl}/api/restore/${runID}/items`, { headers: { Authorization: `Bearer ${token}` } });
+    const result = await apiJson<RestoreItem[]>(`${apiUrl}/api/restore/runs/${runID}/items`, { headers: { Authorization: `Bearer ${token}` } });
     if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
     setRestoreItems(result.data || []);
   };
   const cancelRestoreHistoryRun = async (runID: string) => {
-    const result = await apiJson(`${apiUrl}/api/restore/${runID}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const result = await apiJson(`${apiUrl}/api/restore/runs/${runID}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
     if (result.ok === false) { setError(translateApiError(result.errorCode)); return; }
     setRestoreRuns((runs) => runs.map((run) => run.id === runID ? { ...run, status: 'CANCELLING' } : run));
   };
@@ -321,7 +321,7 @@ export function BackupSnapshotBrowser({ apiUrl, token, jobID, onBack }: Props) {
     </div>}
     {restoreRun && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border border-[var(--color-border)] p-3 text-xs" role="status">
       <span><strong>{t('backup.restoreProgress')}</strong> {restoreRun.status} · {t('migrations.filesCount', { processed: restoreRun.processed_files, total: restoreRun.total_files })} · {formatBytes(restoreRun.processed_bytes)} / {formatBytes(restoreRun.total_bytes)}</span>
-      {!['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(restoreRun.status) && <button type="button" className="ui-button-secondary px-3 py-2 text-xs" onClick={() => void apiJson(`${apiUrl}/api/restore/${restoreRun.id}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })}>{t('backup.restoreCancel')}</button>}
+      {!['COMPLETED', 'PARTIAL', 'FAILED', 'CANCELLED'].includes(restoreRun.status) && <button type="button" className="ui-button-secondary px-3 py-2 text-xs" onClick={() => void apiJson(`${apiUrl}/api/restore/runs/${restoreRun.id}/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })}>{t('backup.restoreCancel')}</button>}
     </div>}
     {loading && <p className="text-sm text-[var(--color-text-muted)]">{t('common.loading')}</p>}
     {error && <p className="ui-alert ui-alert-error text-sm" role="alert">{error}</p>}

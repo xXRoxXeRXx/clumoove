@@ -187,6 +187,52 @@ func main() {
 		trustedProxy:      trustedProxy,
 	}
 
+	mux := server.setupRoutes()
+
+	handler := server.requestLogMiddleware(server.securityHeadersMiddleware(corsMiddleware(mux)))
+
+	srv := &http.Server{
+		Addr:         ":" + port,
+		Handler:      handler,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go server.RunOAuthRotationDaemon(ctx)
+	go server.runGarbageCollector(ctx)
+
+	sched := scheduler.NewScheduler(database, q, server.indexer)
+	sched.SetSyncEngine(syncEng)
+	go sched.Run(ctx)
+	go sched.RunOrphanedSyncJobRecovery(ctx)
+	go sched.RunOrphanedMigrationIndexingRecovery(ctx)
+
+	go func() {
+		slog.Info("http_server_listening", slog.String("component", "api"))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("http_server_failed", slog.String("component", "api"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		}
+	}()
+
+	sig := <-sigChan
+	slog.Info("shutdown_requested", slog.String("component", "api"), slog.String("signal", sig.String()))
+
+	cancel()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("shutdown_failed", slog.String("component", "api"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+		return
+	}
+	slog.Info("service_stopped", slog.String("component", "api"))
+}
+
+func (server *APIServer) setupRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// Auth Routes (Public)
@@ -274,9 +320,9 @@ func main() {
 	mux.Handle("POST /api/backup/{id}/run", jwtMiddleware(http.HandlerFunc(server.handleRunBackup)))
 	mux.Handle("POST /api/backup/{id}/verify", jwtMiddleware(http.HandlerFunc(server.handleCreateBackupVerify)))
 	mux.Handle("GET /api/backup/{id}/verify", jwtMiddleware(http.HandlerFunc(server.handleListBackupVerifies)))
-	mux.Handle("GET /api/backup/verify/{verifyID}/stream", jwtMiddleware(http.HandlerFunc(server.handleBackupVerifyStream)))
-	mux.Handle("GET /api/backup/verify/{verifyID}", jwtMiddleware(http.HandlerFunc(server.handleGetBackupVerify)))
-	mux.Handle("POST /api/backup/verify/{verifyID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelBackupVerify)))
+	mux.Handle("GET /api/backup/{id}/verify/{verifyID}/stream", jwtMiddleware(http.HandlerFunc(server.handleBackupVerifyStream)))
+	mux.Handle("GET /api/backup/{id}/verify/{verifyID}", jwtMiddleware(http.HandlerFunc(server.handleGetBackupVerify)))
+	mux.Handle("POST /api/backup/{id}/verify/{verifyID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelBackupVerify)))
 	mux.Handle("POST /api/backup/{id}/pause", jwtMiddleware(http.HandlerFunc(server.handlePauseBackup)))
 	mux.Handle("POST /api/backup/{id}/resume", jwtMiddleware(http.HandlerFunc(server.handleResumeBackup)))
 	mux.Handle("DELETE /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleDeleteBackup)))
@@ -287,11 +333,12 @@ func main() {
 	mux.Handle("POST /api/restore/previews/{previewID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelRestorePreview)))
 	mux.Handle("POST /api/restore/previews/{previewID}/consume", jwtMiddleware(http.HandlerFunc(server.handleConsumeRestorePreview)))
 	mux.Handle("GET /api/restore", jwtMiddleware(http.HandlerFunc(server.handleListRestoreRuns)))
-	mux.Handle("GET /api/restore/{runID}/stream", jwtMiddleware(http.HandlerFunc(server.handleRestoreRunStream)))
-	mux.Handle("GET /api/restore/{runID}", jwtMiddleware(http.HandlerFunc(server.handleGetRestoreRun)))
-	mux.Handle("GET /api/restore/{runID}/items", jwtMiddleware(http.HandlerFunc(server.handleListRestoreRunItems)))
-	mux.Handle("POST /api/restore/{runID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelRestoreRun)))
-	mux.Handle("GET /api/restore/{runID}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadRestoreReport)))
+	mux.Handle("GET /api/restore/runs", jwtMiddleware(http.HandlerFunc(server.handleListRestoreRuns)))
+	mux.Handle("GET /api/restore/runs/{runID}/stream", jwtMiddleware(http.HandlerFunc(server.handleRestoreRunStream)))
+	mux.Handle("GET /api/restore/runs/{runID}", jwtMiddleware(http.HandlerFunc(server.handleGetRestoreRun)))
+	mux.Handle("GET /api/restore/runs/{runID}/items", jwtMiddleware(http.HandlerFunc(server.handleListRestoreRunItems)))
+	mux.Handle("POST /api/restore/runs/{runID}/cancel", jwtMiddleware(http.HandlerFunc(server.handleCancelRestoreRun)))
+	mux.Handle("GET /api/restore/runs/{runID}/report", jwtMiddleware(http.HandlerFunc(server.handleDownloadRestoreReport)))
 	mux.Handle("DELETE /api/restore/jobs/{jobID}", jwtMiddleware(http.HandlerFunc(server.handleDeleteRestoreJob)))
 
 	// Schedule Management Routes (Protected)
@@ -342,45 +389,5 @@ func main() {
 	mux.HandleFunc("GET /api/oauth/auth", server.handleOAuthAuth)
 	mux.HandleFunc("GET /api/oauth/callback", server.handleOAuthCallback)
 
-	handler := server.requestLogMiddleware(server.securityHeadersMiddleware(corsMiddleware(mux)))
-
-	srv := &http.Server{
-		Addr:         ":" + port,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	go server.RunOAuthRotationDaemon(ctx)
-	go server.runGarbageCollector(ctx)
-
-	sched := scheduler.NewScheduler(database, q, server.indexer)
-	sched.SetSyncEngine(syncEng)
-	go sched.Run(ctx)
-	go sched.RunOrphanedSyncJobRecovery(ctx)
-	go sched.RunOrphanedMigrationIndexingRecovery(ctx)
-
-	go func() {
-		slog.Info("http_server_listening", slog.String("component", "api"))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("http_server_failed", slog.String("component", "api"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		}
-	}()
-
-	sig := <-sigChan
-	slog.Info("shutdown_requested", slog.String("component", "api"), slog.String("signal", sig.String()))
-
-	cancel()
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("shutdown_failed", slog.String("component", "api"), observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
-		return
-	}
-	slog.Info("service_stopped", slog.String("component", "api"))
+	return mux
 }

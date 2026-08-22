@@ -780,9 +780,23 @@ func (s *APIServer) handleCancelBackupVerify(w http.ResponseWriter, r *http.Requ
 	if !authenticated {
 		return
 	}
+	backupID := r.PathValue("id")
+	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+		return
+	}
 	verifyID := r.PathValue("verifyID")
 	if verifyID == "" {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	if err != nil {
+		s.logf(r, "verify check lookup failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
 	cancelled, err := db.CancelBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
@@ -822,8 +836,17 @@ func (s *APIServer) handleGetBackupVerify(w http.ResponseWriter, r *http.Request
 	if !authenticated {
 		return
 	}
-	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, r.PathValue("verifyID"), userID)
-	if err == sql.ErrNoRows {
+	backupID := r.PathValue("id")
+	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+		return
+	}
+	verifyID := r.PathValue("verifyID")
+	if verifyID == "" {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
+	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
@@ -840,6 +863,15 @@ func (s *APIServer) handleBackupVerifyStream(w http.ResponseWriter, r *http.Requ
 	if !authenticated {
 		return
 	}
+	backupID := r.PathValue("id")
+	if backupID == "" || !s.requireBackupOwnership(w, r, backupID, userID) {
+		return
+	}
+	verifyID := r.PathValue("verifyID")
+	if verifyID == "" {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
 	if !s.acquireStream(w, r, userID, "backup-verify-stream") {
 		return
 	}
@@ -849,9 +881,8 @@ func (s *APIServer) handleBackupVerifyStream(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
 		return
 	}
-	verifyID := r.PathValue("verifyID")
 	check, err := db.GetBackupVerifyForOwnerContext(r.Context(), s.db, verifyID, userID)
-	if err == sql.ErrNoRows {
+	if err == sql.ErrNoRows || (check != nil && check.BackupJobID != backupID) {
 		writeError(w, http.StatusNotFound, ErrBackupNotFound)
 		return
 	}
