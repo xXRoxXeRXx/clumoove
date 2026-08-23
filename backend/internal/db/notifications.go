@@ -147,6 +147,66 @@ func createRestoreNotificationEventTx(tx *sql.Tx, restoreRunID string) error {
 	return createNotificationDeliveries(tx, eventID, userID)
 }
 
+// createBackupNotificationEventTx snapshots terminal backup outcomes in the
+// same transaction that finalizes the backup run. Cancellation is
+// intentionally audit-only; completed, partial, and failed backups
+// receive normal completion notifications.
+func createBackupNotificationEventTx(tx *sql.Tx, backupRunID string) error {
+	var userID, status string
+	var generation, total, processed, failed int
+	var bytes, deduplicatedBytes int64
+	var errMsg sql.NullString
+	err := tx.QueryRow(`
+		SELECT j.user_id, r.state, r.generation, r.total_files, r.processed_files, r.failed_files, r.processed_bytes, r.deduplicated_bytes, r.error_code
+		FROM backup_runs r JOIN backup_jobs j ON j.id = r.backup_job_id
+		WHERE r.id = $1 FOR UPDATE`, backupRunID).Scan(&userID, &status, &generation, &total, &processed, &failed, &bytes, &deduplicatedBytes, &errMsg)
+	if err != nil {
+		return err
+	}
+	if status != "COMPLETED" && status != "PARTIAL" && status != "FAILED" {
+		return nil
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"kind":               "backup",
+		"name":               backupRunID,
+		"status":             status,
+		"total":              total,
+		"processed":          processed,
+		"failed":             failed,
+		"skipped":            0,
+		"bytes":              bytes,
+		"deduplicated_bytes": deduplicatedBytes,
+		"generation":         generation,
+		"error_message":      nullString(errMsg),
+	})
+	var eventID string
+	err = tx.QueryRow(`
+		INSERT INTO notification_events (user_id, kind, backup_run_id, run_generation, run_at, payload)
+		VALUES ($1, 'backup', $2, $3, CURRENT_TIMESTAMP, $4)
+		ON CONFLICT (backup_run_id) WHERE backup_run_id IS NOT NULL DO NOTHING
+		RETURNING id`, userID, backupRunID, generation, payload).Scan(&eventID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return createNotificationDeliveries(tx, eventID, userID)
+}
+
+// CreateBackupNotificationEvent creates one immutable event per completed or failed backup run.
+func CreateBackupNotificationEvent(database *sql.DB, backupRunID string) error {
+	tx, err := database.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := createBackupNotificationEventTx(tx, backupRunID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // RepairMissingMigrationNotificationEvents repairs legacy or interrupted
 // terminal transitions. Normal paths write state and the event together.
 func RepairMissingMigrationNotificationEvents(database *sql.DB, limit int) (int, error) {

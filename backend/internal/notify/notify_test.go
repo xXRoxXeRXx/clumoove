@@ -172,6 +172,21 @@ func TestFormatLocalizedAndSubject(t *testing.T) {
 	if got := notificationSubject("fr"); got != "Clumoove notification" {
 		t.Fatalf("fallback subject = %q, want English subject", got)
 	}
+
+	backupPayload, err := decodePayload(json.RawMessage(`{"kind":"backup","name":"Daily Backup","status":"COMPLETED","processed":50,"total":50,"failed":0,"skipped":0}`))
+	if err != nil {
+		t.Fatalf("decodePayload() error = %v", err)
+	}
+	gotDE := formatLocalized(backupPayload, "de")
+	wantDE := "Sicherung Daily Backup\nStatus: COMPLETED\nVerarbeitet: 50 / 50\nFehlgeschlagen: 0\nÜbersprungen: 0"
+	if gotDE != wantDE {
+		t.Fatalf("formatLocalized(backup, de) = %q, want %q", gotDE, wantDE)
+	}
+	gotEN := formatLocalized(backupPayload, "en")
+	wantEN := "Backup Daily Backup\nStatus: COMPLETED\nProcessed: 50 / 50\nFailed: 0\nSkipped: 0"
+	if gotEN != wantEN {
+		t.Fatalf("formatLocalized(backup, en) = %q, want %q", gotEN, wantEN)
+	}
 }
 
 func TestTruncatePreservesUTF8Runes(t *testing.T) {

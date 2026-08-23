@@ -71,7 +71,7 @@
     }
   },
   "delivery": {
-    "notification": { "subject": "Clumoove notification", "kind": { "migration": "Migration", "sync": "Sync", "test": "Test" }, "status": "Status", "processed": "Processed", "failed": "Failed", "skipped": "Skipped" },
+    "notification": { "subject": "Clumoove notification", "kind": { "migration": "Migration", "sync": "Sync", "restore": "Restore", "backup": "Backup", "test": "Test" }, "status": "Status", "processed": "Processed", "failed": "Failed", "skipped": "Skipped" },
     "passwordReset": { "subject": "Clumoove — Reset password", "title": "Reset password", "message": "You requested a password reset. Click the button below to choose a new password.", "action": "Reset password", "note": "This link is valid for 4 hours. If you did not request this, you can ignore this email." },
     "emailChange": { "subject": "Clumoove — Change email address", "title": "Change email address", "message": "You requested to change your email address to <strong>{{email}}</strong>.", "action": "Confirm email address", "note": "This link is valid for 4 hours. If you did not request this change, you can ignore this email." },
     "emailChanged": { "subject": "Clumoove — Email address changed", "title": "Email address changed", "message": "Your Clumoove account email address is now <strong>{{email}}</strong>." },

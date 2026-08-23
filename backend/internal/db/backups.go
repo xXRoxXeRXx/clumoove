@@ -919,6 +919,9 @@ func PublishBackupSnapshotAndFinalizeContext(ctx context.Context, database *sql.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_maintenance (backup_job_id, kind) VALUES ($1, 'RETENTION')`, jobID); err != nil {
 		return false, err
 	}
+	if err := createBackupNotificationEventTx(tx, runID); err != nil {
+		return false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
@@ -1811,6 +1814,9 @@ func completeBackupRunContext(ctx context.Context, database *sql.DB, jobID strin
 	}
 	if updated == 0 {
 		return false, fmt.Errorf("backup job state no longer matches run")
+	}
+	if err := createBackupNotificationEventTx(tx, runID); err != nil {
+		return false, fmt.Errorf("create backup notification event: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("commit backup run completion: %w", err)

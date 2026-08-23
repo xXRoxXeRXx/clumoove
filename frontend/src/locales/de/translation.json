@@ -71,7 +71,7 @@
     }
   },
   "delivery": {
-    "notification": { "subject": "Clumoove-Benachrichtigung", "kind": { "migration": "Migration", "sync": "Synchronisierung", "test": "Test" }, "status": "Status", "processed": "Verarbeitet", "failed": "Fehlgeschlagen", "skipped": "Übersprungen" },
+    "notification": { "subject": "Clumoove-Benachrichtigung", "kind": { "migration": "Migration", "sync": "Synchronisierung", "restore": "Wiederherstellung", "backup": "Sicherung", "test": "Test" }, "status": "Status", "processed": "Verarbeitet", "failed": "Fehlgeschlagen", "skipped": "Übersprungen" },
     "passwordReset": { "subject": "Clumoove — Passwort zurücksetzen", "title": "Passwort zurücksetzen", "message": "Du hast eine Anfrage zum Zurücksetzen deines Passworts erhalten. Klicke auf den Button unten, um ein neues Passwort festzulegen.", "action": "Passwort zurücksetzen", "note": "Der Link ist 4 Stunden gültig. Falls du diese E-Mail nicht angefordert hast, kannst du sie ignorieren." },
     "emailChange": { "subject": "Clumoove — E-Mail-Adresse ändern", "title": "E-Mail-Adresse ändern", "message": "Du hast eine Änderung deiner E-Mail-Adresse auf <strong>{{email}}</strong> angefordert.", "action": "E-Mail-Adresse bestätigen", "note": "Der Link ist 4 Stunden gültig. Falls du diese Änderung nicht angefordert hast, kannst du diese E-Mail ignorieren." },
     "emailChanged": { "subject": "Clumoove — E-Mail-Adresse geändert", "title": "E-Mail-Adresse geändert", "message": "Deine Clumoove-Konto-E-Mail-Adresse ist nun <strong>{{email}}</strong>." },

@@ -839,19 +839,21 @@ END $$;
 CREATE TABLE IF NOT EXISTS notification_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('migration','sync','restore')),
+    kind TEXT NOT NULL CHECK (kind IN ('migration','sync','restore','backup')),
     migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE,
     run_generation INT NOT NULL DEFAULT 0,
     sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE,
     restore_run_id UUID REFERENCES restore_runs(id) ON DELETE CASCADE,
+    backup_run_id UUID REFERENCES backup_runs(id) ON DELETE CASCADE,
     run_at TIMESTAMP WITH TIME ZONE NOT NULL,
     payload JSONB NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     -- XOR: exactly one parent must be set.
     CHECK (
-        (kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL AND restore_run_id IS NULL) OR
-        (kind = 'sync'      AND sync_job_id  IS NOT NULL AND migration_id IS NULL AND restore_run_id IS NULL) OR
-        (kind = 'restore'   AND restore_run_id IS NOT NULL AND migration_id IS NULL AND sync_job_id IS NULL)
+        (kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL AND restore_run_id IS NULL AND backup_run_id IS NULL) OR
+        (kind = 'sync'      AND sync_job_id  IS NOT NULL AND migration_id IS NULL AND restore_run_id IS NULL AND backup_run_id IS NULL) OR
+        (kind = 'restore'   AND restore_run_id IS NOT NULL AND migration_id IS NULL AND sync_job_id IS NULL AND backup_run_id IS NULL) OR
+        (kind = 'backup'    AND backup_run_id IS NOT NULL AND migration_id IS NULL AND sync_job_id IS NULL AND restore_run_id IS NULL)
     )
 );
 
@@ -860,15 +862,16 @@ ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_generation INT NOT 
 ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verification_lease_until TIMESTAMP WITH TIME ZONE;
 ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS run_generation INT NOT NULL DEFAULT 0;
 ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS restore_run_id UUID REFERENCES restore_runs(id) ON DELETE CASCADE;
+ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS backup_run_id UUID REFERENCES backup_runs(id) ON DELETE CASCADE;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_migration_id_key;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_kind_check;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_check;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS chk_notification_events_kind;
 ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS chk_notification_events_parent;
-ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_kind CHECK (kind IN ('migration','sync','restore'));
+ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_kind CHECK (kind IN ('migration','sync','restore','backup'));
 ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_parent CHECK (
-    num_nonnulls(migration_id, sync_job_id, restore_run_id) = 1 AND
-    ((kind = 'migration' AND migration_id IS NOT NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL) OR (kind = 'restore' AND restore_run_id IS NOT NULL))
+    num_nonnulls(migration_id, sync_job_id, restore_run_id, backup_run_id) = 1 AND
+    ((kind = 'migration' AND migration_id IS NOT NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL) OR (kind = 'restore' AND restore_run_id IS NOT NULL) OR (kind = 'backup' AND backup_run_id IS NOT NULL))
 );
 
 -- Partial unique indexes replace the old table-level UNIQUE (sync_job_id, run_at).
@@ -884,6 +887,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_sync_uniq
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_restore_uniq
     ON notification_events(restore_run_id)
     WHERE restore_run_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_backup_uniq
+    ON notification_events(backup_run_id)
+    WHERE backup_run_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS notification_deliveries (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -907,4 +913,3 @@ CREATE OR REPLACE TRIGGER update_notification_deliveries_updated_at
     BEFORE UPDATE ON notification_deliveries
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
-

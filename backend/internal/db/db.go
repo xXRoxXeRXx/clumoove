@@ -1134,6 +1134,17 @@ func InitDB(connStr string) (*sql.DB, error) {
 				log.Printf("Failed schema migration (notification_deliveries trigger): %v\n", err)
 			}
 
+			_, err = db.Exec(`
+				ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS backup_run_id UUID REFERENCES backup_runs(id) ON DELETE CASCADE;
+				ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_kind_check, DROP CONSTRAINT IF EXISTS notification_events_check, DROP CONSTRAINT IF EXISTS chk_notification_events_kind, DROP CONSTRAINT IF EXISTS chk_notification_events_parent;
+				ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_kind CHECK (kind IN ('migration','sync','restore','backup'));
+				ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_parent CHECK (num_nonnulls(migration_id, sync_job_id, restore_run_id, backup_run_id) = 1 AND ((kind = 'migration' AND migration_id IS NOT NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL) OR (kind = 'restore' AND restore_run_id IS NOT NULL) OR (kind = 'backup' AND backup_run_id IS NOT NULL)));
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_backup_uniq ON notification_events(backup_run_id) WHERE backup_run_id IS NOT NULL;
+			`)
+			if err != nil {
+				log.Printf("Failed schema migration (notification_events backup): %v\n", err)
+			}
+
 			if schemaErr != nil {
 				releaseLock()
 				db.Close()

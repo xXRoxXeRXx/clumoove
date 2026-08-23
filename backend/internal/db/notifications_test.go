@@ -71,6 +71,73 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 			processed_bytes BIGINT NOT NULL DEFAULT 0,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TEMP TABLE backup_jobs (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL,
+			lock_id BIGSERIAL UNIQUE,
+			source_url TEXT NOT NULL DEFAULT '',
+			source_username TEXT NOT NULL DEFAULT '',
+			source_password_encrypted TEXT NOT NULL DEFAULT '',
+			target_url TEXT NOT NULL DEFAULT '',
+			target_username TEXT NOT NULL DEFAULT '',
+			target_password_encrypted TEXT NOT NULL DEFAULT '',
+			source_provider TEXT NOT NULL DEFAULT 'webdav',
+			target_provider TEXT NOT NULL DEFAULT 'webdav',
+			target_dir TEXT NOT NULL DEFAULT '/',
+			repository_root TEXT NOT NULL DEFAULT '/',
+			cron_expression TEXT NOT NULL DEFAULT '* * * * *',
+			timezone TEXT NOT NULL DEFAULT 'UTC',
+			status TEXT NOT NULL DEFAULT 'IDLE',
+			run_generation INT NOT NULL DEFAULT 0,
+			last_run_at TIMESTAMPTZ,
+			last_run_status TEXT,
+			error_message TEXT,
+			total_files INT NOT NULL DEFAULT 0,
+			total_bytes BIGINT NOT NULL DEFAULT 0,
+			processed_files INT NOT NULL DEFAULT 0,
+			processed_bytes BIGINT NOT NULL DEFAULT 0,
+			deduplicated_bytes BIGINT NOT NULL DEFAULT 0,
+			failed_files INT NOT NULL DEFAULT 0,
+			error_code TEXT,
+			deletion_state TEXT NOT NULL DEFAULT 'ACTIVE',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TEMP TABLE backup_runs (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			backup_job_id UUID NOT NULL,
+			generation INT NOT NULL DEFAULT 1,
+			trigger TEXT NOT NULL DEFAULT 'manual',
+			scheduled_local_key TEXT,
+			state TEXT NOT NULL DEFAULT 'QUEUED',
+			total_files INT NOT NULL DEFAULT 0,
+			total_bytes BIGINT NOT NULL DEFAULT 0,
+			processed_files INT NOT NULL DEFAULT 0,
+			processed_bytes BIGINT NOT NULL DEFAULT 0,
+			deduplicated_bytes BIGINT NOT NULL DEFAULT 0,
+			failed_files INT NOT NULL DEFAULT 0,
+			error_code TEXT,
+			started_at TIMESTAMPTZ,
+			finished_at TIMESTAMPTZ,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TEMP TABLE backup_snapshots (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			backup_job_id UUID NOT NULL,
+			backup_run_id UUID NOT NULL,
+			state TEXT NOT NULL DEFAULT 'PUBLISHING',
+			total_files INT NOT NULL DEFAULT 0,
+			total_dirs INT NOT NULL DEFAULT 0,
+			total_bytes BIGINT NOT NULL DEFAULT 0,
+			omitted_unstable_count INT NOT NULL DEFAULT 0,
+			omitted_error_count INT NOT NULL DEFAULT 0,
+			integrity_state TEXT NOT NULL DEFAULT 'VALID',
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TEMP TABLE backup_maintenance (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			backup_job_id UUID NOT NULL,
+			kind TEXT NOT NULL
+		)`,
 		`CREATE TEMP TABLE notification_channels (
 			user_id UUID NOT NULL,
 			type TEXT NOT NULL,
@@ -84,6 +151,8 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 			kind TEXT NOT NULL,
 			sync_job_id UUID,
 			migration_id UUID,
+			restore_run_id UUID,
+			backup_run_id UUID,
 			run_generation INT NOT NULL DEFAULT 0,
 			run_at TIMESTAMPTZ NOT NULL,
 			payload JSONB NOT NULL,
@@ -95,6 +164,9 @@ func setupNotificationsTestDB(t *testing.T) *sql.DB {
 		`CREATE UNIQUE INDEX notification_events_migration_gen
 			ON notification_events (migration_id, run_generation)
 			WHERE migration_id IS NOT NULL`,
+		`CREATE UNIQUE INDEX notification_events_backup_uniq
+			ON notification_events (backup_run_id)
+			WHERE backup_run_id IS NOT NULL`,
 		`CREATE TEMP TABLE notification_deliveries (
 			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 			event_id UUID NOT NULL REFERENCES notification_events(id) ON DELETE CASCADE,
@@ -512,4 +584,210 @@ func TestFinalizeAndFailSyncJobPass_NotificationEvents(t *testing.T) {
 			t.Fatalf("expected 1 notification_delivery after FailSyncJobPass, got %d", deliveryCount)
 		}
 	})
+}
+
+func TestCreateBackupNotificationEvent_SuccessfulRun(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_gotify"); err != nil {
+		t.Fatalf("UpsertNotificationChannel failed: %v", err)
+	}
+
+	backupJobID := "00000000-0000-0000-0000-000000000030"
+	backupRunID := "00000000-0000-0000-0000-000000000031"
+	if _, err := db.Exec(`INSERT INTO backup_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'IDLE', 1)`, backupJobID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO backup_runs (id, backup_job_id, generation, state, total_files, total_bytes, processed_files, processed_bytes, deduplicated_bytes, failed_files)
+		VALUES ($1, $2, 1, 'COMPLETED', 100, 1048576, 100, 1048576, 524288, 0)`, backupRunID, backupJobID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
+		t.Fatalf("CreateBackupNotificationEvent failed: %v", err)
+	}
+
+	var eventID string
+	var payloadStr string
+	err := db.QueryRow(`SELECT id, payload::text FROM notification_events WHERE backup_run_id = $1`, backupRunID).Scan(&eventID, &payloadStr)
+	if err != nil {
+		t.Fatalf("expected notification event created for backup run, got: %v", err)
+	}
+	if eventID == "" {
+		t.Fatal("expected non-empty eventID")
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload["kind"] != "backup" {
+		t.Errorf("payload kind = %v, want backup", payload["kind"])
+	}
+	if payload["status"] != "COMPLETED" {
+		t.Errorf("payload status = %v, want COMPLETED", payload["status"])
+	}
+	if payload["processed"] != float64(100) || payload["total"] != float64(100) {
+		t.Errorf("payload counts = processed:%v total:%v", payload["processed"], payload["total"])
+	}
+
+	var count int
+	err = db.QueryRow(`SELECT COUNT(*) FROM notification_deliveries WHERE event_id = $1`, eventID).Scan(&count)
+	if err != nil {
+		t.Fatalf("error querying deliveries: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 delivery entry, got %d", count)
+	}
+}
+
+func TestCreateBackupNotificationEvent_FailedRun(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertNotificationChannel(db, testUserUUID, "discord", true, "enc_discord"); err != nil {
+		t.Fatalf("UpsertNotificationChannel failed: %v", err)
+	}
+
+	backupJobID := "00000000-0000-0000-0000-000000000032"
+	backupRunID := "00000000-0000-0000-0000-000000000033"
+	if _, err := db.Exec(`INSERT INTO backup_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'FAILED', 2)`, backupJobID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO backup_runs (id, backup_job_id, generation, state, total_files, processed_files, failed_files, error_code)
+		VALUES ($1, $2, 2, 'FAILED', 50, 10, 5, 'BACKUP_TARGET_UNAVAILABLE')`, backupRunID, backupJobID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
+		t.Fatalf("CreateBackupNotificationEvent failed: %v", err)
+	}
+
+	var payloadStr string
+	err := db.QueryRow(`SELECT payload::text FROM notification_events WHERE backup_run_id = $1`, backupRunID).Scan(&payloadStr)
+	if err != nil {
+		t.Fatalf("query event: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(payloadStr), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if payload["status"] != "FAILED" {
+		t.Errorf("status = %v, want FAILED", payload["status"])
+	}
+	if payload["error_message"] != "BACKUP_TARGET_UNAVAILABLE" {
+		t.Errorf("error_message = %v, want BACKUP_TARGET_UNAVAILABLE", payload["error_message"])
+	}
+}
+
+func TestCreateBackupNotificationEvent_Idempotency(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertNotificationChannel(db, testUserUUID, "telegram", true, "enc_tg"); err != nil {
+		t.Fatal(err)
+	}
+
+	backupJobID := "00000000-0000-0000-0000-000000000034"
+	backupRunID := "00000000-0000-0000-0000-000000000035"
+	if _, err := db.Exec(`INSERT INTO backup_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'IDLE', 1)`, backupJobID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO backup_runs (id, backup_job_id, generation, state) VALUES ($1, $2, 1, 'COMPLETED')`, backupRunID, backupJobID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	if err := CreateBackupNotificationEvent(db, backupRunID); err != nil {
+		t.Fatalf("second call failed: %v", err)
+	}
+
+	var eventCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE backup_run_id = $1`, backupRunID).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("expected 1 event, got %d", eventCount)
+	}
+}
+
+func TestPublishBackupSnapshotAndFinalizeContext_CreatesNotification(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertNotificationChannel(db, testUserUUID, "gotify", true, "enc_gotify"); err != nil {
+		t.Fatal(err)
+	}
+
+	jobID := "00000000-0000-0000-0000-000000000036"
+	runID := "00000000-0000-0000-0000-000000000037"
+	snapID := "00000000-0000-0000-0000-000000000038"
+
+	if _, err := db.Exec(`INSERT INTO backup_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'VERIFYING', 1)`, jobID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO backup_runs (id, backup_job_id, generation, state) VALUES ($1, $2, 1, 'VERIFYING')`, runID, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO backup_snapshots (id, backup_job_id, backup_run_id, state) VALUES ($1, $2, $3, 'PUBLISHING')`, snapID, jobID, runID); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := PublishBackupSnapshotAndFinalizeContext(context.Background(), db, jobID, 1, runID, snapID, "READY", "COMPLETED", 10, 2, 1024, 10, 1024, 0, 0, 0)
+	if err != nil || !ok {
+		t.Fatalf("PublishBackupSnapshotAndFinalizeContext = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	var eventCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE backup_run_id = $1`, runID).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("expected 1 notification_event after PublishBackupSnapshotAndFinalizeContext, got %d", eventCount)
+	}
+}
+
+func TestFailBackupRunContext_CreatesNotification(t *testing.T) {
+	db := setupNotificationsTestDB(t)
+
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES ($1, 'backup-user@example.com')`, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpsertNotificationChannel(db, testUserUUID, "ntfy", true, "enc_ntfy"); err != nil {
+		t.Fatal(err)
+	}
+
+	jobID := "00000000-0000-0000-0000-000000000039"
+	runID := "00000000-0000-0000-0000-000000000040"
+
+	if _, err := db.Exec(`INSERT INTO backup_jobs (id, user_id, status, run_generation) VALUES ($1, $2, 'RUNNING', 1)`, jobID, testUserUUID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO backup_runs (id, backup_job_id, generation, state) VALUES ($1, $2, 1, 'RUNNING')`, runID, jobID); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := FailBackupRunContext(context.Background(), db, jobID, 1, runID, "RUNNING", "BACKUP_SCAN_FAILED")
+	if err != nil || !ok {
+		t.Fatalf("FailBackupRunContext = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	var eventCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM notification_events WHERE backup_run_id = $1`, runID).Scan(&eventCount); err != nil {
+		t.Fatal(err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("expected 1 notification_event after FailBackupRunContext, got %d", eventCount)
+	}
 }
