@@ -19,6 +19,7 @@ import {
 } from './icons';
 import { ProgressBar } from './ProgressBar';
 import { BackupSnapshotBrowser } from './BackupSnapshotBrowser';
+import { formatCronHuman } from '../utils/cronFormatter';
 
 interface MigrationsDashboardProps {
   apiUrl: string;
@@ -1357,7 +1358,8 @@ function BackupList({
                   <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{formatBytes(job.processed_bytes)} · {t('backup.deduplicated', { value: formatBytes(job.deduplicated_bytes) })}</div>
                 </td>
                 <td data-label={t('backup.nextSchedule')} className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
-                  <div>{job.cron_expression}</div><div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{job.timezone}{job.last_run_at ? ` · ${formatDateTime(job.last_run_at)}` : ''}</div>
+                  <div className="font-medium text-[var(--color-text-primary)]">{formatCronHuman(job.cron_expression, t)}</div>
+                  <div className="mt-1 text-[10px] text-[var(--color-text-muted)] font-mono">{job.timezone} · {job.cron_expression}{job.last_run_at ? ` · ${formatDateTime(job.last_run_at)}` : ''}</div>
                 </td>
                 <td data-label={t('migrations.actions')} className="px-4 py-4 text-right">
                   <div className="flex justify-end gap-2">
