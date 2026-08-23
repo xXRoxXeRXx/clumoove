@@ -11,12 +11,14 @@ export type AppStep =
   | 'reset-password'
   | 'confirm-email'
   | 'syncdetail'
+  | 'backupdetail'
   | 'files';
 
 type NavigationState = {
   step: AppStep;
   migrationId: string;
   syncId: string;
+  backupId: string;
   profileId: string;
   settingsTab: string;
 };
@@ -25,6 +27,7 @@ type HistoryEntry = {
   step?: AppStep;
   migration?: string;
   sync?: string;
+  backup?: string;
   profile?: string;
   tab?: string;
 };
@@ -38,18 +41,21 @@ type UseAppHistoryOptions = {
 
 function stateForStep(step: AppStep, id = ''): NavigationState {
   if (step === 'dashboard') {
-    return { step, migrationId: id, syncId: '', profileId: '', settingsTab: '' };
+    return { step, migrationId: id, syncId: '', backupId: '', profileId: '', settingsTab: '' };
   }
   if (step === 'syncdetail') {
-    return { step, migrationId: '', syncId: id, profileId: '', settingsTab: '' };
+    return { step, migrationId: '', syncId: id, backupId: '', profileId: '', settingsTab: '' };
+  }
+  if (step === 'backupdetail') {
+    return { step, migrationId: '', syncId: '', backupId: id, profileId: '', settingsTab: '' };
   }
   if (step === 'files') {
-    return { step, migrationId: '', syncId: '', profileId: id, settingsTab: '' };
+    return { step, migrationId: '', syncId: '', backupId: '', profileId: id, settingsTab: '' };
   }
   if (step === 'settings') {
-    return { step, migrationId: '', syncId: '', profileId: '', settingsTab: id || 'account' };
+    return { step, migrationId: '', syncId: '', backupId: '', profileId: '', settingsTab: id || 'account' };
   }
-  return { step, migrationId: '', syncId: '', profileId: '', settingsTab: '' };
+  return { step, migrationId: '', syncId: '', backupId: '', profileId: '', settingsTab: '' };
 }
 
 export function initialNavigationFor(
@@ -63,12 +69,14 @@ export function initialNavigationFor(
   const params = new URLSearchParams(search);
   const migrationId = params.get('migration') ?? '';
   const syncId = params.get('sync') ?? '';
+  const backupId = params.get('backup') ?? '';
   const profileId = params.get('profile') ?? '';
   const tab = params.get('tab') ?? '';
   if (params.get('view') === 'files') return stateForStep('files', profileId);
   if (params.get('view') === 'settings') return stateForStep('settings', tab);
   if (migrationId) return stateForStep('dashboard', migrationId);
   if (syncId) return stateForStep('syncdetail', syncId);
+  if (backupId) return stateForStep('backupdetail', backupId);
   return stateForStep('history');
 }
 
@@ -79,6 +87,9 @@ function navigationFromHistory(entry: HistoryEntry, search: string): NavigationS
   }
   if (entry.step === 'syncdetail') {
     return stateForStep('syncdetail', entry.sync ?? params.get('sync') ?? '');
+  }
+  if (entry.step === 'backupdetail') {
+    return stateForStep('backupdetail', entry.backup ?? params.get('backup') ?? '');
   }
   if (entry.step === 'files') {
     return stateForStep('files', entry.profile ?? params.get('profile') ?? '');
@@ -94,6 +105,7 @@ function writeHistory(nextStep: AppStep, id: string, replace: boolean): void {
   const state: HistoryEntry = { step: nextStep };
   url.searchParams.delete('migration');
   url.searchParams.delete('sync');
+  url.searchParams.delete('backup');
   url.searchParams.delete('view');
   url.searchParams.delete('profile');
   url.searchParams.delete('tab');
@@ -104,6 +116,9 @@ function writeHistory(nextStep: AppStep, id: string, replace: boolean): void {
   } else if (nextStep === 'syncdetail' && id) {
     url.searchParams.set('sync', id);
     state.sync = id;
+  } else if (nextStep === 'backupdetail' && id) {
+    url.searchParams.set('backup', id);
+    state.backup = id;
   } else if (nextStep === 'files') {
     url.searchParams.set('view', 'files');
     if (id) {
@@ -142,11 +157,11 @@ export function useAppHistory(options: UseAppHistoryOptions) {
   }, [initialOptions]);
 
   // Seed the existing entry so browser history and React state start from one
-  // source of truth. This preserves authenticated migration and sync deep links
+  // source of truth. This preserves authenticated migration, sync, and backup deep links
   // until silent session validation confirms them.
   useEffect(() => {
-    const { step, migrationId, syncId, profileId, settingsTab } = initialNavigation;
-    writeHistory(step, migrationId || syncId || profileId || settingsTab, true);
+    const { step, migrationId, syncId, backupId, profileId, settingsTab } = initialNavigation;
+    writeHistory(step, migrationId || syncId || backupId || profileId || settingsTab, true);
   }, [initialNavigation]);
 
   useEffect(() => {
@@ -178,6 +193,8 @@ export function useAppHistory(options: UseAppHistoryOptions) {
         ? navigation.migrationId
         : nextStep === 'syncdetail'
         ? navigation.syncId
+        : nextStep === 'backupdetail'
+        ? navigation.backupId
         : nextStep === 'files'
         ? navigation.profileId
         : nextStep === 'settings'
@@ -185,7 +202,7 @@ export function useAppHistory(options: UseAppHistoryOptions) {
         : '';
       applyHistory(nextStep, id ?? activeId, false);
     },
-    [applyHistory, navigation.migrationId, navigation.profileId, navigation.settingsTab, navigation.syncId],
+    [applyHistory, navigation.backupId, navigation.migrationId, navigation.profileId, navigation.settingsTab, navigation.syncId],
   );
 
   const goToOverview = useCallback(() => {
@@ -200,6 +217,7 @@ export function useAppHistory(options: UseAppHistoryOptions) {
     ...navigation,
     initialMigrationId: initialNavigation.migrationId,
     initialSyncId: initialNavigation.syncId,
+    initialBackupId: initialNavigation.backupId,
     initialProfileId: initialNavigation.profileId,
     replaceNav,
     navigate,
@@ -207,3 +225,4 @@ export function useAppHistory(options: UseAppHistoryOptions) {
     goBack,
   };
 }
+

@@ -1530,7 +1530,7 @@ func (s *APIServer) acquireSyncStream(w http.ResponseWriter, r *http.Request, us
 	return s.acquireStream(w, r, userID, "sync-stream")
 }
 
-func (s *APIServer) releaseMigrationStream(userID string) {
+func (s *APIServer) releaseStream(userID string) {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
 	s.activeStreams[userID]--
@@ -1539,10 +1539,19 @@ func (s *APIServer) releaseMigrationStream(userID string) {
 	}
 }
 
+func (s *APIServer) releaseMigrationStream(userID string) {
+	s.releaseStream(userID)
+}
+
 // releaseSyncStream mirrors acquireSyncStream. Both stream types use the same
-// per-user pool, which is released by releaseMigrationStream.
+// per-user pool, which is released by releaseStream.
 func (s *APIServer) releaseSyncStream(userID string) {
-	s.releaseMigrationStream(userID)
+	s.releaseStream(userID)
+}
+
+// releaseBackupStream mirrors acquireStream for backup endpoints.
+func (s *APIServer) releaseBackupStream(userID string) {
+	s.releaseStream(userID)
 }
 
 func isTerminalMigrationStatus(status string) bool {

@@ -435,7 +435,7 @@ func (s *APIServer) handleRestoreRunStream(w http.ResponseWriter, r *http.Reques
 	if !s.acquireStream(w, r, userID, "restore-stream") {
 		return
 	}
-	defer s.releaseMigrationStream(userID)
+	defer s.releaseBackupStream(userID)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -875,7 +875,7 @@ func (s *APIServer) handleBackupVerifyStream(w http.ResponseWriter, r *http.Requ
 	if !s.acquireStream(w, r, userID, "backup-verify-stream") {
 		return
 	}
-	defer s.releaseMigrationStream(userID)
+	defer s.releaseBackupStream(userID)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, ErrInternalError)
@@ -1177,3 +1177,169 @@ func normalizeRestoreSnapshotPaths(paths []string) ([]string, bool) {
 	sort.Strings(normalized)
 	return normalized, true
 }
+
+func (s *APIServer) handleListBackupRuns(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeValidationError(w, ErrBackupIDMissing)
+		return
+	}
+	if !s.requireBackupOwnership(w, r, id, userID) {
+		return
+	}
+	runs, err := db.ListBackupRunsForOwnerContext(r.Context(), s.db, id, userID)
+	if err != nil {
+		s.logf(r, "list backup runs failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+	if runs == nil {
+		runs = []db.BackupRun{}
+	}
+	writeJSON(w, http.StatusOK, runs)
+}
+
+type updateBackupRequest struct {
+	CronExpression string `json:"cron_expression"`
+	Timezone       string `json:"timezone"`
+	RetentionCount int    `json:"retention_count"`
+	Threads        int    `json:"threads"`
+}
+
+func (s *APIServer) handleUpdateBackup(w http.ResponseWriter, r *http.Request) {
+	if !s.rateLimiter.Allow(r.Context(), "migration-sync-mutation", s.clientIP(r), jobMutationRateLimit, jobMutationRateWindow) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeValidationError(w, ErrBackupIDMissing)
+		return
+	}
+	if !s.requireBackupOwnership(w, r, id, userID) {
+		return
+	}
+
+	var req updateBackupRequest
+	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+
+	if err := scheduler.ValidateCronExpression(req.CronExpression); err != nil {
+		writeValidationError(w, ErrBackupCronInvalid)
+		return
+	}
+	if _, err := time.LoadLocation(req.Timezone); err != nil {
+		writeValidationError(w, ErrBackupTimezoneInvalid)
+		return
+	}
+	if req.RetentionCount < 1 || req.RetentionCount > 365 {
+		writeValidationError(w, ErrBackupRetentionInvalid)
+		return
+	}
+	if req.Threads < 1 || req.Threads > 16 {
+		writeValidationError(w, ErrThreadsOutOfRange)
+		return
+	}
+
+	nextRun, err := scheduler.NextRunInLocation(req.CronExpression, req.Timezone, time.Now())
+	if err != nil {
+		writeValidationError(w, ErrBackupCronInvalid)
+		return
+	}
+
+	err = db.UpdateBackupJobContext(r.Context(), s.db, id, userID, req.CronExpression, req.Timezone, req.RetentionCount, req.Threads, &nextRun)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, ErrBackupNotFound)
+		return
+	}
+	if err != nil {
+		s.logf(r, "update backup job failed: %v", err)
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	job, err := db.GetBackupJobForOwnerContext(r.Context(), s.db, id, userID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]bool{"success": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *APIServer) handleBackupStream(w http.ResponseWriter, r *http.Request) {
+	userID, authenticated := s.requireUserID(w, r)
+	if !authenticated {
+		return
+	}
+
+	if !s.acquireStream(w, r, userID, "backup-stream") {
+		return
+	}
+	defer s.releaseBackupStream(userID)
+
+	rc := http.NewResponseController(w)
+	if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, ErrInternalError)
+		return
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer heartbeat.Stop()
+
+	var lastJSON []byte
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": ping\n\n")
+			flusher.Flush()
+		case <-ticker.C:
+			jobs, err := db.ListBackupJobsForOwnerContext(r.Context(), s.db, userID)
+			if err != nil {
+				continue
+			}
+			if jobs == nil {
+				jobs = []db.BackupJob{}
+			}
+
+			data, err := json.Marshal(jobs)
+			if err != nil {
+				continue
+			}
+
+			if bytes.Equal(data, lastJSON) {
+				continue
+			}
+
+			lastJSON = data
+			fmt.Fprintf(w, "event: backup_jobs\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+}
+

@@ -315,8 +315,11 @@ func (server *APIServer) setupRoutes() *http.ServeMux {
 
 	// Backup Routes
 	mux.Handle("GET /api/backup", jwtMiddleware(http.HandlerFunc(server.handleListBackups)))
+	mux.Handle("GET /api/backup/stream", jwtMiddleware(http.HandlerFunc(server.handleBackupStream)))
 	mux.Handle("POST /api/backup", jwtMiddleware(http.HandlerFunc(server.handleCreateBackup)))
 	mux.Handle("GET /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleGetBackup)))
+	mux.Handle("PUT /api/backup/{id}", jwtMiddleware(http.HandlerFunc(server.handleUpdateBackup)))
+	mux.Handle("GET /api/backup/{id}/runs", jwtMiddleware(http.HandlerFunc(server.handleListBackupRuns)))
 	mux.Handle("POST /api/backup/{id}/run", jwtMiddleware(http.HandlerFunc(server.handleRunBackup)))
 	mux.Handle("POST /api/backup/{id}/verify", jwtMiddleware(http.HandlerFunc(server.handleCreateBackupVerify)))
 	mux.Handle("GET /api/backup/{id}/verify", jwtMiddleware(http.HandlerFunc(server.handleListBackupVerifies)))

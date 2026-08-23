@@ -1335,6 +1335,76 @@ func GetBackupJobForOwnerContext(ctx context.Context, database *sql.DB, jobID, u
 	return job, nil
 }
 
+func ListBackupRunsForOwnerContext(ctx context.Context, database *sql.DB, backupJobID, userID string) ([]BackupRun, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT r.id, r.backup_job_id, r.generation, r.trigger, r.scheduled_local_key, r.state,
+			r.total_files, r.total_bytes, r.processed_files, r.processed_bytes, r.deduplicated_bytes, r.failed_files,
+			r.error_code, r.started_at, r.finished_at, r.created_at, r.updated_at
+		FROM backup_runs r
+		JOIN backup_jobs j ON j.id = r.backup_job_id
+		WHERE r.backup_job_id = $1 AND j.user_id = $2
+		ORDER BY r.created_at DESC
+	`, backupJobID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	runs := make([]BackupRun, 0)
+	for rows.Next() {
+		var run BackupRun
+		if err := rows.Scan(
+			&run.ID, &run.BackupJobID, &run.Generation, &run.Trigger, &run.ScheduledLocalKey, &run.State,
+			&run.TotalFiles, &run.TotalBytes, &run.ProcessedFiles, &run.ProcessedBytes, &run.DeduplicatedBytes, &run.FailedFiles,
+			&run.ErrorCode, &run.StartedAt, &run.FinishedAt, &run.CreatedAt, &run.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return runs, nil
+}
+
+func UpdateBackupJobContext(ctx context.Context, database *sql.DB, backupJobID, userID, cronExpression, timezone string, retentionCount, threads int, nextRun *time.Time) error {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE backup_jobs
+		SET cron_expression = $3, timezone = $4, retention_count = $5, threads = $6, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1 AND user_id = $2 AND deletion_state = 'ACTIVE'
+	`, backupJobID, userID, cronExpression, timezone, retentionCount, threads)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return sql.ErrNoRows
+	}
+
+	if nextRun != nil {
+		_, err = tx.ExecContext(ctx, `
+			UPDATE schedules
+			SET cron_expression = $3, next_run_at = $4
+			WHERE task_type = 'backup' AND task_id = $1 AND user_id = $2 AND is_active = TRUE
+		`, backupJobID, userID, cronExpression, *nextRun)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 func ListBackupJobsForOwnerContext(ctx context.Context, database *sql.DB, userID string) ([]BackupJob, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT id, user_id, lock_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,

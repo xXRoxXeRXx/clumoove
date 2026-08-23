@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { SyncDashboard } from './components/SyncDashboard';
+import { BackupDashboard } from './components/BackupDashboard';
 import { ConnectForm } from './components/ConnectForm';
 import { FileBrowser } from './components/FileBrowser';
 import { Dashboard } from './components/Dashboard';
@@ -23,6 +24,7 @@ import { logger } from './utils/logger';
 import { configuredApiOrigin } from './utils/runtimeConfig';
 import { useAppHistory } from './hooks/useAppHistory';
 import { safeAvatarUrl } from './utils/avatar';
+import { resolveFilePath, type FileBreadcrumb } from './api/files';
 
 function parseSettingsTab(tab: string): SettingsTab {
   if (tab === 'connections' || tab === 'appearance' || tab === 'notifications' || tab === 'about') {
@@ -30,7 +32,6 @@ function parseSettingsTab(tab: string): SettingsTab {
   }
   return 'account';
 }
-import { resolveFilePath, type FileBreadcrumb } from './api/files';
 
 const FileManager = lazy(() => import('./components/FileManager/FileManager').then((m) => ({ default: m.FileManager })));
 
@@ -137,10 +138,12 @@ function App() {
     step,
     migrationId,
     syncId,
+    backupId,
     profileId,
     settingsTab,
     initialMigrationId,
     initialSyncId,
+    initialBackupId,
     initialProfileId,
     replaceNav,
     navigate,
@@ -292,6 +295,16 @@ function App() {
               } else {
                 replaceNav('history', '');
               }
+            } else if (initialBackupId) {
+              // Verify active backup status
+              const backupRes = await apiFetch(`${API_URL}/api/backup/${initialBackupId}`, {
+                headers: { 'Authorization': `Bearer ${data.access_token}` },
+              });
+              if (backupRes.ok) {
+                replaceNav('backupdetail', initialBackupId);
+              } else {
+                replaceNav('history', '');
+              }
             } else if (initialProfileId) {
               const profileRes = await apiFetch(`${API_URL}/api/profiles/${initialProfileId}`, {
                 headers: { 'Authorization': `Bearer ${data.access_token}` },
@@ -317,7 +330,7 @@ function App() {
       .finally(() => {
         setIsValidating(false);
       });
-  }, [emailChangeTokenFromUrl, i18n, initialMigrationId, initialProfileId, initialSyncId, replaceNav, resetTokenFromUrl]);
+  }, [emailChangeTokenFromUrl, i18n, initialBackupId, initialMigrationId, initialProfileId, initialSyncId, replaceNav, resetTokenFromUrl]);
 
   // 2. Silent JWT refresh (every 14 minutes)
   useEffect(() => {
@@ -361,7 +374,7 @@ function App() {
     // needed once the migration is created — drop them from memory.
     clearCreationState();
     if (isBackup) {
-      navigate('history');
+      navigate('backupdetail', id);
     } else if (isSync) {
       navigate('syncdetail', id);
     } else {
@@ -562,7 +575,7 @@ function App() {
       </header>
 
       <main ref={mainRef} className={`mx-auto flex w-full max-w-6xl flex-grow flex-col px-4 py-6 sm:px-6 sm:py-8 ${step === 'login' || step === 'reset-password' || step === 'confirm-email' ? 'justify-center' : 'justify-start'}`}>
-        <div key={`${step}:${migrationId}:${syncId}:${profileId}`} className="ui-view-enter w-full">
+        <div key={`${step}:${migrationId}:${syncId}:${backupId}:${profileId}`} className="ui-view-enter w-full">
           {step === 'login' && (
             <AuthForm apiUrl={API_URL} onAuthSuccess={handleAuthSuccess} />
           )}
@@ -594,6 +607,9 @@ function App() {
               }}
               onSelectActiveSync={(id) => {
                 navigate('syncdetail', id);
+              }}
+              onSelectActiveBackup={(id) => {
+                navigate('backupdetail', id);
               }}
               onOpenFileManager={(id, path) => void openFileManagerAtPath(id, path)}
               onOpenFilemanagerRoot={() => openFileManagerRoot(profileId)}
@@ -630,6 +646,22 @@ function App() {
             >
               <SyncDashboard
                 syncId={syncId}
+                apiUrl={API_URL}
+                onBack={handleBack}
+                token={token}
+              />
+            </ErrorBoundary>
+          )}
+
+          {step === 'backupdetail' && (
+            <ErrorBoundary
+              scope="transfer"
+              fallback={() => (
+                <TransferErrorFallback onBack={handleBack} />
+              )}
+            >
+              <BackupDashboard
+                backupId={backupId}
                 apiUrl={API_URL}
                 onBack={handleBack}
                 token={token}

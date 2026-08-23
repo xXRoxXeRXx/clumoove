@@ -28,6 +28,7 @@ interface MigrationsDashboardProps {
   onStartNewMigration: () => void;
   onSelectActiveMigration: (id: string) => void;
   onSelectActiveSync?: (id: string) => void;
+  onSelectActiveBackup?: (id: string) => void;
   onOpenFileManager?: (profileId: string, path: string) => void;
   onOpenFilemanagerRoot?: () => void;
 }
@@ -53,6 +54,7 @@ export function MigrationsDashboard({
   onStartNewMigration,
   onSelectActiveMigration,
   onSelectActiveSync,
+  onSelectActiveBackup,
   onOpenFileManager,
   onOpenFilemanagerRoot,
 }: MigrationsDashboardProps) {
@@ -427,7 +429,7 @@ export function MigrationsDashboard({
         : item));
     } catch (err) {
       toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }), 'error');
-} finally {
+    } finally {
       setControlLoading(null);
     }
   };
@@ -717,6 +719,7 @@ export function MigrationsDashboard({
                 loading={backupLoading}
                 error={backupError}
                 setBackupJobs={setBackupJobs}
+                onSelectActiveBackup={onSelectActiveBackup}
               />
             );
           }
@@ -1279,6 +1282,7 @@ function BackupList({
   loading,
   error,
   setBackupJobs,
+  onSelectActiveBackup,
 }: {
   apiUrl: string;
   token: string;
@@ -1286,6 +1290,7 @@ function BackupList({
   loading: boolean;
   error: string;
   setBackupJobs: React.Dispatch<React.SetStateAction<BackupJob[]>>;
+  onSelectActiveBackup?: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
@@ -1361,10 +1366,27 @@ function BackupList({
             return (
               <tr key={job.id} className="hover:bg-[var(--color-bg-tertiary)]">
                 <td data-label={t('migrations.sourceTarget')} className="px-4 py-4">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text-primary)]">
-                    <span className="capitalize">{job.source_provider}</span><span aria-hidden="true">→</span><span className="capitalize">{job.target_provider}</span>
-                  </div>
-                  <p className="mt-1 max-w-48 truncate text-[10px] font-mono text-[var(--color-text-muted)]" title={job.selected_paths.join(', ')}>{job.selected_paths.join(', ')}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onSelectActiveBackup) {
+                        onSelectActiveBackup(job.id);
+                      } else {
+                        setBrowseJobID(job.id);
+                      }
+                    }}
+                    className="flex flex-col text-left group hover:opacity-80 transition-opacity"
+                    title={t('backup.openDetail')}
+                  >
+                    <div className="flex items-center gap-2 text-xs font-semibold text-[var(--color-text-primary)] group-hover:text-[var(--color-accent)]">
+                      <span className="capitalize">{job.source_provider}</span>
+                      <span aria-hidden="true">→</span>
+                      <span className="capitalize">{job.target_provider}</span>
+                    </div>
+                    <p className="mt-1 max-w-48 truncate text-[10px] font-mono text-[var(--color-text-muted)]" title={job.selected_paths.join(', ')}>
+                      {job.selected_paths.join(', ')}
+                    </p>
+                  </button>
                 </td>
                 <td data-label={t('migrations.status')} className="px-4 py-4">
                   <StatusBadge status={badgeStatus} size="sm" />
@@ -1385,7 +1407,11 @@ function BackupList({
                 <td data-label={t('migrations.actions')} className="px-4 py-4 text-right">
                   <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => void handleAction(job, 'run')} disabled={running || controlLoading !== null} className="ui-button-secondary px-3 py-2 text-xs disabled:opacity-40">{controlLoading === `${job.id}:run` ? <ArrowPathIcon className="size-4 animate-spin" /> : t('backup.run')}</button>
-                    <button type="button" onClick={() => setBrowseJobID(job.id)} className="ui-button-secondary px-3 py-2 text-xs">{t('backup.browseSnapshots')}</button>
+                    {onSelectActiveBackup ? (
+                      <button type="button" onClick={() => onSelectActiveBackup(job.id)} className="ui-button-secondary px-3 py-2 text-xs">{t('backup.dashboardTitle')}</button>
+                    ) : (
+                      <button type="button" onClick={() => setBrowseJobID(job.id)} className="ui-button-secondary px-3 py-2 text-xs">{t('backup.browseSnapshots')}</button>
+                    )}
                     <button type="button" onClick={() => void handleAction(job, isPaused ? 'resume' : 'pause')} disabled={controlLoading !== null || (!isPaused && !['IDLE', 'FAILED', 'QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status))} className="ui-button-secondary px-3 py-2 text-xs disabled:opacity-40" aria-label={pauseLabel} title={pauseLabel}>{controlLoading?.startsWith(`${job.id}:`) ? <ArrowPathIcon className="size-4 animate-spin" /> : isPaused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />}</button>
                     <button type="button" onClick={() => void handleDelete(job)} disabled={controlLoading !== null || job.status === 'DELETING'} className="ui-button-secondary px-3 py-2 text-xs text-[var(--color-error-text)] disabled:opacity-40">{t('backup.deleteRepository')}</button>
                   </div>

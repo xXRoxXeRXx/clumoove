@@ -161,3 +161,23 @@ export interface BackupJob {
   created_at: string;
 }
 
+export interface BackupRun {
+  id: string;
+  backup_job_id: string;
+  generation: number;
+  trigger: 'manual' | 'schedule' | 'catch_up' | string;
+  scheduled_local_key?: string | null;
+  state: string;
+  total_files: number;
+  total_bytes: number;
+  processed_files: number;
+  processed_bytes: number;
+  deduplicated_bytes: number;
+  failed_files: number;
+  error_code?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+}
+
+
