@@ -665,14 +665,16 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 			prev.Mtime.Equal(file.mtime) &&
 			prev.SizeBytes == file.size &&
 			(file.size == 0 || len(prev.BlockIDs) > 0) &&
-			len(prev.FileSHA256) == sha256.Size {
+			prev.FileSHA256 != [sha256.Size]byte{} {
+			// Note: InspectResource is called per reusable file to prevent TOCTOU mutations between
+			// scan/listing and reuse. For large snapshots with many unchanged files, this incurs O(N)
+			// lightweight provider round-trips. Future optimization: batch-stat or conditional bypass
+			// when providers guarantee stable mtimes/ETags.
 			current, err := source.InspectResource(ctx, "files", file.sourcePath)
 			if err == nil && sameSource(file, current) {
-				var fileHash [sha256.Size]byte
-				copy(fileHash[:], prev.FileSHA256)
 				pending = append(pending, pendingFile{
 					file:     file,
-					fileHash: fileHash,
+					fileHash: prev.FileSHA256,
 					blockIDs: prev.BlockIDs,
 				})
 				stats.deduplicatedBytes += file.size
@@ -1129,17 +1131,16 @@ func scanFiles(ctx context.Context, source storage.StorageProvider, selected []s
 	files := make([]scannedFile, 0)
 	directories := make([]scannedDirectory, 0)
 	seen := make(map[string]struct{})
-	queue := append([]string(nil), selected...)
-	for len(queue) > 0 {
+	var dirQueue []string
+
+	for _, root := range selected {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, runStats{}, err
 		}
-		current := queue[0]
-		queue = queue[1:]
-		if err := safeRemotePath(current); err != nil {
+		if err := safeRemotePath(root); err != nil {
 			return nil, nil, runStats{}, err
 		}
-		resource, err := source.InspectResource(ctx, "files", current)
+		resource, err := source.InspectResource(ctx, "files", root)
 		if err != nil {
 			return nil, nil, runStats{}, err
 		}
@@ -1147,24 +1148,17 @@ func scanFiles(ctx context.Context, source storage.StorageProvider, selected []s
 			return nil, nil, runStats{}, err
 		}
 		if resource.IsDir {
-			if _, ok := seen["d:"+resource.Path]; ok {
-				continue
-			}
-			seen["d:"+resource.Path] = struct{}{}
-			relative := strings.TrimPrefix(resource.Path, "/")
-			if relative != "" {
-				relative, err = backuprepo.NormalizeRelativePath(relative)
-				if err != nil {
-					return nil, nil, runStats{}, err
+			if _, ok := seen["d:"+resource.Path]; !ok {
+				seen["d:"+resource.Path] = struct{}{}
+				relative := strings.TrimPrefix(resource.Path, "/")
+				if relative != "" {
+					normRel, err := backuprepo.NormalizeRelativePath(relative)
+					if err != nil {
+						return nil, nil, runStats{}, err
+					}
+					directories = append(directories, scannedDirectory{relativePath: normRel, mtime: resource.LastModified})
 				}
-				directories = append(directories, scannedDirectory{relativePath: relative, mtime: resource.LastModified})
-			}
-			children, err := source.GetDirectoryListing(ctx, "files", resource.Path)
-			if err != nil {
-				return nil, nil, runStats{}, err
-			}
-			for _, child := range children {
-				queue = append(queue, child.Path)
+				dirQueue = append(dirQueue, resource.Path)
 			}
 			continue
 		}
@@ -1176,8 +1170,62 @@ func scanFiles(ctx context.Context, source storage.StorageProvider, selected []s
 			continue
 		}
 		seen["f:"+relative] = struct{}{}
-		files = append(files, scannedFile{sourcePath: resource.Path, relativePath: relative, size: resource.Size, mtime: resource.LastModified})
+		files = append(files, scannedFile{
+			sourcePath:   resource.Path,
+			relativePath: relative,
+			size:         resource.Size,
+			mtime:        resource.LastModified,
+		})
 	}
+
+	for len(dirQueue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, runStats{}, err
+		}
+		currentDir := dirQueue[0]
+		dirQueue = dirQueue[1:]
+
+		children, err := source.GetDirectoryListing(ctx, "files", currentDir)
+		if err != nil {
+			return nil, nil, runStats{}, err
+		}
+		for _, child := range children {
+			if err := safeRemotePath(child.Path); err != nil {
+				return nil, nil, runStats{}, err
+			}
+			if child.IsDir {
+				if _, ok := seen["d:"+child.Path]; ok {
+					continue
+				}
+				seen["d:"+child.Path] = struct{}{}
+				relative := strings.TrimPrefix(child.Path, "/")
+				if relative != "" {
+					normRel, err := backuprepo.NormalizeRelativePath(relative)
+					if err != nil {
+						return nil, nil, runStats{}, err
+					}
+					directories = append(directories, scannedDirectory{relativePath: normRel, mtime: child.LastModified})
+				}
+				dirQueue = append(dirQueue, child.Path)
+				continue
+			}
+			relative, err := backuprepo.NormalizeRelativePath(strings.TrimPrefix(child.Path, "/"))
+			if err != nil {
+				return nil, nil, runStats{}, err
+			}
+			if _, ok := seen["f:"+relative]; ok {
+				continue
+			}
+			seen["f:"+relative] = struct{}{}
+			files = append(files, scannedFile{
+				sourcePath:   child.Path,
+				relativePath: relative,
+				size:         child.Size,
+				mtime:        child.LastModified,
+			})
+		}
+	}
+
 	stats := runStats{totalFiles: len(files), totalDirs: len(directories)}
 	for _, file := range files {
 		stats.totalBytes += file.size

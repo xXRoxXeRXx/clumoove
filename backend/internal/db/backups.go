@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -786,10 +787,17 @@ type BackupSnapshotCatalogItem struct {
 	RelativePath string
 	SizeBytes    int64
 	Mtime        time.Time
-	FileSHA256   []byte
+	FileSHA256   [sha256.Size]byte
 	BlockIDs     []string
 }
 
+// GetBackupSnapshotFileCatalogContext loads the full catalog of reusable file items and block
+// references for a given snapshot into memory in a single query.
+//
+// Performance note: For personal and SMB workloads (thousands to hundreds of thousands of files),
+// this full in-memory map enables fast O(1) deduplication checks during incremental backup passes.
+// For extremely large snapshots with millions of files, this constitutes a significant memory
+// allocation and could be adapted in the future to stream/chunk rows or utilize DB-side set joins.
 func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, snapshotID string) (map[string]BackupSnapshotCatalogItem, error) {
 	rows, err := database.QueryContext(ctx, `
 		SELECT i.relative_path, i.size_bytes, i.mtime, i.file_sha256,
@@ -809,7 +817,8 @@ func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, 
 	type catalogAcc struct {
 		sizeBytes   int64
 		mtime       sql.NullTime
-		fileSHA256  []byte
+		fileSHA256  [sha256.Size]byte
+		hasSHA      bool
 		blockIDs    []string
 		expectedOrd int
 		invalid     bool
@@ -834,10 +843,15 @@ func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, 
 			acc = &catalogAcc{
 				sizeBytes:   size,
 				mtime:       mtime,
-				fileSHA256:  fileSHA,
 				blockIDs:    make([]string, 0),
 				expectedOrd: 0,
 				invalid:     false,
+			}
+			if len(fileSHA) == sha256.Size {
+				copy(acc.fileSHA256[:], fileSHA)
+				acc.hasSHA = true
+			} else {
+				acc.invalid = true
 			}
 			accs[relPath] = acc
 		}
@@ -860,7 +874,7 @@ func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, 
 
 	result := make(map[string]BackupSnapshotCatalogItem, len(accs))
 	for relPath, acc := range accs {
-		if acc.invalid || !acc.mtime.Valid || acc.mtime.Time.IsZero() || len(acc.fileSHA256) != 32 {
+		if acc.invalid || !acc.mtime.Valid || acc.mtime.Time.IsZero() || !acc.hasSHA {
 			continue
 		}
 		if acc.sizeBytes > 0 && len(acc.blockIDs) == 0 {

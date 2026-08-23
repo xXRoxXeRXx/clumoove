@@ -432,7 +432,7 @@ func canReuseFromCatalog(file scannedFile, prev db.BackupSnapshotCatalogItem) bo
 		prev.Mtime.Equal(file.mtime) &&
 		prev.SizeBytes == file.size &&
 		(file.size == 0 || len(prev.BlockIDs) > 0) &&
-		len(prev.FileSHA256) == sha256.Size
+		prev.FileSHA256 != [sha256.Size]byte{}
 }
 
 func TestIncrementalReuseDecisionLogic(t *testing.T) {
@@ -464,28 +464,28 @@ func TestIncrementalReuseDecisionLogic(t *testing.T) {
 			RelativePath: "docs/readme.txt",
 			SizeBytes:    11,
 			Mtime:        now,
-			FileSHA256:   validSHA[:],
+			FileSHA256:   validSHA,
 			BlockIDs:     []string{"block-1"},
 		},
 		"docs/zero.txt": {
 			RelativePath: "docs/zero.txt",
 			SizeBytes:    0,
 			Mtime:        now,
-			FileSHA256:   validSHA[:],
+			FileSHA256:   validSHA,
 			BlockIDs:     nil, // 0 blocks for 0-byte file
 		},
 		"docs/nomtime.txt": {
 			RelativePath: "docs/nomtime.txt",
 			SizeBytes:    8,
 			Mtime:        time.Time{}, // missing mtime
-			FileSHA256:   validSHA[:],
+			FileSHA256:   validSHA,
 			BlockIDs:     []string{"block-2"},
 		},
 		"docs/modified.txt": {
 			RelativePath: "docs/modified.txt",
 			SizeBytes:    16,
 			Mtime:        now, // old mtime
-			FileSHA256:   validSHA[:],
+			FileSHA256:   validSHA,
 			BlockIDs:     []string{"block-3"},
 		},
 	}
@@ -561,6 +561,44 @@ func TestIncrementalReuseDecisionLogic(t *testing.T) {
 			t.Fatal("modified mtime must not be reused")
 		}
 	})
+}
+
+func TestScanFilesAvoidsRedundantInspectCalls(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
+
+	source := newMockTrackedSource()
+	source.files["/root"] = mockFileRecord{isDir: true, mtime: now}
+	source.files["/root/sub"] = mockFileRecord{isDir: true, mtime: now}
+	source.files["/root/sub/file1.txt"] = mockFileRecord{data: []byte("file1"), mtime: now}
+	source.files["/root/sub/file2.txt"] = mockFileRecord{data: []byte("file2-longer"), mtime: now}
+	source.files["/root/standalone.txt"] = mockFileRecord{data: []byte("standalone"), mtime: now}
+
+	files, dirs, stats, err := scanFiles(ctx, source, []string{"/root"})
+	if err != nil {
+		t.Fatalf("scanFiles() error = %v", err)
+	}
+
+	if len(files) != 3 {
+		t.Errorf("files count = %d, want 3", len(files))
+	}
+	if len(dirs) != 2 {
+		t.Errorf("dirs count = %d, want 2 (root and sub)", len(dirs))
+	}
+	if stats.totalFiles != 3 {
+		t.Errorf("stats.totalFiles = %d, want 3", stats.totalFiles)
+	}
+
+	// InspectResource should only have been called for the initial root "/root"
+	if inspectCalls := source.inspectCounts["/root"]; inspectCalls != 1 {
+		t.Errorf("InspectResource(/root) = %d, want 1", inspectCalls)
+	}
+	if inspectCalls := source.inspectCounts["/root/sub"]; inspectCalls != 0 {
+		t.Errorf("InspectResource(/root/sub) = %d, want 0 (should be discovered via GetDirectoryListing)", inspectCalls)
+	}
+	if inspectCalls := source.inspectCounts["/root/sub/file1.txt"]; inspectCalls != 0 {
+		t.Errorf("InspectResource(/root/sub/file1.txt) = %d, want 0", inspectCalls)
+	}
 }
 
 var mockTestDriverID atomic.Uint64
