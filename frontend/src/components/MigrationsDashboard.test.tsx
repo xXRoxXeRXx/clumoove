@@ -2,7 +2,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../i18n';
-import type { Migration, SyncJob } from '../types';
+import type { Migration, SyncJob, BackupJob } from '../types';
 import { MigrationsDashboard } from './MigrationsDashboard';
 import { apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop, type SseHandlers } from '../utils/sse';
@@ -63,6 +63,33 @@ function createSyncJob(sourceUrl: string): SyncJob {
     total_files: 10, processed_files: 2, processed_bytes: 2, total_bytes: 10, changed_files: 0,
     deleted_files: 0, failed_files: 0, last_run_at: null, last_run_status: null,
     error_message: null, created_at: '2026-01-01T00:00:00Z',
+  };
+}
+
+function createBackupJob(id = 'backup-1'): BackupJob {
+  return {
+    id,
+    status: 'IDLE',
+    source_provider: 'nextcloud',
+    source_url: 'https://source.example.test',
+    target_provider: 's3',
+    target_url: 'https://target.example.test',
+    selected_paths: ['/data'],
+    target_dir: '/backup',
+    cron_expression: '0 2 * * *',
+    timezone: 'UTC',
+    retention_count: 7,
+    threads: 2,
+    total_files: 10,
+    total_bytes: 1024,
+    processed_files: 10,
+    processed_bytes: 1024,
+    deduplicated_bytes: 128,
+    failed_files: 0,
+    last_run_at: null,
+    last_run_status: null,
+    error_code: null,
+    created_at: '2026-01-01T00:00:00Z',
   };
 }
 
@@ -270,7 +297,10 @@ describe('MigrationsDashboard tabs', () => {
         migrationSignal = options?.signal;
         return migrationSnapshot.promise;
       }
-      return syncSnapshot.promise;
+      if (String(url).endsWith('/api/sync')) {
+        return syncSnapshot.promise;
+      }
+      return Promise.resolve(jsonResponse([]));
     });
     vi.mocked(connectSseLoop).mockImplementation((options) => {
       streams.set(options.url, options.handlers);
@@ -304,8 +334,11 @@ describe('MigrationsDashboard tabs', () => {
     let syncSignal: AbortSignal | undefined;
     vi.mocked(apiJson).mockImplementation((url, options) => {
       if (String(url).endsWith('/api/migration')) return migrationSnapshot.promise;
-      syncSignal = options?.signal;
-      return syncSnapshot.promise;
+      if (String(url).endsWith('/api/sync')) {
+        syncSignal = options?.signal;
+        return syncSnapshot.promise;
+      }
+      return Promise.resolve(jsonResponse([]));
     });
     vi.mocked(connectSseLoop).mockImplementation((options) => {
       streams.set(options.url, options.handlers);
@@ -340,9 +373,11 @@ describe('MigrationsDashboard tabs', () => {
     [{ ok: false as const, status: 403, errorCode: 'UNKNOWN', networkError: false }, () => i18n.t('errors.UNKNOWN')],
     [{ ok: false as const, status: 0, networkError: true }, () => i18n.t('sync.loadFailed')],
   ])('displays the mapped error or network fallback when loading sync jobs', async (syncResult, expectedMessageForLocale) => {
-    vi.mocked(apiJson).mockImplementation((url) => Promise.resolve(
-      String(url).endsWith('/api/migration') ? jsonResponse([]) : syncResult,
-    ));
+    vi.mocked(apiJson).mockImplementation((url) => {
+      if (String(url).endsWith('/api/migration')) return Promise.resolve(jsonResponse([]));
+      if (String(url).endsWith('/api/sync')) return Promise.resolve(syncResult);
+      return Promise.resolve(jsonResponse([]));
+    });
 
     container = document.createElement('div');
     document.body.append(container);
@@ -360,4 +395,41 @@ describe('MigrationsDashboard tabs', () => {
 
     expect(container.textContent).toContain(expectedMessageForLocale());
   });
+
+  it('loads backup jobs on initial snapshot and shows the backup count badge immediately without needing to click the tab', async () => {
+    const backup1 = createBackupJob('backup-1');
+    const backup2 = createBackupJob('backup-2');
+    vi.mocked(apiJson).mockImplementation((url) => {
+      if (String(url).endsWith('/api/backup')) {
+        return Promise.resolve(jsonResponse([backup1, backup2]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <MigrationsDashboard
+          apiUrl="https://api.example.test"
+          token="token"
+          user={null}
+          onStartNewMigration={vi.fn()}
+          onSelectActiveMigration={vi.fn()}
+        />,
+      );
+    });
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await Promise.resolve();
+    });
+
+    const backupTab = container.querySelector<HTMLButtonElement>('#backup-tab')!;
+    expect(backupTab).not.toBeNull();
+    // The backup tab should display the badge with count 2 immediately
+    expect(backupTab.textContent).toContain('2');
+  });
 });
+

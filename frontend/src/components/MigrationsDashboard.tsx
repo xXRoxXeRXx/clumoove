@@ -86,6 +86,7 @@ export function MigrationsDashboard({
   const snapshotGenerationRef = useRef(0);
   const migrationSnapshotAbortRef = useRef<AbortController | null>(null);
   const syncSnapshotAbortRef = useRef<AbortController | null>(null);
+  const backupSnapshotAbortRef = useRef<AbortController | null>(null);
 
   const { t } = useTranslation();
   const { formatBytes, formatDateTime, formatPercent } = useFormat();
@@ -154,33 +155,44 @@ export function MigrationsDashboard({
     }
   }, [apiUrl, token, t, translateApiError]);
 
-  const fetchBackupJobs = useCallback(async (signal: AbortSignal) => {
+  const fetchBackupJobs = useCallback(async function fetchBackupJobs(signal: AbortSignal, snapshotGeneration?: number): Promise<void> {
+    function acceptsSnapshot(): boolean {
+      return !signal.aborted
+        && (snapshotGeneration === undefined || snapshotGenerationRef.current === snapshotGeneration);
+    }
+
     try {
       const result = await apiJson<BackupJob[]>(`${apiUrl}/api/backup`, {
         headers: { Authorization: `Bearer ${token}` },
         signal,
       });
       if (result.ok === false) throw new Error(apiErrorMessage(result, translateApiError, t('backup.loadFailed')));
-      if (!signal.aborted) {
+      if (acceptsSnapshot()) {
         setBackupJobs(result.data || []);
         setBackupError('');
       }
     } catch (err: unknown) {
-      if (!signal.aborted) setBackupError(err instanceof Error ? err.message : t('backup.loadFailed'));
+      if (acceptsSnapshot()) {
+        setBackupError(err instanceof Error ? err.message : t('backup.loadFailed'));
+      }
     } finally {
-      if (!signal.aborted) setBackupLoading(false);
+      if (acceptsSnapshot()) {
+        setBackupLoading(false);
+      }
     }
   }, [apiUrl, token, t, translateApiError]);
 
-  // Load both lists immediately instead of waiting for the initial SSE frames.
+  // Load initial lists immediately instead of waiting for the initial SSE frames.
   // The streams remain responsible for live updates after this first snapshot.
   useEffect(() => {
     const isInitialLoad = snapshotGenerationRef.current === 0;
     snapshotGenerationRef.current += 1;
     migrationSnapshotAbortRef.current?.abort();
     syncSnapshotAbortRef.current?.abort();
+    backupSnapshotAbortRef.current?.abort();
     migrationSnapshotAbortRef.current = null;
     syncSnapshotAbortRef.current = null;
+    backupSnapshotAbortRef.current = null;
     hasMigrationStreamDataRef.current = false;
     hasSyncStreamDataRef.current = false;
     if (isInitialLoad) return;
@@ -188,8 +200,10 @@ export function MigrationsDashboard({
     const resetTimeoutId = window.setTimeout(() => {
       setLoading(true);
       setSyncLoading(true);
+      setBackupLoading(true);
       setError('');
       setSyncError('');
+      setBackupError('');
     }, 0);
     return () => window.clearTimeout(resetTimeoutId);
   }, [apiUrl, token]);
@@ -197,26 +211,33 @@ export function MigrationsDashboard({
   useEffect(() => {
     const migrationController = new AbortController();
     const syncController = new AbortController();
+    const backupController = new AbortController();
     const snapshotGeneration = snapshotGenerationRef.current;
     migrationSnapshotAbortRef.current = migrationController;
     syncSnapshotAbortRef.current = syncController;
+    backupSnapshotAbortRef.current = backupController;
     function loadInitialSnapshot(): void {
       void fetchMigrations(migrationController.signal, snapshotGeneration);
       void fetchSyncJobs(syncController.signal, snapshotGeneration);
+      void fetchBackupJobs(backupController.signal, snapshotGeneration);
     }
     const timeoutId = window.setTimeout(loadInitialSnapshot, 0);
     return () => {
       window.clearTimeout(timeoutId);
       migrationController.abort();
       syncController.abort();
+      backupController.abort();
       if (migrationSnapshotAbortRef.current === migrationController) {
         migrationSnapshotAbortRef.current = null;
       }
       if (syncSnapshotAbortRef.current === syncController) {
         syncSnapshotAbortRef.current = null;
       }
+      if (backupSnapshotAbortRef.current === backupController) {
+        backupSnapshotAbortRef.current = null;
+      }
     };
-  }, [fetchMigrations, fetchSyncJobs]);
+  }, [fetchMigrations, fetchSyncJobs, fetchBackupJobs]);
 
   useEffect(() => {
     if (activeTab !== 'backup') return;
@@ -406,7 +427,7 @@ export function MigrationsDashboard({
         : item));
     } catch (err) {
       toast(err instanceof Error ? err.message : t('dashboard.actionFailedMsg', { action }), 'error');
-    } finally {
+} finally {
       setControlLoading(null);
     }
   };
@@ -415,7 +436,7 @@ export function MigrationsDashboard({
   const totalSyncs = syncJobs.length;
   const totalBackups = backupJobs.length;
   const totalTransfers = totalMigrations + totalSyncs + totalBackups;
-  const initialDataLoading = loading || syncLoading;
+  const initialDataLoading = loading || syncLoading || backupLoading;
 
   const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING').length;
   const activeSyncs = syncJobs.filter(s => s.status === 'RUNNING' || s.status === 'INDEXING').length;
