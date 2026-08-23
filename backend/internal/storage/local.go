@@ -179,8 +179,8 @@ func (p *LocalProvider) StreamDownloadRange(ctx context.Context, resourceType, f
 	if resourceType != "files" {
 		return nil, fmt.Errorf("%w: resource type %s not supported by local provider", ErrUnsupportedResourceType, resourceType)
 	}
-	if offset < 0 || length <= 0 {
-		return nil, fmt.Errorf("invalid byte range")
+	if _, err := ValidateByteRange(offset, length); err != nil {
+		return nil, err
 	}
 	root, err := p.localRoot()
 	if err != nil {
@@ -200,7 +200,7 @@ func (p *LocalProvider) StreamDownloadRange(ctx context.Context, resourceType, f
 		if err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("invalid byte range")
+		return nil, ErrInvalidByteRange
 	}
 	if _, err = f.Seek(offset, io.SeekStart); err != nil {
 		f.Close()

@@ -78,7 +78,7 @@ export const EditBackupModal: React.FC<EditBackupModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[var(--layer-modal)] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+      className="fixed inset-0 z-[var(--layer-modal)] flex items-center justify-center p-4 bg-black/60"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -86,7 +86,7 @@ export const EditBackupModal: React.FC<EditBackupModalProps> = ({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className="ui-card flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden shadow-2xl border border-[var(--color-border)]"
+        className="ui-card flex flex-col w-full max-w-2xl max-h-[90vh] overflow-hidden border border-[var(--color-border)]"
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
@@ -98,7 +98,7 @@ export const EditBackupModal: React.FC<EditBackupModalProps> = ({
             type="button"
             onClick={onClose}
             className="p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-tertiary)]"
-            aria-label={t('paths.close')}
+            aria-label={t('common.close')}
           >
             <X className="size-5" />
           </button>
@@ -135,7 +135,7 @@ export const EditBackupModal: React.FC<EditBackupModalProps> = ({
               onClick={onClose}
               disabled={saving}
             >
-              {t('paths.close')}
+              {t('common.close')}
             </Button>
             <Button
               type="submit"

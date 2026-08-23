@@ -1040,12 +1040,17 @@ func MarkBackupPacksCheckedContext(ctx context.Context, database *sql.DB, jobID 
 	if len(packIDs) == 0 {
 		return nil
 	}
-	for _, packID := range packIDs {
-		if _, err := database.ExecContext(ctx, `UPDATE backup_packs SET last_checked_at = CURRENT_TIMESTAMP WHERE id = $1 AND backup_job_id = $2 AND state = 'READY'`, packID, jobID); err != nil {
-			return err
-		}
+	idsJSON, err := json.Marshal(packIDs)
+	if err != nil {
+		return err
 	}
-	return nil
+	_, err = database.ExecContext(ctx, `
+		UPDATE backup_packs
+		SET last_checked_at = CURRENT_TIMESTAMP
+		WHERE backup_job_id = $1 AND state = 'READY'
+		  AND id IN (SELECT id::uuid FROM jsonb_array_elements_text($2::jsonb) AS elem(id))`,
+		jobID, string(idsJSON))
+	return err
 }
 
 // MarkBackupPackDamagedContext propagates a verified missing or corrupt pack to

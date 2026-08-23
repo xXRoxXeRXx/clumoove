@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -114,5 +115,37 @@ func TestValidateHTTPRangeResponse(t *testing.T) {
 		t.Fatalf("unexpected error for valid 206 without total: %v", err)
 	}
 	rcNoTotal.Close()
+
+	// Truncated body produces io.ErrUnexpectedEOF
+	respTruncated := &http.Response{
+		StatusCode:    http.StatusPartialContent,
+		ContentLength: 11,
+		Header: http.Header{
+			"Content-Range": []string{"bytes 0-10/100"},
+		},
+		Body: io.NopCloser(bytes.NewReader([]byte("short"))), // 5 bytes instead of 11
+	}
+	rcTruncated, err := ValidateHTTPRangeResponse(respTruncated, 0, 11)
+	if err != nil {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+	_, readErr := io.ReadAll(rcTruncated)
+	rcTruncated.Close()
+	if !errors.Is(readErr, io.ErrUnexpectedEOF) {
+		t.Fatalf("expected ErrUnexpectedEOF on truncated read, got %v", readErr)
+	}
+
+	// Malformed Content-Range
+	respMalformedCR := &http.Response{
+		StatusCode:    http.StatusPartialContent,
+		ContentLength: 5,
+		Header: http.Header{
+			"Content-Range": []string{"invalid-range"},
+		},
+		Body: io.NopCloser(bytes.NewReader(payload[:5])),
+	}
+	if _, err := ValidateHTTPRangeResponse(respMalformedCR, 0, 5); err == nil {
+		t.Fatal("expected error for malformed Content-Range, got nil")
+	}
 }
 

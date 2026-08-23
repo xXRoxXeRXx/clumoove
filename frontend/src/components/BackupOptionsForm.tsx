@@ -81,13 +81,9 @@ export function BackupOptionsForm({
     parseCronToScheduleConfig(cronExpression)
   );
 
-  // Sync internal state when external cronExpression changes (e.g. initial load or reset)
   if (cronExpression !== prevCron) {
     setPrevCron(cronExpression);
-    const currentDerivedCron = buildCronFromScheduleConfig(scheduleConfig);
-    if (cronExpression !== currentDerivedCron) {
-      setScheduleConfig(parseCronToScheduleConfig(cronExpression));
-    }
+    setScheduleConfig(parseCronToScheduleConfig(cronExpression));
   }
 
   const handleConfigChange = (updater: (prev: ScheduleConfig) => ScheduleConfig) => {
@@ -291,7 +287,7 @@ export function BackupOptionsForm({
                   onChange={(e) => setDayOfMonth(parseInt(e.target.value, 10))}
                   className="ui-select w-full px-3 py-2 text-sm"
                 >
-                  {Array.from({ length: 28 }, (_, i) => i + 1).map((day) => (
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
                     <option key={day} value={day}>
                       {day}.
                     </option>

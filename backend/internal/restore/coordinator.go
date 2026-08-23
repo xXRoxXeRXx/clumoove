@@ -168,7 +168,10 @@ func (c *Coordinator) previewTarget(ctx context.Context, preview *db.RestorePrev
 
 	expected := make(map[string]db.RestorePreviewItem, len(items))
 	for _, item := range items {
-		resolved := previewTargetPath(preview.TargetRoot, item.RelativePath)
+		resolved, err := previewTargetPath(preview.TargetRoot, item.RelativePath)
+		if err != nil {
+			return db.RestorePreviewStats{}, err
+		}
 		expected[resolved] = item
 	}
 	targetTree, err := enumeratePreviewTargetTree(ctx, target, preview.TargetRoot)
@@ -242,14 +245,30 @@ func (c *Coordinator) previewTarget(ctx context.Context, preview *db.RestorePrev
 	return stats, nil
 }
 
-func previewTargetPath(root, relative string) string {
+func resolveWithinRoot(root, relative string) (string, error) {
+	root = path.Clean(root)
+	if root == "." || root == "" {
+		root = "/"
+	}
 	if relative == "" {
-		return path.Clean(root)
+		return root, nil
 	}
+	relative = strings.ReplaceAll(relative, "\\", "/")
+	joined := path.Clean(path.Join(root, relative))
 	if root == "/" {
-		return "/" + strings.TrimPrefix(relative, "/")
+		if !strings.HasPrefix(joined, "/") {
+			return "", storage.ErrPathEscapesRoot
+		}
+		return joined, nil
 	}
-	return path.Join(root, relative)
+	if joined != root && !strings.HasPrefix(joined, root+"/") {
+		return "", storage.ErrPathEscapesRoot
+	}
+	return joined, nil
+}
+
+func previewTargetPath(root, relative string) (string, error) {
+	return resolveWithinRoot(root, relative)
 }
 
 func enumeratePreviewTargetTree(ctx context.Context, target storage.StorageProvider, root string) (map[string]storage.CloudResource, error) {

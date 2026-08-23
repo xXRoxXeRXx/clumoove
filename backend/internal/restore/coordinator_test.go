@@ -15,19 +15,34 @@ import (
 
 func TestPreviewTargetPath(t *testing.T) {
 	tests := []struct {
+		name     string
 		root     string
 		relative string
 		want     string
+		wantErr  bool
 	}{
-		{root: "/", relative: "file.txt", want: "/file.txt"},
-		{root: "/target", relative: "sub/file.txt", want: "/target/sub/file.txt"},
-		{root: "/target/", relative: "sub/file.txt", want: "/target/sub/file.txt"},
-		{root: "/target", relative: "", want: "/target"},
-		{root: "/", relative: "", want: "/"},
+		{name: "root slash", root: "/", relative: "file.txt", want: "/file.txt"},
+		{name: "nested under target", root: "/target", relative: "sub/file.txt", want: "/target/sub/file.txt"},
+		{name: "trailing slash on target", root: "/target/", relative: "sub/file.txt", want: "/target/sub/file.txt"},
+		{name: "empty relative", root: "/target", relative: "", want: "/target"},
+		{name: "root empty relative", root: "/", relative: "", want: "/"},
+		{name: "clean sub traversal safe", root: "/target", relative: "a/../b/file.txt", want: "/target/b/file.txt"},
+		{name: "escape target root", root: "/target", relative: "../../etc/passwd", wantErr: true},
+		{name: "escape target parent", root: "/target", relative: "..", wantErr: true},
+		{name: "escape nested parent", root: "/target/folder", relative: "../../other", wantErr: true},
 	}
 	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%s+%s", tt.root, tt.relative), func(t *testing.T) {
-			got := previewTargetPath(tt.root, tt.relative)
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := previewTargetPath(tt.root, tt.relative)
+			if tt.wantErr {
+				if err == nil || !errors.Is(err, storage.ErrPathEscapesRoot) {
+					t.Fatalf("previewTargetPath(%q, %q) error = %v, want ErrPathEscapesRoot", tt.root, tt.relative, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("previewTargetPath(%q, %q) unexpected error: %v", tt.root, tt.relative, err)
+			}
 			if got != tt.want {
 				t.Fatalf("previewTargetPath(%q, %q) = %q, want %q", tt.root, tt.relative, got, tt.want)
 			}

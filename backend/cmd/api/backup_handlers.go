@@ -639,7 +639,7 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.SourceProfileID == "" || req.TargetProfileID == "" {
-		writeError(w, http.StatusNotFound, ErrProfileNotFound)
+		writeValidationError(w, ErrMissingRequiredFields)
 		return
 	}
 	source, err := db.GetConnectionProfile(r.Context(), s.db, req.SourceProfileID)
@@ -656,7 +656,8 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrImmichBackupUnsupported)
 		return
 	}
-	if !storage.IsValidProvider(source.Provider) || !storage.IsValidProvider(target.Provider) {
+	if !storage.IsValidProvider(source.Provider) || !storage.IsValidProvider(target.Provider) ||
+		!storage.ProviderSupportsResourceType(source.Provider, "files") || !storage.ProviderSupportsResourceType(target.Provider, "files") {
 		writeValidationError(w, ErrProviderUnsupported)
 		return
 	}
@@ -752,6 +753,18 @@ func (s *APIServer) handleCreateBackupVerify(w http.ResponseWriter, r *http.Requ
 	}
 	var req createBackupVerifyRequest
 	if !decodeJSONBody(w, r, &req, normalJSONBodyLimit) {
+		return
+	}
+	if req.Mode != db.BackupVerifyMetadata && req.Mode != db.BackupVerifyBudgeted && req.Mode != db.BackupVerifyFull {
+		writeValidationError(w, ErrBackupVerifyInvalid)
+		return
+	}
+	if req.Mode == db.BackupVerifyBudgeted && (req.ByteBudget == nil || *req.ByteBudget < 64<<20 || *req.ByteBudget > 1<<40) {
+		writeValidationError(w, ErrBackupVerifyInvalid)
+		return
+	}
+	if req.Mode != db.BackupVerifyBudgeted && req.ByteBudget != nil {
+		writeValidationError(w, ErrBackupVerifyInvalid)
 		return
 	}
 	if req.Mode == db.BackupVerifyFull && !req.ConfirmFull {

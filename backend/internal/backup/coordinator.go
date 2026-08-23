@@ -639,15 +639,17 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	var previousCatalog map[string]db.BackupSnapshotCatalogItem
 	previousSnapshotID, err := db.GetLatestValidBackupSnapshotIDContext(ctx, c.db, job.ID)
 	if err != nil {
-		logger.Warn("backup_previous_snapshot_lookup_failed", slog.String("error", err.Error()))
-	} else if previousSnapshotID != "" {
+		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
+		return
+	}
+	if previousSnapshotID != "" {
 		catalog, err := db.GetBackupSnapshotFileCatalogContext(ctx, c.db, previousSnapshotID)
 		if err != nil {
-			logger.Warn("backup_previous_catalog_load_failed", slog.String("snapshot_id", previousSnapshotID), slog.String("error", err.Error()))
-		} else {
-			previousCatalog = catalog
-			logger.Info("backup_incremental_catalog_loaded", slog.String("snapshot_id", previousSnapshotID), slog.Int("items_count", len(catalog)))
+			c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
+			return
 		}
+		previousCatalog = catalog
+		logger.Info("backup_incremental_catalog_loaded", slog.String("snapshot_id", previousSnapshotID), slog.Int("items_count", len(catalog)))
 	}
 
 	builder := newPackBuilder(c, job, target)

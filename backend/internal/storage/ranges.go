@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -14,19 +15,38 @@ var (
 	ErrRangeHeaderMismatch = errors.New("range response did not match request")
 )
 
-// rangedReadCloser keeps ownership of the underlying provider stream while
-// exposing exactly the requested byte window.
-type rangedReadCloser struct {
-	io.Reader
-	io.Closer
+// exactRangedReadCloser keeps ownership of the underlying provider stream while
+// exposing exactly the requested byte window and failing with ErrUnexpectedEOF on truncation.
+type exactRangedReadCloser struct {
+	rc        io.ReadCloser
+	remaining int64
 }
 
-// newRangedReadCloser wraps an io.ReadCloser with an io.LimitReader for length
+func (r *exactRangedReadCloser) Read(p []byte) (int, error) {
+	if r.remaining <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.rc.Read(p)
+	r.remaining -= int64(n)
+	if err == io.EOF && r.remaining > 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func (r *exactRangedReadCloser) Close() error {
+	return r.rc.Close()
+}
+
+// newRangedReadCloser wraps an io.ReadCloser with an exactRangedReadCloser for length
 // bytes while ensuring Close() still closes the underlying stream.
 func newRangedReadCloser(rc io.ReadCloser, length int64) io.ReadCloser {
-	return &rangedReadCloser{
-		Reader: io.LimitReader(rc, length),
-		Closer: rc,
+	return &exactRangedReadCloser{
+		rc:        rc,
+		remaining: length,
 	}
 }
 
@@ -45,6 +65,29 @@ func FormatByteRangeHeader(offset, length int64) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("bytes=%d-%d", offset, end), nil
+}
+
+func parseContentRange(cr string) (start, end int64, err error) {
+	cr = strings.TrimSpace(cr)
+	if !strings.HasPrefix(strings.ToLower(cr), "bytes ") {
+		return 0, 0, fmt.Errorf("invalid range unit in Content-Range: %q", cr)
+	}
+	spec := strings.TrimSpace(cr[6:])
+	parts := strings.SplitN(spec, "/", 2)
+	rangePart := parts[0]
+	dashIdx := strings.IndexByte(rangePart, '-')
+	if dashIdx <= 0 || dashIdx == len(rangePart)-1 {
+		return 0, 0, fmt.Errorf("invalid range span in Content-Range: %q", cr)
+	}
+	s, err := strconv.ParseInt(rangePart[:dashIdx], 10, 64)
+	if err != nil || s < 0 {
+		return 0, 0, fmt.Errorf("invalid range start in Content-Range: %q", cr)
+	}
+	e, err := strconv.ParseInt(rangePart[dashIdx+1:], 10, 64)
+	if err != nil || e < s {
+		return 0, 0, fmt.Errorf("invalid range end in Content-Range: %q", cr)
+	}
+	return s, e, nil
 }
 
 // ValidateHTTPRangeResponse verifies that an HTTP response strictly satisfied
@@ -71,12 +114,15 @@ func ValidateHTTPRangeResponse(resp *http.Response, offset, length int64) (io.Re
 		return nil, err
 	}
 
-	expectedPrefix := fmt.Sprintf("bytes %d-%d/", offset, end)
-	expectedPrefixNoTotal := fmt.Sprintf("bytes %d-%d", offset, end)
 	cr := resp.Header.Get("Content-Range")
-	if cr == "" || (!strings.HasPrefix(cr, expectedPrefix) && cr != expectedPrefixNoTotal) {
+	if cr == "" {
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("%w: Content-Range %q does not match expected range %d-%d", ErrRangeHeaderMismatch, cr, offset, end)
+		return nil, fmt.Errorf("%w: missing Content-Range header", ErrRangeHeaderMismatch)
+	}
+	crStart, crEnd, err := parseContentRange(cr)
+	if err != nil || crStart != offset || crEnd != end {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("%w: Content-Range %q does not match requested range %d-%d", ErrRangeHeaderMismatch, cr, offset, end)
 	}
 
 	if resp.ContentLength >= 0 && resp.ContentLength != length {

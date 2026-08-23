@@ -43,34 +43,47 @@ func ReconstructFile(ctx context.Context, destination io.Writer, recipes []Block
 	}
 	fileHash := sha256.New()
 	var written int64
-	for _, recipe := range recipes {
+	for i := 0; i < len(recipes); {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if recipe.PackPath == "" || recipe.PayloadOffset < 0 || recipe.PayloadLength <= 0 || recipe.PayloadLength != recipe.PlaintextSize {
-			return fmt.Errorf("%w: invalid restore block recipe", ErrRepositoryCorrupt)
+		packPath := recipes[i].PackPath
+		packSHA256 := recipes[i].PackSHA256
+		end := i + 1
+		for end < len(recipes) && recipes[end].PackPath == packPath && recipes[end].PackSHA256 == packSHA256 {
+			end++
 		}
-		reader, err := openPack(ctx, recipe.PackPath)
+		group := recipes[i:end]
+
+		for _, recipe := range group {
+			if recipe.PackPath == "" || recipe.PayloadOffset < 0 || recipe.PayloadLength <= 0 || recipe.PayloadLength != recipe.PlaintextSize {
+				return fmt.Errorf("%w: invalid restore block recipe", ErrRepositoryCorrupt)
+			}
+		}
+
+		reader, err := openPack(ctx, packPath)
 		if err != nil {
 			return fmt.Errorf("open restore pack: %w", err)
 		}
-		found := false
-		_, validateErr := backuprepo.ValidatePack(reader, recipe.PackSHA256, func(offset int64, entry backuprepo.Entry) error {
-			if offset != recipe.PayloadOffset {
-				return nil
+
+		extracted := make([][]byte, len(group))
+		foundCount := 0
+
+		_, validateErr := backuprepo.ValidatePack(reader, packSHA256, func(offset int64, entry backuprepo.Entry) error {
+			for idx, recipe := range group {
+				if recipe.PayloadOffset == offset {
+					if entry.Hash != recipe.BlockSHA256 || len(entry.Data) != recipe.PayloadLength {
+						return errors.New("restore block locator does not match pack entry")
+					}
+					if extracted[idx] != nil {
+						return errors.New("restore block locator is ambiguous")
+					}
+					blockData := make([]byte, len(entry.Data))
+					copy(blockData, entry.Data)
+					extracted[idx] = blockData
+					foundCount++
+				}
 			}
-			if entry.Hash != recipe.BlockSHA256 || len(entry.Data) != recipe.PayloadLength {
-				return errors.New("restore block locator does not match pack entry")
-			}
-			if found {
-				return errors.New("restore block locator is ambiguous")
-			}
-			if _, err := destination.Write(entry.Data); err != nil {
-				return fmt.Errorf("write reconstructed file: %w", err)
-			}
-			_, _ = fileHash.Write(entry.Data)
-			written += int64(len(entry.Data))
-			found = true
 			return nil
 		})
 		closeErr := reader.Close()
@@ -80,9 +93,19 @@ func ReconstructFile(ctx context.Context, destination io.Writer, recipes []Block
 		if closeErr != nil {
 			return fmt.Errorf("close restore pack: %w", closeErr)
 		}
-		if !found {
+		if foundCount != len(group) {
 			return fmt.Errorf("%w: restore block is absent from pack", ErrRepositoryCorrupt)
 		}
+
+		for _, data := range extracted {
+			if _, err := destination.Write(data); err != nil {
+				return fmt.Errorf("write reconstructed file: %w", err)
+			}
+			_, _ = fileHash.Write(data)
+			written += int64(len(data))
+		}
+
+		i = end
 	}
 	if written != expectedSize {
 		return fmt.Errorf("%w: reconstructed file size mismatch: got %d, want %d", ErrRepositoryCorrupt, written, expectedSize)

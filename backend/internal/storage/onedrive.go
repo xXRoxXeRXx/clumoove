@@ -471,9 +471,14 @@ func (p *OneDriveProvider) StreamDownload(ctx context.Context, resourceType, fil
 	if err != nil {
 		return nil, err
 	}
-	// Graph redirects to a pre-authorized host. Do not forward the bearer token.
+	// Graph redirects to a pre-authorized host. Validate the egress host and do not forward the bearer token.
 	client := *p.httpClient
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !isLocalTestingEndpoint(p.apiBase) {
+			if err := ValidateEgressHostContext(req.Context(), req.URL.Hostname()); err != nil {
+				return fmt.Errorf("onedrive redirect host rejected: %w", err)
+			}
+		}
 		req.Header.Del("Authorization")
 		return nil
 	}
@@ -507,6 +512,11 @@ func (p *OneDriveProvider) StreamDownloadRange(ctx context.Context, resourceType
 	}
 	client := *p.httpClient
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if !isLocalTestingEndpoint(p.apiBase) {
+			if err := ValidateEgressHostContext(req.Context(), req.URL.Hostname()); err != nil {
+				return fmt.Errorf("onedrive redirect host rejected: %w", err)
+			}
+		}
 		req.Header.Del("Authorization")
 		return nil
 	}
@@ -928,3 +938,10 @@ func (p *OneDriveProvider) itemID(ctx context.Context, filePath string) (string,
 
 func (p *OneDriveProvider) VerificationMode() VerificationMode { return VerificationCryptographicHash }
 func (p *OneDriveProvider) SupportsAtomicRename() bool         { return true }
+
+func isLocalTestingEndpoint(endpoint string) bool {
+	return strings.HasPrefix(endpoint, "http://127.0.0.1") ||
+		strings.HasPrefix(endpoint, "http://localhost") ||
+		strings.HasPrefix(endpoint, "https://127.0.0.1") ||
+		strings.HasPrefix(endpoint, "https://localhost")
+}
