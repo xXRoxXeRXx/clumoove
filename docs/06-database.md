@@ -164,6 +164,37 @@ migration whose current notification generation has no event, protecting histori
 | `mtime` | TIMESTAMPTZ | |
 | `source_hash` / `target_hash` / `etag` | TEXT | |
 
+### `backup_jobs`
+| Column | Type | Notes |
+| :----- | :--- | :---- |
+| `id` | UUID PK | `gen_random_uuid()` |
+| `user_id` | UUID FK → `users` ON DELETE CASCADE | owner |
+| `name` | TEXT NOT NULL | job label |
+| `source_profile_id` | UUID FK → `connection_profiles` | source endpoint |
+| `target_profile_id` | UUID FK → `connection_profiles` | repository store endpoint |
+| `repository_path` | TEXT NOT NULL | directory root for `.clumoove-backup/<id>/` |
+| `selected_paths` | JSONB NOT NULL | array of source paths to back up |
+| `retention_count` | INT NOT NULL DEFAULT 30 | number of snapshots to retain (1–365) |
+| `cron_expression` | TEXT | 5-field cron |
+| `timezone` | TEXT NOT NULL DEFAULT `UTC` | IANA timezone |
+| `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `RUNNING`, `PAUSED`, `FAILED` |
+| `created_at` / `updated_at` | TIMESTAMPTZ | |
+
+### `backup_runs`, `backup_snapshots`, `backup_packs`, `backup_blocks`
+- `backup_runs`: Execution record of each backup run (status, worker lock, generation token, progress counters, bytes scanned/deduped/uploaded).
+- `backup_snapshots`: Immutable published snapshot catalog (`READY`, `PARTIAL`, `DELETED`), root manifest hash, item count, total logical bytes.
+- `backup_packs`: Immutable 64 MiB format v1 pack files stored on target (`pack_id`, logical/physical size, block count, target storage path).
+- `backup_blocks`: Content-addressed 4 MiB blocks (`sha256_hash`, `pack_id`, offset, length, uncompressed size).
+- `backup_snapshot_items` & `backup_snapshot_item_blocks`: File metadata index (path, mode, size, mtime) and block assembly mapping for each snapshot.
+- `backup_maintenance` & `backup_verify_targets`: Coordination leases and target pack catalogs for retention pruning and repository verification passes.
+
+### `restore_previews`, `restore_jobs`, `restore_runs`, `restore_items`
+- `restore_previews`: Transient (30-minute TTL) read-only conflict analysis calculating expected skips, overwrites, renames, and type collisions.
+- `restore_jobs`: Immutable non-secret restore configuration history.
+- `restore_runs`: Execution runs claiming restore tasks with worker heartbeats and streaming block readers.
+- `restore_items`: Queue of files being restored with epoch-fenced worker claims.
+- `restore_path_reservations`, `restore_item_blocks`, `restore_pack_pins`: Concurrency safeguards preventing case collisions, pin active packs against retention deletion during restore, and hold compact-safe block locators.
+
 ### `schedules`
 | Column | Type | Notes |
 | :----- | :--- | :---- |
@@ -251,6 +282,11 @@ Administrator-managed OAuth2 client credentials (no environment variables). `cli
 | `idx_sync_jobs_user_id` | `sync_jobs(user_id)` | sync job ownership lookups |
 | `idx_sync_jobs_status` | `sync_jobs(status)` | active sync job queries |
 | `idx_sync_state_job` | `sync_state(sync_job_id, side)` | sync delta tracking lookup |
+| `idx_backup_jobs_user` | `backup_jobs(user_id)` | backup job ownership lookups |
+| `idx_backup_runs_job` | `backup_runs(job_id)` | run lookups |
+| `idx_backup_snapshots_job` | `backup_snapshots(job_id)` | snapshot catalog lookups |
+| `idx_backup_blocks_hash` | `backup_blocks(sha256_hash)` | block deduplication check |
+| `idx_restore_previews_job` | `restore_previews(job_id)` | preview ownership check |
 | `idx_schedules_next_run` | `schedules(next_run_at) WHERE is_active=TRUE` | scheduler due scan |
 | `idx_schedules_user_id` | `schedules(user_id)` | |
 | `idx_schedules_task` | `schedules(task_type, task_id)` | |
@@ -259,9 +295,7 @@ Administrator-managed OAuth2 client credentials (no environment variables). `cli
 
 ---
 
-## 3. Queue Semantics (in `tasks`)
-
-## Restore and repository-check state
+## 3. Restore and Repository-Check State
 
 `restore_previews` holds the one-time, expiring configuration and encrypted preview credential snapshot;
 `restore_jobs` retains only immutable non-secret configuration and history; `restore_runs` holds the
@@ -278,7 +312,7 @@ referencing that pack.
 
 ---
 
-## 3. Queue Semantics (in `tasks`)
+## 4. Queue Semantics (in `tasks`)
 
 The dequeue (`queue.DequeueSQL`) selects `PENDING` migration tasks while their
 migration is `RUNNING`/`INDEXING`, and `PENDING` sync tasks only while their
@@ -291,21 +325,23 @@ API/worker instances) safely share the same PostgreSQL queue without a broker.
 
 ---
 
-## 4. Cascade & Cleanup Behavior
+## 5. Cascade & Cleanup Behavior
 
 - Deleting a `user` cascades to `refresh_tokens`, `migrations` → `tasks`, `schedules`,
-  `password_reset_tokens`, `email_change_tokens`.
+  `password_reset_tokens`, `email_change_tokens`, `backup_jobs`, `restore_jobs`.
 - Deleting a `migration` cascades to its `tasks` and `indexing_errors`.
-- `DeleteOldMigrations` (historical) pruned migrations older than 24h; the GC is currently disabled in
-  favor of **permanent history until manual deletion** (see `main.go` note).
+- Deleting a `backup_job` cascades to its runs, snapshots, packs, and blocks.
 - Expired `password_reset_tokens` / `email_change_tokens` are cleaned hourly by the completion notifier.
 
 ---
 
-## 5. Audit Actions
+## 6. Audit Actions
 
 `db.AuditAction` constants include: `LOGIN_SUCCESS`, `LOGIN_FAILED`, `REGISTRATION`, `USER_CREATED`,
 `MIGRATION_CREATED`, `MIGRATION_STARTED`, `MIGRATION_COMPLETED`, `MIGRATION_FAILED`, `MIGRATION_PAUSED`,
-`MIGRATION_RESUMED`, `MIGRATION_CANCELLED`, `MIGRATION_DELETED`, `SETTING_UPDATED`, `USER_SUSPENDED`,
+`MIGRATION_RESUMED`, `MIGRATION_CANCELLED`, `MIGRATION_DELETED`, `BACKUP_JOB_CREATED`, `BACKUP_JOB_UPDATED`,
+`BACKUP_JOB_DELETED`, `BACKUP_RUN_STARTED`, `BACKUP_RUN_COMPLETED`, `BACKUP_RUN_FAILED`,
+`RESTORE_PREVIEW_CREATED`, `RESTORE_RUN_STARTED`, `RESTORE_RUN_COMPLETED`, `RESTORE_RUN_CANCELLED`,
+`REPOSITORY_VERIFY_STARTED`, `REPOSITORY_VERIFY_COMPLETED`, `SETTING_UPDATED`, `USER_SUSPENDED`,
 `USER_REACTIVATED`, `USER_DELETED`, `USER_ROLE_CHANGED`, `2FA_ENABLED`, `2FA_DISABLED`, and more.
 Audit writes are best-effort and never block the primary request.

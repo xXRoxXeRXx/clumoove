@@ -13,8 +13,8 @@ and describes the system in detail for developers, operators, and architects.
 
 | # | Document | Contents |
 | :- | :------- | :------- |
-| 01 | [Architecture](./01-architecture.md) | Components, data flow, migration lifecycle, resilience concepts |
-| 02 | [Backend](./02-backend.md) | Go modules, packages (`db`, `queue`, `processor`, `scheduler`, `indexer`, `storage`, `auth`, `crypto`, …), startup logic |
+| 01 | [Architecture](./01-architecture.md) | Components, data flow, migration/sync/backup lifecycle, resilience concepts |
+| 02 | [Backend](./02-backend.md) | Go modules, packages (`db`, `queue`, `processor`, `scheduler`, `indexer`, `storage`, `backup`, `backuprepo`, `restore`, `auth`, `crypto`, …), startup logic |
 | 03 | [Frontend](./03-frontend.md) | React SPA, components, routing, i18n, API client, theming |
 | 04 | [API Reference](./04-api-reference.md) | Full REST/SSE endpoint list with protection and semantics |
 | 05 | [Storage Providers](./05-storage-providers.md) | `StorageProvider` interface, supported providers, factory, SSRF protection |
@@ -35,13 +35,9 @@ There is also a conceptual document:
 - **Queue:** Native in PostgreSQL (`SELECT … FOR UPDATE SKIP LOCKED`). Redis provides worker heartbeats,
   distributed schedule/recovery/OAuth locks (`SET NX`), rate limiting, and cancel/bandwidth Pub/Sub.
 - **Frontend:** React 19 + TypeScript SPA, bundled with Vite 8, Tailwind CSS v4.
-- **Data:** PostgreSQL 15 (metadata, users, migrations, sync jobs, sync state, profiles, tasks, schedules, audit log) + Redis 7 (coordination).
+- **Data:** PostgreSQL 15 (metadata, users, migrations, sync jobs, sync state, backup jobs, runs, snapshots, packs, restore jobs/runs, profiles, tasks, schedules, audit log) + Redis 7 (coordination).
 - **Email:** One administrator-managed SMTP configuration is encrypted in PostgreSQL and serves account mail plus optional email notifications.
 - **Languages:** `de` and `en` (fallback), localized via `i18next`/`react-i18next`.
-
----
-
-## Quickstart (reference)
 
 ```bash
 cp .env.example .env   # fill ENCRYPTION_SECRET_KEY / JWT_SECRET_KEY (each: openssl rand -base64 32)

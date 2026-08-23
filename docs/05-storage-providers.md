@@ -1,4 +1,4 @@
-# 05 â€“ Storage Providers
+# 05 – Storage Providers
 
 All source/target storage is abstracted behind the `StorageProvider` interface
 (`backend/internal/storage/provider.go`). New providers must implement that interface and be registered
@@ -32,7 +32,7 @@ type StorageProvider interface {
 }
 ```
 
-> **Interface contract â€” required method.** `SupportsAtomicRename()` is a **mandatory** part of the
+> **Interface contract — required method.** `SupportsAtomicRename()` is a **mandatory** part of the
 > interface. Every concrete provider **must** implement it, or the package will fail to compile with
 > `does not implement storage.StorageProvider (missing method SupportsAtomicRename)`. There is no
 > default; the compiler enforces it for *all* implementers, including test mocks. When adding a new
@@ -68,27 +68,11 @@ time, description, tags, etc.) after a successful upload.
 
 ### Supporting types
 
-- `CloudResource` â€” `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
-- `FileMetadata` â€” `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
-
-Optional capability interface:
-
-```go
-type MetadataApplier interface {
-    ApplyMetadata(ctx, resourceType, filePath string, meta FileMetadata) error
-}
-```
-
-When a target client implements `MetadataApplier`, the processor applies file metadata (modification
-time, description, tags, etc.) after a successful upload.
-
-### Supporting types
-
-- `CloudResource` â€” `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
-- `FileMetadata` â€” `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
-- `ErrAuth` â€” sentinel returned (wrapped) on HTTP 401 so the processor can detect auth failures via
+- `CloudResource` — `Path`, `Name`, `Size`, `IsDir`, `Hash`, `LastModified`, `Metadata`.
+- `FileMetadata` — `ModifiedTime`, `Description`, `Tags`, `Starred`, `CustomProps`.
+- `ErrAuth` — sentinel returned (wrapped) on HTTP 401 so the processor can detect auth failures via
   `errors.Is`.
-- `ErrDuplicateUID` â€” SabreDAV duplicate UID (calendars); treated as `SKIP`.
+- `ErrDuplicateUID` — SabreDAV duplicate UID (calendars); treated as `SKIP`.
 
 ---
 
@@ -105,7 +89,7 @@ time, description, tags, etc.) after a successful upload.
 | `google` | `google.go` | Drive API v3 / Calendar / People | OAuth2 | files, calendars, contacts |
 | `onedrive` | `onedrive.go` | Microsoft Graph personal OneDrive | OAuth2 (access token in `password` field) | files only |
 | `hidrive` | `hidrive.go` | Strato HiDrive REST API v2.1 | OAuth2 | files only |
-| `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, â€¦) | access key / secret key | files |
+| `s3` | `s3.go` | S3 (Wasabi, MinIO, B2, …) | access key / secret key | files |
 | `smb` | `smb.go` | SMB2/SMB3 (`go-smb2`) | user/pass | files |
 | `sftp` | `sftp.go` | SSH SFTP (`pkg/sftp`) | user/pass (or key), trusted SHA-256 host-key fingerprint | files |
 | `ftp` | `ftp.go` | FTPS: explicit or implicit TLS | user/pass | files |
@@ -139,6 +123,8 @@ For Seafile username/password connections, workers share an in-memory account-to
 | MEGA | `size_only` | No comparable target-hash API |
 
 Koofr uses only `https://app.koofr.net`; self-hosted, white-label, compatible-service endpoints, and mount selection are intentionally unsupported. `Connect` resolves the account's primary mount. It rejects redirects, streams multipart uploads without disk buffering, treats names case-insensitively, sanitizes slash and backslash in target names, and uploads directly to the final name for `OVERWRITE` because move is not documented as atomic.
+
+Immich provider constraints: Immich is strictly a files-only, one-time migration target or source. It cannot be used as a sync source or target, nor as a backup source/target or restore destination.
 
 ---
 
@@ -199,83 +185,11 @@ The API and worker containers need outbound TCP access to the FTPS control port 
 inbound Docker port publication is required for FTPS. A server that requires a distinct passive data host
 is intentionally unsupported because data channels are pinned to the validated control host.
 
-## 2.2. Local Storage Provider (`local`)
+---
 
-`local` reads and writes files from a server-side, tenant-isolated sandbox defined by the
-`LOCAL_STORAGE_ROOT` environment variable. It carries **no credentials** (no URL, no username, no
-password). Each provider instance is rooted at `LOCAL_STORAGE_ROOT/users/<user-id>`, where the user ID is
-derived server-side from authenticated JWT claims (API paths) or the persisted migration/sync owner
-(background paths). It is never supplied by the request or profile. On Unix-like hosts, descriptor-relative,
-component-by-component `openat` with `O_NOFOLLOW` anchors both the configured root and every local
-operation; this rejects `..` traversal and symlink replacement races without ever re-opening an
-attacker-controlled path. Local-provider mutations are intentionally unavailable on Windows until an equivalent handle-relative
-implementation exists. Creating a local provider without a valid user scope fails. It supports only the
-`files` resource type; calendars/contacts are not applicable.
+## 3. Range-Read & Pack Retrieval Requirements (Backup & Restore)
 
-## 2.3. HiDrive Provider (`hidrive`)
-
-HiDrive uses its fixed REST v2.1 endpoint and OAuth2 bearer tokens. It supports files only. API response
-names and paths are URL-escaped; `hidrive.go` decodes them before they reach the indexer, so a name such as
-`deprecated%2Bbuild.9` is subsequently requested as `deprecated+build.9`, never double-escaped to `%252B`.
-
-HiDrive's `chash` is a provider-specific hierarchical content hash, not SHA-1 despite its 20-byte length.
-`hidrivehash.go` calculates it while streaming to a HiDrive target: SHA-1 is calculated for each 4096-byte
-block (with zero padding for the final block); up to 256 position-bound child hashes are SHA-1 transformed
-and added modulo 2^160, recursively. All-zero blocks are represented as empty slots, as specified by
-HiDrive. The generated `HIDRIVE:<chash>` is compared with the target's server-side `chash` after upload.
-This applies to migrations and sync passes. HiDrive-to-HiDrive transfers compare the native source and
-target `chash` values directly. For a non-HiDrive source, the worker-generated HiDrive hash is used instead
-of falling back to a size-only comparison.
-
-QuickXor hashes are base64 values and remain case-sensitive when normalised for comparison.
-
-## 2.4. MEGA Provider (`mega`)
-
-`mega` connects only to the authenticated user's personal Cloud Drive and supports the `files` resource
-type; calendars and contacts are unsupported. It takes an email address in the username field and a
-password in the password field, with no provider URL. The client forces HTTPS and does not follow HTTP
-redirects.
-
-After a successful password login, Clumoove persists the MEGA session ID and master key encrypted with
-the instance encryption key, then supplies them only to the scoped provider operation for later reuse.
-The provider clears in-memory master-key material when it closes. MEGA accounts requiring multi-factor
-authentication cannot be connected because the provider has no interactive second-factor flow.
-
-MEGA permits same-name siblings, which cannot be addressed safely by a path. Listings and mutations reject
-such ambiguous paths rather than selecting an arbitrary node. Otherwise it supports the normal file
-conflict strategies, including atomic temporary-upload then rename for overwrite. MEGA exposes no
-comparable target checksum, so post-transfer verification checks target existence and size only.
-
-The `Local` option appears in the UI **only** when `LOCAL_STORAGE_ROOT` is configured (`local_storage_enabled`
-in `GET /api/settings`). `NewProvider("local")` returns an error if the variable is unset or not a
-directory. `LOCAL_STORAGE_ROOT` must be set on **both** the api-backend and the worker (the worker
-performs the actual file I/O). `local` is exempt from the SSRF egress validation (no network host is
-contacted). `GetFileHash` returns a `SHA1:` hash, enabling the standard 3-way hash check.
-
-## 3. Factory & Validation (`factory.go`)
-
-### Immich
-
-Immich uses a server URL and API key sent as `x-api-key`; the key is stored in the encrypted password field and is never logged. No username is needed. The supplied URL may include the `/api` suffix; the provider normalizes it to the API base URL. It uses the stable v2 endpoint subset for API-key validation, asset search/download/upload. Immich is a flat photo library: both source browsing and the upload target present the library root (`/`) as a flat list of asset IDs (no `/Timeline`, no `/Albums`, no album assignment). Asset IDs, rather than filenames, identify source assets; the original filename is retained in task metadata so the real file name is preserved on download.
-
-Immich is files-only and supports one-time migrations only: calendars, contacts, and sync jobs are rejected. An Immich target requires the native-duplicate `SKIP` conflict strategy; overwrite, rename, filename deletion, and atomic rename are unsupported. Uploaded assets land directly in the Immich library and are never assigned to an album. Directory/album creation (`CreateDirectory`) is a no-op. Only supported image, video, and RAW extensions are indexed for an Immich target; rejected files are recorded as indexing errors.
-
-New Immich uploads persist the returned target asset ID in task metadata. Verification uses only that ID with `GET /assets/{id}`: its Base64 SHA-1 `checksum` is normalized to `SHA1:<lowercase-hex>`, while `exifInfo.fileSizeInByte` is the fallback when no checksum is available. ETags are never integrity evidence. Historical completed tasks without a persisted target asset ID are deliberately left unverified rather than guessed from an album or filename; retransfer is required for a trustworthy check.
-
-`NewProvider(ctx, providerType, urlStr, username, password)`:
-
-1. For `nextcloud`/`webdav`, extracts credentials embedded in the URL (`user:pass@host`) and strips them
-   from the URL before use (prevents leakage in `url.Error`).
-2. For `nextcloud`/`webdav`/`smb`/`sftp`/`ftp`/`immich`, runs `validateEgressURL` (SSRF guard).
-3. Switches on the whitelisted provider type and returns the concrete client. `magentacloud` and `koofr` ignore
-   the URL (use fixed endpoints). `koofr` authenticates with Basic Auth using its email/username and application password. `google`, `dropbox`, `onedrive`, and `hidrive` take the OAuth access token as `password`. Unknown types return `unsupported provider type`.
-
-### OneDrive Personal
-
-`onedrive` uses fixed Microsoft Graph endpoints and the `consumers` OAuth authority, so it supports personal accounts and files only. Shared folders exposed as shortcuts in the user's root are supported: Clumoove resolves the shortcut's remote drive and item identity before listing, inspecting, or downloading descendants. Personal Vault is identified by Graph's `specialFolder.name = vault` facet and is excluded from selection/indexing because its interactive unlock cannot be performed by a background OAuth job. SharePoint, organizational accounts, calendars, and contacts are intentionally excluded. Graph `eTag` values are retained for sync change detection. When Graph exposes a file's non-cryptographic QuickXor hash, Clumoove calculates the same algorithm while streaming and uses it for provider-specific verification; unavailable hashes still fall back to size verification. Target filenames follow OneDrive's Windows-style forbidden-character, reserved-name, trailing-punctuation, 255-character segment, 400-character path, and case-insensitive rules.
-
-Provider URL normalization: `normalizeProviderURL` substitutes the constant MagentaCLOUD URL when the
-provider is `magentacloud`. Koofr's factory owns its constant public endpoint, so the frontend sends an empty URL for both fixed-endpoint providers.
+Storage providers serving as backup targets (where pack files `.clumoove-backup/<repo-id>/packs/*.pack` are stored) must support efficient reading of stored pack blocks. For providers with native HTTP Range request support (S3, WebDAV, Nextcloud, OpenCloud, HiDrive), workers fetch individual 4 MiB blocks directly without downloading the entire 64 MiB pack. For providers without byte-range APIs, workers leverage bounded in-memory pack readers (`MAX_RESTORE_PACK_READERS`) to cache and slice blocks locally during restore runs.
 
 ---
 
@@ -310,7 +224,7 @@ Plaintext HTTP endpoints and the former S3 `insecure=true` option are rejected.
 ## 5. Hash Parsing
 
 `ParseHashString` in `backend/internal/storage/hash.go` extracts the algorithm + clean hash from provider hash strings (e.g.
-`SHA1:abc123`, `MD5:â€¦`, `SHA256:â€¦`, `HIDRIVE:â€¦`). The processor selects the per-provider hasher accordingly and only
+`SHA1:abc123`, `MD5:…`, `SHA256:…`, `HIDRIVE:…`). The processor selects the per-provider hasher accordingly and only
 computes a second (target) hasher when algorithms differ (CPU optimization).
 
 ---
@@ -321,7 +235,7 @@ computes a second (target) hasher when algorithms differ (CPU optimization).
    applicable).
 2. **Implement `SupportsAtomicRename() bool` and `VerificationMode() VerificationMode`.** These are required interface methods (no default). Forgetting
    it produces a compile error `does not implement storage.StorageProvider (missing method
-   SupportsAtomicRename)` for *every* implementer, including test mocks â€” so add it together with the other
+   SupportsAtomicRename)` for *every* implementer, including test mocks — so add it together with the other
    methods. Return `true` when the provider supports an atomic "upload to `<path>.tmp` then rename"
    overwrite (standard file providers), or `false` when it cannot rename/delete (e.g. Immich).
    Return `cryptographic_hash` only for a comparable target hash; ETag-only and hashless targets must

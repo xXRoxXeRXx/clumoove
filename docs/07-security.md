@@ -29,13 +29,13 @@ bytes. This prevents key reuse and weak signing keys.
 - Usernames/passwords/OAuth tokens are encrypted with AES-256-GCM **before** being written to
   PostgreSQL.
 - Plaintext credentials are **never** passed to background goroutines. The worker queries them from the
-  DB by `MigrationID` and decrypts **at the last moment** (inside `processTask` / `indexer.Start`) using
+  DB by `MigrationID` or `BackupJobID` and decrypts **at the last moment** (inside `processTask` / `indexer.Start` / `backup.Coordinator` / `restore.Coordinator`) using
   the domain-bound crypto API, which clears its temporary GCM plaintext buffer before returning a
   string required by an integration. APIs that can retain bytes use `DecryptBytesWithDomain` and clear
   the returned buffer themselves; Go strings cannot be reliably scrubbed without unsafe memory writes.
 - The frontend holds secrets **in memory only** and clears them (`setCredentials(null)`) once the
-  migration is created or when navigating away from selection/dashboard screens.
-- Transfers are streamed through RAM buffers (zero on-disk retention of file contents).
+  job is created or when navigating away from selection/dashboard screens.
+- Transfers, backups, and restores are streamed through RAM buffers (zero on-disk retention of file contents).
 
 ---
 
@@ -68,7 +68,7 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 ## 4. OAuth2 & Token Rotation
 
-- OAuth2 access/refresh tokens are stored AES-GCM encrypted on migrations and sync jobs
+- OAuth2 access/refresh tokens are stored AES-GCM encrypted on migrations, sync jobs, and backup connection profiles
   (`source_refresh_token_encrypted`, `target_refresh_token_encrypted`).
 - `RunOAuthRotationDaemon` (API gateway) proactively refreshes Dropbox, Google, OneDrive, and HiDrive tokens before expiry.
 - OAuth provider responses are limited to 1 MiB. Provider-controlled error descriptions are never returned or logged; only a rejected refresh credential (`invalid_grant`/equivalent) is terminal, while transient refresh failures remain eligible for the next rotation or task retry pass.
@@ -88,11 +88,9 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 ---
 
-## 5. Migration Detail SSE Authentication
+## 5. SSE Authentication & Detail Protection
 
-`GET /api/migration/{id}/stream` is protected by `AuthMiddleware` and accepts the JWT only through the
-`Authorization: Bearer` header. It validates ownership (`mig.UserID == claims.sub`) before opening the
-stream. No realtime endpoint accepts access tokens in query parameters.
+All SSE stream routes (`/api/migration/{id}/stream`, `/api/sync/stream`, `/api/restore/runs/{runID}/stream`, `/api/backup/{id}/verify/{verifyID}/stream`) are protected by `AuthMiddleware` and accept the JWT exclusively through the `Authorization: Bearer` header. They validate ownership (`job.UserID == claims.sub`) before opening the stream. No realtime endpoint accepts access tokens in query parameters.
 
 ---
 
@@ -111,7 +109,7 @@ stream. No realtime endpoint accepts access tokens in query parameters.
 - Redis requires a password (`REDIS_PASSWORD`). Connection fails fast if the password is empty or a known
   default (`redis_secret`, `dev_redis_secure_pass_999`).
 - Redis is **not** exposed to the host network (internal Docker network only).
-- Used only for heartbeats, `SET NX` locks, and cancel/bandwidth Pub/Sub — never as primary storage.
+- Used only for heartbeats, `SET NX` locks, rate limiting, and cancel/bandwidth Pub/Sub — never as primary storage.
 
 ---
 
@@ -128,12 +126,14 @@ endpoint group from consuming another group's request budget. Limits:
 | Connect/browse/mkdir | 30 / 1 min |
 | Session list/revoke | 30 / 1 min |
 | Migration/sync create or start | 10 / 1 min |
+| Backup create / trigger run | 10 / 1 min |
+| Restore preview / consume | 10 / 1 min |
 | TOTP | 10 / 1 min |
-| Migration stream (SSE) | 60 / 1 min, max 10 concurrent streams per user |
+| SSE streams (migration / sync / restore / verify) | 60 / 1 min, max 10 concurrent streams per user |
 
 All JSON request bodies pass through `http.MaxBytesReader` before decoding. Normal API requests are limited to 1 MiB; avatar JSON is limited to 3 MiB to support its existing 2 MiB decoded-image cap; authentication and TOTP requests are limited to 64 KiB. Malformed, oversized, trailing-data, and otherwise invalid JSON bodies return `INVALID_BODY`, except password-reset requests preserve their generic success response for anti-enumeration.
 
-The API's normal HTTP timeouts are read 30 seconds, write 60 seconds, and idle 120 seconds. Migration list/detail and sync SSE handlers explicitly clear their per-response write deadline through `http.ResponseController`, so the normal write timeout does not terminate healthy long-lived streams; 15-second SSE comment heartbeats keep intermediary proxies from treating them as idle.
+The API's normal HTTP timeouts are read 30 seconds, write 60 seconds, and idle 120 seconds. Migration, sync, restore, and verify SSE handlers explicitly clear their per-response write deadline through `http.ResponseController`, so the normal write timeout does not terminate healthy long-lived streams; 15-second SSE comment heartbeats keep intermediary proxies from treating them as idle.
 
 **Account lockouts** (mirror the TOTP lockout): 5 failed logins → 15-minute lockout; 5 failed TOTP
 attempts → 15-minute lockout. Both are enforced in `db` with single-statement atomic increments.
@@ -164,13 +164,13 @@ User-supplied provider URLs are validated before any egress (`storage/ssrf.go`):
 
 ## 10. Multi-Tenancy & Ownership
 
-- Migrations are owned by a user; `status`/`start`/`pause`/`cancel`/`delete`/report endpoints enforce a
-  strict ownership check via `JWT sub` vs `mig.UserID` → `403 Forbidden` on mismatch.
-- Schedule endpoints (`GET`/`DELETE /schedule/{id}`) use `db.VerifyScheduleOwnership` (EXISTS-based); a
-  non-owning result returns `404 Not Found` (not `403`) to avoid leaking existence/ownership.
+- Migrations, sync jobs, and backup jobs are owned by a user; `status`/`start`/`pause`/`cancel`/`delete`/report endpoints enforce a
+  strict ownership check via `JWT sub` vs entity owner → `403 Forbidden` or `404 Not Found` (to avoid leaking existence).
+- Schedule endpoints (`GET`/`DELETE /schedule/{id}`) and restore previews/runs use `VerifyOwnership` (EXISTS-based); a
+  non-owning result returns `404 Not Found` to avoid leaking existence/ownership.
 - **Roles:** `USER` (default) and `ADMIN`. ADMIN gains instance-wide oversight (user list, all
-  migrations, audit log). There is intentionally no separate `AUDITOR` role.
-- Deactivating a user pauses their `RUNNING`/`INDEXING` migrations and disables their schedules;
+  migrations, all syncs, audit log). There is intentionally no separate `AUDITOR` role.
+- Deactivating a user pauses their active migrations, sync jobs, and backup runs, and disables their schedules;
   reactivating re-enables schedules.
 
 ---
@@ -207,7 +207,7 @@ API server timeouts: read 30s, write 60s, idle 120s.
 
 ## 13. Audit Logging
 
-A best-effort `audit_log` captures security-relevant events (logins, migration lifecycle, user
+A best-effort `audit_log` captures security-relevant events (logins, migration lifecycle, backup/restore actions, user
 management, 2FA changes, settings updates). `ip` values are sanitized (control/CR-LF stripped) to
 prevent log injection (CWE-117). Writes never block the primary request.
 
@@ -215,7 +215,7 @@ prevent log injection (CWE-117). Writes never block the primary request.
 
 ## 14. CSV Formula Injection
 
-The migration report (`/migration/{id}/report`) neutralizes spreadsheet formula-trigger characters
+The migration and restore reports (`/migration/{id}/report`, `/restore/runs/{runID}/report`) neutralize spreadsheet formula-trigger characters
 (`=`, `+`, `-`, `@`, tab, CR) by prefixing cells with a single quote, since file paths/error messages
 originate from the (attacker-influenced) source server.
 

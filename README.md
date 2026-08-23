@@ -23,11 +23,11 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 ## Features
 
 - **Seventeen storage providers** as any source/target combination: Nextcloud, OpenCloud, Seafile, MagentaCLOUD, Koofr, generic WebDAV, Dropbox, Google Drive, Microsoft OneDrive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, FTPS, Local server sandbox, Mega (files-only), and Immich (files-only one-time migrations).
-- **Sync Engine & Migration Engine** — full support for one-shot/scheduled migrations as well as recurring one-way and two-way folder synchronizations.
-- **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations and sync jobs.
+- **Sync Engine, Migration Engine & Backup Engine** — full support for one-shot/scheduled migrations, recurring one-way and two-way folder synchronizations, and point-in-time snapshot backups with block deduplication and two-phase restore.
+- **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations, sync jobs, and backup repositories.
 - **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic worker-recovery, exponential backoff, and connection-loss auto-pause.
-- **Data integrity** verified by a 3-way hash check (source / in-memory / target) on every transferred file.
-- **Scheduler engine** for one-shot (deferred) and recurring (`cron`) migrations and syncs, with overlap protection and multi-instance safety.
+- **Data integrity** verified by a 3-way hash check (source / in-memory / target) on every transferred file, with metadata and budgeted repository integrity verification for backups.
+- **Scheduler engine** for one-shot (deferred) and recurring (`cron`) migrations, interval syncs, and timezone-aware cron backups, with overlap protection and multi-instance safety.
 - **Live control** — pause, resume, cancel, adjust thread count and bandwidth limit, and watch progress over an authenticated SSE feed.
 - **Multi-tenancy & security** — per-user isolation, TOTP 2FA, AES-256-GCM credential encryption, JWT key segregation, CORS whitelist, refresh-token rotation and rate limiting.
 - **Central email delivery** — administrators configure one encrypted instance mailer for account emails and optional per-user completion notifications.
@@ -38,16 +38,16 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 rclone is an excellent, mature command-line tool for moving and managing cloud files. It supports substantially more
 storage backends than Clumoove, and it also provides a web GUI, a remote-control API, one-way `sync`, and two-way
 `bisync`. Clumoove does not aim to be a replacement for rclone's universal CLI, mount/serve capabilities, or backend
-coverage. Instead, it is a self-hosted application for operating selected migration and synchronization workflows as
+coverage. Instead, it is a self-hosted application for operating selected migration, synchronization, and snapshot backup workflows as
 durable, multi-user jobs.
 
 | Area | Clumoove | rclone's documented model |
 | :--- | :--- | :--- |
-| **Primary interface and scope** | Browser-based, account-scoped migration platform with a guided connection, browse, selection, configuration, and execution workflow. | A command-line program for managing cloud storage; its bundled GUI controls a locally running rclone process. |
+| **Primary interface and scope** | Browser-based, account-scoped migration, sync, and backup platform with a guided connection, browse, selection, configuration, and execution workflow. | A command-line program for managing cloud storage; its bundled GUI controls a locally running rclone process. |
 | **Identity and tenant boundaries** | Separate user accounts, ownership checks on jobs and schedules, roles, TOTP 2FA, JWT sessions, audit log, and encrypted reusable connection profiles. | A configured rclone process operates with the permissions of its host user. Its RC API explicitly has all-or-nothing access and is equivalent to shell access for that user. |
 | **Durable execution** | A PostgreSQL task queue persists individual transfer tasks, progress, errors, schedules, and reports. Multiple workers can claim work atomically; liveness, retry, orphan recovery, and connection-loss recovery are built in. | Commands and RC jobs run in a process. The RC documentation describes finished asynchronous jobs as retained for 60 seconds; longer-running automation is normally composed around rclone. |
-| **Scheduling and operations** | Deferred and recurring migrations plus interval-based syncs are first-class persisted jobs, with overlap protection, distributed schedule locks, live authenticated progress, downloadable CSV reports, and durable completion notifications. | rclone supports the transfer commands and `bisync`; its `bisync` guide recommends configuring cron for recurring runs. |
-| **Migration semantics** | Purpose-built conflict choices (`SKIP`, `OVERWRITE`, `RENAME`), pre-transfer inventory, case-collision handling, selected-path workflows, and a provider-aware three-way source/in-memory/target hash check with safe fallbacks. | Flexible commands and flags support copy, sync, bisync, checksums, filters, metadata, and backend-specific behaviour; verification depends on command options and the capabilities shared by the chosen backends. |
+| **Scheduling and operations** | Deferred and recurring migrations, interval-based syncs, and cron-scheduled backups are first-class persisted jobs, with overlap protection, distributed schedule locks, live authenticated progress, downloadable CSV reports, and durable completion notifications. | rclone supports the transfer commands and `bisync`; its `bisync` guide recommends configuring cron for recurring runs. |
+| **Migration & Backup semantics** | Purpose-built conflict choices (`SKIP`, `OVERWRITE`, `RENAME`), pre-transfer inventory, case-collision handling, selected-path workflows, provider-aware three-way hash checks, deduplicated snapshot repositories, and two-phase restore previews. | Flexible commands and flags support copy, sync, bisync, checksums, filters, metadata, and backend-specific behaviour; verification depends on command options and the capabilities shared by the chosen backends. |
 | **Supported data** | Seventeen selected source/target providers, with files plus calendars and contacts for Nextcloud and Google Drive, and an Immich-specific files migration flow. | Far broader storage-backend coverage, primarily exposed through its unified file/object interface. |
 
 This comparison describes product scope rather than claiming that rclone lacks a GUI, API, checksums, or bidirectional
@@ -187,9 +187,11 @@ See [`docs/09-development.md`](./docs/09-development.md) for conventions and the
 ```
 clumoove/
 ├── backend/                 # Go module (cmd/api, cmd/worker)
-│   ├── cmd/api/             # HTTP gateway, auth, WebSocket, OAuth, scheduler trigger
-│   ├── cmd/worker/          # Migration engine (processor, recovery schedulers)
-│   └── internal/            # auth, crypto, db, indexer, processor, scheduler, storage, queue
+│   ├── cmd/api/             # HTTP gateway, auth, SSE, OAuth, scheduler trigger, backup/restore
+│   ├── cmd/worker/          # Engine (processor, recovery, backup, restore, verifiers)
+│   └── internal/            # auth, backup, backuprepo, crypto, db, email, indexer,
+│                            # oauth, processor, queue, restore, sanitize, scheduler,
+│                            # storage, throttle, totp2fa
 ├── frontend/                # React 19 SPA (Vite, Tailwind v4, i18n)
 ├── db/schema.sql            # DDL (also inline in db.go for auto-migration)
 ├── docker-compose.yml       # Production stack (local prod build)
@@ -201,7 +203,7 @@ clumoove/
 
 | Document | Contents |
 | :--- | :--- |
-| [`docs/01-architecture.md`](./docs/01-architecture.md) | Components, data flow, migration lifecycle, resilience |
+| [`docs/01-architecture.md`](./docs/01-architecture.md) | Components, data flow, migration/sync/backup lifecycle, resilience |
 | [`docs/02-backend.md`](./docs/02-backend.md) | Go modules and packages, startup logic |
 | [`docs/03-frontend.md`](./docs/03-frontend.md) | React SPA, components, routing, i18n, API client |
 | [`docs/04-api-reference.md`](./docs/04-api-reference.md) | Full REST/WebSocket endpoint reference |

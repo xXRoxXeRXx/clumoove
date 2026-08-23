@@ -4,7 +4,7 @@ The backend is a single Go module (`backend/`) with two binary entrypoints that 
 internal packages. It is written in Go 1.25 and uses the standard library `net/http` mux
 (Go 1.22 method/pattern routing) — no external router dependencies.
 
-Immich is a files-only, one-time-migration provider. Its API key is stored as the encrypted password, URLs use the normal SSRF-safe transport, and API handlers reject calendars, contacts, non-`SKIP` target conflicts, and sync-job creation involving Immich.
+Immich is a files-only, one-time-migration provider. Its API key is stored as the encrypted password, URLs use the normal SSRF-safe transport, and API handlers reject calendars, contacts, non-`SKIP` target conflicts, and sync/backup/restore job creation involving Immich.
 
 ## Cloud File Manager (Phase 1)
 
@@ -24,7 +24,7 @@ Responsibilities (started in `main()`):
 - Supports initial administrator creation via Web UI when no users exist (`POST /api/auth/setup-admin`, see
   [Security](./07-security.md#admin-bootstrap)).
 - Registers all HTTP routes on `http.NewServeMux()` (Go 1.22 patterns, e.g. `POST /api/migration/start`,
-  `GET /api/migration/{id}`).
+  `GET /api/migration/{id}`, `POST /api/backup`, `GET /api/backup/{id}`).
 - Wraps the mux with `securityHeadersMiddleware(corsMiddleware(mux))`.
 - Starts background goroutines:
   - `server.rateLimiter.evictExpired` — rate-limit map cleanup.
@@ -37,13 +37,13 @@ Responsibilities (started in `main()`):
 Key server struct fields: `db`, `queue`, `indexer`, `encryptionKey`, `jwtSecret`, `rateLimiter`,
 `activeStreams`, `trustedProxy`.
 
-### `cmd/worker` — Migration Engine
+### `cmd/worker` — Migration & Backup Engine
 
 Responsibilities:
 
 - Initializes the same DB and Redis connections.
 - Builds a `processor.Processor` and calls `proc.Start(ctx)`.
-- Handles `SIGINT`/`SIGTERM` → cancels context → `Start` blocks until all in-flight tasks finish
+- Handles `SIGINT`/`SIGTERM` → cancels context → `Start` blocks until all in-flight tasks and runs finish
   (graceful drain).
 - Worker ID format: `worker-<hostname>-<pid>`.
 
@@ -54,13 +54,16 @@ Responsibilities:
 | Package | Purpose |
 | :------ | :------ |
 | `internal/auth` | JWT generation/validation (`auth.go`), TOTP helpers, HTTP middleware (`middleware.go`). |
+| `internal/backup` | Backup coordinator, run execution, snapshot publishing, retention management, repository verification. |
+| `internal/backuprepo` | Clumoove backup pack format v1 reader/writer, manifest repository abstraction, block catalog. |
 | `internal/crypto` | AES-256-GCM `Encrypt`/`Decrypt` with SHA-256 key derivation. |
-| `internal/db` | PostgreSQL access layer, `InitDB` schema migration, audit log, users, migrations, tasks, schedules, SMTP, indexing errors, admin queries. |
+| `internal/db` | PostgreSQL access layer, `InitDB` schema migration, audit log, users, migrations, tasks, schedules, backup jobs/runs/snapshots/blocks/packs, restore previews/jobs/runs, SMTP, indexing errors, admin queries. |
 | `internal/email` | SMTP config + `SendMail`, localized HTML delivery rendering. |
 | `internal/indexer` | BFS indexing of source paths/calendars/contacts → `PENDING` tasks. |
 | `internal/oauth` | OAuth2 token refresh for Dropbox/Google/OneDrive/HiDrive; `Configure`/`NewDBLoader` installs a DB-backed credential loader with a 30s ciphertext cache; secrets are decrypted only at token-request time. |
 | `internal/processor` | The worker loop, transfer logic, conflict resolution, hash verification, retry/backoff, liveness & recovery schedulers, completion notifier. |
 | `internal/queue` | PostgreSQL dequeue (`DequeueSQL`), Redis locks, Pub/Sub for cancel/bandwidth, liveness tracking. |
+| `internal/restore` | Two-phase restore coordinator (read-only conflict preview + execute restore runs). |
 | `internal/sanitize` | Filename sanitization + case-collision detection/resolution for target providers. |
 | `internal/scheduler` | Core scheduler daemon (cron, overlap protection, multi-instance lock). |
 | `internal/storage` | `StorageProvider` interface, provider implementations, `NewProvider` factory, SSRF egress guards. |
@@ -77,14 +80,18 @@ migrations** so the schema self-heals on first boot:
 - `CREATE TABLE IF NOT EXISTS` for `users`, `refresh_tokens`, `settings`, `schedules`, `audit_log`,
   `instance_smtp_settings`, `instance_oauth_providers`, `notification_channels`, `notification_events`,
   `notification_deliveries`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`,
-  `connection_profiles`, `sync_jobs`, `sync_state`.
+  `connection_profiles`, `sync_jobs`, `sync_state`, `backup_jobs`, `backup_runs`, `backup_snapshots`,
+  `backup_packs`, `backup_blocks`, `backup_snapshot_items`, `backup_snapshot_item_blocks`,
+  `backup_maintenance`, `backup_verify_targets`, `restore_previews`, `restore_jobs`, `restore_runs`,
+  `restore_items`, `restore_path_reservations`, `restore_item_blocks`, `restore_pack_pins`.
 - `ALTER TABLE … ADD COLUMN IF NOT EXISTS` for every new column added over time (e.g.
   `user_id`, `source_provider`/`target_provider`, `resource_type`, `threads`, OAuth token columns,
   `selected_paths`/`selected_calendars`/`selected_contacts`, `bandwidth_limit_mbps`, TOTP columns,
   `sync_job_id` on `tasks`, audit columns, etc.).
 - Useful indexes: `idx_migrations_user_id`, `idx_tasks_migration_status`, `idx_tasks_sync_status`,
   `idx_tasks_retry` (partial), `idx_schedules_next_run` (partial), `idx_conn_profiles_user`,
-  `idx_sync_jobs_user_id`, `idx_sync_state_job`, `idx_audit_log_*`.
+  `idx_sync_jobs_user_id`, `idx_sync_state_job`, `idx_backup_jobs_user`, `idx_backup_runs_job`,
+  `idx_backup_snapshots_job`, `idx_backup_blocks_hash`, `idx_restore_previews_job`, `idx_audit_log_*`.
 - Connection pool sizing derived from `MAX_THREADS` (`val*2`, min 50).
 - **Default-credential rejection:** if the DB host is publicly reachable and the DSN still contains
   `postgres:postgres@`, startup fails (local/private hosts are exempted).
@@ -92,9 +99,11 @@ migrations** so the schema self-heals on first boot:
 Key query helpers include `CreateMigration`, `GetMigration`, `UpdateMigrationStatus`,
 `UpdateMigrationStatusIfIndexing`, `IncrementMigrationProgress` (transitions to `COMPLETED`/`FAILED`),
 `CreateSyncJob`, `GetSyncJob`, `ListSyncJobs`, `CreateConnectionProfile`, `ListConnectionProfiles`,
+`CreateBackupJob`, `GetBackupJob`, `ListBackupJobs`, `CreateBackupRun`, `GetBackupRun`, `ListBackupSnapshots`,
+`CreateRestorePreview`, `GetRestorePreview`, `CreateRestoreRun`, `GetRestoreRun`,
 `CreateTask`, `GetTask`, `UpdateTaskStatus`, `ResetMigrationForReindex` (TOCTOU-safe),
 `RecordIndexingErrors`, `WriteAuditLog`, `GetDueSchedules`, `UpdateNextRunAt`, `DeactivateSchedule`,
-`VerifyMigrationOwnership`, `VerifySyncOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
+`VerifyMigrationOwnership`, `VerifySyncOwnership`, `VerifyBackupOwnership`, `IsSetupRequired`, `ListUsers`, `GetGlobalStats`,
 `ListAllMigrations`, `ListAllSyncs`, `ListAuditLog`, and paginated admin views.
 
 ### `StringArray` & JSONB
@@ -276,7 +285,7 @@ See [Architecture §6](./01-architecture.md#6-scheduler-engine-planned--periodic
 
 1. Transitions to `INDEXING` (`UpdateMigrationStatusIfIndexing`).
 2. Loads the migration (including persisted `selected_paths`/`calendars`/`contacts`),
-   **decrypts source credentials at the last moment**.
+    **decrypts source credentials at the last moment**.
 3. Walks each selected path/calendar/contact with `indexFolder` (BFS, visited-map to prevent cycles).
 4. **Resilient indexing:** a single folder/file error is recorded in `indexErrors` and skipped rather
    than aborting the whole migration. Per-folder errors appear in the final report.
@@ -304,6 +313,22 @@ hostname/SNI validation. Every control and passive data connection uses the SSRF
 EPSV is preferred, and PASV may supply only the data port while the validated control host remains the
 data-channel destination. FTP has no portable hash API, so integrity verification uses the existing
 size-comparison fallback.
+
+---
+
+## 8.1 Backup & Restore Engines (`internal/backup`, `internal/backuprepo`, `internal/restore`)
+
+### Backup Engine (`internal/backup` & `internal/backuprepo`)
+- `backup.Coordinator` manages repository setup, run executions, and retention maintenance.
+- Pack format: immutable 64 MiB binary packs (`.clumoove-backup/<repository-id>/packs/<pack-id>.pack`) with Magic Header (`CLMBKP01`), header length, footer index containing SHA-256 block hash table, block offsets, and lengths.
+- Chunking: fixed 4 MiB streaming chunks with SHA-256 hashing. Identical blocks across runs/files are deduplicated against `backup_blocks`.
+- Snapshots: atomic publishing of item catalog (`backup_snapshot_items`) and block mapping (`backup_snapshot_item_blocks`).
+- Retention: FIFO snapshot pruning keeping `retention_count` latest snapshots. Reclaims unreferenced blocks and unlinks deleted packs.
+
+### Restore Engine (`internal/restore`)
+- `restore.Coordinator` executes two-phase restore operations.
+- Preview phase: read-only evaluation of target tree conflicts (matching size/mtime, type collisions, directory merges).
+- Execution phase: reads required blocks from packs (via HTTP Range requests or bounded `MAX_RESTORE_PACK_READERS` buffers), recreates file hierarchies, and sets original modification timestamps.
 
 ---
 

@@ -5,7 +5,7 @@ styled with **Tailwind CSS v4** (via `@tailwindcss/vite`). Icons come exclusivel
 `@heroicons/react`. All user
 strings are localized with `i18next` + `react-i18next` + `i18next-browser-languagedetector`.
 
-The connection wizard has an Immich branch with server URL and API-key fields (no username), a least-privilege permission hint, `/Timeline` default selection, album browsing/creation, native-duplicate `SKIP`, and migration-only mode. Sync is unavailable whenever either endpoint is Immich.
+The connection wizard has an Immich branch with server URL and API-key fields (no username), a least-privilege permission hint, `/Timeline` default selection, album browsing/creation, native-duplicate `SKIP`, and migration-only mode. Sync, backup, and restore are unavailable whenever either endpoint is Immich.
 
 ## Cloud File Manager (Phase 1)
 
@@ -38,14 +38,18 @@ frontend/src/
 ├── App.tsx                  # Top-level state machine, history routing, auth bootstrap
 ├── App.css / index.css      # Global + Tailwind layers, CSS variables (theming)
 ├── i18n.ts                  # i18next init (de/en, fallback en)
-├── types.ts                 # Shared TypeScript types (User, MigrationConfig, CloudFile, …)
+├── types.ts                 # Shared TypeScript types (User, MigrationConfig, BackupJob, RestorePreview, …)
 ├── assets/                  # Static images (hero, logos, svgs)
 ├── components/
 │   ├── AuthForm.tsx         # Login / register / 2FA / forgot-password entry
 │   ├── ConnectForm.tsx      # Source/target provider selection + connection test
 │   ├── FileBrowser.tsx      # Path/calendar/contact selection before start
+│   ├── BackupOptionsForm.tsx # Backup schedule (cron/timezone), retention count, compression
+│   ├── BackupSnapshotBrowser.tsx # Point-in-time snapshot tree browser, verify/restore actions
+│   ├── RestorePreviewModal.tsx   # Two-phase restore conflict preview and execution modal
 │   ├── Dashboard.tsx        # Live migration progress (SSE)
-│   ├── MigrationsDashboard.tsx # History list of the user's migrations
+│   ├── MigrationsDashboard.tsx # History list of the user's migrations, syncs, and backups
+│   ├── SyncDashboard.tsx    # Live sync progress and delta stats
 │   ├── SettingsPage.tsx     # Profile, password, 2FA, email, SMTP, avatar
 │   ├── AdminPanel.tsx       # ADMIN-only user/migration/audit oversight
 │   ├── ResetPasswordForm.tsx
@@ -76,7 +80,7 @@ frontend/src/
 
 ```ts
 type Step =
-  | 'login' | 'history' | 'connect' | 'select'
+  | 'login' | 'history' | 'connect' | 'select' | 'backup'
   | 'dashboard' | 'settings' | 'admin'
   | 'reset-password' | 'confirm-email';
 ```
@@ -145,8 +149,11 @@ explicit Vite development API target deterministic.
 | `AuthForm` | Login, registration, TOTP code entry, password reset request. |
 | `ConnectForm` | Choose source/target provider + credentials; supports saved connection profiles; calls `/migration/connect`; on success hands config + listed files to the next step. |
 | `FileBrowser` | Pick paths/calendars/contacts, conflict strategy, target dir, threads, bandwidth, optional `scheduled_time`; calls `/migration/start`; drops secrets from memory after success. |
+| `BackupOptionsForm` | Configure backup schedules (cron, timezone), retention limits (1–365), source paths, and triggers repository initialization. |
+| `BackupSnapshotBrowser` | Explore deduplicated point-in-time snapshots, download specific items, trigger metadata/budgeted repository verification, and launch the restore workflow. |
+| `RestorePreviewModal` | Interactive conflict analysis modal evaluating target path collisions, file differences, directory merges, and expected skip/overwrite/rename operations. |
 | `Dashboard` | Live progress for a migration via authenticated `/migration/{id}/stream` SSE using `connectSseLoop`; shows files/calendars/contacts stats, pause/resume/cancel, threads/bandwidth controls, a paginated in-app error overview, and CSV report download. |
-| `MigrationsDashboard` | Lists the user's migrations and sync jobs with status; opens a selected migration/sync or starts a new one. |
+| `MigrationsDashboard` | Lists the user's migrations, sync jobs, and backup jobs with status; opens a selected job or starts a new one. |
 | `SyncDashboard` | Live progress and details for synchronization jobs (delta stats, changed/deleted files, pause/resume, threads and bandwidth controls) plus a paginated in-app error overview. |
 | `SettingsPage` | Display name, password change, avatar (cropper), 2FA setup/enable/disable, email change, an email-notification toggle when the instance mailer is available, connection profile management. |
 | `AdminPanel` | (ADMIN) user list/suspend/reactivate/delete/role, global stats, all-migrations view, all-syncs view, audit log, and central SMTP configuration/test/removal. |
@@ -202,9 +209,7 @@ callback-URL card and one card per OAuth provider (Google, OneDrive, Dropbox, Hi
 shared `SectionCard` component; the email-server card renders its form in a single column because it occupies
 half the width.
 
-## 9. Frontend Validation
-
-## Restore and repository-check UI
+### 8.1 Restore and Repository-Check UI
 
 The snapshot browser supports a saved target profile or a direct files target. Direct passwords/access
 tokens and OAuth refresh tokens exist only in component state until preview submission, then the browser

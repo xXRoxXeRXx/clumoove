@@ -1,7 +1,7 @@
 # 01 – Architecture
 
 This document describes the high-level architecture of Clumoove: the deployed components, how a
-migration flows through the system, and the resilience mechanisms that keep transfers safe.
+migration, synchronization, or backup flows through the system, and the resilience mechanisms that keep transfers safe.
 
 ## Cloud File Manager (Phase 1)
 
@@ -12,7 +12,7 @@ The authenticated file manager is a direct, profile-bound API path and is not pa
 ## 1. System Topology
 
 Clumoove is a decoupled monorepo with separate containers for the frontend, API gateway, database,
-cache, and migration workers. Every migration is tied to a user account and isolated from others.
+cache, and migration/backup workers. Every job is tied to a user account and isolated from others.
 
 ```
 ┌────────────────────┐
@@ -26,23 +26,27 @@ cache, and migration workers. Every migration is tied to a user account and isol
 │  Go API Gateway    │◀────────▶│  PostgreSQL 15           │
 │  (cmd/api) :8000   │  CRUD,    │  - users, migrations,    │
 │  Auth, WS, OAuth,  │  Auth,    │    sync_jobs, sync_state,│
-│  Scheduler, Sync,  │  Indexing │    profiles, tasks,      │
-│  Rotation Daemon   │          │    schedules, audit_log  │
-└─────────┬──────────┘          │  - also the task QUEUE   │
-          │                      └──────────────────────────┘
-          │ (Redis: Pub/Sub, locks, heartbeats)
+│  Scheduler, Sync,  │  Indexing │    backup_jobs/runs/     │
+│  Backup, Restore,  │          │    snapshots/packs,      │
+│  Rotation Daemon   │          │    restore_jobs/runs,    │
+└─────────┬──────────┘          │    profiles, tasks,      │
+          │                      │    schedules, audit_log  │
+          │                      │  - also the task QUEUE   │
+          │ (Redis: Pub/Sub,     └──────────────────────────┘
+          │  locks, heartbeats)
           ▼
 ┌────────────────────┐          ┌──────────────────────────┐
 │  Go Worker Engine  │◀────────▶│  Redis 7 (password auth) │
 │  (cmd/worker)      │  dequeue  │  - worker:active:{id}    │
 │  Dequeue, Transfer,│  via SQL  │  - worker:recovery-lock  │
-│  Recovery, Retry   │           │  - schedule:lock:{id}    │
-└──────┬──────┬──────┘           │  - migration-control:*   │
+│  Backup, Restore,  │           │  - schedule:lock:{id}    │
+│  Recovery, Retry   │           │  - migration-control:*   │
+└──────┬──────┬──────┘           │  - backup-verify:*       │
        │      │                  └──────────────────────────┘
        ▼      ▼
 ┌──────────────┐   ┌──────────────┐
- │  Source Store │   │ Target Store  │  (Nextcloud, OpenCloud, Seafile, WebDAV, Dropbox, Google, OneDrive,
-└──────────────┘   └──────────────┘   S3, SMB, SFTP, FTPS, MagentaCLOUD, Koofr, Local, Immich)
+│  Source Store│   │ Target Store │  (Nextcloud, OpenCloud, Seafile, WebDAV, Dropbox, Google, OneDrive,
+└──────────────┘   └──────────────┘   S3, SMB, SFTP, FTPS, MagentaCLOUD, Koofr, Local, Mega, Immich)
 ```
 
 > **Important:** The task queue runs **natively in PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`).
@@ -55,11 +59,11 @@ cache, and migration workers. Every migration is tied to a user account and isol
 
 | Component | Entrypoint | Responsibilities |
 | :-------- | :--------- | :--------------- |
-| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), SSE streams, OAuth callbacks, OAuth rotation daemon, scheduler daemon, sync engine endpoints, connection profile management, admin endpoints. |
-| **Worker Engine** | `backend/cmd/worker` | Dequeue tasks via SQL, stream transfer with integrity verification, conflict resolution, retry/backoff, worker liveness, connection-loss recovery, orphan recovery, completion notifier. |
-| **PostgreSQL** | container `migration-postgres` | System of record **and** queue. Stores users, credentials (encrypted), migrations, sync jobs, sync state, connection profiles, tasks, schedules, audit log, OAuth/refresh tokens, settings. |
-| **Redis** | container `migration-redis` | Liveness keys, recovery/schedule distributed locks, cancel & bandwidth Pub/Sub. Password-protected, not exposed to host. |
-| **Frontend** | container `migration-frontend` | SPA: login, connect form, file browser, live dashboard, sync view/dashboard, connection profiles, settings, admin panel. |
+| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), SSE streams, OAuth callbacks, OAuth rotation daemon, scheduler daemon, sync engine endpoints, backup job management, snapshot catalog queries, restore preview creation/consumption, repository verify endpoints, connection profile management, admin endpoints. |
+| **Worker Engine** | `backend/cmd/worker` | Dequeue tasks via SQL, stream transfer with integrity verification, conflict resolution, retry/backoff, worker liveness, connection-loss recovery, orphan recovery, completion notifier, backup run execution (scanning, 4 MiB chunking, deduplication, 64 MiB pack uploads, snapshot publishing), retention maintenance, repository verification (`METADATA`, `BUDGETED`, `FULL`), restore preview calculations, restore run execution. |
+| **PostgreSQL** | container `migration-postgres` | System of record **and** queue. Stores users, credentials (encrypted), migrations, sync jobs, sync state, backup jobs, backup runs, backup snapshots, backup packs/blocks, restore jobs, restore runs/items, connection profiles, tasks, schedules, audit log, OAuth/refresh tokens, settings. |
+| **Redis** | container `migration-redis` | Liveness keys, recovery/schedule distributed locks, cancel & bandwidth Pub/Sub, rate limiting, file manager leases and download tickets. Password-protected, not exposed to host. |
+| **Frontend** | container `migration-frontend` | SPA: login, connect form, file browser, live dashboard, sync view/dashboard, backup options form, snapshot browser, restore wizard/preview modal, connection profiles, file manager, settings, admin panel. |
 
 ---
 
@@ -109,6 +113,48 @@ hostname, and SNI validation. Passive data connections are egress-validated inde
 pinned to the validated control host; a PASV response can contribute its port but never a replacement
 host address. Deployments must allow outbound TCP to the control port and the FTPS server's configured
 passive data-port range; no inbound port publishing is needed.
+
+---
+
+## 3.1 Backup & Restore Lifecycle
+
+### Backup Workflow
+
+```
+┌─────────────┐   trigger / cron   ┌─────────────┐   BFS scan & hash   ┌─────────────┐
+│  SCHEDULED  │ ─────────────────▶ │   RUNNING   │ ──────────────────▶ │  PUBLISHING │
+└─────────────┘                    └──────┬──────┘                     └──────┬──────┘
+                                          │                                   │ verify packs
+                                          │ cancel / connection loss          ▼
+                                          ▼                             ┌─────────────┐
+                                   ┌─────────────┐                      │ READY/PART. │
+                                   │FAILED/PAUSED│                      └─────────────┘
+                                   └─────────────┘
+```
+
+1. **Backup Definition & Schedule** — User creates a backup job (`POST /api/backup`) with source/target profile IDs, selected paths, 5-field cron expression, IANA timezone, and retention count (1–365).
+2. **Run Execution** — When triggered immediately or via scheduler, an active `backup_runs` row is created. A worker claims the run via PostgreSQL advisory locks.
+3. **Chunking & Deduplication** — Files are read into 4-MiB chunks, computing SHA-256 block hashes. If a block hash already exists in `backup_blocks`, the block is reused; otherwise, it is staged into a 64-MiB pack buffer.
+4. **Pack Upload** — When a pack reaches 64 MiB or the run finishes, it is uploaded in immutable format v1 to `.clumoove-backup/<repo-id>/packs/<pack-id>.pack` and recorded in `backup_packs`.
+5. **Snapshot Publication** — Metadata is saved to `backup_snapshots`, `backup_snapshot_items`, and `backup_snapshot_item_blocks`. The snapshot transitions to `READY` (or `PARTIAL` if non-fatal read errors occurred).
+6. **Retention Pruning** — Oldest snapshots beyond `retention_count` are pruned via `backup_maintenance`, removing unreferenced blocks and unlinking orphaned pack files.
+
+### Two-Phase Restore Workflow
+
+```
+┌──────────────────┐  POST /restore/previews   ┌──────────────────┐
+│ Snapshot Browser │ ────────────────────────▶ │  Restore Preview │
+└──────────────────┘                           │ (conflict check) │
+                                               └────────┬─────────┘
+                                                        │ POST /restore/previews/{id}/consume
+                                                        ▼
+┌──────────────────┐    stream blocks/packs    ┌──────────────────┐
+│  Target Storage  │ ◀──────────────────────── │   Restore Run    │
+└──────────────────┘                           └──────────────────┘
+```
+
+1. **Phase 1: Restore Preview (Read-Only)** — `POST /api/backup/{id}/snapshots/{snapshotID}/restore/previews` inspects the target directory, calculating conflict counts, type mismatches, directory merges, and expected skip/overwrite/rename actions. Results have a 30-minute TTL.
+2. **Phase 2: Restore Run (Execution)** — `POST /api/restore/previews/{previewID}/consume` creates a `restore_runs` entry. Workers claim the restore run, fetch required blocks (using Range requests or `MAX_RESTORE_PACK_READERS` bounded pack caches), assemble target files, and apply modification timestamps.
 
 ---
 
@@ -223,12 +269,14 @@ under `backend/internal/i18n` is generated from their `delivery.*` keys so API a
 the account's persisted language without depending on a frontend runtime.
 
 ```
-migration/
+clumoove/
 ├── backend/                 # Go module (cmd/api, cmd/worker)
-│   ├── cmd/api/             # HTTP gateway, auth, SSE, OAuth, scheduler trigger
-│   ├── cmd/worker/          # migration engine (processor, recovery schedulers)
+│   ├── cmd/api/             # HTTP gateway, auth, SSE, OAuth, scheduler trigger, backup/restore
+│   ├── cmd/worker/          # Engine (processor, recovery, backup, restore, verifiers)
 │   └── internal/
 │       ├── auth/            # JWT, TOTP, middleware
+│       ├── backup/          # Backup coordinator, run execution, retention
+│       ├── backuprepo/      # Pack writer/reader format v1, manifest catalog
 │       ├── crypto/          # AES-256-GCM encrypt/decrypt
 │       ├── db/              # PostgreSQL access, schema migration, audit log
 │       ├── email/           # SMTP sending
@@ -236,6 +284,7 @@ migration/
 │       ├── oauth/           # OAuth2 token refresh
 │       ├── processor/       # worker liveness, retry, recovery, transfer loop
 │       ├── queue/           # PostgreSQL queue, Redis locks/PubSub
+│       ├── restore/         # Two-phase restore preview and run executor
 │       ├── sanitize/        # filename sanitization, collision resolution
 │       ├── scheduler/       # schedule engine (cron, overlap protection)
 │       ├── storage/         # StorageProvider implementations + factory

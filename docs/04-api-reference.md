@@ -4,33 +4,6 @@ All paths are prefixed with `/api`. JSON responses are produced with `writeJSON`
 **only** a machine-readable `error_code` (localized on the client via `translateApiError`); raw
 `err.Error()` strings are never forwarded to the client for connection failures.
 
-## Backup Restore And Repository Checks
-
-All restore and repository-check routes are JWT-protected and owner-scoped. An unknown or foreign restore preview, run, job, or check returns a non-leaking `404`.
-
-| Method | Path | Purpose |
-| :----- | :--- | :------ |
-| `POST` | `/backup/{id}/snapshots/{snapshotID}/restore/previews` | Queues a mandatory async preview. The body accepts selected non-overlapping paths, either an owned `target_profile_id` or direct `target_provider`/URL/username/password-or-access-token (+ OAuth refresh token), root, conflict strategy, `threads` (`1..16`), and `bandwidth_mbps` (`0..1000`). `retry_restore_job_id` is accepted only for the same owner, immutable snapshot, and fingerprint. |
-| `GET` | `/restore/previews/{previewID}` | Reads preview status and advisory totals. Ready previews expire after 30 minutes. |
-| `POST` | `/restore/previews/{previewID}/cancel` | Cancels an unconsumed preview. |
-| `POST` | `/restore/previews/{previewID}/consume` | Consumes one ready preview and creates a queued restore run. |
-| `GET` | `/restore` or `/restore/runs` | Lists restore-run history for the caller. |
-| `GET` | `/restore/runs/{runID}` | Reads one restore run and progress counters. |
-| `GET` | `/restore/runs/{runID}/stream` | SSE stream for owner-scoped live run progress, including initial event and keepalives. |
-| `GET` | `/restore/runs/{runID}/items` | Lists immutable run item outcomes. |
-| `POST` | `/restore/runs/{runID}/cancel` | Requests durable cancellation; already verified target files are not rolled back. |
-| `DELETE` | `/restore/jobs/{jobID}` | Deletes a retained terminal restore job. |
-| `GET` | `/restore/runs/{runID}/report` | Downloads a terminal run CSV report. |
-| `POST` | `/backup/{id}/verify` | Creates a metadata, byte-budgeted, or full repository check. `BUDGETED` requires `byte_budget` from 64 MiB through 1 TiB; `FULL` requires `confirm_full: true`. |
-| `GET` | `/backup/{id}/verify` | Lists check history and progress. |
-| `GET` | `/backup/{id}/verify/{verifyID}` | Reads one owner-scoped repository check. |
-| `GET` | `/backup/{id}/verify/{verifyID}/stream` | SSE stream for owner-scoped repository-check progress and keepalives. |
-| `POST` | `/backup/{id}/verify/{verifyID}/cancel` | Cancels a queued or running repository check. |
-
-Restore targets cannot be Immich or overlap the backup repository or its `.clumoove-backup` tree. Repository checks snapshot their pack catalog at start, pin active packs against deletion, and release those live references only at terminalization.
-
-The server computes a versioned SHA-256 restore configuration fingerprint from the immutable snapshot, normalized selected paths, target provider/profile identity/root, and conflict strategy. Resource limits and credentials are excluded, so future retry runs can require the same data-placement configuration while receiving fresh credentials.
-
 **Response conventions**
 - Success: `200 OK` JSON (`{ "success": true, … }` for action endpoints).
 - Connection-test/browse/mkdir logical failures: `200 OK` with `{ "success": false, "error_code": "…" }`
@@ -44,7 +17,9 @@ The server computes a versioned SHA-256 restore configuration fingerprint from t
 - `JWT` — requires `Authorization: Bearer <access_token>`.
 - `admin` — JWT + `role == ADMIN` (enforced inside the handler).
 
-Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migration starts default an omitted strategy to `SKIP`; sync creation defaults it to `OVERWRITE`. Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Immich endpoints use a server URL and API key supplied in the password field; no username is required. MEGA endpoints use an email address in the username field and a password, with no provider URL; reusable MEGA session material is persisted encrypted after connection. MEGA supports files only, excludes accounts requiring MFA, and verifies transfers by target existence and size. Koofr uses its fixed public endpoint with an email/username and application password, no provider URL, its primary mount only, and MD5-based verification.
+Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migration starts default an omitted strategy to `SKIP`; sync creation defaults it to `OVERWRITE`. Immich validation: migration start rejects calendar/contact selections when either endpoint is `immich`, and an Immich target requires `conflict_strategy: "SKIP"`. `POST /sync` rejects either Immich endpoint with `IMMICH_SYNC_UNSUPPORTED`. Backup jobs and restore targets reject Immich entirely. Immich endpoints use a server URL and API key supplied in the password field; no username is required. MEGA endpoints use an email address in the username field and a password, with no provider URL; reusable MEGA session material is persisted encrypted after connection. MEGA supports files only, excludes accounts requiring MFA, and verifies transfers by target existence and size. Koofr uses its fixed public endpoint with an email/username and application password, no provider URL, its primary mount only, and MD5-based verification.
+
+---
 
 ## Cloud File Manager (Phase 1)
 
@@ -138,7 +113,59 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 
 ---
 
-## 4. Connection Profiles
+## 4. Backup & Snapshot Catalog
+
+All backup routes are JWT-protected and owner-scoped.
+
+| Method | Path | Protection | Description |
+| :----- | :--- | :--------- | :---------- |
+| `GET` | `/backup` | JWT | List the user's backup jobs. |
+| `POST` | `/backup` | JWT | Create a new backup job (profile IDs, selected paths, cron schedule, timezone, retention). |
+| `GET` | `/backup/{id}` | JWT (own) | Get backup job details, status, latest run stats. |
+| `POST` | `/backup/{id}/run` | JWT (own) | Manually queue a backup run. |
+| `POST` | `/backup/{id}/pause` | JWT (own) | Pause an active backup job/run. |
+| `POST` | `/backup/{id}/resume` | JWT (own) | Resume a paused backup job. |
+| `DELETE` | `/backup/{id}` | JWT (own) | Delete a backup job, snapshots, and cascaded pack references. |
+| `GET` | `/backup/{id}/snapshots` | JWT (own) | List completed point-in-time snapshots for the backup job. |
+| `GET` | `/backup/{id}/snapshots/{snapshotID}/items` | JWT (own) | Browse files and directories within a specific point-in-time snapshot. |
+
+---
+
+## 5. Restore Engine
+
+All restore routes are JWT-protected and owner-scoped. An unknown or foreign preview, run, or job returns a non-leaking `404`.
+
+| Method | Path | Protection | Description |
+| :----- | :--- | :--------- | :---------- |
+| `POST` | `/backup/{id}/snapshots/{snapshotID}/restore/previews` | JWT (own) | Queues a mandatory async preview. Body accepts selected paths, target profile/credentials, root, conflict strategy, `threads` (`1..16`), `bandwidth_mbps` (`0..1000`). |
+| `GET` | `/restore/previews/{previewID}` | JWT (own) | Reads preview status and conflict counts. Ready previews expire after 30 minutes. |
+| `POST` | `/restore/previews/{previewID}/cancel` | JWT (own) | Cancels an unconsumed preview. |
+| `POST` | `/restore/previews/{previewID}/consume` | JWT (own) | Consumes one ready preview and creates a queued restore run. |
+| `GET` | `/restore` or `/restore/runs` | JWT | Lists restore-run history for the caller. |
+| `GET` | `/restore/runs/{runID}` | JWT (own) | Reads one restore run and progress counters. |
+| `GET` | `/restore/runs/{runID}/stream` | JWT (own) | SSE stream for owner-scoped live run progress, including initial event and keepalives. |
+| `GET` | `/restore/runs/{runID}/items` | JWT (own) | Lists immutable run item outcomes. |
+| `POST` | `/restore/runs/{runID}/cancel` | JWT (own) | Requests durable cancellation; already verified target files are not rolled back. |
+| `DELETE` | `/restore/jobs/{jobID}` | JWT (own) | Deletes a retained terminal restore job. |
+| `GET` | `/restore/runs/{runID}/report` | JWT (own) | Downloads a terminal run CSV report. |
+
+The server computes a versioned SHA-256 restore configuration fingerprint from the immutable snapshot, normalized selected paths, target provider/profile identity/root, and conflict strategy. Resource limits and credentials are excluded, so future retry runs can require the same data-placement configuration while receiving fresh credentials.
+
+---
+
+## 6. Repository Verification
+
+| Method | Path | Protection | Description |
+| :----- | :--- | :--------- | :---------- |
+| `POST` | `/backup/{id}/verify` | JWT (own) | Creates a metadata, byte-budgeted, or full repository check. `BUDGETED` requires `byte_budget` from 64 MiB through 1 TiB; `FULL` requires `confirm_full: true`. |
+| `GET` | `/backup/{id}/verify` | JWT (own) | Lists check history and progress. |
+| `GET` | `/backup/{id}/verify/{verifyID}` | JWT (own) | Reads one owner-scoped repository check. |
+| `GET` | `/backup/{id}/verify/{verifyID}/stream` | JWT (own) | SSE stream for owner-scoped repository-check progress and keepalives. |
+| `POST` | `/backup/{id}/verify/{verifyID}/cancel` | JWT (own) | Cancels a queued or running repository check. |
+
+---
+
+## 7. Connection Profiles
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -151,7 +178,7 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 
 ---
 
-## 5. Schedules
+## 8. Schedules
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -161,7 +188,7 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 
 ---
 
-## 6. Settings
+## 9. Settings
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -175,12 +202,12 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 
 ---
 
-## 7. Admin (ADMIN only)
+## 10. Admin (ADMIN only)
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
 | `POST` | `/admin/users` | admin | Create a user with role + must-change flag. |
-| `POST` | `/admin/users/{id}/suspend` | admin | Deactivate user (pauses active migrations and sync jobs, cancels active sync work, disables schedules). |
+| `POST` | `/admin/users/{id}/suspend` | admin | Deactivate user (pauses active migrations, syncs, and backups, cancels active work, disables schedules). |
 | `POST` | `/admin/users/{id}/reactivate` | admin | Reactivate user (re-enables schedules). |
 | `DELETE` | `/admin/users/{id}` | admin | Delete user (cascade). |
 | `PUT` | `/admin/users/{id}/role` | admin | Change role (`USER`/`ADMIN`). |
@@ -197,11 +224,11 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 | `DELETE` | `/admin/settings/oauth/{provider}` | admin | Remove the stored credentials for one provider. |
 | `GET` | `/audit/log` | admin | Paginated/filtered audit log. |
 
-If a user suspension commits but a Redis sync-cancellation event cannot be published, the endpoint still returns `200` with `partial: true`; the affected sync-job IDs are recorded in the suspension audit entry for operator follow-up.
+If a user suspension commits but a Redis sync-cancellation event cannot be published, the endpoint still returns `200` with `partial: true`; the affected job IDs are recorded in the suspension audit entry for operator follow-up.
 
 ---
 
-## 8. OAuth
+## 11. OAuth
 
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
@@ -210,7 +237,7 @@ If a user suspension commits but a Redis sync-cancellation event cannot be publi
 
 ---
 
-## 9. Start Request Shape (reference)
+## 12. Start Request Shape (reference)
 
 `POST /api/migration/start` accepts a `StartRequest`:
 
@@ -247,7 +274,7 @@ Validation rules applied server-side:
 - `ftp` accepts only `ftp://host:21?tls=explicit` for explicit FTPS or `ftps://host:990` for implicit FTPS. Plain FTP,
   URL userinfo, certificate-validation bypasses, and custom CAs are not supported. Credentials belong in the encrypted
   username/password request fields, not the URL.
-- An Immich target requires `conflict_strategy: "SKIP"`; Immich relies on native duplicate detection and does not support overwrite or rename. Immich can be used only for one-time migrations, not sync jobs.
+- An Immich target requires `conflict_strategy: "SKIP"`; Immich relies on native duplicate detection and does not support overwrite or rename. Immich can be used only for one-time migrations, not sync jobs or backup/restore operations.
 - MEGA uses its personal Cloud Drive over HTTPS. Accounts requiring MEGA MFA are unsupported. Same-name sibling nodes are rejected as ambiguous rather than selected by path.
 - Per-user cap of `maxActiveMigrations` (10) simultaneous active migrations.
 - `threads` clamped to 1–16; `bandwidth_limit_mbps` clamped to 0–1000.
@@ -255,12 +282,12 @@ Validation rules applied server-side:
 
 ---
 
-## 10. Error Codes
+## 13. Error Codes
 
 Error codes are typed constants (`APIErrorCode`). Examples include `ErrMigrationNotOwned`,
 `ErrMigrationNotFound`, `ErrMigrationInvalidState`, `ErrProviderUnsupported`, `ErrSourceConnectionFailed`,
 `ErrTargetConnectionFailed`, `ErrRateLimited`, `ErrThreadsOutOfRange`, `ErrBandwidthOutOfRange`,
 `ErrCorsOriginUntrusted`, `ErrInvalidBody`, `ErrNoSourcePaths`, `ErrEncryptionFailed`,
-`ErrTooManyActiveMigrations`, and many more. Each must be added to **both** locale files under
+`ErrTooManyActiveMigrations`, `ErrBackupJobNotFound`, `ErrBackupJobNotOwned`, `ErrRestorePreviewNotFound`,
+`ErrRestorePreviewExpired`, `ErrRestorePreviewConflict`, and many more. Each must be added to **both** locale files under
 `errors.*`. The frontend maps unknown codes to `errors.UNKNOWN`.
-
