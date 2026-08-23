@@ -657,6 +657,8 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 			return
 		}
 
+		// previousCatalog is nil on first-run backups; nil map lookups return false, so
+		// this branch is simply skipped and every file is downloaded fresh.
 		if prev, ok := previousCatalog[file.relativePath]; ok &&
 			!file.mtime.IsZero() &&
 			!prev.Mtime.IsZero() &&

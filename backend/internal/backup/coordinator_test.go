@@ -426,6 +426,15 @@ func (m *mockTrackedSource) FileExists(ctx context.Context, resourceType, filePa
 	return false, 0, nil
 }
 
+func canReuseFromCatalog(file scannedFile, prev db.BackupSnapshotCatalogItem) bool {
+	return !file.mtime.IsZero() &&
+		!prev.Mtime.IsZero() &&
+		prev.Mtime.Equal(file.mtime) &&
+		prev.SizeBytes == file.size &&
+		(file.size == 0 || len(prev.BlockIDs) > 0) &&
+		len(prev.FileSHA256) == sha256.Size
+}
+
 func TestIncrementalReuseDecisionLogic(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 8, 23, 10, 0, 0, 0, time.UTC)
@@ -492,14 +501,7 @@ func TestIncrementalReuseDecisionLogic(t *testing.T) {
 		if !ok {
 			t.Fatal("expected item in catalog")
 		}
-		canReuse := !file.mtime.IsZero() &&
-			!prev.Mtime.IsZero() &&
-			prev.Mtime.Equal(file.mtime) &&
-			prev.SizeBytes == file.size &&
-			(file.size == 0 || len(prev.BlockIDs) > 0) &&
-			len(prev.FileSHA256) == 32
-
-		if !canReuse {
+		if !canReuseFromCatalog(file, prev) {
 			t.Fatal("expected file to be eligible for reuse")
 		}
 
@@ -523,14 +525,7 @@ func TestIncrementalReuseDecisionLogic(t *testing.T) {
 		if !ok {
 			t.Fatal("expected item in catalog")
 		}
-		canReuse := !file.mtime.IsZero() &&
-			!prev.Mtime.IsZero() &&
-			prev.Mtime.Equal(file.mtime) &&
-			prev.SizeBytes == file.size &&
-			(file.size == 0 || len(prev.BlockIDs) > 0) &&
-			len(prev.FileSHA256) == 32
-
-		if !canReuse {
+		if !canReuseFromCatalog(file, prev) {
 			t.Fatal("expected 0-byte file to be eligible for reuse")
 		}
 	})
@@ -546,14 +541,7 @@ func TestIncrementalReuseDecisionLogic(t *testing.T) {
 		if !ok {
 			t.Fatal("expected item in catalog")
 		}
-		canReuse := !file.mtime.IsZero() &&
-			!prev.Mtime.IsZero() &&
-			prev.Mtime.Equal(file.mtime) &&
-			prev.SizeBytes == file.size &&
-			(file.size == 0 || len(prev.BlockIDs) > 0) &&
-			len(prev.FileSHA256) == 32
-
-		if canReuse {
+		if canReuseFromCatalog(file, prev) {
 			t.Fatal("zero mtime must not be reused")
 		}
 	})
@@ -569,14 +557,7 @@ func TestIncrementalReuseDecisionLogic(t *testing.T) {
 		if !ok {
 			t.Fatal("expected item in catalog")
 		}
-		canReuse := !file.mtime.IsZero() &&
-			!prev.Mtime.IsZero() &&
-			prev.Mtime.Equal(file.mtime) &&
-			prev.SizeBytes == file.size &&
-			(file.size == 0 || len(prev.BlockIDs) > 0) &&
-			len(prev.FileSHA256) == 32
-
-		if canReuse {
+		if canReuseFromCatalog(file, prev) {
 			t.Fatal("modified mtime must not be reused")
 		}
 	})
@@ -801,6 +782,3 @@ func TestBatchCreateBackupSnapshotItemsAndBlocksContextSingleTransaction(t *test
 		t.Errorf("rollbackCount = %d, want 0", state.rollbackCount)
 	}
 }
-
-
-
