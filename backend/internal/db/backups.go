@@ -691,6 +691,192 @@ func LinkBackupSnapshotItemBlocksContext(ctx context.Context, database *sql.DB, 
 	return tx.Commit()
 }
 
+type BatchSnapshotItem struct {
+	RelativePath string
+	IsDir        bool
+	SizeBytes    int64
+	Mtime        time.Time
+	FileSHA256   []byte
+	State        string
+	ErrorCode    string
+	BlockIDs     []string
+}
+
+func BatchCreateBackupSnapshotItemsAndBlocksContext(ctx context.Context, database *sql.DB, snapshotID string, items []BatchSnapshotItem) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmtItem, err := tx.PrepareContext(ctx, `
+		INSERT INTO backup_snapshot_items (
+			backup_snapshot_id, relative_path, is_dir, size_bytes, mtime, file_sha256, state, error_code
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''))
+		RETURNING id
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmtItem.Close()
+
+	stmtBlock, err := tx.PrepareContext(ctx, `
+		INSERT INTO backup_snapshot_item_blocks (
+			backup_snapshot_item_id, ordinal, backup_block_id
+		) VALUES ($1, $2, $3)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmtBlock.Close()
+
+	for _, item := range items {
+		var itemID string
+		var mtimeVal sql.NullTime
+		if !item.Mtime.IsZero() {
+			mtimeVal = sql.NullTime{Time: item.Mtime, Valid: true}
+		}
+		err := stmtItem.QueryRowContext(
+			ctx,
+			snapshotID,
+			item.RelativePath,
+			item.IsDir,
+			item.SizeBytes,
+			mtimeVal,
+			item.FileSHA256,
+			item.State,
+			item.ErrorCode,
+		).Scan(&itemID)
+		if err != nil {
+			return err
+		}
+		for ordinal, blockID := range item.BlockIDs {
+			if _, err := stmtBlock.ExecContext(ctx, itemID, ordinal, blockID); err != nil {
+				return err
+			}
+		}
+	}
+
+	return tx.Commit()
+}
+
+func GetLatestValidBackupSnapshotIDContext(ctx context.Context, database *sql.DB, jobID string) (string, error) {
+	var id string
+	err := database.QueryRowContext(ctx, `
+		SELECT id
+		FROM backup_snapshots
+		WHERE backup_job_id = $1 AND state IN ('READY', 'PARTIAL') AND integrity_state = 'VALID'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, jobID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+type BackupSnapshotCatalogItem struct {
+	RelativePath string
+	SizeBytes    int64
+	Mtime        time.Time
+	FileSHA256   []byte
+	BlockIDs     []string
+}
+
+func GetBackupSnapshotFileCatalogContext(ctx context.Context, database *sql.DB, snapshotID string) (map[string]BackupSnapshotCatalogItem, error) {
+	rows, err := database.QueryContext(ctx, `
+		SELECT i.relative_path, i.size_bytes, i.mtime, i.file_sha256,
+			COALESCE(ib.ordinal, -1), COALESCE(ib.backup_block_id::text, ''), COALESCE(p.state, '')
+		FROM backup_snapshot_items i
+		LEFT JOIN backup_snapshot_item_blocks ib ON ib.backup_snapshot_item_id = i.id
+		LEFT JOIN backup_blocks b ON b.id = ib.backup_block_id
+		LEFT JOIN backup_packs p ON p.id = b.backup_pack_id
+		WHERE i.backup_snapshot_id = $1 AND i.is_dir = FALSE AND i.state = 'AVAILABLE'
+		ORDER BY i.relative_path, ib.ordinal ASC
+	`, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type catalogAcc struct {
+		sizeBytes   int64
+		mtime       sql.NullTime
+		fileSHA256  []byte
+		blockIDs    []string
+		expectedOrd int
+		invalid     bool
+	}
+
+	accs := make(map[string]*catalogAcc)
+	for rows.Next() {
+		var (
+			relPath   string
+			size      int64
+			mtime     sql.NullTime
+			fileSHA   []byte
+			ordinal   int
+			blockID   string
+			packState string
+		)
+		if err := rows.Scan(&relPath, &size, &mtime, &fileSHA, &ordinal, &blockID, &packState); err != nil {
+			return nil, err
+		}
+		acc, ok := accs[relPath]
+		if !ok {
+			acc = &catalogAcc{
+				sizeBytes:   size,
+				mtime:       mtime,
+				fileSHA256:  fileSHA,
+				blockIDs:    make([]string, 0),
+				expectedOrd: 0,
+				invalid:     false,
+			}
+			accs[relPath] = acc
+		}
+		if size == 0 {
+			if ordinal != -1 && blockID != "" {
+				acc.invalid = true
+			}
+			continue
+		}
+		if ordinal != acc.expectedOrd || blockID == "" || packState != "READY" {
+			acc.invalid = true
+			continue
+		}
+		acc.blockIDs = append(acc.blockIDs, blockID)
+		acc.expectedOrd++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]BackupSnapshotCatalogItem, len(accs))
+	for relPath, acc := range accs {
+		if acc.invalid || !acc.mtime.Valid || acc.mtime.Time.IsZero() || len(acc.fileSHA256) != 32 {
+			continue
+		}
+		if acc.sizeBytes > 0 && len(acc.blockIDs) == 0 {
+			continue
+		}
+		result[relPath] = BackupSnapshotCatalogItem{
+			RelativePath: relPath,
+			SizeBytes:    acc.sizeBytes,
+			Mtime:        acc.mtime.Time,
+			FileSHA256:   acc.fileSHA256,
+			BlockIDs:     acc.blockIDs,
+		}
+	}
+	return result, nil
+}
+
 func nullableTime(value time.Time) sql.NullTime {
 	if value.IsZero() {
 		return sql.NullTime{}

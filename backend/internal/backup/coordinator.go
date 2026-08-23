@@ -30,6 +30,8 @@ import (
 
 var errVerifyMoreWork = errors.New("repository check has more bounded work")
 
+type ProviderFactoryFunc func(ctx context.Context, job *db.BackupJob) (storage.StorageProvider, storage.StorageProvider, error)
+
 // Coordinator owns only backup worker execution. Its pack semaphore is process
 // scoped, preventing independently claimed jobs from exhausting memory/network.
 type Coordinator struct {
@@ -38,6 +40,7 @@ type Coordinator struct {
 	packWriterSlots chan struct{}
 	packReaderSlots *restore.PackReaderLimiter
 	workerID        string
+	providerFactory ProviderFactoryFunc
 }
 
 // backupRunLogger supplies the stable correlation fields used by every
@@ -92,6 +95,10 @@ func (c *Coordinator) SetWorkerID(workerID string) {
 	if strings.TrimSpace(workerID) != "" {
 		c.workerID = workerID
 	}
+}
+
+func (c *Coordinator) SetProviderFactory(factory ProviderFactoryFunc) {
+	c.providerFactory = factory
 }
 
 // PollOnce claims and executes at most one queued run. Callers can invoke it
@@ -628,18 +635,49 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 		c.fail(ctx, job, run, "BACKUP_CATALOG_FAILED", err)
 		return
 	}
-	for _, directory := range directories {
-		if _, err := db.CreateBackupSnapshotDirectoryContext(ctx, c.db, snapshotID, directory.relativePath, directory.mtime); err != nil {
-			c.finishOrFail(ctx, job, run, "RUNNING", err, stats)
-			return
+
+	var previousCatalog map[string]db.BackupSnapshotCatalogItem
+	previousSnapshotID, err := db.GetLatestValidBackupSnapshotIDContext(ctx, c.db, job.ID)
+	if err != nil {
+		logger.Warn("backup_previous_snapshot_lookup_failed", slog.String("error", err.Error()))
+	} else if previousSnapshotID != "" {
+		catalog, err := db.GetBackupSnapshotFileCatalogContext(ctx, c.db, previousSnapshotID)
+		if err != nil {
+			logger.Warn("backup_previous_catalog_load_failed", slog.String("snapshot_id", previousSnapshotID), slog.String("error", err.Error()))
+		} else {
+			previousCatalog = catalog
+			logger.Info("backup_incremental_catalog_loaded", slog.String("snapshot_id", previousSnapshotID), slog.Int("items_count", len(catalog)))
 		}
 	}
+
 	builder := newPackBuilder(c, job, target)
 	pending := make([]pendingFile, 0, len(files))
 	for _, file := range files {
 		if !c.runActive(ctx, job, run, snapshotID) {
 			return
 		}
+
+		if prev, ok := previousCatalog[file.relativePath]; ok &&
+			!file.mtime.IsZero() &&
+			!prev.Mtime.IsZero() &&
+			prev.Mtime.Equal(file.mtime) &&
+			prev.SizeBytes == file.size &&
+			(file.size == 0 || len(prev.BlockIDs) > 0) &&
+			len(prev.FileSHA256) == sha256.Size {
+			current, err := source.InspectResource(ctx, "files", file.sourcePath)
+			if err == nil && sameSource(file, current) {
+				var fileHash [sha256.Size]byte
+				copy(fileHash[:], prev.FileSHA256)
+				pending = append(pending, pendingFile{
+					file:     file,
+					fileHash: fileHash,
+					blockIDs: prev.BlockIDs,
+				})
+				stats.deduplicatedBytes += file.size
+				continue
+			}
+		}
+
 		item, unstable, err := c.backupFile(ctx, job, source, file, &stats, builder)
 		if err != nil {
 			c.finishOrFail(ctx, job, run, "RUNNING", err, stats)
@@ -661,17 +699,37 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 	if !c.runActive(ctx, job, run, snapshotID) {
 		return
 	}
+
+	batchItems := make([]db.BatchSnapshotItem, 0, len(directories)+len(pending))
+	for _, directory := range directories {
+		batchItems = append(batchItems, db.BatchSnapshotItem{
+			RelativePath: directory.relativePath,
+			IsDir:        true,
+			SizeBytes:    0,
+			Mtime:        directory.mtime,
+			State:        "AVAILABLE",
+		})
+	}
 	for _, item := range pending {
+		resolvedBlockIDs := make([]string, len(item.blockIDs))
 		for i, id := range item.blockIDs {
-			item.blockIDs[i] = builder.resolveBlockID(id)
+			resolvedBlockIDs[i] = builder.resolveBlockID(id)
 		}
-		itemID, err := db.CreateBackupSnapshotItemContext(ctx, c.db, snapshotID, item.file.relativePath, item.file.size, item.file.mtime, item.fileHash[:], "AVAILABLE", "")
-		if err != nil || db.LinkBackupSnapshotItemBlocksContext(ctx, c.db, itemID, item.blockIDs) != nil {
-			c.finishOrFail(ctx, job, run, "RUNNING", errors.New("backup catalog write failed"), stats)
-			return
-		}
+		batchItems = append(batchItems, db.BatchSnapshotItem{
+			RelativePath: item.file.relativePath,
+			IsDir:        false,
+			SizeBytes:    item.file.size,
+			Mtime:        item.file.mtime,
+			FileSHA256:   item.fileHash[:],
+			State:        "AVAILABLE",
+			BlockIDs:     resolvedBlockIDs,
+		})
 		stats.processedFiles++
 		stats.processedBytes += item.file.size
+	}
+	if err := db.BatchCreateBackupSnapshotItemsAndBlocksContext(ctx, c.db, snapshotID, batchItems); err != nil {
+		c.finishOrFail(ctx, job, run, "RUNNING", errors.New("backup catalog write failed"), stats)
+		return
 	}
 	if !c.runActive(ctx, job, run, snapshotID) {
 		return
@@ -818,6 +876,13 @@ func ensureDedicatedTarget(ctx context.Context, target storage.StorageProvider, 
 }
 
 func (c *Coordinator) providers(ctx context.Context, job *db.BackupJob) (storage.StorageProvider, storage.StorageProvider, error) {
+	if c.providerFactory != nil {
+		return c.providerFactory(ctx, job)
+	}
+	return c.defaultProviders(ctx, job)
+}
+
+func (c *Coordinator) defaultProviders(ctx context.Context, job *db.BackupJob) (storage.StorageProvider, storage.StorageProvider, error) {
 	sourceBytes, err := crypto.DecryptBytesWithDomain(job.SourcePasswordEncrypted, c.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.SourceProvider)))
 	if err != nil {
 		return nil, nil, err

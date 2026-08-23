@@ -1182,6 +1182,8 @@
     "triggerCatchUp": "Nachhol-Lauf",
     "duration": "Dauer",
     "transferred": "Übertragen",
+    "snapshotVolume": "Snapshot-Volumen",
+    "newlyUploaded": "Neu übertragen",
     "savedDeduplication": "Dedupliziert",
     "dedupSavings": "Deduplizierungs-Ersparnis",
     "repositoryStats": "Repository-Statistik",

@@ -251,8 +251,8 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
   const totalBytes = job.total_bytes || 0;
   const processedBytes = job.processed_bytes || 0;
   const deduplicatedBytes = job.deduplicated_bytes || 0;
-  const totalVolume = processedBytes + deduplicatedBytes;
-  const dedupPercentage = totalVolume > 0 ? Math.round((deduplicatedBytes / totalVolume) * 100) : 0;
+  const newlyUploadedBytes = Math.max(0, processedBytes - deduplicatedBytes);
+  const dedupPercentage = processedBytes > 0 ? Math.min(100, Math.round((deduplicatedBytes / processedBytes) * 100)) : 0;
   const byteProgressPercent = totalBytes > 0
     ? Math.min(Math.round((processedBytes / totalBytes) * 100), 100)
     : (job.total_files > 0 ? Math.min(Math.round((job.processed_files / job.total_files) * 100), 100) : 0);
@@ -445,7 +445,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
                   </div>
 
                   <div className="flex justify-between border-t border-[var(--color-border-light)] pt-2">
-                    <span className="text-[var(--color-text-muted)]">{t('backup.totalStored')}:</span>
+                    <span className="text-[var(--color-text-muted)]">{t('backup.snapshotVolume')}:</span>
                     <span className="font-mono font-semibold text-[var(--color-text-primary)]">
                       {formatBytes(processedBytes)}
                     </span>
@@ -455,6 +455,13 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
                     <span className="text-[var(--color-text-muted)]">{t('backup.dedupSavings')}:</span>
                     <span className="font-mono font-semibold text-[var(--color-success-text)]">
                       {formatBytes(deduplicatedBytes)} ({formatPercent(dedupPercentage)})
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between border-t border-[var(--color-border-light)] pt-2">
+                    <span className="text-[var(--color-text-muted)]">{t('backup.newlyUploaded')}:</span>
+                    <span className="font-mono font-semibold text-[var(--color-text-primary)]">
+                      {formatBytes(newlyUploadedBytes)}
                     </span>
                   </div>
 
@@ -512,8 +519,9 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
                       <th className="px-3 py-3">{t('migrations.status')}</th>
                       <th className="px-3 py-3">{t('backup.duration')}</th>
                       <th className="px-3 py-3">{t('migrations.files')}</th>
-                      <th className="px-3 py-3">{t('backup.transferred')}</th>
+                      <th className="px-3 py-3">{t('backup.snapshotVolume')}</th>
                       <th className="px-3 py-3">{t('backup.savedDeduplication')}</th>
+                      <th className="px-3 py-3">{t('backup.newlyUploaded')}</th>
                       <th className="px-3 py-3">{t('migrations.createdAt')}</th>
                     </tr>
                   </thead>
@@ -522,6 +530,7 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
                       const startTime = run.started_at ? new Date(run.started_at).getTime() : 0;
                       const endTime = run.finished_at ? new Date(run.finished_at).getTime() : 0;
                       const durationMs = startTime > 0 && endTime > startTime ? endTime - startTime : 0;
+                      const newlyUploaded = Math.max(0, (run.processed_bytes || 0) - (run.deduplicated_bytes || 0));
                       const triggerLabel = run.trigger === 'manual'
                         ? t('backup.triggerManual')
                         : run.trigger === 'schedule'
@@ -557,11 +566,14 @@ export function BackupDashboard({ backupId, apiUrl, token, onBack }: BackupDashb
                               </span>
                             )}
                           </td>
-                          <td data-label={t('backup.transferred')} className="px-3 py-3 font-mono text-[var(--color-text-primary)]">
+                          <td data-label={t('backup.snapshotVolume')} className="px-3 py-3 font-mono text-[var(--color-text-primary)]">
                             {formatBytes(run.processed_bytes)}
                           </td>
                           <td data-label={t('backup.savedDeduplication')} className="px-3 py-3 font-mono text-[var(--color-success-text)]">
                             {formatBytes(run.deduplicated_bytes)}
+                          </td>
+                          <td data-label={t('backup.newlyUploaded')} className="px-3 py-3 font-mono text-[var(--color-text-secondary)]">
+                            {formatBytes(newlyUploaded)}
                           </td>
                           <td data-label={t('migrations.createdAt')} className="px-3 py-3 text-[10px] text-[var(--color-text-muted)]">
                             {formatDateTime(run.created_at)}
