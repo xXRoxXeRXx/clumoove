@@ -905,10 +905,15 @@ func InitDB(connStr string) (*sql.DB, error) {
 			}
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS notification_events (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(), user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-				kind TEXT NOT NULL CHECK (kind IN ('migration','sync')), migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE, run_generation INT NOT NULL DEFAULT 0,
-				sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE, run_at TIMESTAMP WITH TIME ZONE NOT NULL, payload JSONB NOT NULL,
+				kind TEXT NOT NULL CHECK (kind IN ('migration','sync','restore','backup')), migration_id UUID REFERENCES migrations(id) ON DELETE CASCADE, run_generation INT NOT NULL DEFAULT 0,
+				sync_job_id UUID REFERENCES sync_jobs(id) ON DELETE CASCADE, restore_run_id UUID REFERENCES restore_runs(id) ON DELETE CASCADE, backup_run_id UUID REFERENCES backup_runs(id) ON DELETE CASCADE, run_at TIMESTAMP WITH TIME ZONE NOT NULL, payload JSONB NOT NULL,
 				created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				CHECK ((kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL AND migration_id IS NULL)),
+				CHECK (
+					(kind = 'migration' AND migration_id IS NOT NULL AND sync_job_id IS NULL AND restore_run_id IS NULL AND backup_run_id IS NULL) OR
+					(kind = 'sync'      AND sync_job_id  IS NOT NULL AND migration_id IS NULL AND restore_run_id IS NULL AND backup_run_id IS NULL) OR
+					(kind = 'restore'   AND restore_run_id IS NOT NULL AND migration_id IS NULL AND sync_job_id IS NULL AND backup_run_id IS NULL) OR
+					(kind = 'backup'    AND backup_run_id IS NOT NULL AND migration_id IS NULL AND sync_job_id IS NULL AND restore_run_id IS NULL)
+				),
 				UNIQUE (sync_job_id, run_at))`)
 			if err != nil {
 				log.Printf("Failed schema migration (notification_events): %v\n", err)
@@ -1113,9 +1118,10 @@ func InitDB(connStr string) (*sql.DB, error) {
 				ALTER TABLE restore_items ADD CONSTRAINT fk_restore_items_parent FOREIGN KEY (restore_run_id, parent_item_id) REFERENCES restore_items(restore_run_id, id) ON DELETE CASCADE;
 				CREATE TABLE IF NOT EXISTS restore_path_reservations (restore_run_id UUID NOT NULL REFERENCES restore_runs(id) ON DELETE CASCADE, canonical_path TEXT NOT NULL, restore_item_id UUID NOT NULL REFERENCES restore_items(id) ON DELETE CASCADE, PRIMARY KEY (restore_run_id, canonical_path), UNIQUE (restore_run_id, restore_item_id));
 				ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS restore_run_id UUID REFERENCES restore_runs(id) ON DELETE CASCADE;
+				ALTER TABLE notification_events ADD COLUMN IF NOT EXISTS backup_run_id UUID REFERENCES backup_runs(id) ON DELETE CASCADE;
 				ALTER TABLE notification_events DROP CONSTRAINT IF EXISTS notification_events_kind_check, DROP CONSTRAINT IF EXISTS notification_events_check, DROP CONSTRAINT IF EXISTS chk_notification_events_kind, DROP CONSTRAINT IF EXISTS chk_notification_events_parent;
-				ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_kind CHECK (kind IN ('migration','sync','restore'));
-				ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_parent CHECK (num_nonnulls(migration_id, sync_job_id, restore_run_id) = 1 AND ((kind = 'migration' AND migration_id IS NOT NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL) OR (kind = 'restore' AND restore_run_id IS NOT NULL)));
+				ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_kind CHECK (kind IN ('migration','sync','restore','backup'));
+				ALTER TABLE notification_events ADD CONSTRAINT chk_notification_events_parent CHECK (num_nonnulls(migration_id, sync_job_id, restore_run_id, backup_run_id) = 1 AND ((kind = 'migration' AND migration_id IS NOT NULL) OR (kind = 'sync' AND sync_job_id IS NOT NULL) OR (kind = 'restore' AND restore_run_id IS NOT NULL) OR (kind = 'backup' AND backup_run_id IS NOT NULL)));
 				CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_events_restore_uniq ON notification_events(restore_run_id) WHERE restore_run_id IS NOT NULL;
 			`)
 			if err != nil {
