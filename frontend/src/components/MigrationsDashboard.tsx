@@ -12,7 +12,8 @@ import { connectSseLoop } from '../utils/sse';
 import {
   ArrowPathIcon,
   CalendarDaysIcon,
-  FolderOpenIcon,
+  CloudArrowDownIcon,
+  CloudArrowUpIcon,
   PauseIcon,
   PlayIcon,
   TrashIcon,
@@ -572,12 +573,12 @@ export function MigrationsDashboard({
       </div>
 
       {/* Main Section with Segmented Pill Tabs & Search Filter Bar */}
-      <div className="ui-card min-h-[560px] space-y-6 p-6">
+      <div className="ui-card min-h-[560px] space-y-6 p-4 sm:p-6">
 
         {/* Navigation Tabs & Controls Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 gap-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between pb-4 gap-4">
           {/* Segmented Pill Tabs */}
-          <div className="flex items-center gap-1 border-b border-[var(--color-border)]" role="tablist" aria-label={t('migrations.title')}>
+          <div className="flex w-full max-w-full items-center gap-1 border-b border-[var(--color-border)] overflow-x-auto pb-0.5 sm:pb-0 -mb-px" role="tablist" aria-label={t('migrations.title')}>
             <button
                 ref={(node) => { tabRefs.current.migrations = node; }}
                 id="migrations-tab"
@@ -587,14 +588,14 @@ export function MigrationsDashboard({
               aria-controls="migrations-panel"
               tabIndex={activeTab === 'migrations' ? 0 : -1}
               onKeyDown={(event) => handleTabKeyDown(event, 'migrations')}
-              className={`flex items-center gap-2 px-3 py-2 text-sm ${
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium shrink-0 whitespace-nowrap -mb-px ${
                 activeTab === 'migrations'
-                  ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
+                  ? 'border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`}
             >
               <span>{t('sync.tabMigrations')}</span>
-              <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'migrations' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+              <span className={`shrink-0 px-2 py-0.5 text-[10px] ${activeTab === 'migrations' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {migrations.length}
               </span>
             </button>
@@ -607,14 +608,14 @@ export function MigrationsDashboard({
               aria-controls="sync-panel"
               tabIndex={activeTab === 'sync' ? 0 : -1}
               onKeyDown={(event) => handleTabKeyDown(event, 'sync')}
-              className={`flex items-center gap-2 px-3 py-2 text-sm ${
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium shrink-0 whitespace-nowrap -mb-px ${
                 activeTab === 'sync'
-                  ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
+                  ? 'border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`}
             >
               <span>{t('sync.tabSyncs')}</span>
-              <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'sync' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+              <span className={`shrink-0 px-2 py-0.5 text-[10px] ${activeTab === 'sync' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {syncJobs.length}
               </span>
             </button>
@@ -627,14 +628,14 @@ export function MigrationsDashboard({
               aria-controls="backup-panel"
               tabIndex={activeTab === 'backup' ? 0 : -1}
               onKeyDown={(event) => handleTabKeyDown(event, 'backup')}
-              className={`flex items-center gap-2 px-3 py-2 text-sm ${
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium shrink-0 whitespace-nowrap -mb-px ${
                 activeTab === 'backup'
-                  ? 'border-b-2 border-[var(--color-text-primary)] font-medium text-[var(--color-text-primary)]'
+                  ? 'border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
                   : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
               }`}
             >
               <span>{t('backup.tab')}</span>
-              <span className={`px-2 py-0.5 text-[10px] ${activeTab === 'backup' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
+              <span className={`shrink-0 px-2 py-0.5 text-[10px] ${activeTab === 'backup' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
                 {backupJobs.length}
               </span>
             </button>
@@ -646,7 +647,7 @@ export function MigrationsDashboard({
               aria-selected={false}
               tabIndex={-1}
               onKeyDown={(event) => handleTabKeyDown(event, 'fileManager')}
-              className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shrink-0 whitespace-nowrap -mb-px"
             >
               <span>{t('sync.tabFileManager')}</span>
             </button>
@@ -720,6 +721,7 @@ export function MigrationsDashboard({
                 error={backupError}
                 setBackupJobs={setBackupJobs}
                 onSelectActiveBackup={onSelectActiveBackup}
+                onOpenFileManager={onOpenFileManager}
               />
             );
           }
@@ -872,28 +874,6 @@ export function MigrationsDashboard({
                           </button>
                             );
                           })()}
-                          {mig.source_profile_id && onOpenFileManager && (
-                            <button
-                              type="button"
-                              onClick={(event) => { event.stopPropagation(); onOpenFileManager(mig.source_profile_id!, commonParentPath(mig.selected_paths)); }}
-                              className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
-                              aria-label={t('files.openSource')}
-                              title={t('files.openSource')}
-                            >
-                              <FolderOpenIcon className="size-4" aria-hidden="true" />
-                            </button>
-                          )}
-                          {mig.target_profile_id && onOpenFileManager && (
-                            <button
-                              type="button"
-                              onClick={(event) => { event.stopPropagation(); onOpenFileManager(mig.target_profile_id!, mig.target_dir || '/'); }}
-                              className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
-                              aria-label={t('files.openTarget')}
-                              title={t('files.openTarget')}
-                            >
-                              <FolderOpenIcon className="size-4" aria-hidden="true" />
-                            </button>
-                          )}
                           <button
                             onClick={(e) => handleDelete(mig.id, e)}
                             disabled={deleteLoading === mig.id || !isDeletableMigration(mig.status)}
@@ -905,6 +885,28 @@ export function MigrationsDashboard({
                               ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
                               : <TrashIcon className="size-4" aria-hidden="true" />}
                           </button>
+                          {mig.source_profile_id && onOpenFileManager && (
+                            <button
+                              type="button"
+                              onClick={(event) => { event.stopPropagation(); onOpenFileManager(mig.source_profile_id!, commonParentPath(mig.selected_paths)); }}
+                              className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)]"
+                              aria-label={t('files.openSource')}
+                              title={t('files.openSource')}
+                            >
+                              <CloudArrowDownIcon className="size-4" aria-hidden="true" />
+                            </button>
+                          )}
+                          {mig.target_profile_id && onOpenFileManager && (
+                            <button
+                              type="button"
+                              onClick={(event) => { event.stopPropagation(); onOpenFileManager(mig.target_profile_id!, mig.target_dir || '/'); }}
+                              className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)]"
+                              aria-label={t('files.openTarget')}
+                              title={t('files.openTarget')}
+                            >
+                              <CloudArrowUpIcon className="size-4" aria-hidden="true" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1214,28 +1216,6 @@ function SyncList({
                   </button>
                     );
                   })()}
-                  {job.source_profile_id && onOpenFileManager && (
-                    <button
-                      type="button"
-                      onClick={(event) => { event.stopPropagation(); onOpenFileManager(job.source_profile_id!, commonParentPath(job.selected_paths)); }}
-                      className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
-                      aria-label={t('files.openSource')}
-                      title={t('files.openSource')}
-                    >
-                      <FolderOpenIcon className="size-4" aria-hidden="true" />
-                    </button>
-                  )}
-                  {job.target_profile_id && onOpenFileManager && (
-                    <button
-                      type="button"
-                      onClick={(event) => { event.stopPropagation(); onOpenFileManager(job.target_profile_id!, job.target_dir || '/'); }}
-                      className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
-                      aria-label={t('files.openTarget')}
-                      title={t('files.openTarget')}
-                    >
-                      <FolderOpenIcon className="size-4" aria-hidden="true" />
-                    </button>
-                  )}
                   <button
                     onClick={(e) => handleDelete(job.id, e)}
                     disabled={deleteLoading === job.id}
@@ -1247,6 +1227,28 @@ function SyncList({
                       ? <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
                       : <TrashIcon className="size-4" aria-hidden="true" />}
                   </button>
+                  {job.source_profile_id && onOpenFileManager && (
+                    <button
+                      type="button"
+                      onClick={(event) => { event.stopPropagation(); onOpenFileManager(job.source_profile_id!, commonParentPath(job.selected_paths)); }}
+                      className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)]"
+                      aria-label={t('files.openSource')}
+                      title={t('files.openSource')}
+                    >
+                      <CloudArrowDownIcon className="size-4" aria-hidden="true" />
+                    </button>
+                  )}
+                  {job.target_profile_id && onOpenFileManager && (
+                    <button
+                      type="button"
+                      onClick={(event) => { event.stopPropagation(); onOpenFileManager(job.target_profile_id!, job.target_dir || '/'); }}
+                      className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)]"
+                      aria-label={t('files.openTarget')}
+                      title={t('files.openTarget')}
+                    >
+                      <CloudArrowUpIcon className="size-4" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
               </td>
             </tr>
@@ -1283,6 +1285,7 @@ function BackupList({
   error,
   setBackupJobs,
   onSelectActiveBackup,
+  onOpenFileManager,
 }: {
   apiUrl: string;
   token: string;
@@ -1291,9 +1294,10 @@ function BackupList({
   error: string;
   setBackupJobs: React.Dispatch<React.SetStateAction<BackupJob[]>>;
   onSelectActiveBackup?: (id: string) => void;
+  onOpenFileManager?: (profileId: string, path: string) => void;
 }) {
   const { t } = useTranslation();
-  const { formatBytes, formatDateTime } = useFormat();
+  const { formatBytes } = useFormat();
   const translateApiError = useApiError();
   const toast = useToast();
   const confirm = useConfirm();
@@ -1402,18 +1406,81 @@ function BackupList({
                 </td>
                 <td data-label={t('backup.nextSchedule')} className="px-4 py-4 text-xs text-[var(--color-text-secondary)]">
                   <div className="font-medium text-[var(--color-text-primary)]">{formatCronHuman(job.cron_expression, t)}</div>
-                  <div className="mt-1 text-[10px] text-[var(--color-text-muted)] font-mono">{job.timezone} · {job.cron_expression}{job.last_run_at ? ` · ${formatDateTime(job.last_run_at)}` : ''}</div>
                 </td>
-                <td data-label={t('migrations.actions')} className="px-4 py-4 text-right">
-                  <div className="flex justify-end gap-2">
-                    <button type="button" onClick={() => void handleAction(job, 'run')} disabled={running || controlLoading !== null} className="ui-button-secondary px-3 py-2 text-xs disabled:opacity-40">{controlLoading === `${job.id}:run` ? <ArrowPathIcon className="size-4 animate-spin" /> : t('backup.run')}</button>
-                    {onSelectActiveBackup ? (
-                      <button type="button" onClick={() => onSelectActiveBackup(job.id)} className="ui-button-secondary px-3 py-2 text-xs">{t('backup.dashboardTitle')}</button>
-                    ) : (
-                      <button type="button" onClick={() => setBrowseJobID(job.id)} className="ui-button-secondary px-3 py-2 text-xs">{t('backup.browseSnapshots')}</button>
+                <td data-label={t('migrations.actions')} className="px-4 py-4 text-right whitespace-nowrap">
+                  <div className="flex justify-end items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void handleAction(job, 'run')}
+                      disabled={running || controlLoading !== null}
+                      className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
+                      aria-label={t('backup.run')}
+                      title={t('backup.run')}
+                    >
+                      {controlLoading === `${job.id}:run` ? (
+                        <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <ArrowPathIcon className="size-4" aria-hidden="true" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleAction(job, isPaused ? 'resume' : 'pause')}
+                      disabled={controlLoading !== null || (!isPaused && !['IDLE', 'FAILED', 'QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status))}
+                      className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)] disabled:opacity-30"
+                      aria-label={pauseLabel}
+                      title={pauseLabel}
+                    >
+                      {controlLoading?.startsWith(`${job.id}:pause`) || controlLoading?.startsWith(`${job.id}:resume`) ? (
+                        <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                      ) : isPaused ? (
+                        <PlayIcon className="size-4" aria-hidden="true" />
+                      ) : (
+                        <PauseIcon className="size-4" aria-hidden="true" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDelete(job)}
+                      disabled={controlLoading !== null || job.status === 'DELETING'}
+                      className="ui-button-secondary p-2 text-[var(--color-error-text)] hover:bg-[var(--color-error-bg)] disabled:opacity-30"
+                      aria-label={t('backup.deleteRepository')}
+                      title={t('backup.deleteRepository')}
+                    >
+                      {controlLoading === `${job.id}:delete` ? (
+                        <ArrowPathIcon className="size-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <TrashIcon className="size-4" aria-hidden="true" />
+                      )}
+                    </button>
+                    {job.source_profile_id && onOpenFileManager && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenFileManager(job.source_profile_id!, commonParentPath(job.selected_paths));
+                        }}
+                        className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)]"
+                        aria-label={t('files.openSource')}
+                        title={t('files.openSource')}
+                      >
+                        <CloudArrowDownIcon className="size-4" aria-hidden="true" />
+                      </button>
                     )}
-                    <button type="button" onClick={() => void handleAction(job, isPaused ? 'resume' : 'pause')} disabled={controlLoading !== null || (!isPaused && !['IDLE', 'FAILED', 'QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status))} className="ui-button-secondary px-3 py-2 text-xs disabled:opacity-40" aria-label={pauseLabel} title={pauseLabel}>{controlLoading?.startsWith(`${job.id}:`) ? <ArrowPathIcon className="size-4 animate-spin" /> : isPaused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />}</button>
-                    <button type="button" onClick={() => void handleDelete(job)} disabled={controlLoading !== null || job.status === 'DELETING'} className="ui-button-secondary px-3 py-2 text-xs text-[var(--color-error-text)] disabled:opacity-40">{t('backup.deleteRepository')}</button>
+                    {job.target_profile_id && onOpenFileManager && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onOpenFileManager(job.target_profile_id!, job.target_dir || '/');
+                        }}
+                        className="ui-button-secondary p-2 hover:bg-[var(--color-bg-tertiary)]"
+                        aria-label={t('files.openTarget')}
+                        title={t('files.openTarget')}
+                      >
+                        <CloudArrowUpIcon className="size-4" aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
