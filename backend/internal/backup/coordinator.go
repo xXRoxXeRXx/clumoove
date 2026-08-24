@@ -1328,11 +1328,19 @@ func scanFiles(ctx context.Context, source storage.StorageProvider, selected []s
 		if err != nil {
 			return nil, nil, runStats{}, err
 		}
+		canonicalCurrentDir := canonicalBackupScanPath(currentDir)
 		for _, child := range children {
 			if err := safeRemotePath(child.Path); err != nil {
 				return nil, nil, runStats{}, err
 			}
-			if child.Path == currentDir || !isBackupPathWithin(currentDir, child.Path) {
+			canonicalChildPath := canonicalBackupScanPath(child.Path)
+			// A DAV Depth:1 response may include the requested collection itself,
+			// sometimes with a trailing slash. It is not a descendant and must not
+			// be queued again.
+			if canonicalChildPath == canonicalCurrentDir {
+				continue
+			}
+			if !isBackupPathWithin(canonicalCurrentDir, canonicalChildPath) {
 				return nil, nil, runStats{}, errors.New("backup listing returned a non-child path")
 			}
 			if isBackupPathWithin(excludedRoot, child.Path) {
@@ -1398,6 +1406,13 @@ func isBackupPathWithin(root, candidate string) bool {
 		return false
 	}
 	return root == "/" || candidate == root || strings.HasPrefix(candidate, root+"/")
+}
+
+// canonicalBackupScanPath keeps listing validation stable across providers that
+// represent collections with or without a trailing slash. It is used only for
+// comparisons; the provider-supplied path is retained for subsequent I/O.
+func canonicalBackupScanPath(value string) string {
+	return path.Clean(value)
 }
 
 func repositoryPath(root string, parts ...string) (string, error) {

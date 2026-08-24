@@ -334,16 +334,18 @@ type mockFileRecord struct {
 }
 
 type mockTrackedSource struct {
-	files          map[string]mockFileRecord
-	downloadCounts map[string]int
-	inspectCounts  map[string]int
+	files            map[string]mockFileRecord
+	downloadCounts   map[string]int
+	inspectCounts    map[string]int
+	listingOverrides map[string][]storage.CloudResource
 }
 
 func newMockTrackedSource() *mockTrackedSource {
 	return &mockTrackedSource{
-		files:          make(map[string]mockFileRecord),
-		downloadCounts: make(map[string]int),
-		inspectCounts:  make(map[string]int),
+		files:            make(map[string]mockFileRecord),
+		downloadCounts:   make(map[string]int),
+		inspectCounts:    make(map[string]int),
+		listingOverrides: make(map[string][]storage.CloudResource),
 	}
 }
 
@@ -403,6 +405,9 @@ func (m *mockTrackedSource) VerificationMode() storage.VerificationMode {
 	return storage.VerificationCryptographicHash
 }
 func (m *mockTrackedSource) GetDirectoryListing(ctx context.Context, resourceType, dirPath string) ([]storage.CloudResource, error) {
+	if entries, ok := m.listingOverrides[dirPath]; ok {
+		return entries, nil
+	}
 	var results []storage.CloudResource
 	cleanDir := path.Clean(dirPath)
 	for p, rec := range m.files {
@@ -598,6 +603,31 @@ func TestScanFilesAvoidsRedundantInspectCalls(t *testing.T) {
 	}
 	if inspectCalls := source.inspectCounts["/root/sub/file1.txt"]; inspectCalls != 0 {
 		t.Errorf("InspectResource(/root/sub/file1.txt) = %d, want 0", inspectCalls)
+	}
+}
+
+func TestScanFilesSkipsDirectorySelfReferenceWithTrailingSlash(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 24, 19, 56, 0, 0, time.UTC)
+	source := newMockTrackedSource()
+	source.files["/root"] = mockFileRecord{isDir: true, mtime: now}
+	source.listingOverrides["/root"] = []storage.CloudResource{
+		{Path: "/root/", IsDir: true, LastModified: now},
+		{Path: "/root/file.txt", Size: 4, LastModified: now},
+	}
+
+	files, dirs, stats, err := scanFiles(ctx, source, []string{"/root"}, "")
+	if err != nil {
+		t.Fatalf("scanFiles() error = %v", err)
+	}
+	if len(files) != 1 || files[0].sourcePath != "/root/file.txt" {
+		t.Fatalf("files = %#v, want one child file", files)
+	}
+	if len(dirs) != 1 || dirs[0].relativePath != "root" {
+		t.Fatalf("directories = %#v, want only root", dirs)
+	}
+	if stats.totalFiles != 1 || stats.totalDirs != 1 {
+		t.Fatalf("stats = %#v, want one file and one directory", stats)
 	}
 }
 
