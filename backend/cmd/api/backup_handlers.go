@@ -679,6 +679,10 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		writeValidationError(w, ErrFolderPathInvalid)
 		return
 	}
+	if sameBackupConnection(source, target) && anyBackupPathOverlaps(paths, targetDir) {
+		writeValidationError(w, ErrBackupSourceTargetOverlap)
+		return
+	}
 	if err := scheduler.ValidateCronExpression(req.CronExpression); err != nil {
 		writeValidationError(w, ErrBackupCronInvalid)
 		return
@@ -707,14 +711,14 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = tx.QueryRowContext(r.Context(), `WITH repository AS (SELECT gen_random_uuid() AS id)
 			INSERT INTO backup_jobs (user_id, source_profile_id, target_profile_id, source_url, source_username, source_password_encrypted,
-				source_refresh_token_encrypted, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
-				target_url, target_username, target_password_encrypted, target_refresh_token_encrypted, target_mega_session_id_encrypted,
+				source_refresh_token_encrypted, source_token_expires_at, source_mega_session_id_encrypted, source_mega_master_key_encrypted,
+				target_url, target_username, target_password_encrypted, target_refresh_token_encrypted, target_token_expires_at, target_mega_session_id_encrypted,
 				target_mega_master_key_encrypted, source_provider, target_provider, selected_paths, target_dir, repository_id, repository_root,
 				cron_expression, timezone, retention_count, threads)
-			SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, repository.id,
-				$19 || '/.clumoove-backup/' || repository.id::text, $20, $21, $22, $23 FROM repository RETURNING id`,
-			userID, req.SourceProfileID, req.TargetProfileID, source.URL, source.Username, source.PasswordEncrypted, nullableEncrypted(source.RefreshTokenEncrypted), nullableEncrypted(source.MegaSessionIDEncrypted), nullableEncrypted(source.MegaMasterKeyEncrypted),
-			target.URL, target.Username, target.PasswordEncrypted, nullableEncrypted(target.RefreshTokenEncrypted), nullableEncrypted(target.MegaSessionIDEncrypted), nullableEncrypted(target.MegaMasterKeyEncrypted), source.Provider, target.Provider, db.StringArray(paths), targetDir,
+			SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, repository.id,
+				$21 || '/.clumoove-backup/' || repository.id::text, $22, $23, $24, $25 FROM repository RETURNING id`,
+			userID, req.SourceProfileID, req.TargetProfileID, source.URL, source.Username, source.PasswordEncrypted, nullableEncrypted(source.RefreshTokenEncrypted), source.TokenExpiresAt, nullableEncrypted(source.MegaSessionIDEncrypted), nullableEncrypted(source.MegaMasterKeyEncrypted),
+			target.URL, target.Username, target.PasswordEncrypted, nullableEncrypted(target.RefreshTokenEncrypted), target.TokenExpiresAt, nullableEncrypted(target.MegaSessionIDEncrypted), nullableEncrypted(target.MegaMasterKeyEncrypted), source.Provider, target.Provider, db.StringArray(paths), targetDir,
 			req.CronExpression, req.Timezone, req.RetentionCount, req.Threads).Scan(&id)
 	}
 	if err == nil {
@@ -736,6 +740,34 @@ func (s *APIServer) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 
 func nullableEncrypted(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: value != ""}
+}
+
+// sameBackupConnection conservatively identifies two saved profiles that point
+// at the same account. Credentials are deliberately not used for this check.
+func sameBackupConnection(source, target *db.ConnectionProfile) bool {
+	if source.ID != "" && source.ID == target.ID {
+		return true
+	}
+	if oauth.IsProvider(source.Provider) || oauth.IsProvider(target.Provider) {
+		return strings.EqualFold(source.Provider, target.Provider) && source.OAuthUser != "" &&
+			strings.EqualFold(source.OAuthUser, target.OAuthUser)
+	}
+	return strings.EqualFold(source.Provider, target.Provider) &&
+		strings.EqualFold(strings.TrimRight(source.URL, "/"), strings.TrimRight(target.URL, "/")) &&
+		strings.EqualFold(strings.TrimSpace(source.Username), strings.TrimSpace(target.Username))
+}
+
+func anyBackupPathOverlaps(selected []string, targetDir string) bool {
+	for _, selectedPath := range selected {
+		if backupPathContains(selectedPath, targetDir) || backupPathContains(targetDir, selectedPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func backupPathContains(parent, candidate string) bool {
+	return parent == "/" || candidate == parent || strings.HasPrefix(candidate, parent+"/")
 }
 
 func (s *APIServer) handleCreateBackupVerify(w http.ResponseWriter, r *http.Request) {
@@ -1355,4 +1387,3 @@ func (s *APIServer) handleBackupStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-

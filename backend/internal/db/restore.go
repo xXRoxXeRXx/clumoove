@@ -1311,4 +1311,3 @@ func GetExpiringOAuthRestoreRuns(database *sql.DB) ([]ExpiringOAuthRestoreRun, e
 	}
 	return result, rows.Err()
 }
-

@@ -208,10 +208,10 @@ func (m *mockBackupTarget) FileExists(ctx context.Context, resourceType, filePat
 
 func TestEnsureDedicatedTarget(t *testing.T) {
 	const (
-		targetDir    = "/backups"
-		repoID       = "38256494-2dce-416a-b4fd-46f5b25de01c"
-		container    = "/backups/.clumoove-backup"
-		repoRoot     = "/backups/.clumoove-backup/38256494-2dce-416a-b4fd-46f5b25de01c"
+		targetDir = "/backups"
+		repoID    = "38256494-2dce-416a-b4fd-46f5b25de01c"
+		container = "/backups/.clumoove-backup"
+		repoRoot  = "/backups/.clumoove-backup/38256494-2dce-416a-b4fd-46f5b25de01c"
 	)
 
 	t.Run("empty target directory succeeds", func(t *testing.T) {
@@ -574,7 +574,7 @@ func TestScanFilesAvoidsRedundantInspectCalls(t *testing.T) {
 	source.files["/root/sub/file2.txt"] = mockFileRecord{data: []byte("file2-longer"), mtime: now}
 	source.files["/root/standalone.txt"] = mockFileRecord{data: []byte("standalone"), mtime: now}
 
-	files, dirs, stats, err := scanFiles(ctx, source, []string{"/root"})
+	files, dirs, stats, err := scanFiles(ctx, source, []string{"/root"}, "")
 	if err != nil {
 		t.Fatalf("scanFiles() error = %v", err)
 	}
@@ -618,13 +618,13 @@ type catalogMockRow struct {
 }
 
 type mockCatalogDriverState struct {
-	rows            []catalogMockRow
-	queryExecuted   string
-	beginCount      int
-	commitCount     int
-	rollbackCount   int
-	prepStatements  []string
-	execCount       int
+	rows           []catalogMockRow
+	queryExecuted  string
+	beginCount     int
+	commitCount    int
+	rollbackCount  int
+	prepStatements []string
+	execCount      int
 }
 
 func newMockCatalogTestDB(t *testing.T, rows []catalogMockRow) (*sql.DB, *mockCatalogDriverState) {
@@ -679,7 +679,7 @@ type mockCatalogStmt struct {
 	query string
 }
 
-func (s *mockCatalogStmt) Close() error { return nil }
+func (s *mockCatalogStmt) Close() error  { return nil }
 func (s *mockCatalogStmt) NumInput() int { return -1 }
 func (s *mockCatalogStmt) Exec(args []driver.Value) (driver.Result, error) {
 	s.state.execCount++

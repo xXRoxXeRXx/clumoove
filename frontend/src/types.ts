@@ -133,7 +133,6 @@ export interface SyncJob {
   error_message: string | null;
   created_at: string;
 }
-
 export interface BackupJob {
   id: string;
   status: string;

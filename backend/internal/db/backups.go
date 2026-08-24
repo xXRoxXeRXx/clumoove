@@ -210,6 +210,32 @@ func UpdateBackupRepositoryOAuthTokens(ctx context.Context, database *sql.DB, ba
 	return nil
 }
 
+// UpdateBackupJobOAuthTokens conditionally rotates either credential snapshot.
+// The role is fixed to an allowlist so column names never derive from input.
+func UpdateBackupJobOAuthTokens(ctx context.Context, database *sql.DB, backupJobID, role, accessEncrypted, refreshEncrypted string, expiresAt time.Time, expectedRefreshEncrypted string) error {
+	if expectedRefreshEncrypted == "" {
+		return ErrOAuthTokenConflict
+	}
+	if role == "target" {
+		return UpdateBackupRepositoryOAuthTokens(ctx, database, backupJobID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
+	}
+	if role != "source" {
+		return ErrOAuthTokenConflict
+	}
+	result, err := database.ExecContext(ctx, `UPDATE backup_jobs SET source_password_encrypted = $2, source_refresh_token_encrypted = $3, source_token_expires_at = $4 WHERE id = $1 AND source_refresh_token_encrypted = $5 AND deletion_state = 'ACTIVE'`, backupJobID, accessEncrypted, refreshEncrypted, expiresAt, expectedRefreshEncrypted)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return ErrOAuthTokenConflict
+	}
+	return nil
+}
+
 func UpdateBackupRepositoryMegaSessionContext(ctx context.Context, database *sql.DB, backupJobID, sessionIDEncrypted, masterKeyEncrypted string) error {
 	_, err := database.ExecContext(ctx, `UPDATE backup_jobs SET target_mega_session_id_encrypted = $2, target_mega_master_key_encrypted = $3 WHERE id = $1 AND deletion_state = 'ACTIVE'`, backupJobID, nullableBackupString(sessionIDEncrypted), nullableBackupString(masterKeyEncrypted))
 	return err
@@ -507,6 +533,77 @@ const (
 type BackupPassClaim struct {
 	Outcome BackupClaimOutcome
 	Run     *BackupRun
+}
+
+// RecoverStaleBackupRunsContext fails abandoned active passes so a crashed
+// worker cannot permanently block later manual or scheduled runs. Active
+// workers renew their heartbeat while executing; recovery only affects a pass
+// that has been silent for ten minutes and still owns the job generation.
+func RecoverStaleBackupRunsContext(ctx context.Context, database *sql.DB) (int, error) {
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin stale backup recovery: %w", err)
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `UPDATE backup_runs r SET state = 'FAILED', error_code = 'BACKUP_RUN_RECOVERED', finished_at = CURRENT_TIMESTAMP
+		WHERE r.state IN ('SCANNING', 'RUNNING', 'VERIFYING') AND r.updated_at < CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+		AND EXISTS (SELECT 1 FROM backup_jobs j WHERE j.id = r.backup_job_id AND j.run_generation = r.generation AND j.status IN ('SCANNING', 'RUNNING', 'VERIFYING'))
+		RETURNING r.id, r.backup_job_id, r.generation`)
+	if err != nil {
+		return 0, fmt.Errorf("recover stale backup runs: %w", err)
+	}
+	defer rows.Close()
+	type recoveredRun struct {
+		id, jobID  string
+		generation int
+	}
+	var recovered []recoveredRun
+	for rows.Next() {
+		var run recoveredRun
+		if err := rows.Scan(&run.id, &run.jobID, &run.generation); err != nil {
+			return 0, fmt.Errorf("scan stale backup run: %w", err)
+		}
+		recovered = append(recovered, run)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate stale backup runs: %w", err)
+	}
+	for _, run := range recovered {
+		if _, err := tx.ExecContext(ctx, `UPDATE backup_jobs SET status = 'FAILED', error_code = 'BACKUP_RUN_RECOVERED', last_run_status = 'FAILED', last_run_at = CURRENT_TIMESTAMP WHERE id = $1 AND run_generation = $2 AND status IN ('SCANNING', 'RUNNING', 'VERIFYING')`, run.jobID, run.generation); err != nil {
+			return 0, fmt.Errorf("fail recovered backup job: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM backup_snapshots WHERE backup_job_id = $1 AND backup_run_id = $2 AND state = 'PUBLISHING'`, run.jobID, run.id); err != nil {
+			return 0, fmt.Errorf("discard recovered backup snapshot: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit stale backup recovery: %w", err)
+	}
+	return len(recovered), nil
+}
+
+// TouchBackupRunContext renews an active run's liveness heartbeat. The job and
+// generation predicates prevent an obsolete worker from masking a newer pass.
+func TouchBackupRunContext(ctx context.Context, database *sql.DB, jobID string, generation int, runID string) error {
+	_, err := database.ExecContext(ctx, `UPDATE backup_runs r SET updated_at = CURRENT_TIMESTAMP WHERE r.id = $1 AND r.backup_job_id = $2 AND r.generation = $3 AND r.state IN ('SCANNING', 'RUNNING', 'VERIFYING') AND EXISTS (SELECT 1 FROM backup_jobs j WHERE j.id = r.backup_job_id AND j.run_generation = r.generation AND j.status IN ('SCANNING', 'RUNNING', 'VERIFYING'))`, runID, jobID, generation)
+	return err
+}
+
+// BackupProfilesSameOAuthAccountContext uses the provider-recorded account ID
+// rather than empty OAuth usernames when deciding whether a source is also the
+// repository account. Deleted profiles deliberately return false; persisted
+// URL/username fallback remains available to callers for legacy jobs.
+func BackupProfilesSameOAuthAccountContext(ctx context.Context, database *sql.DB, sourceProfileID, targetProfileID sql.NullString) (bool, error) {
+	if !sourceProfileID.Valid || !targetProfileID.Valid {
+		return false, nil
+	}
+	var same bool
+	err := database.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM connection_profiles source JOIN connection_profiles target ON target.id = $2
+		WHERE source.id = $1 AND LOWER(source.provider) = LOWER(target.provider)
+			AND source.oauth_user <> '' AND LOWER(source.oauth_user) = LOWER(target.oauth_user)
+	)`, sourceProfileID.String, targetProfileID.String).Scan(&same)
+	return same, err
 }
 
 // BackupScheduleInfo is the minimal scheduler-facing view of a backup job. It

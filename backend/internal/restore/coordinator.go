@@ -450,11 +450,11 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 		return fmt.Errorf("load restore connections: %w", err)
 	}
 	repository, err := db.GetBackupRepositoryConnectionContext(ctx, c.db, backupJobID)
+	if err != nil { return err }
+	repository.PasswordEncrypted, err = c.ensureFreshRepositoryOAuthToken(ctx, repository)
 	if err != nil {
 		return err
 	}
-	repository.PasswordEncrypted, err = c.ensureFreshRepositoryOAuthToken(ctx, repository)
-	if err != nil { return err }
 	if targetPasswordEncrypted == "" && targetProviderType != "local" {
 		return errors.New("restore target credential snapshot is unavailable")
 	}
@@ -559,11 +559,6 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 			return db.SkipRestoreItemContext(ctx, c.db, item.ID, item.RestoreRunID, "RESTORE_TARGET_EXISTS", item.ClaimEpoch)
 		case "OVERWRITE":
 			overwriteExisting = true
-			if !targetProvider.SupportsAtomicRename() {
-				if err := targetProvider.DeleteFile(ctx, "files", item.TargetPath); err != nil {
-					return err
-				}
-			}
 		case "RENAME":
 			original := item.TargetPath
 			for suffix := 1; suffix <= 100; suffix++ {
@@ -663,8 +658,8 @@ func (c *Coordinator) restoreItem(ctx context.Context, item *db.RestoreItem) err
 			return err
 		}
 	}
-	_, size, err := targetProvider.FileExists(ctx, "files", item.TargetPath)
-	if err != nil || size != item.SizeBytes {
+	exists, size, err := targetProvider.FileExists(ctx, "files", item.TargetPath)
+	if err != nil || !exists || size != item.SizeBytes {
 		return errors.New("restore target size verification failed")
 	}
 	verificationKind := "SIZE_VERIFIED"

@@ -35,12 +35,13 @@ type ProviderFactoryFunc func(ctx context.Context, job *db.BackupJob) (storage.S
 // Coordinator owns only backup worker execution. Its pack semaphore is process
 // scoped, preventing independently claimed jobs from exhausting memory/network.
 type Coordinator struct {
-	db              *sql.DB
-	encryptionKey   string
-	packWriterSlots chan struct{}
-	packReaderSlots *restore.PackReaderLimiter
-	workerID        string
-	providerFactory ProviderFactoryFunc
+	db                *sql.DB
+	encryptionKey     string
+	packWriterSlots   chan struct{}
+	packReaderSlots   *restore.PackReaderLimiter
+	workerID          string
+	providerFactory   ProviderFactoryFunc
+	preferMaintenance bool
 }
 
 // backupRunLogger supplies the stable correlation fields used by every
@@ -104,13 +105,24 @@ func (c *Coordinator) SetProviderFactory(factory ProviderFactoryFunc) {
 // PollOnce claims and executes at most one queued run. Callers can invoke it
 // from their existing worker poll loop without creating another scheduler.
 func (c *Coordinator) PollOnce(ctx context.Context) (bool, error) {
+	if _, err := db.RecoverStaleBackupRunsContext(ctx, c.db); err != nil {
+		return false, err
+	}
+	if c.preferMaintenance {
+		c.preferMaintenance = false
+		if claimed, err := c.pollMaintenance(ctx); err != nil || claimed {
+			return claimed, err
+		}
+	}
 	job, run, err := db.ClaimNextQueuedBackupRunContext(ctx, c.db)
 	if err != nil {
 		return false, err
 	}
 	if run == nil {
+		c.preferMaintenance = true
 		return c.pollMaintenance(ctx)
 	}
+	c.preferMaintenance = true
 	logger := backupRunLogger(ctx, job, run)
 	logger.Info("backup_run_claimed", slog.String("trigger", run.Trigger))
 	conn, err := c.db.Conn(ctx)
@@ -355,6 +367,9 @@ func (c *Coordinator) applyRetention(ctx context.Context, job *db.BackupJob, tar
 			return err
 		}
 	}
+	if len(packs) == 1000 {
+		return db.EnqueueBackupMaintenanceContext(ctx, c.db, job.ID, "RETENTION")
+	}
 	candidate, err := db.FindBackupCompactionCandidateContext(ctx, c.db, job.ID)
 	if err != nil {
 		return err
@@ -519,17 +534,45 @@ func (c *Coordinator) Run(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		return errors.New("backup poll interval must be positive")
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	retryDelay := interval
+	if retryDelay > time.Second {
+		retryDelay = time.Second
+	}
 	for {
-		if _, err := c.PollOnce(ctx); err != nil && ctx.Err() == nil {
-			return err
+		if _, err := c.PollOnce(ctx); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			slog.Default().Warn("backup_poll_failed", slog.Any("error", err), slog.Duration("retry_delay", retryDelay))
+			if !waitForBackupPoll(ctx, retryDelay) {
+				return ctx.Err()
+			}
+			if retryDelay < 30*time.Second {
+				retryDelay *= 2
+				if retryDelay > 30*time.Second {
+					retryDelay = 30 * time.Second
+				}
+			}
+			continue
 		}
-		select {
-		case <-ctx.Done():
+		retryDelay = interval
+		if retryDelay > time.Second {
+			retryDelay = time.Second
+		}
+		if !waitForBackupPoll(ctx, interval) {
 			return ctx.Err()
-		case <-ticker.C:
 		}
+	}
+}
+
+func waitForBackupPoll(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
@@ -557,6 +600,13 @@ type runStats struct {
 }
 
 func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.BackupRun) {
+	heartbeatCtx, cancelHeartbeat := context.WithCancel(ctx)
+	heartbeatDone := make(chan struct{})
+	go c.heartbeatRun(heartbeatCtx, job, run, heartbeatDone)
+	defer func() {
+		cancelHeartbeat()
+		<-heartbeatDone
+	}()
 	logger := backupRunLogger(ctx, job, run)
 	logger.Info("backup_run_started",
 		slog.String("source_provider", job.SourceProvider),
@@ -602,7 +652,16 @@ func (c *Coordinator) execute(ctx context.Context, job *db.BackupJob, run *db.Ba
 		return
 	}
 	logger.Info("backup_repository_validated")
-	files, directories, stats, err := scanFiles(ctx, source, job.SelectedPaths)
+	excludedRoot := ""
+	sameConnection, err := c.sameBackupConnection(ctx, job)
+	if err != nil {
+		c.fail(ctx, job, run, "BACKUP_CONNECTION_FAILED", err)
+		return
+	}
+	if sameConnection {
+		excludedRoot = job.RepositoryRoot
+	}
+	files, directories, stats, err := scanFiles(ctx, source, job.SelectedPaths, excludedRoot)
 	if err != nil {
 		c.finishOrFail(ctx, job, run, "SCANNING", err, stats)
 		return
@@ -855,6 +914,22 @@ func (c *Coordinator) runActive(ctx context.Context, job *db.BackupJob, run *db.
 	return true
 }
 
+func (c *Coordinator) heartbeatRun(ctx context.Context, job *db.BackupJob, run *db.BackupRun, done chan<- struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := db.TouchBackupRunContext(ctx, c.db, job.ID, run.Generation, run.ID); err != nil && ctx.Err() == nil {
+				backupRunLogger(ctx, job, run).Warn("backup_run_heartbeat_failed", observability.Error(err), slog.String("error_kind", observability.ErrorKind(err)))
+			}
+		}
+	}
+}
+
 func ensureDedicatedTarget(ctx context.Context, target storage.StorageProvider, targetDir, repositoryID string) error {
 	entries, err := target.GetDirectoryListing(ctx, "files", targetDir)
 	if err != nil {
@@ -889,6 +964,12 @@ func (c *Coordinator) providers(ctx context.Context, job *db.BackupJob) (storage
 }
 
 func (c *Coordinator) defaultProviders(ctx context.Context, job *db.BackupJob) (storage.StorageProvider, storage.StorageProvider, error) {
+	if err := c.ensureFreshOAuthToken(ctx, job, "source"); err != nil {
+		return nil, nil, err
+	}
+	if err := c.ensureFreshOAuthToken(ctx, job, "target"); err != nil {
+		return nil, nil, err
+	}
 	sourceBytes, err := crypto.DecryptBytesWithDomain(job.SourcePasswordEncrypted, c.encryptionKey, crypto.ConnectionCredentialDomain(oauth.IsProvider(job.SourceProvider)))
 	if err != nil {
 		return nil, nil, err
@@ -917,6 +998,56 @@ func (c *Coordinator) defaultProviders(ctx context.Context, job *db.BackupJob) (
 		return nil, nil, err
 	}
 	return source, target, nil
+}
+
+func (c *Coordinator) ensureFreshOAuthToken(ctx context.Context, job *db.BackupJob, role string) error {
+	provider := job.SourceProvider
+	accessEncrypted := &job.SourcePasswordEncrypted
+	refreshEncrypted := &job.SourceRefreshTokenEncrypted
+	expiresAt := &job.SourceTokenExpiresAt
+	if role == "target" {
+		provider = job.TargetProvider
+		accessEncrypted = &job.TargetPasswordEncrypted
+		refreshEncrypted = &job.TargetRefreshTokenEncrypted
+		expiresAt = &job.TargetTokenExpiresAt
+	}
+	if !oauth.IsProvider(provider) || (expiresAt.Valid && time.Now().Before(expiresAt.Time.Add(-2*time.Minute))) {
+		return nil
+	}
+	if !refreshEncrypted.Valid || refreshEncrypted.String == "" {
+		return errors.New("backup OAuth refresh credential is unavailable")
+	}
+	refresh, err := crypto.DecryptWithDomain(refreshEncrypted.String, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+	if err != nil {
+		return fmt.Errorf("decrypt backup OAuth refresh token: %w", err)
+	}
+	defer crypto.ZeroString(&refresh)
+	refreshCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	token, err := oauth.RefreshToken(refreshCtx, provider, refresh)
+	cancel()
+	if err != nil {
+		return fmt.Errorf("refresh backup OAuth token: %w", err)
+	}
+	access, err := crypto.EncryptWithDomain(token.AccessToken, c.encryptionKey, crypto.DomainOAuthAccessToken)
+	if err != nil {
+		return err
+	}
+	rotatedRefresh, err := crypto.EncryptWithDomain(token.RefreshToken, c.encryptionKey, crypto.DomainOAuthRefreshToken)
+	if err != nil {
+		return err
+	}
+	expiresIn := token.ExpiresIn
+	if expiresIn <= 0 {
+		expiresIn = 3600
+	}
+	newExpiry := time.Now().Add(time.Duration(expiresIn) * time.Second)
+	if err := db.UpdateBackupJobOAuthTokens(ctx, c.db, job.ID, role, access, rotatedRefresh, newExpiry, refreshEncrypted.String); err != nil {
+		return fmt.Errorf("persist backup OAuth token: %w", err)
+	}
+	*accessEncrypted = access
+	*refreshEncrypted = sql.NullString{String: rotatedRefresh, Valid: true}
+	*expiresAt = sql.NullTime{Time: newExpiry, Valid: true}
+	return nil
 }
 
 func (c *Coordinator) backupFile(ctx context.Context, job *db.BackupJob, source storage.StorageProvider, file scannedFile, stats *runStats, builder *packBuilder) (pendingFile, bool, error) {
@@ -1129,7 +1260,7 @@ func ensureFormat(ctx context.Context, target storage.StorageProvider, root, rep
 	return nil
 }
 
-func scanFiles(ctx context.Context, source storage.StorageProvider, selected []string) ([]scannedFile, []scannedDirectory, runStats, error) {
+func scanFiles(ctx context.Context, source storage.StorageProvider, selected []string, excludedRoot string) ([]scannedFile, []scannedDirectory, runStats, error) {
 	files := make([]scannedFile, 0)
 	directories := make([]scannedDirectory, 0)
 	seen := make(map[string]struct{})
@@ -1142,12 +1273,18 @@ func scanFiles(ctx context.Context, source storage.StorageProvider, selected []s
 		if err := safeRemotePath(root); err != nil {
 			return nil, nil, runStats{}, err
 		}
+		if isBackupPathWithin(excludedRoot, root) {
+			continue
+		}
 		resource, err := source.InspectResource(ctx, "files", root)
 		if err != nil {
 			return nil, nil, runStats{}, err
 		}
 		if err := safeRemotePath(resource.Path); err != nil {
 			return nil, nil, runStats{}, err
+		}
+		if isBackupPathWithin(excludedRoot, resource.Path) {
+			continue
 		}
 		if resource.IsDir {
 			if _, ok := seen["d:"+resource.Path]; !ok {
@@ -1195,6 +1332,12 @@ func scanFiles(ctx context.Context, source storage.StorageProvider, selected []s
 			if err := safeRemotePath(child.Path); err != nil {
 				return nil, nil, runStats{}, err
 			}
+			if child.Path == currentDir || !isBackupPathWithin(currentDir, child.Path) {
+				return nil, nil, runStats{}, errors.New("backup listing returned a non-child path")
+			}
+			if isBackupPathWithin(excludedRoot, child.Path) {
+				continue
+			}
 			if child.IsDir {
 				if _, ok := seen["d:"+child.Path]; ok {
 					continue
@@ -1233,6 +1376,28 @@ func scanFiles(ctx context.Context, source storage.StorageProvider, selected []s
 		stats.totalBytes += file.size
 	}
 	return files, directories, stats, nil
+}
+
+func (c *Coordinator) sameBackupConnection(ctx context.Context, job *db.BackupJob) (bool, error) {
+	if job.SourceProfileID.Valid && job.TargetProfileID.Valid && job.SourceProfileID.String == job.TargetProfileID.String {
+		return true, nil
+	}
+	if oauth.IsProvider(job.SourceProvider) || oauth.IsProvider(job.TargetProvider) {
+		same, err := db.BackupProfilesSameOAuthAccountContext(ctx, c.db, job.SourceProfileID, job.TargetProfileID)
+		if err != nil || same {
+			return same, err
+		}
+	}
+	return strings.EqualFold(job.SourceProvider, job.TargetProvider) &&
+		strings.EqualFold(strings.TrimRight(job.SourceURL, "/"), strings.TrimRight(job.TargetURL, "/")) &&
+		strings.EqualFold(strings.TrimSpace(job.SourceUsername), strings.TrimSpace(job.TargetUsername)), nil
+}
+
+func isBackupPathWithin(root, candidate string) bool {
+	if root == "" {
+		return false
+	}
+	return root == "/" || candidate == root || strings.HasPrefix(candidate, root+"/")
 }
 
 func repositoryPath(root string, parts ...string) (string, error) {

@@ -32,7 +32,6 @@ func TestValidateByteRange(t *testing.T) {
 		}
 	}
 }
-
 func TestValidateHTTPRangeResponse(t *testing.T) {
 	payload := []byte("hello world")
 
@@ -148,4 +147,3 @@ func TestValidateHTTPRangeResponse(t *testing.T) {
 		t.Fatal("expected error for malformed Content-Range, got nil")
 	}
 }
-

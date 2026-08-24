@@ -735,6 +735,7 @@
     "BACKUP_TIMEZONE_INVALID": "The backup timezone is invalid.",
     "BACKUP_RETENTION_INVALID": "Backup retention must be between 1 and 365 snapshots.",
     "BACKUP_PATHS_INVALID": "Select non-overlapping absolute source paths.",
+    "BACKUP_SOURCE_TARGET_OVERLAP": "The backup source cannot include its repository folder.",
     "IMMICH_BACKUP_UNSUPPORTED": "Immich cannot be used for backups.",
     "BACKUP_LOCK_UNAVAILABLE": "The backup could not acquire its execution lock. Please try again.",
     "BACKUP_FILES_UNSUPPORTED": "The selected source or target does not support file backups.",

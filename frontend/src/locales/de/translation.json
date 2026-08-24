@@ -735,6 +735,7 @@
     "BACKUP_TIMEZONE_INVALID": "Die Backup-Zeitzone ist ungültig.",
     "BACKUP_RETENTION_INVALID": "Die Backup-Aufbewahrung muss zwischen 1 und 365 Sicherungen liegen.",
     "BACKUP_PATHS_INVALID": "Wähle nicht überlappende absolute Quellpfade aus.",
+    "BACKUP_SOURCE_TARGET_OVERLAP": "Die Backup-Quelle darf ihren Repository-Ordner nicht enthalten.",
     "IMMICH_BACKUP_UNSUPPORTED": "Immich kann nicht für Backups verwendet werden.",
     "BACKUP_LOCK_UNAVAILABLE": "Die Sicherung konnte ihre Ausführungssperre nicht erhalten. Bitte versuche es erneut.",
     "BACKUP_FILES_UNSUPPORTED": "Die gewählte Quelle oder das Ziel unterstützt keine Dateisicherungen.",

@@ -225,4 +225,3 @@ export function useAppHistory(options: UseAppHistoryOptions) {
     goBack,
   };
 }
-

@@ -432,4 +432,3 @@ describe('MigrationsDashboard tabs', () => {
     expect(backupTab.textContent).toContain('2');
   });
 });
-
