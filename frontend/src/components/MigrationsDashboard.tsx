@@ -578,7 +578,7 @@ export function MigrationsDashboard({
         {/* Navigation Tabs & Controls Header */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between pb-4 gap-4">
           {/* Segmented Pill Tabs */}
-          <div className="flex w-full max-w-full items-center gap-1 border-b border-[var(--color-border)] overflow-x-auto pb-0.5 sm:pb-0 -mb-px" role="tablist" aria-label={t('migrations.title')}>
+          <div className="flex w-full max-w-full items-center gap-1 border-b border-[var(--color-border)] overflow-x-auto ui-scrollbar-none pb-0.5 sm:pb-0 -mb-px" role="tablist" aria-label={t('migrations.title')}>
             <button
                 ref={(node) => { tabRefs.current.migrations = node; }}
                 id="migrations-tab"

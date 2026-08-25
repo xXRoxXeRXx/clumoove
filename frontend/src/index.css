@@ -351,6 +351,14 @@ html {
 @utility ui-file-archive { color: var(--color-file-archive); }
 @utility ui-file-default { color: var(--color-file-default); }
 
+@utility ui-scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 body {
   min-height: 100vh;
   overflow-x: hidden;
