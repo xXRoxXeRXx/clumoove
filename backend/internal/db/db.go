@@ -198,6 +198,18 @@ func InitDB(connStr string) (*sql.DB, error) {
 			// and can fail startup after the DDL sequence completes.
 			var schemaErr error
 			log := schemaErrorLogger{logger: log.Default(), err: &schemaErr}
+
+			_, err = db.Exec(`CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql'`)
+			if err != nil {
+				log.Printf("Failed schema migration (update_updated_at_column): %v\n", err)
+			}
+
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
 				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 				email VARCHAR(255) UNIQUE NOT NULL,
