@@ -31,8 +31,9 @@ services:
       - DATABASE_URL=postgres://clumoove:${APP_PASSWORD}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${APP_PASSWORD}@redis-queue:6379
       - PORT=8000
-      - ENCRYPTION_SECRET_KEY=${APP_PASSWORD}
-      - JWT_SECRET_KEY=${APP_PASSWORD}
+      - ENCRYPTION_SECRET_KEY=enc_${APP_PASSWORD}_clumoove_encryption_key_v1
+      - JWT_SECRET_KEY=jwt_${APP_PASSWORD}_clumoove_jwt_signing_key_32bytes_v1
+      - TRUSTED_PROXY=1
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
       - ${APP_DATA_DIR}/data/storage:/clumoove
@@ -47,7 +48,7 @@ services:
     environment:
       - DATABASE_URL=postgres://clumoove:${APP_PASSWORD}@postgres-db:5432/cloud_migration_db?sslmode=disable
       - REDIS_URL=redis://:${APP_PASSWORD}@redis-queue:6379
-      - ENCRYPTION_SECRET_KEY=${APP_PASSWORD}
+      - ENCRYPTION_SECRET_KEY=enc_${APP_PASSWORD}_clumoove_encryption_key_v1
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
       - ${APP_DATA_DIR}/data/storage:/clumoove
