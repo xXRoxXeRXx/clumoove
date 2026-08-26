@@ -26,7 +26,7 @@ services:
       - ${APP_DATA_DIR}/data/redis:/data
 
   api-backend:
-    image: ghcr.io/xxroxxerxx/clumoove-api:v0.15.0
+    image: ghcr.io/xxroxxerxx/clumoove-api:v0.16.0
     restart: on-failure
     environment:
       - DATABASE_URL=postgres://clumoove:${APP_PASSWORD}@postgres-db:5432/cloud_migration_db?sslmode=disable
@@ -43,7 +43,7 @@ services:
       - redis-queue
 
   migration-worker:
-    image: ghcr.io/xxroxxerxx/clumoove-worker:v0.15.0
+    image: ghcr.io/xxroxxerxx/clumoove-worker:v0.16.0
     restart: on-failure
     command: ["/app/worker"]
     environment:
@@ -58,7 +58,7 @@ services:
       - redis-queue
 
   frontend:
-    image: ghcr.io/xxroxxerxx/clumoove-frontend:v0.15.0
+    image: ghcr.io/xxroxxerxx/clumoove-frontend:v0.16.0
     restart: on-failure
     environment:
       - CLUMOOVE_API_URL=

@@ -5,6 +5,30 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-08-26
+
+### Added
+- **Snapshot Backup & Restore Engine**:
+  - Incremental block-level deduplication: files are sliced into 4-MiB SHA-256 blocks, deduplicated against `backup_blocks`, and packed into immutable 64-MiB packs under `.clumoove-backup/<repository-id>/packs/`.
+  - Two-phase restore pipeline: Phase 1 computes mandatory read-only conflict previews (`POST /api/backup/{id}/snapshots/{snapshotID}/restore/previews`) with fingerprinting; Phase 2 executes the preview streaming blocks via Range reads or bounded buffers.
+  - Retention policies & lifecycle maintenance: automated snapshot pruning (1–365 retention count) and repository integrity checks (`METADATA`, `BUDGETED`, `FULL`) with live SSE progress.
+  - Visual cron schedule builder: interactive visual recurrence builder and human-readable cron summaries in the frontend.
+  - Dedicated backup dashboards: visual snapshot browser, item catalog search, run histories, and live maintenance diagnostics.
+  - Multi-channel completion notifications: full delivery support for Email, Telegram, Discord, Gotify, and ntfy on completed/failed backup runs.
+- **Umbrel App Store Packaging**:
+  - Official Umbrel App Store package manifests (`umbrel-app.yml`, `docker-compose.yml`) supporting umbrelOS.
+  - 1-Click web onboarding via `app_proxy` with dynamic key segregation derived from `APP_PASSWORD`.
+  - Configured `backupIgnore` rules for ephemeral Redis queue data.
+
+### Improved & Fixed
+- **Database Migrations & Reliability**:
+  - Added automatic creation of PostgreSQL trigger function `update_updated_at_column()` in `InitDB()` to guarantee smooth cold-start migrations on fresh databases.
+  - Added `backup` and `restore` event kinds to notification check constraints.
+  - Handled WebDAV directory self-references and improved stalled backup run recovery.
+- **Frontend & UX**:
+  - Optimized mobile navigation tab layout and hid native scrollbars on the dashboard.
+  - Unified action buttons across migration, sync, and backup dashboards.
+
 ## [0.15.0] - 2026-08-19
 
 ### Added
