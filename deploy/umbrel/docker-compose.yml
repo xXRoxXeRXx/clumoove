@@ -1,12 +1,10 @@
+version: "3.7"
+
 services:
   app_proxy:
-    image: getumbrel/app-proxy:v1.3.0
     environment:
-      APP_HOST: frontend
+      APP_HOST: clumoove_frontend_1
       APP_PORT: 3000
-    ports:
-      - "8380:8380"
-    restart: on-failure
 
   postgres-db:
     image: postgres:15-alpine
