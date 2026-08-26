@@ -5,6 +5,7 @@ services:
     environment:
       APP_HOST: clumoove_frontend_1
       APP_PORT: 3000
+      PROXY_AUTH_ADD: "false"
 
   postgres-db:
     image: postgres:15-alpine
