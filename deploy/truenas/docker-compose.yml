@@ -1,0 +1,97 @@
+# TrueNAS SCALE Docker Compose Deployment for Clumoove
+# Compatible with TrueNAS SCALE 24.10 (Electric Eel) and newer ("Install via YAML" / Custom App)
+
+services:
+  # ── PostgreSQL Database ─────────────────────────────────────────────────────
+  postgres-db:
+    container_name: clumoove-postgres
+    image: postgres:15-alpine
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=300"]
+    environment:
+      POSTGRES_USER: ${DB_USER:-clumoove}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-clumoove_secure_password}
+      POSTGRES_DB: cloud_migration_db
+    volumes:
+      # TrueNAS Host Path / Dataset recommendation: /mnt/poolname/apps/clumoove/postgres
+      - ${POSTGRES_DATA_PATH:-postgres_data}:/var/lib/postgresql/data
+    networks:
+      - clumoove-network
+
+  # ── Redis Queue ─────────────────────────────────────────────────────────────
+  redis-queue:
+    container_name: clumoove-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:-clumoove_secure_redis_pass}" --bind 0.0.0.0
+    volumes:
+      # TrueNAS Host Path / Dataset recommendation: /mnt/poolname/apps/clumoove/redis
+      - ${REDIS_DATA_PATH:-redis_data}:/data
+    networks:
+      - clumoove-network
+
+  # ── API Gateway ─────────────────────────────────────────────────────────────
+  api-backend:
+    container_name: clumoove-api
+    image: ghcr.io/xxroxxerxx/clumoove-api:latest
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8001}:8000"
+    environment:
+      - DATABASE_URL=postgres://${DB_USER:-clumoove}:${DB_PASSWORD:-clumoove_secure_password}@postgres-db:5432/cloud_migration_db?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-clumoove_secure_redis_pass}@redis-queue:6379
+      - PORT=8000
+      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-clumoove_32_byte_aes_encryption_key_default}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-clumoove_32_byte_jwt_signing_key_default}
+      - TRUSTED_PROXY=1
+      - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      # TrueNAS Host Path / Dataset recommendation: /mnt/poolname/apps/clumoove/storage or NAS pool dataset
+      - ${STORAGE_DATA_PATH:-storage_data}:/clumoove
+    depends_on:
+      - postgres-db
+      - redis-queue
+    networks:
+      - clumoove-network
+
+  # ── Migration Worker ────────────────────────────────────────────────────────
+  migration-worker:
+    container_name: clumoove-worker
+    image: ghcr.io/xxroxxerxx/clumoove-worker:latest
+    restart: unless-stopped
+    command: ["/app/worker"]
+    environment:
+      - DATABASE_URL=postgres://${DB_USER:-clumoove}:${DB_PASSWORD:-clumoove_secure_password}@postgres-db:5432/cloud_migration_db?sslmode=disable
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-clumoove_secure_redis_pass}@redis-queue:6379
+      - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY:-clumoove_32_byte_aes_encryption_key_default}
+      - LOCAL_STORAGE_ROOT=/clumoove
+    volumes:
+      - ${STORAGE_DATA_PATH:-storage_data}:/clumoove
+    depends_on:
+      - postgres-db
+      - redis-queue
+    networks:
+      - clumoove-network
+
+  # ── Web Frontend ────────────────────────────────────────────────────────────
+  frontend:
+    container_name: clumoove-frontend
+    image: ghcr.io/xxroxxerxx/clumoove-frontend:latest
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8380}:3000"
+    environment:
+      - CLUMOOVE_API_URL=
+    depends_on:
+      - api-backend
+    networks:
+      - clumoove-network
+
+networks:
+  clumoove-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  storage_data:

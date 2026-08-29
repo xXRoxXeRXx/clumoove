@@ -1,0 +1,29 @@
+images:
+  frontend_image:
+    repository: ghcr.io/xxroxxerxx/clumoove-frontend
+    tag: v0.16.0
+  api_image:
+    repository: ghcr.io/xxroxxerxx/clumoove-api
+    tag: v0.16.0
+  worker_image:
+    repository: ghcr.io/xxroxxerxx/clumoove-worker
+    tag: v0.16.0
+  container_utils_image:
+    repository: ixsystems/container-utils
+    tag: 1.0.2
+  postgres_15_image:
+    repository: postgres
+    tag: 15-alpine
+  redis_image:
+    repository: redis
+    tag: 7-alpine
+
+consts:
+  frontend_container_name: clumoove-frontend
+  api_container_name: clumoove-api
+  worker_container_name: clumoove-worker
+  postgres_container_name: clumoove-postgres
+  redis_container_name: clumoove-redis
+  perms_container_name: clumoove-perms
+  db_name: cloud_migration_db
+  db_user: clumoove
