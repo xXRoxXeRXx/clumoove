@@ -58,6 +58,12 @@ services:
 
       # Performance & Timeouts
       - INDEXING_TIMEOUT_MINUTES=${INDEXING_TIMEOUT_MINUTES:-60}
+      - WEBDAV_LISTING_TIMEOUT_SECONDS=${WEBDAV_LISTING_TIMEOUT_SECONDS:-120}
+
+      # Structured Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_ENVIRONMENT=${LOG_ENVIRONMENT:-}
+      - INSTANCE_ID=${INSTANCE_ID:-}
       - LOCAL_STORAGE_ROOT=/clumoove
     volumes:
       - ${LOCAL_STORAGE_HOST_PATH:-./local-storage}:/clumoove
@@ -84,6 +90,14 @@ services:
       # Security & Workers
       - ENCRYPTION_SECRET_KEY=${ENCRYPTION_SECRET_KEY}
       - MAX_THREADS=${MAX_THREADS:-50}
+      - MAX_BACKUP_PACK_WRITERS=${MAX_BACKUP_PACK_WRITERS:-1}
+      - MAX_RESTORE_PACK_READERS=${MAX_RESTORE_PACK_READERS:-1}
+      - WEBDAV_LISTING_TIMEOUT_SECONDS=${WEBDAV_LISTING_TIMEOUT_SECONDS:-120}
+
+      # Structured Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_ENVIRONMENT=${LOG_ENVIRONMENT:-}
+      - INSTANCE_ID=${INSTANCE_ID:-}
 
       # Local Storage Sandbox
       - LOCAL_STORAGE_ROOT=/clumoove

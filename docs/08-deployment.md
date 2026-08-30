@@ -14,7 +14,7 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 - Docker and Docker Compose installed on the host.
 - A `.env` file (copy from `.env.example`) with at least:
   - `ENCRYPTION_SECRET_KEY` and `JWT_SECRET_KEY` — each `openssl rand -base64 32`, **not identical**.
-  - `REDIS_PASSWORD` — a strong, unique value (not a known default).
+  - a non-default Redis password: `REDIS_PASSWORD` for the Compose Redis service, or a password embedded in `REDIS_URL` when connecting to an external Redis service.
 - For remote installs: open ports `3001` (web UI) and `8001` (API) in the firewall.
 
 ---
@@ -28,7 +28,7 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 | `DB_USER` / `DB_PASSWORD` | PostgreSQL credentials. | `postgres` |
 | `DATABASE_URL` | Full DB connection URL. If unset, defaults to `sslmode=require` localhost. | localhost fallback |
 | `REDIS_URL` | Redis connection (`redis://:pw@host:6379`). | `localhost:6379` |
-| `REDIS_PASSWORD` | Redis password (required; strong/unique). | – |
+| `REDIS_PASSWORD` | Redis password fallback; Docker Compose also uses it to configure its Redis service. The effective password must be non-empty, strong, and not a known default. | – |
 | `CORS_ALLOWED_ORIGIN` | Allowed CORS origin for production. | – |
 | `CLUMOOVE_API_URL` | Origin-only API URL injected by the frontend nginx container at startup; unset for same-origin proxying. | unset |
 | `POSTGRES_MAX_CONNECTIONS` | PostgreSQL connection limit for the production Compose stack; increase when scaling workers. | `300` |
@@ -36,9 +36,10 @@ Downloads and raw uploads are streamed without API buffering. The frontend nginx
 | `INDEXING_TIMEOUT_MINUTES` | Max duration of one indexing run. | `60` |
 | `WEBDAV_LISTING_TIMEOUT_SECONDS` | Per-PROPFIND listing timeout. | `120` |
 | `MAX_THREADS` | Global max parallel tasks per worker process (also sizes DB pool). | `16` (`50` in production Compose) |
+| `MAX_BACKUP_PACK_WRITERS` | Worker-only limit for concurrent immutable backup-pack writers; values outside `1..4` refuse worker startup. | `1` |
 | `MAX_RESTORE_PACK_READERS` | Concurrent full-pack readers shared by restore execution and repository checks; values outside `1..4` refuse worker startup. | `1` |
 | `MIGRATION_BLOCK_PRIVATE` | If `1`/`true`, also block RFC1918/ULA egress (SSRF). | off |
-| `TRUSTED_PROXY` | Set `1`/`true` when a reverse proxy strips client `X-Forwarded-*` (enables real client IP for rate limiting and lets the OAuth callback host follow `X-Forwarded-Host`). The callback **scheme** is taken from `X-Forwarded-Proto` regardless, so a TLS-terminating proxy that forwards that header yields an `https://` redirect URI without `TRUSTED_PROXY`. | off |
+| `TRUSTED_PROXY` | Set `1`/`true` only when a trusted reverse proxy strips client-supplied `X-Forwarded-*`; this enables real client IP for rate limiting and derives the OAuth callback host/scheme from the proxy context. For an HTTPS callback behind TLS termination, set this value and configure the proxy to set a trustworthy `X-Forwarded-Proto`. Without it, forwarded headers are ignored and the callback uses the direct request host and scheme. | off |
 | `FRONTEND_URL` | Frontend base URL (used in reset/email-change links). | `http://localhost:5173` |
 | `LOG_LEVEL` | Minimum JSON `slog` level. Valid values: `DEBUG`, `INFO`, `WARN`, `ERROR` (case-insensitive). | `INFO` |
 | `LOG_ENVIRONMENT` | Optional deployment label included in each log record, such as `development`, `staging`, or `production`. | unset |
@@ -58,10 +59,11 @@ SMTP is configured by an administrator in **Administration → System → Email 
 | :--- | :--- | :--- | :--- |
 | `docker-compose.yml` | Production | Local multi-stage build (`target: prod`) | Builds api/worker/frontend from source; uses production restart policies, a 300-connection PostgreSQL limit, and `MAX_THREADS=50` by default. Run behind a reverse proxy. |
 | `docker-compose.dev.yml` | Development | Local multi-stage build (`target: dev`) + source mounts | Air restarts API and worker after Go/locale changes; Vite provides frontend HMR. |
+| `docker-compose.prod.yml` | Production release images | Published images | Pulls the api, worker, and frontend release images instead of building them locally. |
 
-> Both compose files build the images locally from source — no prebuilt
-> images are pulled from GHCR. Use `docker-compose.dev.yml` for local development with
-> source mounts and live reload.
+> `docker-compose.yml` and `docker-compose.dev.yml` build images locally from source. Use
+> `docker-compose.dev.yml` for local development with source mounts and live reload;
+> `docker-compose.prod.yml` is the release-image deployment option.
 
 ---
 
@@ -80,7 +82,7 @@ SMTP is configured by an administrator in **Administration → System → Email 
 
 ---
 
-## 4. Starting the Stack
+## 5. Starting the Stack
 
 ### Development (local build)
 
@@ -101,15 +103,25 @@ docker compose up --build -d
 
 This builds the api/worker/frontend `prod` images locally from source and starts all
 services in the background. Suitable for running behind a reverse proxy with HTTPS. The
-API auto-detects proxied CORS/hosts; set `CORS_ALLOWED_ORIGIN`, `FRONTEND_URL`, and
-`TRUSTED_PROXY=1` as needed.
+With `TRUSTED_PROXY=1`, the API derives the public OAuth host and scheme from trustworthy forwarding
+headers. CORS is not auto-detected: set `CORS_ALLOWED_ORIGIN` explicitly for every cross-origin SPA.
+Set `FRONTEND_URL` for reset and email-change links.
 
 > Note: the first `docker compose up --build` compiles the Go binaries and the frontend
 > bundle, so the initial build takes a few minutes. Subsequent runs reuse the layer cache.
 
+### Production (release images)
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+This pulls the published api, worker, and frontend images selected by `DOCKER_IMAGE_PREFIX` rather than
+building them locally.
+
 ---
 
-## 5. Runtime API URL and CSP (Frontend)
+## 6. Runtime API URL and CSP (Frontend)
 
 The production frontend is a pre-built Vite bundle: `VITE_*` variables set in its Compose service
 environment cannot change that bundle. Configure a separate API origin with `CLUMOOVE_API_URL` instead.
@@ -132,7 +144,7 @@ custom-domain proxying, then `http://<hostname>:8001` locally.
 
 ---
 
-## 6. Scaling Workers
+## 7. Scaling Workers
 
 Restore and repository-check full-pack reads are bounded per worker by `MAX_RESTORE_PACK_READERS`. A v1 pack is capped at 64 MiB, so the application-owned full-pack reader budget is at most `64 MiB * MAX_RESTORE_PACK_READERS` per worker, plus a 4 MiB block/range buffer per admitted restore reader. Cluster-wide capacity is the sum across worker replicas. Range-capable providers avoid full-pack reads for restore blocks; other providers deliberately use bounded rereads and can therefore incur physical-read amplification for deduplicated files.
 
@@ -154,7 +166,7 @@ of 300 is suitable for up to two 50-thread workers; set it to at least `500` bef
 
 ---
 
-## 7. Operational Tasks & Notes
+## 8. Operational Tasks & Notes
 
 - **Structured logs:** API and worker logs are JSON `slog` records on stdout. Configure log collection to
   preserve JSON fields, including `environment`, `instance_id`, and API request IDs. API responses return
@@ -170,22 +182,21 @@ of 300 is suitable for up to two 50-thread workers; set it to at least `500` bef
 - **Completion notifications:** the worker's `RunNotifier` drains durable per-channel deliveries for
   email, Gotify, ntfy, Telegram, and Discord. Each channel retries independently; it also cleans
   expired reset/email-change tokens hourly. Legacy SMTP settings are bridged into the email channel.
-- **Permanent history:** migrations persist until manually deleted (the 24h GC is disabled). Deleting a
-  migration cascades to its tasks/indexing errors.
+- **Migration retention:** the API's hourly garbage collector automatically deletes terminal migrations
+  (`COMPLETED`, `COMPLETED_WITH_ERRORS`, `FAILED`, or `CANCELLED`) and their cascaded task/indexing-error
+  history after 30 days. Manual deletion removes them earlier.
 - **Manual recovery endpoints:** users can `retry-failed` (re-enqueue failed tasks) or `reindex`
   (re-run indexing for a `FAILED` migration).
 - **Audit log:** accessible to ADMIN via `GET /api/audit/log` (filterable by action/user/target/time).
 - **Health/availability:** if PostgreSQL or Redis is down at startup, both API and worker retry for ~10
   attempts (2s backoff) before failing.
-- **Secrets in logs:** on first boot the API generates a random admin password and prints it **once** to
-  stdout (the process/container logs): `BOOTSTRAP ADMIN created — email=… password=… (rotate on first
-  login)`. The plaintext password is never stored and is not recoverable afterwards — capture it from the
-  startup logs, log in, and change it immediately (`must_change_password=TRUE` forces this). See
-  `07-security.md` §11 for the full bootstrap flow and operator checklist.
+- **Initial administrator:** when the user table is empty, open the Web UI and complete its interactive
+  initial-administrator setup. The API accepts `POST /api/auth/setup-admin` only in that state; it never
+  generates or logs a bootstrap password.
 
 ---
 
-## 8. Reverse Proxy Recommendations
+## 9. Reverse Proxy Recommendations
 
 When fronting the API with a reverse proxy (e.g. nginx):
 

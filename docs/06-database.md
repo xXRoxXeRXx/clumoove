@@ -20,12 +20,17 @@ Migration and sync job rows have nullable `source_profile_id` and `target_profil
 > **Rule:** Any schema change must be added to `db/schema.sql` **and** as an inline statement inside
 > `InitDB()` for automatic migration on startup.
 
-A shared trigger function `update_updated_at_column()` keeps `updated_at` current on several tables
-(`users`, `migrations`, `schedules`, `instance_smtp_settings`).
+A shared trigger function `update_updated_at_column()` keeps `updated_at` current on tables that install
+the trigger, including `migrations`, `tasks`, `schedules`, `connection_profiles`, SMTP/OAuth settings,
+notification deliveries, and the backup/restore tables. `users` deliberately has no such trigger.
 
 ---
 
 ## 1. Tables
+
+> The tables below are a functional, grouped schema reference rather than a duplicate of every DDL column
+> and constraint. `db/schema.sql` remains the exhaustive source of truth; security-sensitive credential
+> snapshots and coordination/fencing fields are called out explicitly where they apply.
 
 ### `users`
 | Column | Type | Notes |
@@ -47,6 +52,7 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `totp_locked_until` | TIMESTAMPTZ | |
 | `login_failed_attempts` | INTEGER NOT NULL DEFAULT 0 | |
 | `login_locked_until` | TIMESTAMPTZ | |
+| `last_login_at` | TIMESTAMPTZ | indexed for administrator activity queries |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
 ### `refresh_tokens`
@@ -69,18 +75,22 @@ A shared trigger function `update_updated_at_column()` keeps `updated_at` curren
 | `source_password_encrypted` / `target_password_encrypted` | TEXT | AES-GCM |
 | `source_refresh_token_encrypted` / `target_refresh_token_encrypted` | TEXT | OAuth (AES-GCM) |
 | `source_token_expires_at` / `target_token_expires_at` | TIMESTAMPTZ | |
+| `source_mega_session_id_encrypted` / `source_mega_master_key_encrypted` / target equivalents | TEXT | MEGA reusable-session credential snapshots (AES-GCM) |
+| `source_profile_id` / `target_profile_id` | UUID FK → `connection_profiles` | nullable, `ON DELETE SET NULL`; snapshots remain authoritative |
 | `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted, including files-only `ftp` |
 | `target_dir` | TEXT NOT NULL DEFAULT `/` | |
-| `status` | TEXT | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `PAUSED`, `PAUSED_CONNECTION_LOSS`, `COMPLETED`, `FAILED`, `CANCELLED` |
+| `status` | TEXT | `PENDING`, `SCHEDULED`, `INDEXING`, `RUNNING`, `VERIFYING`, `PAUSED`, `PAUSED_CONNECTION_LOSS`, `COMPLETED`, `COMPLETED_WITH_ERRORS`, `FAILED`, `CANCELLED` |
 | `conflict_strategy` | TEXT NOT NULL DEFAULT `SKIP`, CHECK | `SKIP`, `OVERWRITE`, `RENAME` |
 | `selected_paths` / `selected_calendars` / `selected_contacts` | JSONB | persisted for deferred re-index |
 | `total_files` / `processed_files` / `skipped_files` / `failed_files` | INTEGER | |
-| `total_bytes` / `processed_bytes` | BIGINT | |
+| `total_bytes` / `processed_bytes` / `live_bytes` | BIGINT | |
 | `error_message` | TEXT | sanitized, credential-redacted |
 | `threads` | INT NOT NULL DEFAULT 8 | 1–16 |
 | `bandwidth_limit_mbps` | INT NOT NULL DEFAULT 0 | 0–1000 |
 | `email_sent` | BOOLEAN NOT NULL DEFAULT FALSE | legacy completion-email flag; no longer drives delivery |
 | `notification_generation` | INT NOT NULL DEFAULT 0 | increments for each retry/reindex run, making terminal notifications pass-scoped |
+| `verification_generation` / `verification_lease_until` | INT / TIMESTAMPTZ | fences each post-transfer verification pass |
+| `failed_retry_done` | BOOLEAN NOT NULL DEFAULT FALSE | prevents repeated automatic failed-task retry handling |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
 ### Notification outbox
@@ -105,11 +115,13 @@ migration whose current notification generation has no event, protecting histori
 | `file_path` | TEXT | |
 | `file_size` | BIGINT | |
 | `source_hash` / `worker_hash` / `target_hash` | TEXT | `algo:hash` or `SIZE:n` or `DYNAMIC` |
+| `claim_epoch` / `pass_generation` | BIGINT / INT | fencing token and sync-pass association |
 | `status` | TEXT | `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`, `SKIPPED`, `CANCELLED` |
 | `resource_type` | TEXT NOT NULL DEFAULT `files` | `files`, `calendars`, `contacts` |
 | `metadata` | JSONB | modification time, description, … |
 | `error_message` | TEXT | |
 | `attempts` | INT | |
+| `checksum_verified` | BOOLEAN NOT NULL DEFAULT FALSE | set after the final verification pass |
 | `next_retry_at` | TIMESTAMPTZ | backoff scheduling |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
@@ -124,6 +136,7 @@ migration whose current notification generation has no event, protecting histori
 | `password_encrypted` / `refresh_token_encrypted` | TEXT | AES-GCM |
 | `token_expires_at` | TIMESTAMPTZ | |
 | `oauth_user` | TEXT | |
+| `mega_session_id_encrypted` / `mega_master_key_encrypted` | TEXT | reusable MEGA session material (AES-GCM) |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
 ### `sync_jobs`
@@ -131,11 +144,13 @@ migration whose current notification generation has no event, protecting histori
 | :----- | :--- | :---- |
 | `id` | UUID PK | `gen_random_uuid()` |
 | `user_id` | UUID → `users` ON DELETE CASCADE | owner |
+| `source_profile_id` / `target_profile_id` | UUID FK → `connection_profiles` | nullable, `ON DELETE SET NULL`; snapshots remain authoritative |
 | `source_url` / `target_url` | TEXT | Provider endpoint only; for `ftp`, FTPS-only canonical URL (no userinfo) |
 | `source_username` / `target_username` | TEXT | |
 | `source_password_encrypted` / `target_password_encrypted` | TEXT | AES-GCM |
 | `source_refresh_token_encrypted` / `target_refresh_token_encrypted` | TEXT | OAuth (AES-GCM) |
 | `source_token_expires_at` / `target_token_expires_at` | TIMESTAMPTZ | |
+| `source_mega_session_id_encrypted` / `source_mega_master_key_encrypted` / target equivalents | TEXT | MEGA reusable-session credential snapshots (AES-GCM) |
 | `source_provider` / `target_provider` | TEXT NOT NULL DEFAULT `nextcloud` | whitelisted, including files-only `ftp` |
 | `direction` | TEXT NOT NULL DEFAULT `one_way` | `one_way`, `two_way` |
 | `conflict_strategy` | TEXT NOT NULL DEFAULT `OVERWRITE` | `OVERWRITE`, `SKIP`, `RENAME` |
@@ -143,8 +158,9 @@ migration whose current notification generation has no event, protecting histori
 | `interval_minutes` | INT NOT NULL DEFAULT 15 | |
 | `threads` | INT NOT NULL DEFAULT 8 | |
 | `bandwidth_limit_mbps` | INT NOT NULL DEFAULT 0 | 0–1000; 0 is unlimited |
-| `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `RUNNING`, `PAUSED`, `FAILED` |
+| `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `INDEXING`, `RUNNING`, `VERIFYING`, `PAUSED`, `PAUSED_CONNECTION_LOSS`, `COMPLETED`, `FAILED` |
 | `run_generation` | INTEGER NOT NULL DEFAULT `0` | incremented for each claimed sync pass; guards lifecycle CAS updates and matches task `pass_generation` |
+| `verification_generation` / `verification_lease_until` | INTEGER / TIMESTAMPTZ | fences each verification pass |
 | `target_dir` | TEXT NOT NULL DEFAULT `/` | |
 | `selected_paths` | JSONB | |
 | `last_run_at` | TIMESTAMPTZ | |
@@ -169,29 +185,32 @@ migration whose current notification generation has no event, protecting histori
 | :----- | :--- | :---- |
 | `id` | UUID PK | `gen_random_uuid()` |
 | `user_id` | UUID FK → `users` ON DELETE CASCADE | owner |
-| `name` | TEXT NOT NULL | job label |
-| `source_profile_id` | UUID FK → `connection_profiles` | source endpoint |
-| `target_profile_id` | UUID FK → `connection_profiles` | repository store endpoint |
-| `repository_path` | TEXT NOT NULL | directory root for `.clumoove-backup/<id>/` |
+| `lock_id` | BIGSERIAL UNIQUE NOT NULL | PostgreSQL advisory-lock key |
+| `source_profile_id` / `target_profile_id` | UUID FK → `connection_profiles` | nullable `ON DELETE SET NULL` references; creation requires two saved, owned profiles |
+| source/target endpoint, provider, username, password, OAuth expiry/refresh, and MEGA session/master-key snapshots | TEXT / TIMESTAMPTZ | encrypted execution snapshots retained independently from profile edits/deletion |
 | `selected_paths` | JSONB NOT NULL | array of source paths to back up |
-| `retention_count` | INT NOT NULL DEFAULT 30 | number of snapshots to retain (1–365) |
-| `cron_expression` | TEXT | 5-field cron |
-| `timezone` | TEXT NOT NULL DEFAULT `UTC` | IANA timezone |
-| `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `RUNNING`, `PAUSED`, `FAILED` |
+| `target_dir` / `repository_id` / `repository_root` | TEXT / UUID / TEXT | target folder and immutable repository identity/root |
+| `cron_expression` / `timezone` | TEXT NOT NULL | required five-field cron and IANA timezone |
+| `retention_count` | INT NOT NULL DEFAULT 30 | DDL constraint is at least 1; API constrains user input to 1–365 |
+| `threads` | INT NOT NULL DEFAULT 8 | CHECK `1..16` |
+| `status` | TEXT NOT NULL DEFAULT `IDLE` | `IDLE`, `QUEUED`, `SCANNING`, `RUNNING`, `VERIFYING`, `PAUSED`, `FAILED`, `DELETING` |
+| `run_generation` | INT NOT NULL DEFAULT 0 | fenced run generation |
+| `last_run_at` / `last_run_status` / progress counters / `error_code` | TIMESTAMPTZ / TEXT / INT / BIGINT | persistent outcome and progress state |
+| `deletion_state` | TEXT NOT NULL DEFAULT `ACTIVE` | `ACTIVE`, `REQUESTED`, `DELETING`, `DELETED` |
 | `created_at` / `updated_at` | TIMESTAMPTZ | |
 
 ### `backup_runs`, `backup_snapshots`, `backup_packs`, `backup_blocks`
-- `backup_runs`: Execution record of each backup run (status, worker lock, generation token, progress counters, bytes scanned/deduped/uploaded).
-- `backup_snapshots`: Immutable published snapshot catalog (`READY`, `PARTIAL`, `DELETED`), root manifest hash, item count, total logical bytes.
-- `backup_packs`: Immutable 64 MiB format v1 pack files stored on target (`pack_id`, logical/physical size, block count, target storage path).
-- `backup_blocks`: Content-addressed 4 MiB blocks (`sha256_hash`, `pack_id`, offset, length, uncompressed size).
+- `backup_runs`: Execution record for a fenced `generation`, trigger, lifecycle state (`QUEUED`, `SCANNING`, `RUNNING`, `VERIFYING`, `COMPLETED`, `PARTIAL`, `FAILED`, `CANCELLED`), timestamps, progress counters, and `error_code`.
+- `backup_snapshots`: Immutable catalog keyed by `backup_run_id`, with state, selected roots, file/directory/byte counters, omission counters, integrity state, and lifecycle timestamps. It has no root-manifest-hash column.
+- `backup_packs`: Immutable v1 pack metadata (`id`, `remote_rel_path`, `sha256`, `size_bytes`, state, generation, last check).
+- `backup_blocks`: Content-addressed blocks using the actual locator columns `sha256`, `backup_pack_id`, `payload_offset`, `payload_length`, and `plaintext_size`.
 - `backup_snapshot_items` & `backup_snapshot_item_blocks`: File metadata index (path, mode, size, mtime) and block assembly mapping for each snapshot.
 - `backup_maintenance` & `backup_verify_targets`: Coordination leases and target pack catalogs for retention pruning and repository verification passes.
 
 ### `restore_previews`, `restore_jobs`, `restore_runs`, `restore_items`
-- `restore_previews`: Transient (30-minute TTL) read-only conflict analysis calculating expected skips, overwrites, renames, and type collisions.
+- `restore_previews`: Transient (30-minute TTL) read-only conflict analysis calculating expected skips, overwrites, renames, and type collisions; holds its encrypted target credential snapshot, including MEGA material when applicable.
 - `restore_jobs`: Immutable non-secret restore configuration history.
-- `restore_runs`: Execution runs claiming restore tasks with worker heartbeats and streaming block readers.
+- `restore_runs`: Execution runs claiming restore tasks with worker heartbeats, streaming block readers, and an encrypted active target credential snapshot, including MEGA material when applicable.
 - `restore_items`: Queue of files being restored with epoch-fenced worker claims.
 - `restore_path_reservations`, `restore_item_blocks`, `restore_pack_pins`: Concurrency safeguards preventing case collisions, pin active packs against retention deletion during restore, and hold compact-safe block locators.
 
@@ -274,24 +293,33 @@ Administrator-managed OAuth2 client credentials (no environment variables). `cli
 
 | Index | On | Purpose |
 | :---- | :-- | :------ |
-| `idx_migrations_user_id` | `migrations(user_id)` | ownership lookups |
-| `idx_tasks_migration_status` | `tasks(migration_id, status)` | dequeue/progress |
-| `idx_tasks_sync_status` | `tasks(sync_job_id, status)` | sync dequeue/progress |
+| `idx_users_last_login_at` | `users(last_login_at)` | administrator activity queries |
+| `idx_refresh_tokens_id`, `idx_refresh_tokens_user_expires_at` | `refresh_tokens(id)`; `refresh_tokens(user_id, expires_at DESC)` | public-session uniqueness and a user's active sessions |
+| `idx_migrations_status`, `idx_migrations_user_id`, `idx_migrations_source_profile_id`, `idx_migrations_target_profile_id` | `migrations` status, owner, and profile references | lifecycle, ownership, and profile cleanup queries |
+| `idx_tasks_migration_id`, `idx_tasks_status`, `idx_tasks_migration_status` | `tasks` migration, status, and `(migration_id, status)` | migration task lookup, dequeue, and progress |
+| `idx_tasks_sync_gen_status` | `tasks(sync_job_id, pass_generation, status)` | generation-fenced sync dequeue/progress |
 | `idx_tasks_retry` | `tasks(status, next_retry_at) WHERE status='FAILED' AND next_retry_at IS NOT NULL` | retry scanner |
+| `idx_tasks_pending`, `idx_tasks_wait_conflict_copy` | pending task queue; pending conflict-copy dependency | efficient worker claims and conflict-copy wakeups |
 | `idx_conn_profiles_user` | `connection_profiles(user_id)` | profile ownership lookups |
-| `idx_sync_jobs_user_id` | `sync_jobs(user_id)` | sync job ownership lookups |
-| `idx_sync_jobs_status` | `sync_jobs(status)` | active sync job queries |
+| `idx_sync_jobs_user_id`, `idx_sync_jobs_status`, `idx_sync_jobs_source_profile_id`, `idx_sync_jobs_target_profile_id` | `sync_jobs` owner, status, and profile references | sync ownership, lifecycle, and profile cleanup queries |
 | `idx_sync_state_job` | `sync_state(sync_job_id, side)` | sync delta tracking lookup |
-| `idx_backup_jobs_user` | `backup_jobs(user_id)` | backup job ownership lookups |
-| `idx_backup_runs_job` | `backup_runs(job_id)` | run lookups |
-| `idx_backup_snapshots_job` | `backup_snapshots(job_id)` | snapshot catalog lookups |
-| `idx_backup_blocks_hash` | `backup_blocks(sha256_hash)` | block deduplication check |
-| `idx_restore_previews_job` | `restore_previews(job_id)` | preview ownership check |
+| `idx_backup_jobs_user_created`, `idx_backup_jobs_status` | `backup_jobs(user_id, created_at DESC)`; `backup_jobs(status)` | backup ownership/listing and lifecycle work |
+| `idx_backup_runs_scheduled_local_key`, `idx_backup_runs_queued`, `idx_backup_runs_job_created` | `backup_runs` schedule key, queued rows, and job chronology | deduplicated scheduled runs, worker claims, and history |
+| `idx_backup_snapshots_job_created`, `idx_backup_snapshots_visible` | `backup_snapshots` chronology and visible-state subset | snapshot listing |
+| `idx_backup_packs_job_state`, `idx_backup_blocks_job_pack` | pack state and block-to-pack locators | repository maintenance and block reads |
+| `idx_backup_snapshot_items_snapshot`, `idx_backup_snapshot_item_blocks_block` | snapshot item paths and block mappings | catalog browsing and retention safety |
+| `idx_backup_maintenance_pending`, `idx_backup_maintenance_job`, `idx_backup_maintenance_active_verify` | maintenance claim queue, job history, and active verification | fenced retention/repository checks |
+| `idx_backup_verify_targets_claim` | `backup_verify_targets(backup_maintenance_id, state)` | repository-check worker claims |
+| `idx_restore_previews_claim`, `idx_restore_previews_owner` | preview queue and owner chronology | preview execution and access |
+| `idx_restore_jobs_owner` | `restore_jobs(user_id, created_at DESC)` | restore history access |
+| `idx_restore_runs_active`, `idx_restore_runs_claim` | active-run uniqueness and queued runs | restore overlap protection and worker claims |
+| `idx_restore_items_run_status`, `idx_restore_items_retry` | restore task state and retry subset | restore execution/retry |
 | `idx_schedules_next_run` | `schedules(next_run_at) WHERE is_active=TRUE` | scheduler due scan |
 | `idx_schedules_user_id` | `schedules(user_id)` | |
 | `idx_schedules_task` | `schedules(task_type, task_id)` | |
 | `idx_indexing_errors_migration_id` | `indexing_errors(migration_id)` | report query |
-| `idx_audit_log_created_at` / `_action` / `_user_id` | `audit_log(...)` | admin log filtering |
+| `idx_audit_log_created`, `idx_audit_log_action`, `idx_audit_log_user_id` | `audit_log(created_at DESC)`, action, and user | admin log filtering |
+| `idx_notification_channels_user`, `idx_notification_events_migration_uniq`, `idx_notification_events_sync_uniq`, `idx_notification_events_restore_uniq`, `idx_notification_events_backup_uniq`, `idx_notification_deliveries_pending` | notification ownership, event idempotency, and due deliveries | durable multi-channel notification outbox |
 
 ---
 

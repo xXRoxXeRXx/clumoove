@@ -26,7 +26,9 @@ The connection wizard has an Immich branch with server URL and API-key fields (n
 | Lint | ESLint 10 + `typescript-eslint` + react-hooks/refresh plugins |
 
 Scripts (`package.json`): `dev` (`vite`), `build` (`tsc -b && vite build`), `lint` (`eslint .`),
-`preview` (`vite preview`).
+`locale:check` (`node scripts/check-locales.mjs`), `test` (`npm run locale:check && vitest run`), and
+`preview` (`vite preview`). `locale:check` is mandatory after i18n or API-error-code changes: it verifies
+locale-key parity and error-code coverage before tests run.
 
 ---
 
@@ -36,7 +38,7 @@ Scripts (`package.json`): `dev` (`vite`), `build` (`tsc -b && vite build`), `lin
 frontend/src/
 ├── main.tsx                 # React root, mounts <App/>, imports i18n
 ├── App.tsx                  # Top-level state machine, history routing, auth bootstrap
-├── App.css / index.css      # Global + Tailwind layers, CSS variables (theming)
+├── index.css                # Global Tailwind layers and CSS variables (theming)
 ├── i18n.ts                  # i18next init (de/en, fallback en)
 ├── types.ts                 # Shared TypeScript types (User, MigrationConfig, BackupJob, RestorePreview, …)
 ├── assets/                  # Static images (hero, logos, svgs)
@@ -44,10 +46,13 @@ frontend/src/
 │   ├── AuthForm.tsx         # Login / register / 2FA / forgot-password entry
 │   ├── ConnectForm.tsx      # Source/target provider selection + connection test
 │   ├── FileBrowser.tsx      # Path/calendar/contact selection before start
+│   ├── BackupDashboard.tsx  # Backup-job list and global backup SSE stream
 │   ├── BackupOptionsForm.tsx # Backup schedule (cron/timezone), retention count, compression
-│   ├── BackupSnapshotBrowser.tsx # Point-in-time snapshot tree browser, verify/restore actions
-│   ├── RestorePreviewModal.tsx   # Two-phase restore conflict preview and execution modal
+│   ├── BackupSnapshotBrowser.tsx # Snapshot tree, verification, and restore-preview workflow
 │   ├── Dashboard.tsx        # Live migration progress (SSE)
+│   ├── EditBackupModal.tsx  # Edit backup schedule and retention settings
+│   ├── EditSyncModal.tsx    # Browse and edit a sync job's scope and schedule
+│   ├── FileManager/         # Profile-bound file manager and preview/upload controls
 │   ├── MigrationsDashboard.tsx # History list of the user's migrations, syncs, and backups
 │   ├── SyncDashboard.tsx    # Live sync progress and delta stats
 │   ├── SettingsPage.tsx     # Profile, password, 2FA, email, SMTP, avatar
@@ -57,19 +62,25 @@ frontend/src/
 │   ├── AvatarCropper.tsx
 │   ├── LanguageSwitcher.tsx
 │   └── Toggle.tsx
+├── api/
+│   ├── files.ts             # File-manager API requests and binary upload/thumbnail helpers
+│   └── profiles.ts          # Connection-profile API helpers
 ├── contexts/
 │   ├── ThemeContext.tsx     # Light/dark theme provider
 │   └── useThemeContext.ts
 ├── hooks/
+│   ├── useAppHistory.ts     # URL/history-backed step state
 │   └── useTheme.ts
 ├── locales/
 │   ├── de/translation.json  # German strings (incl. errors.* namespace)
 │   └── en/translation.json  # English strings (key parity required)
 └── utils/
     ├── adminApi.ts          # Admin REST helpers
+    ├── apiClient.ts         # Configured apiFetch wrapper with single-flight refresh
     ├── apiError.ts          # useApiError() → translateApiError()
     ├── format.ts            # Locale-aware number/date/bytes formatting (useFormat)
-    └── oauth.ts             # OAuth popup + postMessage receiver
+    ├── oauth.ts             # OAuth popup + postMessage receiver
+    └── runtimeConfig.ts     # Runtime/Vite API-origin validation
 ```
 
 ---
@@ -79,23 +90,25 @@ frontend/src/
 `App.tsx` is a step-based state machine (no React Router). Steps:
 
 ```ts
-type Step =
-  | 'login' | 'history' | 'connect' | 'select' | 'backup'
-  | 'dashboard' | 'settings' | 'admin'
-  | 'reset-password' | 'confirm-email';
+type AppStep =
+  | 'login' | 'history' | 'connect' | 'select' | 'dashboard'
+  | 'settings' | 'admin' | 'reset-password' | 'confirm-email'
+  | 'syncdetail' | 'backupdetail' | 'files';
 ```
 
 - Initial step is derived from URL params (`reset-token`, `email-change-token`) or `localStorage`
   session state.
-- **History-based navigation:** in-app screens are pushed/replaced via `window.history.pushState`
-  with a state object `{ step, migration, appEntry }`. `goToOverview` / `goBack` use `history.back()`
-  so browser back/forward works deterministically and stale credentials are cleared when leaving
-  `select`/`dashboard`.
+- **History-based navigation:** in-app screens are pushed/replaced via `window.history.pushState` and
+  query parameters for migration, sync, backup, profile, or settings state. `goToOverview` / `goBack` use
+  `history.back()` so browser back/forward works deterministically and stale credentials are cleared when
+  leaving `select`/`dashboard`.
 - **Silent login:** on mount, if `has_session` is set, it calls `POST /api/auth/refresh` then
   `GET /api/auth/me`; on success it restores the dashboard/history step.
-- **Auto token refresh:** a global `fetch` patch intercepts `401` responses (except auth endpoints),
-  performs a silent refresh, and replays the original request with the new bearer token. A second
-  `setInterval` refreshes the access token every 14 minutes.
+- **Auto token refresh:** the configured `apiFetch` wrapper adds the bearer token and credentials to calls
+  for the configured API origin. On a non-auth `401`, it performs one single-flight cookie refresh and
+  retries the request with the new bearer token. Direct `fetch` calls remain for public settings, refresh
+  and logout, and special binary/ticket flows. A separate `setInterval` refreshes the access token every
+  14 minutes.
 - **OAuth:** the OAuth callback window posts tokens via `postMessage`; the receiver validates
   `event.origin` against the API origin before trusting it (tokens are in-memory only).
 
@@ -109,15 +122,17 @@ type Step =
 1. In the production image, `/runtime-config.js` supplies a validated `CLUMOOVE_API_URL` origin at
    container startup. It takes precedence and supports a configured cross-origin API.
 2. In Vite development, `import.meta.env.VITE_API_URL` is the build/dev-server fallback.
-3. Otherwise, on a custom domain with no/80/443 port, use the same origin (reverse-proxy routing).
-4. Else use `http://<hostname>:8001` (local dev).
+3. Without either configured origin, `localhost` or `127.0.0.1` on port `3000` uses
+   `http://<hostname>:8001` for the standalone development setup.
+4. Every other case uses the same origin (production nginx, Umbrel app proxy, custom domain, or Vite
+   unless `VITE_API_URL` is set).
 
 `CLUMOOVE_API_URL` must be an origin-only HTTP(S) URL: it cannot contain a path, credentials, query, or
 fragment. nginx derives `connect-src` from that exact value, while an unset value leaves the CSP at
-`connect-src 'self'` for same-origin API proxying. A console warning is emitted when the API is reached
-over plaintext HTTP on a non-loopback host. Unlike the previous resolution behavior, an origin-only
-`VITE_API_URL` now takes precedence even when it points to `localhost` or `127.0.0.1`; this makes an
-explicit Vite development API target deterministic.
+`connect-src 'self'` for same-origin API proxying. `parseApiOrigin` rejects plaintext `http:` origins in
+production as well as origins with credentials, paths, queries, or fragments. An origin-only `VITE_API_URL`
+takes precedence even when it points to `localhost` or `127.0.0.1`, making an explicit Vite development API
+target deterministic.
 
 ---
 
@@ -150,8 +165,7 @@ explicit Vite development API target deterministic.
 | `ConnectForm` | Choose source/target provider + credentials; supports saved connection profiles; calls `/migration/connect`; on success hands config + listed files to the next step. |
 | `FileBrowser` | Pick paths/calendars/contacts, conflict strategy, target dir, threads, bandwidth, optional `scheduled_time`; calls `/migration/start`; drops secrets from memory after success. |
 | `BackupOptionsForm` | Configure backup schedules (cron, timezone), retention limits (1–365), source paths, and triggers repository initialization. |
-| `BackupSnapshotBrowser` | Explore deduplicated point-in-time snapshots, download specific items, trigger metadata/budgeted repository verification, and launch the restore workflow. |
-| `RestorePreviewModal` | Interactive conflict analysis modal evaluating target path collisions, file differences, directory merges, and expected skip/overwrite/rename operations. |
+| `BackupSnapshotBrowser` | Explore deduplicated point-in-time snapshots, download specific items, trigger metadata/budgeted repository verification, and own the restore-preview workflow and its conflict-analysis UI. |
 | `Dashboard` | Live progress for a migration via authenticated `/migration/{id}/stream` SSE using `connectSseLoop`; shows files/calendars/contacts stats, pause/resume/cancel, threads/bandwidth controls, a paginated in-app error overview, and CSV report download. |
 | `MigrationsDashboard` | Lists the user's migrations, sync jobs, and backup jobs with status; opens a selected job or starts a new one. |
 | `SyncDashboard` | Live progress and details for synchronization jobs (delta stats, changed/deleted files, pause/resume, threads and bandwidth controls) plus a paginated in-app error overview. |
@@ -223,7 +237,9 @@ progress, reports, and damage counters; all progress state is safe to refresh af
 ## 9. Frontend Validation
 
 Run the standard typecheck and lint commands from [Development §2](./09-development.md#2-code-quality--checks),
-then run `npm test` and `npm run build` for a complete frontend change. UI changes additionally require:
+then run `npm run locale:check`, `npm test`, and `npm run build` for a complete frontend change. `npm test`
+runs the locale/error-code validation before Vitest; run `npm run locale:check` directly for a fast
+parity check after translation or API-error-code edits. UI changes additionally require:
 
 - a search confirming no legacy visual utilities or `lucide-react` imports remain;
 - locale key-parity verification after adding visible text or accessible labels; and

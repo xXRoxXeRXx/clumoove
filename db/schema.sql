@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_expires_at ON refresh_tokens(user_id, expires_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_id ON refresh_tokens(id);
 
 -- Table for Application Settings (Key-Value Store)
 CREATE TABLE IF NOT EXISTS settings (

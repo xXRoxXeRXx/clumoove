@@ -12,46 +12,32 @@ The authenticated file manager is a direct, profile-bound API path and is not pa
 ## 1. System Topology
 
 Clumoove is a decoupled monorepo with separate containers for the frontend, API gateway, database,
-cache, and migration/backup workers. Every job is tied to a user account and isolated from others.
+coordination store, and migration/sync/backup/restore workers. Every job is tied to a user account and
+isolated from others.
 
-```
-┌────────────────────┐
-│  React SPA         │
-│  (frontend)        │
-│  http://:3001      │
-└─────────┬──────────┘
-          │ HTTPS / SSE / REST
-          ▼
-┌────────────────────┐          ┌──────────────────────────┐
-│  Go API Gateway    │◀────────▶│  PostgreSQL 15           │
-│  (cmd/api) :8000   │  CRUD,    │  - users, migrations,    │
-│  Auth, WS, OAuth,  │  Auth,    │    sync_jobs, sync_state,│
-│  Scheduler, Sync,  │  Indexing │    backup_jobs/runs/     │
-│  Backup, Restore,  │          │    snapshots/packs,      │
-│  Rotation Daemon   │          │    restore_jobs/runs,    │
-└─────────┬──────────┘          │    profiles, tasks,      │
-          │                      │    schedules, audit_log  │
-          │                      │  - also the task QUEUE   │
-          │ (Redis: Pub/Sub,     └──────────────────────────┘
-          │  locks, heartbeats)
-          ▼
-┌────────────────────┐          ┌──────────────────────────┐
-│  Go Worker Engine  │◀────────▶│  Redis 7 (password auth) │
-│  (cmd/worker)      │  dequeue  │  - worker:active:{id}    │
-│  Dequeue, Transfer,│  via SQL  │  - worker:recovery-lock  │
-│  Backup, Restore,  │           │  - schedule:lock:{id}    │
-│  Recovery, Retry   │           │  - migration-control:*   │
-└──────┬──────┬──────┘           │  - backup-verify:*       │
-       │      │                  └──────────────────────────┘
-       ▼      ▼
-┌──────────────┐   ┌──────────────┐
-│  Source Store│   │ Target Store │  (Nextcloud, OpenCloud, Seafile, WebDAV, Dropbox, Google, OneDrive,
-└──────────────┘   └──────────────┘   S3, SMB, SFTP, FTPS, MagentaCLOUD, Koofr, Local, Mega, Immich)
+```mermaid
+flowchart TD
+    FE[React SPA]
+    API[Go API Gateway<br/>Auth, REST/SSE, OAuth, scheduler,<br/>sync-pass coordination, backup/restore API]
+    Worker[Go Worker Engine<br/>Migration and sync-task execution,<br/>backup, restore, verification, recovery]
+    DB[(PostgreSQL 15<br/>System of record and task queue)]
+    Redis[(Redis 7<br/>Distributed coordination and short-lived state)]
+    Source[Source storage]
+    Target[Target storage]
+
+    FE <-->|HTTPS: REST + SSE| API
+    API <-->|CRUD, auth, indexing, sync-pass state| DB
+    API <-->|rate limits, locks, tickets, leases, Pub/Sub| Redis
+    Worker <-->|dequeue with SKIP LOCKED;<br/>LISTEN/NOTIFY wake-up| DB
+    Worker <-->|heartbeats, locks, Pub/Sub| Redis
+    Worker <-->|stream downloads| Source
+    Worker <-->|stream uploads| Target
 ```
 
 > **Important:** The task queue runs **natively in PostgreSQL** (`SELECT … FOR UPDATE SKIP LOCKED`).
-> Redis is **not** a message broker. It is used exclusively for worker liveness heartbeats,
-> distributed recovery locks (`SET NX`), and cancel/bandwidth Pub/Sub events.
+> Redis is never a task broker. It is the shared distributed coordination and short-lived-state store for
+> worker heartbeats; recovery, scheduler, and OAuth locks; cancel/bandwidth Pub/Sub; API rate limiting;
+> and file-manager download tickets and stream leases.
 
 ---
 
@@ -59,28 +45,36 @@ cache, and migration/backup workers. Every job is tied to a user account and iso
 
 | Component | Entrypoint | Responsibilities |
 | :-------- | :--------- | :--------------- |
-| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), SSE streams, OAuth callbacks, OAuth rotation daemon, scheduler daemon, sync engine endpoints, backup job management, snapshot catalog queries, restore preview creation/consumption, repository verify endpoints, connection profile management, admin endpoints. |
-| **Worker Engine** | `backend/cmd/worker` | Dequeue tasks via SQL, stream transfer with integrity verification, conflict resolution, retry/backoff, worker liveness, connection-loss recovery, orphan recovery, completion notifier, backup run execution (scanning, 4 MiB chunking, deduplication, 64 MiB pack uploads, snapshot publishing), retention maintenance, repository verification (`METADATA`, `BUDGETED`, `FULL`), restore preview calculations, restore run execution. |
+| **API Gateway** | `backend/cmd/api` | HTTP routing, JWT auth middleware, connection tests, file browsing, triggering indexing (immediate + scheduled), SSE streams, OAuth callbacks, OAuth rotation daemon, scheduler daemon, sync-pass coordination, backup job management, snapshot catalog queries, restore preview creation/consumption, repository verify endpoints, connection profile management, admin endpoints. |
+| **Worker Engine** | `backend/cmd/worker` | Dequeue migration and sync tasks via SQL, stream transfer with integrity verification, conflict resolution, retry/backoff, worker liveness, connection-loss recovery, orphan recovery, completion notifier, backup run execution (scanning, 4 MiB chunking, deduplication, 64 MiB pack uploads, snapshot publishing), retention maintenance, repository verification (`METADATA`, `BUDGETED`, `FULL`), restore preview calculations, restore run execution. |
 | **PostgreSQL** | container `migration-postgres` | System of record **and** queue. Stores users, credentials (encrypted), migrations, sync jobs, sync state, backup jobs, backup runs, backup snapshots, backup packs/blocks, restore jobs, restore runs/items, connection profiles, tasks, schedules, audit log, OAuth/refresh tokens, settings. |
-| **Redis** | container `migration-redis` | Liveness keys, recovery/schedule distributed locks, cancel & bandwidth Pub/Sub, rate limiting, file manager leases and download tickets. Password-protected, not exposed to host. |
+| **Redis** | container `migration-redis` | Liveness keys; recovery, schedule, and OAuth distributed locks; cancel & bandwidth Pub/Sub; rate limiting; file-manager stream leases and download tickets. Password-protected, not exposed to host. |
 | **Frontend** | container `migration-frontend` | SPA: login, connect form, file browser, live dashboard, sync view/dashboard, backup options form, snapshot browser, restore wizard/preview modal, connection profiles, file manager, settings, admin panel. |
 
 ---
 
 ## 3. Migration Lifecycle
 
-```
- ┌──────────┐   connect/test   ┌──────────┐  start (immediate)  ┌──────────┐
- │ SCHEDULED│ ───────────────▶ │ INDEXING │ ─── creates PENDING ─▶│ RUNNING  │
- └──────────┘  (deferred time)└──────────┘      tasks           └────┬─────┘
-       ▲                                                                 │
-       │ triggerMigration (scheduler)                                    │ all tasks done
-       │                                                                 ▼
- ┌──────────┐  PAUSED_CONNECTION_LOSS (auto)  ┌──────────┐        ┌──────────┐
- │  PAUSED  │ ◀──────────────────────────────│ COMPLETED│        │  FAILED  │
- └────┬─────┘  resume by user / recovery       └──────────┘        └──────────┘
-      │
-      └───────────── cancel ───────────────▶ CANCELLED
+```mermaid
+stateDiagram-v2
+    [*] --> SCHEDULED: deferred start
+    [*] --> INDEXING: immediate start
+    SCHEDULED --> INDEXING: scheduler triggers
+    INDEXING --> RUNNING: inventory creates tasks
+    INDEXING --> PAUSED_CONNECTION_LOSS: connection loss
+    RUNNING --> PAUSED: user pauses
+    PAUSED --> RUNNING: user resumes
+    RUNNING --> PAUSED_CONNECTION_LOSS: connection loss
+    PAUSED_CONNECTION_LOSS --> RUNNING: recovery or user resume
+    RUNNING --> VERIFYING: transfer work finishes
+    VERIFYING --> COMPLETED: all work verified
+    VERIFYING --> COMPLETED_WITH_ERRORS: skipped, failed, or indexing errors
+    VERIFYING --> FAILED: verification cannot complete
+    SCHEDULED --> CANCELLED: user cancels
+    INDEXING --> CANCELLED: user cancels
+    RUNNING --> CANCELLED: user cancels
+    PAUSED --> CANCELLED: user cancels
+    PAUSED_CONNECTION_LOSS --> CANCELLED: user cancels
 ```
 
 1. **Registration & Login** — User registers (`POST /api/auth/register`) and authenticates
@@ -165,6 +159,10 @@ Cloud services frequently suffer connection fluctuations, so the backend is buil
 - **PostgreSQL-native queue (at-least-once):** Dequeue is done directly in PostgreSQL with
   `SELECT … FOR UPDATE SKIP LOCKED`. A task is atomically moved into `RUNNING`. If a worker crashes,
   `RunWorkerLiveness` resets its orphaned `RUNNING` tasks back to `PENDING` on restart.
+- **LISTEN/NOTIFY wake-up with polling fallback:** Inserting `PENDING` tasks emits PostgreSQL
+  `NOTIFY task_available`, which wakes idle workers through a dedicated `LISTEN` connection. This reduces
+  normal enqueue latency without changing the SQL queue semantics; workers still poll every five seconds
+  as a fallback (every two seconds when `LISTEN` is unavailable).
 - **Worker liveness & distributed recovery:** Each worker periodically reports its heartbeat via Redis.
   A scheduler (`RunWorkerLiveness`) detects dead workers and atomically claims their recovery lock via
   Redis `SET NX`, preventing duplicate recovery across instances.
@@ -183,9 +181,9 @@ Cloud services frequently suffer connection fluctuations, so the backend is buil
 
 ---
 
-## 5. Data Integrity (3-Way Hash Check)
+## 5. Data Integrity (Comparable Hashes + Size Fallback)
 
-To prevent silent data corruption, every file is mathematically verified:
+When the source and target expose comparable hashes, each transferred file is mathematically verified:
 
 1. **Source hash** — Captured before transfer via WebDAV PROPFIND (`OC-Checksums` / `getcontenthash`),
    or via a direct `GetFileHash` fallback.
@@ -196,7 +194,8 @@ To prevent silent data corruption, every file is mathematically verified:
 3. **Target hash** — After upload, the hash of the written file is queried from the target server.
 4. **Validation** — A task is complete only when the hashes match
    ($\text{Hash}_{\text{source}} \equiv \text{Hash}_{\text{worker}} \equiv \text{Hash}_{\text{target}}$).
-   Where a provider exposes no usable comparable hash, the system falls back to size + timestamp comparison.
+   Where a provider exposes no usable comparable hash, the system verifies target existence and size instead;
+   timestamps are not integrity evidence.
 
 See [Backend](./02-backend.md#integrity-verification) and
 [Security](./07-security.md) for details on the verification fallbacks that avoid false "corrupted"

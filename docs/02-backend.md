@@ -8,7 +8,7 @@ Immich is a files-only, one-time-migration provider. Its API key is stored as th
 
 ## Cloud File Manager (Phase 1)
 
-`cmd/api/file_profile_resolver.go` resolves an owned saved profile fail-closed, decrypts its credentials with the field-domain AAD, refreshes expiring OAuth access tokens, scopes Local access to the JWT user, and constructs the provider through `storage.NewProvider`. `file_handlers.go` seals user/profile-bound references and cursors with independent crypto domains, resolves stored quick-link paths to sealed breadcrumbs, issues Redis-backed one-time download tickets, and accepts raw `PUT` upload bodies only after metadata validation. `ExactSizeReader` rejects short or trailing bodies without buffering; an upload lease is acquired before the body is read and released on every exit path. The manager capability registry is intentionally separate from `StorageProvider`: Google Drive uses ID-based native manager contracts, including tested upload conflict handling; every files provider has a bounded read adapter and remains mutation-disabled until it has its own manager implementation.
+`cmd/api/file_profile_resolver.go` resolves an owned saved profile fail-closed, decrypts its credentials with the field-domain AAD, refreshes expiring OAuth access tokens, scopes Local access to the JWT user, and constructs the provider through `storage.NewProvider`. `file_handlers.go` seals user/profile-bound references and cursors with independent crypto domains, resolves stored quick-link paths to sealed breadcrumbs, issues Redis-backed one-time download tickets, and accepts raw `PUT` upload bodies only after metadata validation. `ExactSizeReader` rejects short or trailing bodies without buffering; an upload lease is acquired before the body is read and released on every exit path. The manager capability registry is intentionally separate from `StorageProvider`: each provider opts into browse, download, upload, directory creation, and thumbnails through its tested, dedicated manager contracts. The profile capability endpoint is the source of truth; Immich is read-only, and Local is unavailable on Windows.
 
 ---
 
@@ -22,12 +22,13 @@ Responsibilities (started in `main()`):
 - **Refuses to start** unless `ENCRYPTION_SECRET_KEY` and `JWT_SECRET_KEY` are set, are different, and
   the JWT key is ≥ 32 bytes.
 - Supports initial administrator creation via Web UI when no users exist (`POST /api/auth/setup-admin`, see
-  [Security](./07-security.md#admin-bootstrap)).
+  [Security](./07-security.md#11-admin-setup-wizard)).
 - Registers all HTTP routes on `http.NewServeMux()` (Go 1.22 patterns, e.g. `POST /api/migration/start`,
   `GET /api/migration/{id}`, `POST /api/backup`, `GET /api/backup/{id}`).
 - Wraps the mux with `securityHeadersMiddleware(corsMiddleware(mux))`.
+- Applies Redis-backed rate limits with atomic `INCR` plus `PEXPIRE`; there is no process-local
+  rate-limit eviction goroutine.
 - Starts background goroutines:
-  - `server.rateLimiter.evictExpired` — rate-limit map cleanup.
   - `server.RunOAuthRotationDaemon` — proactive OAuth2 token rotation.
   - `sched.Run(ctx)` — the Core Scheduler Engine.
 - Graceful shutdown on `SIGINT`/`SIGTERM` (5-second window).
@@ -37,14 +38,16 @@ Responsibilities (started in `main()`):
 Key server struct fields: `db`, `queue`, `indexer`, `encryptionKey`, `jwtSecret`, `rateLimiter`,
 `activeStreams`, `trustedProxy`.
 
-### `cmd/worker` — Migration & Backup Engine
+### `cmd/worker` — Migration, Sync, Backup & Restore Engine
 
 Responsibilities:
 
 - Initializes the same DB and Redis connections.
 - Builds a `processor.Processor` and calls `proc.Start(ctx)`.
-- Handles `SIGINT`/`SIGTERM` → cancels context → `Start` blocks until all in-flight tasks and runs finish
-  (graceful drain).
+- Starts dedicated backup and restore coordinators in addition to the processor.
+- On `SIGINT`/`SIGTERM`, cancels the shared context. `proc.Start` drains transfer workers and the
+  verification dispatcher; the independently started backup and restore coordinators receive the same
+  cancellation but are not joined by the processor's wait group.
 - Worker ID format: `worker-<hostname>-<pid>`.
 
 ---
@@ -56,17 +59,24 @@ Responsibilities:
 | `internal/auth` | JWT generation/validation (`auth.go`), TOTP helpers, HTTP middleware (`middleware.go`). |
 | `internal/backup` | Backup coordinator, run execution, snapshot publishing, retention management, repository verification. |
 | `internal/backuprepo` | Clumoove backup pack format v1 reader/writer, manifest repository abstraction, block catalog. |
+| `internal/config` | Shared process configuration defaults and environment-resolution helpers. |
 | `internal/crypto` | AES-256-GCM `Encrypt`/`Decrypt` with SHA-256 key derivation. |
 | `internal/db` | PostgreSQL access layer, `InitDB` schema migration, audit log, users, migrations, tasks, schedules, backup jobs/runs/snapshots/blocks/packs, restore previews/jobs/runs, SMTP, indexing errors, admin queries. |
 | `internal/email` | SMTP config + `SendMail`, localized HTML delivery rendering. |
+| `internal/httpresp` | Shared JSON response envelope and machine-readable API error helpers. |
+| `internal/i18n` | Backend view of the frontend delivery-translation catalog. |
 | `internal/indexer` | BFS indexing of source paths/calendars/contacts → `PENDING` tasks. |
+| `internal/megasecret` | Encryption and lifecycle helpers for reusable MEGA session material. |
+| `internal/notify` | Validation and delivery for email, Gotify, ntfy, Telegram, and Discord notification channels. |
 | `internal/oauth` | OAuth2 token refresh for Dropbox/Google/OneDrive/HiDrive; `Configure`/`NewDBLoader` installs a DB-backed credential loader with a 30s ciphertext cache; secrets are decrypted only at token-request time. |
+| `internal/observability` | Structured JSON logging, request IDs, and privacy-preserving redaction. |
 | `internal/processor` | The worker loop, transfer logic, conflict resolution, hash verification, retry/backoff, liveness & recovery schedulers, completion notifier. |
 | `internal/queue` | PostgreSQL dequeue (`DequeueSQL`), Redis locks, Pub/Sub for cancel/bandwidth, liveness tracking. |
 | `internal/restore` | Two-phase restore coordinator (read-only conflict preview + execute restore runs). |
 | `internal/sanitize` | Filename sanitization + case-collision detection/resolution for target providers. |
 | `internal/scheduler` | Core scheduler daemon (cron, overlap protection, multi-instance lock). |
 | `internal/storage` | `StorageProvider` interface, provider implementations, `NewProvider` factory, SSRF egress guards. |
+| `internal/sync` | API-owned, generation-fenced sync-pass coordinator: scans both sides, computes deltas, enqueues tasks, waits for workers, and commits `sync_state`. |
 | `internal/throttle` | Per-migration bandwidth `MigrationThrottler` and throttled readers. |
 | `internal/totp2fa` | TOTP secret generation, code verification. |
 
@@ -77,7 +87,7 @@ Responsibilities:
 `InitDB(connStr)` opens the connection with up to 10 startup retries and runs **inline schema
 migrations** so the schema self-heals on first boot:
 
-- `CREATE TABLE IF NOT EXISTS` for `users`, `refresh_tokens`, `settings`, `schedules`, `audit_log`,
+- `CREATE TABLE IF NOT EXISTS` for `users`, `migrations`, `tasks`, `refresh_tokens`, `settings`, `schedules`, `audit_log`,
   `instance_smtp_settings`, `instance_oauth_providers`, `notification_channels`, `notification_events`,
   `notification_deliveries`, `password_reset_tokens`, `email_change_tokens`, `indexing_errors`,
   `connection_profiles`, `sync_jobs`, `sync_state`, `backup_jobs`, `backup_runs`, `backup_snapshots`,
@@ -88,10 +98,12 @@ migrations** so the schema self-heals on first boot:
   `user_id`, `source_provider`/`target_provider`, `resource_type`, `threads`, OAuth token columns,
   `selected_paths`/`selected_calendars`/`selected_contacts`, `bandwidth_limit_mbps`, TOTP columns,
   `sync_job_id` on `tasks`, audit columns, etc.).
-- Useful indexes: `idx_migrations_user_id`, `idx_tasks_migration_status`, `idx_tasks_sync_status`,
-  `idx_tasks_retry` (partial), `idx_schedules_next_run` (partial), `idx_conn_profiles_user`,
-  `idx_sync_jobs_user_id`, `idx_sync_state_job`, `idx_backup_jobs_user`, `idx_backup_runs_job`,
-  `idx_backup_snapshots_job`, `idx_backup_blocks_hash`, `idx_restore_previews_job`, `idx_audit_log_*`.
+- Useful indexes include `idx_migrations_user_id`, `idx_tasks_migration_status`,
+  `idx_tasks_sync_gen_status`, `idx_tasks_retry` (partial), `idx_schedules_next_run` (partial),
+  `idx_conn_profiles_user`, `idx_sync_jobs_user_id`, `idx_sync_state_job`,
+  `idx_backup_jobs_user_created`, `idx_backup_runs_job_created`,
+  `idx_backup_snapshots_job_created`, `idx_backup_blocks_job_pack`,
+  `idx_restore_previews_owner`, and `idx_audit_log_*`.
 - Connection pool sizing derived from `MAX_THREADS` (`val*2`, min 50).
 - **Default-credential rejection:** if the DB host is publicly reachable and the DSN still contains
   `postgres:postgres@`, startup fails (local/private hosts are exempted).
@@ -116,24 +128,17 @@ conversion (used for `selected_paths`, `selected_calendars`, `selected_contacts`
 
 ## 4. Queue (`internal/queue`)
 
-The queue is **PostgreSQL-native**. `DequeueSQL` uses a CTE with `FOR UPDATE SKIP LOCKED`:
+The queue is **PostgreSQL-native**. Each `DequeueSQL` call uses one transaction to:
 
-```sql
-WITH available_tasks AS (
-  SELECT t.id, t.migration_id
-  FROM tasks t JOIN migrations m ON t.migration_id = m.id
-  WHERE t.status = 'PENDING'
-    AND m.status IN ('RUNNING', 'INDEXING')
-    AND (SELECT COUNT(*) FROM tasks t2
-         WHERE t2.migration_id = m.id AND t2.status = 'RUNNING') < m.threads
-  ORDER BY t.created_at ASC
-  LIMIT 1
-  FOR UPDATE SKIP LOCKED
-)
-UPDATE tasks SET status = 'RUNNING', worker_hash = $1
-WHERE id = (SELECT id FROM available_tasks)
-RETURNING id, migration_id;
-```
+1. Mark a pending sync upload as `SKIPPED` when its required `conflict_copy` rename prerequisite
+   has already failed, been cancelled, or been skipped.
+2. Select one eligible pending migration or sync task with `FOR UPDATE SKIP LOCKED`. Migration tasks
+   are candidates in `RUNNING` or `INDEXING`; sync tasks are candidates only in `RUNNING` and only for
+   the current `run_generation`. A dependent rename upload is excluded until its exact prerequisite
+   completed.
+3. Lock the selected task's parent migration or sync job with `FOR UPDATE`, then re-check the parent
+   status and its running-task capacity. Sync claims also re-check the selected task's generation.
+4. Atomically set the claimed task to `RUNNING`, persist `worker_hash`, and increment `claim_epoch`.
 
 Migration tasks are eligible while their migration is `RUNNING` or `INDEXING`.
 Sync tasks are eligible only while their sync job is `RUNNING`: `INDEXING` is
@@ -154,6 +159,11 @@ and the pass is marked failed for a recoverable retry.
 
 This guarantees at-least-once delivery and per-job thread caps.
 
+After inserting pending tasks, `NotifyTaskAvailable` sends PostgreSQL `NOTIFY task_available`. Idle
+worker threads keep a dedicated `LISTEN` connection and wake immediately when notified. The listener is
+only a latency optimization: workers continue to poll every five seconds with a healthy listener and
+every two seconds if `LISTEN` cannot be established.
+
 Redis is used for:
 
 - `RegisterActiveWorker` / `GetAbandonedWorkerQueues` — liveness heartbeats (TTL 120s).
@@ -163,6 +173,8 @@ Redis is used for:
 - `TryClaimOAuthLock` — per-job/role OAuth refresh lock (`oauth:lock:{type}:{id}:{role}`, `SET NX`).
 - `PublishCancelEvent` / `SubscribeToCancelEvents` — cancel Pub/Sub with auto-reconnect backoff.
 - `PublishBandwidthChange` / `SubscribeToBandwidthChanges` — migration and sync-job bandwidth Pub/Sub with auto-reconnect.
+- The API's distributed rate limiter, using atomic Redis counters with key TTLs.
+- File-manager one-time download tickets and per-user upload/download stream leases.
 
 `NewQueue` **rejects empty or known-default passwords** (`redis_secret`, `dev_redis_secure_pass_999`).
 
@@ -343,7 +355,7 @@ size-comparison fallback.
   plaintext buffer for callers to clear. It can read the legacy unversioned `hex(nonce+cipher)` envelope
   (which had no AAD) so existing rows remain usable. Empty strings round-trip to empty.
 - Used **only** for credential encryption (never JWT signing). See
-  [Security](./07-security.md#key-segregation).
+  [Security](./07-security.md#1-key-segregation).
 
 ---
 
@@ -407,9 +419,10 @@ flow (`/api/auth/2fa/*`). Lockout after 5 failed attempts for 15 minutes is enfo
 
 ## 15. Configuration Contract (hard requirements)
 
-Both API and worker refuse to start when `ENCRYPTION_SECRET_KEY` is empty, `REDIS_PASSWORD` is empty or
-a known default, or the database DSN uses `postgres:postgres@` on a publicly reachable host. The API
-additionally refuses to start when `JWT_SECRET_KEY` is empty, equals `ENCRYPTION_SECRET_KEY`, or is shorter
-than 32 bytes; the worker does not use a JWT key.
+Both API and worker refuse to start when `ENCRYPTION_SECRET_KEY` is empty, the effective Redis password
+(from `REDIS_URL` or the `REDIS_PASSWORD` fallback) is empty or a known default, or the database DSN uses
+`postgres:postgres@` on a publicly reachable host. The API additionally refuses to start when
+`JWT_SECRET_KEY` is empty, equals `ENCRYPTION_SECRET_KEY`, or is shorter than 32 bytes; the worker does not
+use a JWT key.
 
 See [Deployment](./08-deployment.md) for the full environment-variable reference.

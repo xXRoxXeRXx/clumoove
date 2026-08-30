@@ -35,12 +35,13 @@ is required.
 ```bash
 cd frontend
 npm install
-npm run dev           # Vite dev server on :5173 (or as configured)
+VITE_API_URL=http://localhost:8000 npm run dev  # Vite dev server on :5173
 ```
 
-The frontend resolves the API via `getApiUrl()` (see
-[Deployment §5](./08-deployment.md#5-dynamic-api-url-frontend)). For local dev it points at
-`http://<host>:8001`.
+Set `VITE_API_URL=http://localhost:8000` when running the API directly on its default port. The frontend
+resolves the API via `getApiUrl()` (see [Deployment §6](./08-deployment.md#6-runtime-api-url-and-csp-frontend));
+without a runtime or Vite API origin, Vite on `:5173` uses same-origin `/api` requests and cannot reach the
+separately started API process.
 
 ---
 
@@ -235,6 +236,6 @@ docker-compose.yml / docker-compose.dev.yml
 ```
 
 `docker-compose.yml` builds the production stack locally (`target: prod`); `docker-compose.dev.yml` builds
-all images locally for development. See [Deployment §4](./08-deployment.md#4-starting-the-stack).
+all images locally for development. See [Deployment §5](./08-deployment.md#5-starting-the-stack).
 
 See [Architecture §8](./01-architecture.md#8-project-layout) for the full tree.

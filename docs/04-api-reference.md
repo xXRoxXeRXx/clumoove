@@ -29,10 +29,12 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | `POST /files/profiles/{profileID}/entries:list` | JWT | Lists `files` with optional opaque `parent_ref`, sealed cursor, and a maximum limit of 200. |
 | `POST /files/profiles/{profileID}/entries:resolve` | JWT | Resolves a stored path to sealed breadcrumbs, returning the nearest existing parent when necessary. |
 | `PUT /files/profiles/{profileID}/content` | JWT | Streams one raw file body. `Content-Length` is required; `X-Clumoove-File-Name` is Base64URL UTF-8, `X-Clumoove-Parent-Ref` is an optional sealed directory ref, and `X-Clumoove-Conflict-Strategy` is `SKIP`, `OVERWRITE`, or `RENAME`. |
+| `POST /files/profiles/{profileID}/directories` | JWT | Creates a directory from a name and optional sealed parent reference. |
 | `POST /files/profiles/{profileID}/download-tickets` | JWT | Creates a single-use, 60-second download ticket from an opaque file ref. |
 | `GET /files/download/{ticket}` | ticket | Streams an attachment without a JWT or remote path in the URL. |
+| `POST /files/profiles/{profileID}/thumbnail` | JWT | Streams a thumbnail for an opaque file reference when the profile supports thumbnails. |
 
-The file manager returns normal HTTP errors. Its `FILES_*` error codes are localized by the frontend. Upload returns `201` for upload/rename and `200` for skip; it returns `411 FILES_UPLOAD_LENGTH_REQUIRED`, `400 FILES_UPLOAD_SIZE_MISMATCH`, or `409 FILES_CONFLICT` as applicable. Google Drive uses native pagination and currently is the only manager provider with upload enabled; other files providers use deterministic, emulated paging with a 10,000-entry safety limit and return `FILES_DIRECTORY_CHANGED` if a folder changes between pages.
+The file manager returns normal HTTP errors. Its `FILES_*` error codes are localized by the frontend. Upload returns `201` for upload/rename and `200` for skip; it returns `411 FILES_UPLOAD_LENGTH_REQUIRED`, `400 FILES_UPLOAD_SIZE_MISMATCH`, or `409 FILES_CONFLICT` as applicable. Directory creation accepts `{ "name", "parent_ref"? }` and returns `201`, `409 FILES_CONFLICT`, or `501 FILES_UNSUPPORTED_OPERATION`. Thumbnail requests accept `{ "ref", "width"?, "height"? }`, return an image stream on `200`, and return `415` for unsupported media or `501` when thumbnails are unavailable. Browse, download, upload, directory creation, conflict strategies, and thumbnails are capability-gated per profile; retrieve the capability endpoint before enabling an action. Upload is enabled for the provider types whose returned `capabilities.upload` is true, rather than for one fixed provider; Immich is read-only, and Local is unavailable on Windows. Native pagination is available where the profile advertises it; all other providers use deterministic, emulated paging with a 10,000-entry safety limit and return `FILES_DIRECTORY_CHANGED` if a folder changes between pages.
 
 ---
 
@@ -41,6 +43,8 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
 | `POST` | `/auth/register` | public | Create account (password ≥ 12 chars). |
+| `GET` | `/auth/setup-status` | public, rate-limited | Returns `{ needs_setup }` for initial administrator bootstrap. |
+| `POST` | `/auth/setup-admin` | public, rate-limited | Creates the sole initial `ADMIN` user and issues a session. Body: `email`, `password`, `display_name`, optional `language`. Returns `403 SETUP_ALREADY_COMPLETED` after bootstrap. |
 | `POST` | `/auth/login` | public | Login → JWT access + refresh cookie. Returns `2fa_pending` token if 2FA enabled. |
 | `POST` | `/auth/totp` | public | Verify TOTP code (2FA) using the 5-min temp token; returns full JWT. |
 | `POST` | `/auth/refresh` | refresh | Rotate access token from refresh cookie. |
@@ -71,6 +75,7 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 | `GET` | `/migration` | JWT | List the user's migrations. |
 | `GET` | `/migration/stream` | JWT | SSE migration-stream (rate-limited, capped per user). |
 | `POST` | `/migration/connect` | JWT | Connection test for source **and** target; returns source listing. Rate-limited. |
+| `POST` | `/migration/connect/test` | JWT | Rate-limited single-side connection test. Body uses the source or target provider/credentials (or saved profile) plus `role: "source" | "target"`; logical failures use `{ success: false, error_code }`. |
 | `POST` | `/migration/browse` | JWT | Browse source directories/calendars/contacts. Rate-limited. |
 | `POST` | `/migration/target/browse` | JWT | Browse target directories. Rate-limited. |
 | `POST` | `/migration/target/mkdir` | JWT | Create a target directory. Rate-limited. |
@@ -84,6 +89,7 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 | `GET` | `/migration/{id}/report` | JWT (own) | CSV report (failed tasks + skipped indexing errors). |
 | `GET` | `/migration/{id}/errors` | JWT (own) | Paginated JSON error list (final transfer failures + indexing errors); accepts `limit` (max. 100) and `offset`. |
 | `POST` | `/migration/{id}/retry-failed` | JWT (own) | Re-enqueue failed tasks (`COMPLETED`/`FAILED` only). |
+| `POST` | `/migration/{id}/reauth` | JWT (own) | Replaces OAuth tokens for `role` `source` or `target`. Body: `role`, `access_token`, `refresh_token`, optional `expires_in`; resets failed tasks for retry and returns the retried count. |
 | `POST` | `/migration/{id}/reindex` | JWT (own) | Re-run indexing for a `FAILED` migration. |
 | `PUT` | `/migration/{id}/threads` | JWT (own) | Live thread count (1–16). |
 | `PUT` | `/migration/{id}/bandwidth` | JWT (own) | Live bandwidth limit (0–1000 Mbps); publishes Redis event. |
@@ -105,11 +111,15 @@ The file manager returns normal HTTP errors. Its `FILES_*` error codes are local
 | `POST` | `/sync/{id}/start` | JWT (own) | Manually trigger a sync run. |
 | `POST` | `/sync/{id}/pause` | JWT (own) | Pause a running sync job. |
 | `POST` | `/sync/{id}/resume` | JWT (own) | Resume a paused sync job. |
+| `POST` | `/sync/{id}/reauth` | JWT (own) | Replaces OAuth tokens for `role` `source` or `target`. Body: `role`, `access_token`, `refresh_token`, optional `expires_in`; returns the job to `IDLE`. |
 | `DELETE` | `/sync/{id}` | JWT (own) | Delete sync job + cascading state/tasks. |
 | `GET` | `/sync/{id}/report` | JWT (own) | Download CSV report for sync errors. |
 | `GET` | `/sync/{id}/errors` | JWT (own) | Paginated JSON list of final transfer failures; accepts `limit` (max. 100) and `offset`. |
 | `PUT` | `/sync/{id}/threads` | JWT (own) | Live thread count adjustment. |
 | `PUT` | `/sync/{id}/bandwidth` | JWT (own) | Live bandwidth limit (0–1000 Mbps); publishes Redis event. |
+| `GET` | `/sync/{id}/browse` | JWT (own) | Rate-limited browse of stored sync credentials. Query: `role=source|target` (source default), `path` (`/` default), `resource_type=files|calendars|contacts` (`files` default). Logical connection/listing failures use `{ success: false, error_code }`. |
+| `PUT` | `/sync/{id}/schedule` | JWT (own) | Updates the interval. Body: `{ "interval_minutes" }`; allowed values are 5, 15, 30, 60, 360, and 1440. |
+| `PUT` | `/sync/{id}/scope` | JWT (own) | Updates an inactive job's scope. Body: `selected_paths`, optional `target_dir`, `conflict_strategy`, `direction`, and `delete_propagation`; active jobs return `409 SYNC_INVALID_STATE`. |
 
 ---
 
@@ -120,8 +130,11 @@ All backup routes are JWT-protected and owner-scoped.
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
 | `GET` | `/backup` | JWT | List the user's backup jobs. |
+| `GET` | `/backup/stream` | JWT | SSE stream of the caller's `backup_jobs` updates, with keepalives; this is not a WebSocket. |
 | `POST` | `/backup` | JWT | Create a new backup job (profile IDs, selected paths, cron schedule, timezone, retention). |
 | `GET` | `/backup/{id}` | JWT (own) | Get backup job details, status, latest run stats. |
+| `PUT` | `/backup/{id}` | JWT (own) | Update cron schedule, timezone, retention, and threads. Body: `cron_expression`, `timezone`, `retention_count` (`1..365`), `threads` (`1..16`). |
+| `GET` | `/backup/{id}/runs` | JWT (own) | List run history for a backup job. |
 | `POST` | `/backup/{id}/run` | JWT (own) | Manually queue a backup run. |
 | `POST` | `/backup/{id}/pause` | JWT (own) | Pause an active backup job/run. |
 | `POST` | `/backup/{id}/resume` | JWT (own) | Resume a paused backup job. |
@@ -193,7 +206,7 @@ The server computes a versioned SHA-256 restore configuration fingerprint from t
 | Method | Path | Protection | Description |
 | :----- | :--- | :--------- | :---------- |
 | `GET` | `/settings` | public | Read instance setting(s). |
-| `PUT` | `/settings` | JWT | Update a setting. |
+| `PUT` | `/settings` | admin | Update the instance registration setting. Body: `{ "key": "registrations_enabled", "value": "true" | "false" }`. |
 | `GET` | `/settings/notifications` | JWT | List notification preferences; includes `email_available` and returns the email channel only when the instance mailer is configured. |
 | `PUT` | `/settings/notifications` | JWT | Update a channel. The `email` channel accepts only `{ type, enabled }`; other channels retain their user configuration. |
 | `POST` | `/settings/notifications/test` | JWT | Send a test through a configured non-email notification channel. Instance-mailer tests are admin-only. |
@@ -288,6 +301,8 @@ Error codes are typed constants (`APIErrorCode`). Examples include `ErrMigration
 `ErrMigrationNotFound`, `ErrMigrationInvalidState`, `ErrProviderUnsupported`, `ErrSourceConnectionFailed`,
 `ErrTargetConnectionFailed`, `ErrRateLimited`, `ErrThreadsOutOfRange`, `ErrBandwidthOutOfRange`,
 `ErrCorsOriginUntrusted`, `ErrInvalidBody`, `ErrNoSourcePaths`, `ErrEncryptionFailed`,
-`ErrTooManyActiveMigrations`, `ErrBackupJobNotFound`, `ErrBackupJobNotOwned`, `ErrRestorePreviewNotFound`,
-`ErrRestorePreviewExpired`, `ErrRestorePreviewConflict`, and many more. Each must be added to **both** locale files under
-`errors.*`. The frontend maps unknown codes to `errors.UNKNOWN`.
+`ErrTooManyActiveMigrations`, `ErrBackupNotFound` (`BACKUP_NOT_FOUND`), `ErrRestoreNotFound`
+(`RESTORE_NOT_FOUND`), `ErrRestorePreviewInvalidState` (`RESTORE_PREVIEW_INVALID_STATE`),
+`ErrRestorePreviewExpired` (`RESTORE_PREVIEW_EXPIRED`), and `ErrRestoreTypeConflict`
+(`RESTORE_TYPE_CONFLICT`). Each must be added to **both** locale files under `errors.*`. The frontend
+maps unknown codes to `errors.UNKNOWN`.

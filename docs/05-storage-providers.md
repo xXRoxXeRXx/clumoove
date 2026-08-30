@@ -189,7 +189,7 @@ is intentionally unsupported because data channels are pinned to the validated c
 
 ## 3. Range-Read & Pack Retrieval Requirements (Backup & Restore)
 
-Storage providers serving as backup targets (where pack files `.clumoove-backup/<repo-id>/packs/*.pack` are stored) must support efficient reading of stored pack blocks. For providers with native HTTP Range request support (S3, WebDAV, Nextcloud, OpenCloud, HiDrive), workers fetch individual 4 MiB blocks directly without downloading the entire 64 MiB pack. For providers without byte-range APIs, workers leverage bounded in-memory pack readers (`MAX_RESTORE_PACK_READERS`) to cache and slice blocks locally during restore runs.
+Storage providers serving as backup targets (where pack files `.clumoove-backup/<repo-id>/packs/*.pack` are stored) must support efficient reading of stored pack blocks. Providers that implement `storage.RangeDownloader` fetch individual 4 MiB blocks directly without downloading the entire 64 MiB pack. The current implementations are S3, WebDAV (including Nextcloud and OpenCloud), HiDrive, Dropbox, Google, Koofr, Local, OneDrive, Seafile, SFTP, and SMB. Providers without `RangeDownloader` use bounded in-memory pack readers (`MAX_RESTORE_PACK_READERS`) to cache and slice blocks locally during restore runs.
 
 ---
 

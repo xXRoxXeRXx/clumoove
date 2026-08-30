@@ -25,8 +25,9 @@ scheduler engine for deferred and recurring migrations, and a security-first des
 - **Seventeen storage providers** as any source/target combination: Nextcloud, OpenCloud, Seafile, MagentaCLOUD, Koofr, generic WebDAV, Dropbox, Google Drive, Microsoft OneDrive, Strato HiDrive, S3-compatible, SMB/CIFS, SFTP, FTPS, Local server sandbox, Mega (files-only), and Immich (files-only one-time migrations).
 - **Sync Engine, Migration Engine & Backup Engine** — full support for one-shot/scheduled migrations, recurring one-way and two-way folder synchronizations, and point-in-time snapshot backups with block deduplication and two-phase restore.
 - **Connection Profiles** — save and reuse encrypted source/target connection profiles across migrations, sync jobs, and backup repositories.
+- **Cloud File Manager** — browse saved connection profiles and stream ticketed downloads, capability-gated uploads, directory creation, and thumbnails without exposing remote paths or credentials in URLs.
 - **Resilient transfer engine** with a PostgreSQL-native task queue (`SELECT … FOR UPDATE SKIP LOCKED`), automatic worker-recovery, exponential backoff, and connection-loss auto-pause.
-- **Data integrity** verified by a 3-way hash check (source / in-memory / target) on every transferred file, with metadata and budgeted repository integrity verification for backups.
+- **Data integrity** verified by a 3-way hash check (source / in-memory / target) when providers expose comparable hashes; providers without them use existence and size verification. Backup repositories also support metadata and budgeted integrity checks.
 - **Scheduler engine** for one-shot (deferred) and recurring (`cron`) migrations, interval syncs, and timezone-aware cron backups, with overlap protection and multi-instance safety.
 - **Live control** — pause, resume, cancel, adjust thread count and bandwidth limit, and watch progress over an authenticated SSE feed.
 - **Multi-tenancy & security** — per-user isolation, TOTP 2FA, AES-256-GCM credential encryption, JWT key segregation, CORS whitelist, refresh-token rotation and rate limiting.
@@ -93,18 +94,19 @@ its own container.
 
 ```mermaid
 graph TD
-    FE[React SPA] <-->|REST + WebSocket| API[Go API Gateway]
+    FE[React SPA] <-->|REST + SSE| API[Go API Gateway]
     API <-->|CRUD, auth, indexing| DB[(PostgreSQL)]
     Worker[Go Worker Engine] <-->|Dequeue via SELECT FOR UPDATE SKIP LOCKED| DB
-    API <-->|heartbeats, locks, events| Redis[(Redis)]
-    Worker <-->|heartbeats, locks| Redis
+    API <-->|rate limits, locks, tickets, leases, events| Redis[(Redis)]
+    Worker <-->|heartbeats, locks, events| Redis
     Worker <-->|stream download| SRC[Source storage]
     Worker <-->|stream upload| DST[Target storage]
 ```
 
 > [!IMPORTANT]
-> The task queue runs **natively in PostgreSQL**. Redis is used **only** for worker heartbeats, distributed recovery
-> locks (`SET NX`) and cancel/bandwidth Pub/Sub — never as a queue broker.
+> The task queue runs **natively in PostgreSQL**. Redis is never a task broker; it is the shared distributed
+> coordination and short-lived-state store for worker heartbeats, recovery/scheduler/OAuth locks, cancel/bandwidth
+> Pub/Sub, API rate limiting, and file-manager download tickets and stream leases.
 
 A migration flows through connect → browse → index (queue-based BFS) → configure → process (streamed, no disk cache) →
 live progress → CSV report. The full lifecycle and resilience model are described in
@@ -115,14 +117,14 @@ live progress → CSV report. The full lifecycle and resilience model are descri
 ### Prerequisites
 
 - Docker and Docker Compose
-- A `.env` file — copy [`.env.example`](./.env.example) and set at least `ENCRYPTION_SECRET_KEY` and `JWT_SECRET_KEY`
-  (each `openssl rand -base64 32`, **must differ**)
+- A `.env` file — copy [`.env.example`](./.env.example) and set `ENCRYPTION_SECRET_KEY`, `JWT_SECRET_KEY`
+  (each `openssl rand -base64 32`, **must differ**), and a strong, unique `REDIS_PASSWORD`
 - On a remote host, open ports `3001` (web) and `8001` (API)
 
 ### Run (development)
 
 ```bash
-cp .env.example .env   # fill ENCRYPTION_SECRET_KEY / JWT_SECRET_KEY
+cp .env.example .env   # fill ENCRYPTION_SECRET_KEY / JWT_SECRET_KEY / REDIS_PASSWORD
 docker compose -f docker-compose.dev.yml up --build -d
 ```
 
@@ -149,10 +151,10 @@ Key environment variables (full list in [`docs/08-deployment.md`](./docs/08-depl
 | :--- | :--- |
 | `ENCRYPTION_SECRET_KEY` | AES-256-GCM key for stored credentials. **Required.** |
 | `JWT_SECRET_KEY` | HMAC key for JWT signatures. **Required, must differ from `ENCRYPTION_SECRET_KEY`.** |
-| `REDIS_PASSWORD` | Redis password. **Required** — no default; the server refuses to start with an empty/known value. |
+| `REDIS_PASSWORD` | Redis password fallback. The effective password from `REDIS_URL` or this fallback is **required** and must not be a known default. |
 | `DATABASE_URL` / `DB_USER` / `DB_PASSWORD` | PostgreSQL connection. |
-| `MAX_THREADS` | Global max parallelism per worker process (default `16`). |
-| `TRUSTED_PROXY` | Set to `1`/`true` when a reverse proxy strips client-supplied `X-Forwarded-*` headers; required for correct client-IP accounting and the auto-derived OAuth callback scheme. |
+| `MAX_THREADS` | Global max parallelism per worker process. Code default: `16`; Docker Compose production: `50`; Docker Compose development: `16`. |
+| `TRUSTED_PROXY` | Set to `1`/`true` behind a trusted reverse proxy that strips client-supplied `X-Forwarded-*` headers; required for correct client-IP accounting and the proxy-derived OAuth callback host/scheme. |
 
 > **OAuth providers** (Google, OneDrive, Dropbox, HiDrive) are configured by an administrator under **Administration → System**, not via environment variables. The OAuth redirect URI is always `<scheme>://<host>/api/oauth/callback` and is shown read-only in the admin UI.
 
@@ -206,7 +208,7 @@ clumoove/
 | [`docs/01-architecture.md`](./docs/01-architecture.md) | Components, data flow, migration/sync/backup lifecycle, resilience |
 | [`docs/02-backend.md`](./docs/02-backend.md) | Go modules and packages, startup logic |
 | [`docs/03-frontend.md`](./docs/03-frontend.md) | React SPA, components, routing, i18n, API client |
-| [`docs/04-api-reference.md`](./docs/04-api-reference.md) | Full REST/WebSocket endpoint reference |
+| [`docs/04-api-reference.md`](./docs/04-api-reference.md) | Full REST/SSE endpoint reference |
 | [`docs/05-storage-providers.md`](./docs/05-storage-providers.md) | Provider interface, factory, SSRF protection |
 | [`docs/06-database.md`](./docs/06-database.md) | Tables, indexes, triggers, auto-migration |
 | [`docs/07-security.md`](./docs/07-security.md) | Key segregation, encryption, OAuth, CORS, rate limiting |

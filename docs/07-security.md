@@ -68,9 +68,9 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 ## 4. OAuth2 & Token Rotation
 
-- OAuth2 access/refresh tokens are stored AES-GCM encrypted on migrations, sync jobs, and backup connection profiles
+- OAuth2 access/refresh tokens are stored AES-GCM encrypted on migrations, sync jobs, backup jobs, and active restore runs
   (`source_refresh_token_encrypted`, `target_refresh_token_encrypted`).
-- `RunOAuthRotationDaemon` (API gateway) proactively refreshes Dropbox, Google, OneDrive, and HiDrive tokens before expiry.
+- `RunOAuthRotationDaemon` (API gateway) proactively refreshes Dropbox, Google, OneDrive, and HiDrive tokens before expiry for migrations, sync jobs, and restore runs. Backup runs use their own coordinated refresh logic.
 - OAuth provider responses are limited to 1 MiB. Provider-controlled error descriptions are never returned or logged; only a rejected refresh credential (`invalid_grant`/equivalent) is terminal, while transient refresh failures remain eligible for the next rotation or task retry pass.
 - The worker also refreshes inline when a token is expired or within 2 minutes of expiry, using a
   per-migration mutex (`getOrCreateRefreshLock`) to serialize refreshes.
@@ -90,7 +90,7 @@ Connection failures can embed URLs with credentials (`https://user:pass@host/…
 
 ## 5. SSE Authentication & Detail Protection
 
-All SSE stream routes (`/api/migration/{id}/stream`, `/api/sync/stream`, `/api/restore/runs/{runID}/stream`, `/api/backup/{id}/verify/{verifyID}/stream`) are protected by `AuthMiddleware` and accept the JWT exclusively through the `Authorization: Bearer` header. They validate ownership (`job.UserID == claims.sub`) before opening the stream. No realtime endpoint accepts access tokens in query parameters.
+All SSE stream routes (`/api/migration/stream`, `/api/migration/{id}/stream`, `/api/sync/stream`, `/api/backup/stream`, `/api/backup/{id}/verify/{verifyID}/stream`, `/api/restore/runs/{runID}/stream`) are protected by `AuthMiddleware` and accept the JWT exclusively through the `Authorization: Bearer` header. They validate ownership (`job.UserID == claims.sub`) before opening the stream. No realtime endpoint accepts access tokens in query parameters.
 
 ---
 
@@ -106,8 +106,9 @@ All SSE stream routes (`/api/migration/{id}/stream`, `/api/sync/stream`, `/api/r
 
 ## 7. Redis Security
 
-- Redis requires a password (`REDIS_PASSWORD`). Connection fails fast if the password is empty or a known
-  default (`redis_secret`, `dev_redis_secure_pass_999`).
+- Redis requires a non-empty, non-default password in `REDIS_URL` or, if the URL omits one, in the
+  `REDIS_PASSWORD` fallback. Connection fails fast if the effective password is empty or a known default
+  (`redis_secret`, `dev_redis_secure_pass_999`).
 - Redis is **not** exposed to the host network (internal Docker network only).
 - Used only for heartbeats, `SET NX` locks, rate limiting, and cancel/bandwidth Pub/Sub — never as primary storage.
 
