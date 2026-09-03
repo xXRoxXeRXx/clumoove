@@ -2,7 +2,7 @@ name: clumoove
 
 services:
   frontend:
-    image: ghcr.io/xxroxxerxx/clumoove-frontend:v0.16.0@sha256:16ea89b67068b49d5413d5eb354520da717418da823d13553756ab176c549f70
+    image: ghcr.io/xxroxxerxx/clumoove-frontend:v0.17.0
     container_name: clumoove-frontend
     restart: unless-stopped
     ports:
@@ -23,7 +23,7 @@ services:
             de_DE: WebUI HTTP Port
 
   api-backend:
-    image: ghcr.io/xxroxxerxx/clumoove-api:v0.16.0@sha256:e089bb8ef0268bfc6b53337ad3e0f5ca3d2d22bcc56fc2940242be99005a2fc1
+    image: ghcr.io/xxroxxerxx/clumoove-api:v0.17.0
     container_name: clumoove-api
     restart: unless-stopped
     environment:
@@ -51,7 +51,7 @@ services:
             de_DE: Clumoove Internes Speicherverzeichnis
 
   migration-worker:
-    image: ghcr.io/xxroxxerxx/clumoove-worker:v0.16.0@sha256:a8d2a17ed3250684a7a6e4514b17f0a949b28dbfd193766c401e90e549e5de85
+    image: ghcr.io/xxroxxerxx/clumoove-worker:v0.17.0
     container_name: clumoove-worker
     restart: unless-stopped
     command: ["/app/worker"]

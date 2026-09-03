@@ -1,13 +1,13 @@
 images:
   frontend_image:
     repository: ghcr.io/xxroxxerxx/clumoove-frontend
-    tag: v0.16.0
+    tag: v0.17.0
   api_image:
     repository: ghcr.io/xxroxxerxx/clumoove-api
-    tag: v0.16.0
+    tag: v0.17.0
   worker_image:
     repository: ghcr.io/xxroxxerxx/clumoove-worker
-    tag: v0.16.0
+    tag: v0.17.0
   container_utils_image:
     repository: ixsystems/container-utils
     tag: 1.0.2

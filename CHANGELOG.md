@@ -5,6 +5,19 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.17.0] - 2026-09-03
+
+### Added
+- **TrueNAS SCALE Deployment & Community App Packaging**:
+  - Official TrueNAS SCALE 24.10+ (Electric Eel) catalog manifests (`app.yaml`, `ix_values.yaml`, templates) and docker-compose deployment assets.
+  - Dedicated container permissions init and isolated database/queue networking.
+- **CasaOS & ZimaOS App Store Manifests**:
+  - CasaOS/ZimaOS packaging manifests with custom branding assets, port mappings, and bind-mount configurations.
+
+### Fixed
+- **S3 Storage Provider**:
+  - Fixed multipart uploads failing with HTTP 500 `InternalError` during `UploadPart` on Railway Storage Buckets (Tigris), MinIO, and other S3-compatible providers by configuring `RequestChecksumCalculationWhenRequired` and removing chunked trailer checksums (`aws-chunked`) from multipart uploads.
+
 ## [0.16.0] - 2026-08-26
 
 ### Added
