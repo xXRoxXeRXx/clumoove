@@ -1,10 +1,20 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
@@ -151,5 +161,153 @@ func TestS3ProviderNonFilesRejected(t *testing.T) {
 func TestS3UploadTargetPartsLeavesMultipartHeadroom(t *testing.T) {
 	if s3UploadTargetParts >= 10000 {
 		t.Fatalf("s3UploadTargetParts = %d, must leave room below S3's 10,000-part limit", s3UploadTargetParts)
+	}
+}
+
+func TestS3StreamUploadHeaders(t *testing.T) {
+	type reqRecord struct {
+		method          string
+		rawQuery        string
+		transferEnc     string
+		contentLen      int64
+		checksumAlgoHdr string
+		trailerHdr      string
+	}
+
+	var mu sync.Mutex
+	var records []reqRecord
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		records = append(records, reqRecord{
+			method:          r.Method,
+			rawQuery:        r.URL.RawQuery,
+			transferEnc:     r.Header.Get("Transfer-Encoding"),
+			contentLen:      r.ContentLength,
+			checksumAlgoHdr: r.Header.Get("x-amz-sdk-checksum-algorithm"),
+			trailerHdr:      r.Header.Get("x-amz-trailer"),
+		})
+		mu.Unlock()
+
+		_, _ = io.Copy(io.Discard, r.Body)
+		_ = r.Body.Close()
+
+		if r.Method == http.MethodPost && strings.Contains(r.URL.RawQuery, "uploads") {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<InitiateMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Bucket>my-bucket</Bucket>
+  <Key>multipart.bin</Key>
+  <UploadId>test-upload-id</UploadId>
+</InitiateMultipartUploadResult>`))
+			return
+		}
+
+		if r.Method == http.MethodPut && strings.Contains(r.URL.RawQuery, "uploadId=") {
+			w.Header().Set("ETag", `"part-etag"`)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if r.Method == http.MethodPost && strings.Contains(r.URL.RawQuery, "uploadId=") {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUploadResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Location>http://example.com/my-bucket/multipart.bin</Location>
+  <Bucket>my-bucket</Bucket>
+  <Key>multipart.bin</Key>
+  <ETag>"final-etag"</ETag>
+</CompleteMultipartUploadResult>`))
+			return
+		}
+
+		if r.Method == http.MethodPut {
+			w.Header().Set("ETag", `"single-etag"`)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("acc", "sec", "")),
+		config.WithHTTPClient(server.Client()),
+		config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
+		config.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
+	)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(server.URL)
+		o.UsePathStyle = true
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+	})
+
+	p := &S3Provider{
+		client: client,
+		bucket: "my-bucket",
+	}
+
+	// 1. Test single-part upload (e.g. 1 KB)
+	smallPayload := []byte("hello s3 world")
+	err = p.StreamUpload(context.Background(), "files", "/single.txt", bytes.NewReader(smallPayload), int64(len(smallPayload)))
+	if err != nil {
+		t.Fatalf("StreamUpload single-part failed: %v", err)
+	}
+
+	// 2. Test multipart upload (> 16MB default threshold to trigger multiUploader)
+	payloadSize := int64(17 * 1024 * 1024)
+	payload := bytes.Repeat([]byte("a"), int(payloadSize))
+	err = p.StreamUpload(context.Background(), "files", "/multipart.bin", bytes.NewReader(payload), payloadSize)
+	if err != nil {
+		t.Fatalf("StreamUpload multipart failed: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	var singlePartFound, partUploadFound bool
+	for _, rec := range records {
+		if rec.method == http.MethodPut && !strings.Contains(rec.rawQuery, "uploadId=") {
+			singlePartFound = true
+			if strings.Contains(rec.transferEnc, "aws-chunked") {
+				t.Errorf("PutObject used unexpected aws-chunked Transfer-Encoding: %s", rec.transferEnc)
+			}
+			if rec.checksumAlgoHdr != "" {
+				t.Errorf("PutObject sent unexpected x-amz-sdk-checksum-algorithm: %s", rec.checksumAlgoHdr)
+			}
+			if rec.trailerHdr != "" {
+				t.Errorf("PutObject sent unexpected x-amz-trailer: %s", rec.trailerHdr)
+			}
+		}
+		if rec.method == http.MethodPut && strings.Contains(rec.rawQuery, "uploadId=") {
+			partUploadFound = true
+			if strings.Contains(rec.transferEnc, "aws-chunked") {
+				t.Errorf("UploadPart used unexpected aws-chunked Transfer-Encoding: %s", rec.transferEnc)
+			}
+			if rec.checksumAlgoHdr != "" {
+				t.Errorf("UploadPart sent unexpected x-amz-sdk-checksum-algorithm: %s", rec.checksumAlgoHdr)
+			}
+			if rec.trailerHdr != "" {
+				t.Errorf("UploadPart sent unexpected x-amz-trailer: %s", rec.trailerHdr)
+			}
+			if rec.contentLen <= 0 {
+				t.Errorf("UploadPart expected positive Content-Length, got %d", rec.contentLen)
+			}
+		}
+	}
+	if !singlePartFound {
+		t.Fatal("expected at least one PutObject request during single-part upload")
+	}
+	if !partUploadFound {
+		t.Fatal("expected at least one UploadPart request during multipart upload")
 	}
 }

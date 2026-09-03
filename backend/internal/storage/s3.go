@@ -18,7 +18,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
-	tmtypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
@@ -106,12 +105,16 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 		config.WithRegion(region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 		config.WithHTTPClient(httpClient),
+		config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
+		config.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 		if endpoint != "" {
 			o.BaseEndpoint = aws.String(endpoint)
 			o.UsePathStyle = true
@@ -418,13 +421,13 @@ func (p *S3Provider) StreamUpload(ctx context.Context, resourceType, filePath st
 		}
 		o.PartSizeBytes = partSize
 		o.Concurrency = 3
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	})
 
 	_, err := uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
-		Bucket:            aws.String(p.bucket),
-		Key:               aws.String(cleanPath),
-		Body:              stream,
-		ChecksumAlgorithm: tmtypes.ChecksumAlgorithmSha256,
+		Bucket: aws.String(p.bucket),
+		Key:    aws.String(cleanPath),
+		Body:   stream,
 	})
 	if err != nil {
 		if isS3AuthError(err) {
