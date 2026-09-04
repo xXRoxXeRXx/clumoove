@@ -455,3 +455,225 @@ func TestNextcloudManagerListDirectoryTooLarge(t *testing.T) {
 		t.Fatalf("ListManager(large) error = %v, want ErrManagerDirectoryTooLarge", err)
 	}
 }
+
+func TestNextcloudManagerDeleteFile(t *testing.T) {
+	deleted := false
+	provider := newNextcloudManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/doc.txt</d:href>
+    <d:propstat>
+      <d:prop><d:getcontentlength>12</d:getcontentlength></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "DELETE":
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	if err := provider.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/doc.txt", NativeID: "42"}, false); err != nil {
+		t.Fatalf("DeleteManagerItem(file): %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected file to be deleted via DELETE")
+	}
+}
+
+func TestNextcloudManagerDeleteDirectoryEmpty(t *testing.T) {
+	deleted := false
+	provider := newNextcloudManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND" && r.Header.Get("Depth") == "0":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/empty-folder/</d:href>
+    <d:propstat>
+      <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "PROPFIND" && r.Header.Get("Depth") == "1":
+			// Directory listing returns only itself (empty directory)
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/empty-folder/</d:href>
+    <d:propstat>
+      <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "DELETE":
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	if err := provider.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/empty-folder", NativeID: "100"}, false); err != nil {
+		t.Fatalf("DeleteManagerItem(empty dir): %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected empty directory to be deleted via DELETE")
+	}
+}
+
+func TestNextcloudManagerDeleteDirectoryNonEmptyRejection(t *testing.T) {
+	provider := newNextcloudManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND" && r.Header.Get("Depth") == "0":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/full-folder/</d:href>
+    <d:propstat>
+      <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "PROPFIND" && r.Header.Get("Depth") == "1":
+			// Directory listing returns child items
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/full-folder/</d:href>
+    <d:propstat>
+      <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/full-folder/child.txt</d:href>
+    <d:propstat>
+      <d:prop><d:getcontentlength>5</d:getcontentlength></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	err := provider.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/full-folder", NativeID: "200"}, false)
+	if !errors.Is(err, ErrManagerDirectoryNotEmpty) {
+		t.Fatalf("expected ErrManagerDirectoryNotEmpty, got %v", err)
+	}
+}
+
+func TestNextcloudManagerDeleteDirectoryRecursive(t *testing.T) {
+	deleted := false
+	provider := newNextcloudManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND" && r.Header.Get("Depth") == "0":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/full-folder/</d:href>
+    <d:propstat>
+      <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "DELETE":
+			deleted = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	if err := provider.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/full-folder", NativeID: "200"}, true); err != nil {
+		t.Fatalf("DeleteManagerItem(recursive): %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected non-empty directory to be deleted via DELETE when recursive=true")
+	}
+}
+
+func TestNextcloudManagerMoveWithNativeID(t *testing.T) {
+	moved := false
+	provider := newNextcloudManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "PROPFIND" && r.URL.Path == "/remote.php/dav/files/testuser/file.txt" && r.Header.Get("Depth") == "0":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/file.txt</d:href>
+    <d:propstat>
+      <d:prop><d:getcontentlength>12</d:getcontentlength></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "PROPFIND" && r.URL.Path == "/remote.php/dav/files/testuser/target-folder" && r.Header.Get("Depth") == "0":
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/target-folder/</d:href>
+    <d:propstat>
+      <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "PROPFIND" && r.URL.Path == "/remote.php/dav/files/testuser/target-folder" && r.Header.Get("Depth") == "1":
+			// Destination listing: empty
+			w.WriteHeader(http.StatusMultiStatus)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
+<d:multistatus xmlns:d="DAV:">
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/target-folder/</d:href>
+    <d:propstat>
+      <d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
+</d:multistatus>`))
+		case r.Method == "MOVE":
+			moved = true
+			if !strings.HasSuffix(r.Header.Get("Destination"), "/files/testuser/target-folder/file.txt") {
+				t.Fatalf("unexpected Destination header %q", r.Header.Get("Destination"))
+			}
+			w.WriteHeader(http.StatusCreated)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	mutator := NewPathManagerMutator(provider)
+	source := ManagerLocator{Path: "/file.txt", NativeID: "file-id-123"}
+	dest := ManagerLocator{Path: "/target-folder", NativeID: "folder-id-456"}
+	res, err := mutator.MoveManagerItem(context.Background(), source, dest, "file.txt", ManagerMutationOptions{})
+	if err != nil {
+		t.Fatalf("MoveManagerItem failed: %v", err)
+	}
+	if !moved {
+		t.Fatal("expected MOVE to be called")
+	}
+	if res.Status != "moved" || res.FinalName != "file.txt" {
+		t.Fatalf("unexpected result: %#v", res)
+	}
+}

@@ -72,7 +72,7 @@ func (m *PathManagerMutator) CopyManagerItem(ctx context.Context, locator, desti
 }
 
 func (m *PathManagerMutator) validate(ctx context.Context, locator, destination ManagerLocator, name string) (CloudResource, string, error) {
-	if locator.NativeID != "" || destination.NativeID != "" || locator.Path == "" || locator.Path == "/" || destination.Path == "" {
+	if locator.Path == "" || locator.Path == "/" || destination.Path == "" {
 		return CloudResource{}, "", ErrManagerInvalidDestination
 	}
 	source, err := m.provider.InspectResource(ctx, "files", locator.Path)

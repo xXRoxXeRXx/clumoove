@@ -894,3 +894,53 @@ func TestHandleFileThumbnailValidations(t *testing.T) {
 	}
 }
 
+func TestHandleFileMutationValidations(t *testing.T) {
+	server := &APIServer{
+		rateLimiter:   allowAllFileRateLimiter{},
+		encryptionKey: "test-encryption-key-for-files!!",
+	}
+
+	// 1. Missing claims
+	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:copy", strings.NewReader(`{"ref":"abc"}`))
+	rec := httptest.NewRecorder()
+	server.handleFileEntryCopy(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	// 2. Invalid source ref
+	reqInvalid := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:move", strings.NewReader(`{"ref":"invalid"}`))
+	reqInvalid.SetPathValue("profileID", "p1")
+	reqInvalid = reqInvalid.WithContext(context.WithValue(reqInvalid.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	recInvalid := httptest.NewRecorder()
+	server.handleFileEntryMove(recInvalid, reqInvalid)
+	if recInvalid.Code != http.StatusBadRequest || !strings.Contains(recInvalid.Body.String(), string(ErrFilesInvalidRef)) {
+		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recInvalid.Code, recInvalid.Body.String())
+	}
+
+	// 3. Destination parent ref that is a file (must be directory)
+	sourceRef, _ := sealFileReference(fileReference{
+		UserID:       "u1",
+		ProfileID:    "p1",
+		ResourceType: "files",
+		Kind:         "file",
+		Locator:      storage.ManagerLocator{Path: "/test.txt", NativeID: "file-123"},
+	}, server.encryptionKey)
+	destFileRef, _ := sealFileReference(fileReference{
+		UserID:       "u1",
+		ProfileID:    "p1",
+		ResourceType: "files",
+		Kind:         "file",
+		Locator:      storage.ManagerLocator{Path: "/other.txt", NativeID: "file-456"},
+	}, server.encryptionKey)
+
+	reqDestFile := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:copy", strings.NewReader(`{"ref":"`+sourceRef+`","destination_parent_ref":"`+destFileRef+`"}`))
+	reqDestFile.SetPathValue("profileID", "p1")
+	reqDestFile = reqDestFile.WithContext(context.WithValue(reqDestFile.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	recDestFile := httptest.NewRecorder()
+	server.handleFileEntryCopy(recDestFile, reqDestFile)
+	if recDestFile.Code != http.StatusBadRequest || !strings.Contains(recDestFile.Body.String(), string(ErrFilesInvalidRef)) {
+		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDestFile.Code, recDestFile.Body.String())
+	}
+}
+

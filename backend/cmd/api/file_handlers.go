@@ -633,16 +633,19 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		writeValidationError(w, ErrInvalidBody)
 		return
 	}
-	destination := storage.ManagerLocator{Path: path.Dir(source.Locator.Path)}
+	destination := storage.ManagerLocator{Path: managedRootPath()}
+	if operation == "rename" {
+		destination = storage.ManagerLocator{Path: path.Dir(source.Locator.Path)}
+	}
 	if request.DestinationParentRef != "" {
 		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, s.encryptionKey, userID, profileID)
-		if destinationErr != nil || destinationRef.Kind != "directory" || isManagedRootLocator("", destinationRef.Locator) || destinationRef.Locator.Path == "" {
+		if destinationErr != nil || destinationRef.Kind != "directory" || destinationRef.Locator.Path == "" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
 		}
 		destination = destinationRef.Locator
 	}
-	if destination.NativeID != "" || destination.Path == "" {
+	if destination.Path == "" {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
@@ -727,7 +730,7 @@ func (s *APIServer) writeFileMutationError(w http.ResponseWriter, err error, cap
 			strategies = append(strategies, "RENAME")
 		}
 		writeJSON(w, http.StatusConflict, map[string]any{"error_code": ErrFilesConflict, "conflict_strategies": strategies})
-	case errors.Is(err, storage.ErrManagerDirectoryCycle):
+	case errors.Is(err, storage.ErrManagerDirectoryCycle), errors.Is(err, storage.ErrManagerInvalidDestination):
 		writeValidationError(w, ErrFilesInvalidDestination)
 	case errors.Is(err, storage.ErrManagerNoop):
 		writeValidationError(w, ErrFilesNoop)

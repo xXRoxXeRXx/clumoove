@@ -89,7 +89,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [deletingEntry, setDeletingEntry] = useState(false);
   const [deleteRecursive, setDeleteRecursive] = useState(false);
   const [deleteError, setDeleteError] = useState('');
-  const [actionMenuEntry, setActionMenuEntry] = useState<FileEntry | null>(null);
+  const [menuState, setMenuState] = useState<{
+    entry: FileEntry;
+    x: number;
+    y: number;
+    align?: 'left' | 'right';
+  } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [renameEntry, setRenameEntry] = useState<FileEntry | null>(null);
   const [renameName, setRenameName] = useState('');
   const [mutationEntry, setMutationEntry] = useState<FileEntry | null>(null);
@@ -167,6 +173,31 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!menuState) return;
+    const handlePointerDown = (event: PointerEvent | MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuState(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMenuState(null);
+      }
+    };
+    const handleScroll = () => {
+      setMenuState(null);
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleScroll, true);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleScroll, true);
+    };
+  }, [menuState]);
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const currentBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
@@ -457,11 +488,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   }, [apiUrl, profileId, token, translateApiError]);
 
   const startRename = (entry: FileEntry) => {
-    setActionMenuEntry(null); setRenameEntry(entry); setRenameName(entry.name); setMutationError(''); setConflictStrategies(null);
+    setMenuState(null); setRenameEntry(entry); setRenameName(entry.name); setMutationError(''); setConflictStrategies(null);
   };
 
   const startDestinationPicker = (entry: FileEntry, operation: 'copy' | 'move') => {
-    setActionMenuEntry(null); setMutationEntry(entry); setMutationOperation(operation); setMutationError(''); setConflictStrategies(null);
+    setMenuState(null); setMutationEntry(entry); setMutationOperation(operation); setMutationError(''); setConflictStrategies(null);
     const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
     setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null);
   };
@@ -504,27 +535,128 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   };
 
   const canRename = (entry: FileEntry) => capabilities.rename && entry.allowed_actions.includes('rename');
-  // Copy is supported through the same manager capability as move. The server
-  // reports whether it used a provider-native copy in the mutation response.
   const canCopy = (entry: FileEntry) => capabilities.move && entry.allowed_actions.includes('copy');
   const canMove = (entry: FileEntry) => capabilities.move && entry.allowed_actions.includes('move');
   const hasEntryActions = (entry: FileEntry) => canRename(entry) || canCopy(entry) || canMove(entry) || (entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download')) || entry.allowed_actions.includes('delete');
 
-  const renderActionMenu = (entry: FileEntry) => {
-    if (!hasEntryActions(entry)) return null;
-    const isOpen = actionMenuEntry?.ref === entry.ref;
-    return <div className="relative inline-block text-left" onClick={(event) => event.stopPropagation()}>
-      <button type="button" className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.actionsFor', { name: entry.name })} aria-haspopup="menu" aria-expanded={isOpen} onClick={() => setActionMenuEntry(isOpen ? null : entry)}>
-	        <EllipsisVerticalIcon className="h-5 w-5" aria-hidden="true" />
-      </button>
-      {isOpen && <div role="menu" aria-label={t('files.actionsFor', { name: entry.name })} className="absolute right-0 z-20 mt-1 w-40 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-1 shadow-sm">
-        {canRename(entry) && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => startRename(entry)}><PencilIcon className="h-4 w-4" aria-hidden="true" />{t('files.rename')}</button>}
-        {canCopy(entry) && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => startDestinationPicker(entry, 'copy')}><ClipboardDocumentIcon className="h-4 w-4" aria-hidden="true" />{t('files.copy')}</button>}
-        {canMove(entry) && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => startDestinationPicker(entry, 'move')}><ArrowRightIcon className="h-4 w-4" aria-hidden="true" />{t('files.move')}</button>}
-        {entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download') && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => void download(entry)}><ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />{t('files.downloadAction')}</button>}
-        {entry.allowed_actions.includes('delete') && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-hover)]" onClick={() => requestDelete(entry)}><TrashIcon className="h-4 w-4" aria-hidden="true" />{t('files.deleteAction')}</button>}
-      </div>}
-    </div>;
+  const toggleMenu = (event: React.MouseEvent, entry: FileEntry) => {
+    event.stopPropagation();
+    if (menuState?.entry.ref === entry.ref) {
+      setMenuState(null);
+      return;
+    }
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    setMenuState({
+      entry,
+      x: rect.right,
+      y: rect.bottom + 4,
+      align: 'right',
+    });
+  };
+
+  const handleContextMenu = (event: React.MouseEvent, entry: FileEntry) => {
+    if (!hasEntryActions(entry)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setMenuState({
+      entry,
+      x: event.clientX,
+      y: event.clientY,
+      align: 'left',
+    });
+  };
+
+  const renderActionMenuPortal = () => {
+    if (!menuState) return null;
+    const entry = menuState.entry;
+    const menuWidth = 180;
+    const menuHeight = 220;
+    let left = menuState.align === 'right' ? menuState.x - menuWidth : menuState.x;
+    let top = menuState.y;
+
+    if (left + menuWidth > window.innerWidth - 8) {
+      left = window.innerWidth - menuWidth - 8;
+    }
+    if (left < 8) {
+      left = 8;
+    }
+    if (top + menuHeight > window.innerHeight - 8) {
+      top = Math.max(8, top - menuHeight - 8);
+    }
+
+    return createPortal(
+      <div
+        ref={menuRef}
+        role="menu"
+        aria-label={t('files.actionsFor', { name: entry.name })}
+        style={{ position: 'fixed', top: `${top}px`, left: `${left}px`, zIndex: 50 }}
+        className="w-44 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-1.5 shadow-xl ring-1 ring-black/5 dark:ring-white/10 animate-in fade-in zoom-in-95 duration-100"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {canRename(entry) && (
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-hover)] transition-colors"
+            onClick={() => startRename(entry)}
+          >
+            <PencilIcon className="h-4 w-4 text-[var(--color-text-secondary)] shrink-0" aria-hidden="true" />
+            <span>{t('files.rename')}</span>
+          </button>
+        )}
+        {canCopy(entry) && (
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-hover)] transition-colors"
+            onClick={() => startDestinationPicker(entry, 'copy')}
+          >
+            <ClipboardDocumentIcon className="h-4 w-4 text-[var(--color-text-secondary)] shrink-0" aria-hidden="true" />
+            <span>{t('files.copy')}</span>
+          </button>
+        )}
+        {canMove(entry) && (
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-hover)] transition-colors"
+            onClick={() => startDestinationPicker(entry, 'move')}
+          >
+            <ArrowRightIcon className="h-4 w-4 text-[var(--color-text-secondary)] shrink-0" aria-hidden="true" />
+            <span>{t('files.move')}</span>
+          </button>
+        )}
+        {entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download') && (
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-text-primary)] hover:bg-[var(--color-hover)] transition-colors"
+            onClick={() => {
+              setMenuState(null);
+              void download(entry);
+            }}
+          >
+            <ArrowDownTrayIcon className="h-4 w-4 text-[var(--color-text-secondary)] shrink-0" aria-hidden="true" />
+            <span>{t('files.downloadAction')}</span>
+          </button>
+        )}
+        {entry.allowed_actions.includes('delete') && (
+          <button
+            type="button"
+            role="menuitem"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-hover)] transition-colors"
+            onClick={() => {
+              setMenuState(null);
+              requestDelete(entry);
+            }}
+          >
+            <TrashIcon className="h-4 w-4 text-[var(--color-danger)] shrink-0" aria-hidden="true" />
+            <span>{t('files.deleteAction')}</span>
+          </button>
+        )}
+      </div>,
+      document.body
+    );
   };
 
   return (
@@ -718,6 +850,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                           <tr
                             key={entry.ref}
                             onClick={() => isInteractive && openEntry(entry)}
+                            onContextMenu={(event) => handleContextMenu(event, entry)}
                             className={`border-t border-[var(--color-border)] hover:bg-[var(--color-hover)] transition-colors ${isInteractive ? 'cursor-pointer' : ''}`}
                           >
                             <td data-label={t('files.name')} className="px-3 py-2 min-w-0 max-w-0">
@@ -754,9 +887,18 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                               {entry.modified_at ? formatDateTime(entry.modified_at) : t('common.unspecified')}
                             </td>
                             <td data-label={t('files.actions')} className="w-14 sm:w-16 px-3 py-2 text-right whitespace-nowrap shrink-0">
-                              {entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download') && <button type="button" onClick={(event) => { event.stopPropagation(); void download(entry); }} disabled={downloadingRef !== null} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.download', { name: entry.name })} title={t('files.download', { name: entry.name })}><ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" /></button>}
-                              {entry.allowed_actions.includes('delete') && <button type="button" onClick={(event) => { event.stopPropagation(); requestDelete(entry); }} disabled={deletingEntry} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.delete', { name: entry.name })} title={t('files.delete', { name: entry.name })}><TrashIcon className="h-4 w-4" aria-hidden="true" /></button>}
-                              {renderActionMenu(entry)}
+                              {hasEntryActions(entry) && (
+                                <button
+                                  type="button"
+                                  className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                                  aria-label={t('files.actionsFor', { name: entry.name })}
+                                  aria-haspopup="menu"
+                                  aria-expanded={menuState?.entry.ref === entry.ref}
+                                  onClick={(event) => toggleMenu(event, entry)}
+                                >
+                                  <EllipsisVerticalIcon className="h-5 w-5" aria-hidden="true" />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
@@ -775,6 +917,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                         role="gridcell"
                         tabIndex={isInteractive ? 0 : undefined}
                         onClick={() => isInteractive && openEntry(entry)}
+                        onContextMenu={(event) => handleContextMenu(event, entry)}
                         onKeyDown={(e) => {
                           if ((e.key === 'Enter' || e.key === ' ') && isInteractive) {
                             e.preventDefault();
@@ -786,9 +929,20 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                         }`}
                         title={entry.name}
                       >
-                         <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{renderActionMenu(entry)}</div>
-                         {entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download') && <button type="button" onClick={(event) => { event.stopPropagation(); void download(entry); }} disabled={downloadingRef !== null} className="ui-icon-button absolute top-2 left-2 z-10 p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100" aria-label={t('files.download', { name: entry.name })}><ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" /></button>}
-                         {entry.allowed_actions.includes('delete') && <button type="button" onClick={(event) => { event.stopPropagation(); requestDelete(entry); }} disabled={deletingEntry} className="ui-icon-button absolute left-10 top-2 z-10 p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100" aria-label={t('files.delete', { name: entry.name })}><TrashIcon className="h-3.5 w-3.5" aria-hidden="true" /></button>}
+                        {hasEntryActions(entry) && (
+                          <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                            <button
+                              type="button"
+                              className="ui-icon-button p-1.5 rounded-lg bg-[var(--color-bg-primary)]/80 backdrop-blur-xs border border-[var(--color-border)]/60 shadow-xs hover:bg-[var(--color-hover)]"
+                              aria-label={t('files.actionsFor', { name: entry.name })}
+                              aria-haspopup="menu"
+                              aria-expanded={menuState?.entry.ref === entry.ref}
+                              onClick={(event) => toggleMenu(event, entry)}
+                            >
+                              <EllipsisVerticalIcon className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                          </div>
+                        )}
                         <div className="relative w-full aspect-[4/3] flex items-center justify-center bg-[var(--color-bg-tertiary)]/40 overflow-hidden">
                           <FileThumbnail
                             apiUrl={apiUrl}
@@ -971,7 +1125,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           />
         </Suspense>
       )}
+      {renderActionMenuPortal()}
     </section>
   );
 }
-

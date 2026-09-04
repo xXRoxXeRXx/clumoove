@@ -408,7 +408,6 @@ describe('FileManager component', () => {
     });
     await flushAsync();
 
-    // Root result must NOT be overwritten by the late SlowDir response
     expect(container.textContent).toContain('root.txt');
     expect(container.textContent).not.toContain('slow-result.txt');
   });
@@ -442,11 +441,19 @@ describe('FileManager component', () => {
 
     await flushAsync();
 
-    const downloadBtn = container.querySelector('button[aria-label="Download report.txt"]');
-    expect(downloadBtn).not.toBeNull();
+    const actionsBtn = container.querySelector('button[aria-label="Actions for report.txt"]');
+    expect(actionsBtn).not.toBeNull();
 
     await act(async () => {
-      (downloadBtn as HTMLButtonElement)?.click();
+      (actionsBtn as HTMLButtonElement)?.click();
+      await Promise.resolve();
+    });
+
+    const downloadMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((b) => b.textContent?.includes('Download'));
+    expect(downloadMenuItem).toBeDefined();
+
+    await act(async () => {
+      downloadMenuItem?.click();
       await Promise.resolve();
     });
     await flushAsync();
@@ -723,11 +730,19 @@ describe('FileManager component', () => {
     const fileCard = Array.from(container.querySelectorAll('[role="gridcell"]')).find((cell) => cell.textContent?.includes('report.txt'));
     expect(fileCard).toBeDefined();
 
-    const downloadBtn = fileCard?.querySelector('button[aria-label="Download report.txt"]');
-    expect(downloadBtn).toBeDefined();
+    const actionsBtn = fileCard?.querySelector('button[aria-label="Actions for report.txt"]');
+    expect(actionsBtn).toBeDefined();
 
     await act(async () => {
-      (downloadBtn as HTMLButtonElement)?.click();
+      (actionsBtn as HTMLButtonElement)?.click();
+      await Promise.resolve();
+    });
+
+    const downloadMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((b) => b.textContent?.includes('Download'));
+    expect(downloadMenuItem).toBeDefined();
+
+    await act(async () => {
+      downloadMenuItem?.click();
       await Promise.resolve();
     });
     await flushAsync();
@@ -846,14 +861,143 @@ describe('FileManager component', () => {
       await Promise.resolve();
     });
     await flushAsync();
-    const deleteButton = container.querySelector<HTMLButtonElement>('button[aria-label="Delete report.txt"]');
-    expect(deleteButton).not.toBeNull();
-    await act(async () => { deleteButton?.click(); await Promise.resolve(); });
+
+    const actionsBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Actions for report.txt"]');
+    expect(actionsBtn).not.toBeNull();
+    await act(async () => { actionsBtn?.click(); await Promise.resolve(); });
+
+    const deleteMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((b) => b.textContent?.includes('Delete'));
+    expect(deleteMenuItem).toBeDefined();
+    await act(async () => { deleteMenuItem?.click(); await Promise.resolve(); });
+
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Delete item');
     const confirmButton = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent === 'Delete');
     await act(async () => { confirmButton?.click(); await Promise.resolve(); });
     expect(vi.mocked(deleteFileEntry)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-1', 'ref-file-1', false, expect.any(AbortSignal));
     expect(vi.mocked(listFileEntries)).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens context menu on right click and triggers action', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { capabilities: { ...mockCapabilities, rename: true } },
+    });
+    vi.mocked(listFileEntries).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [{ ...rootEntries[1], allowed_actions: ['rename'] }], next_cursor: null },
+    });
+
+    await act(async () => {
+      root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const fileRow = container.querySelector('tbody tr');
+    expect(fileRow).not.toBeNull();
+
+    await act(async () => {
+      fileRow?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 100, clientY: 150, cancelable: true }));
+      await Promise.resolve();
+    });
+
+    const renameMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((b) => b.textContent?.includes('Rename'));
+    expect(renameMenuItem).toBeDefined();
+
+    await act(async () => {
+      renameMenuItem?.click();
+      await Promise.resolve();
+    });
+
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Rename');
+  });
+
+  it('supports directory deletion with recursive option', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { capabilities: { ...mockCapabilities, delete_empty_directory: true, delete_recursive_directory: true } },
+    });
+    vi.mocked(listFileEntries).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        entries: [
+          {
+            ref: 'ref-dir-1',
+            name: 'Documents',
+            display_path: '/Documents',
+            kind: 'directory',
+            size: 0,
+            allowed_actions: ['delete'],
+          },
+        ],
+        next_cursor: null,
+      },
+    });
+    vi.mocked(deleteFileEntry)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        errorCode: 'FILES_DIRECTORY_NOT_EMPTY',
+        networkError: false,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 204,
+        data: {},
+      });
+
+    await act(async () => {
+      root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const actionsBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Actions for Documents"]');
+    expect(actionsBtn).not.toBeNull();
+    await act(async () => { actionsBtn?.click(); await Promise.resolve(); });
+
+    const deleteMenuItem = Array.from(document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((b) => b.textContent?.includes('Delete'));
+    expect(deleteMenuItem).toBeDefined();
+    await act(async () => { deleteMenuItem?.click(); await Promise.resolve(); });
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Delete item');
+
+    // First attempt: non-recursive
+    const confirmButton = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((button) => button.textContent === 'Delete');
+    expect(confirmButton).toBeDefined();
+    await act(async () => { confirmButton?.click(); await Promise.resolve(); });
+
+    expect(vi.mocked(deleteFileEntry)).toHaveBeenNthCalledWith(
+      1,
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-dir-1',
+      false,
+      expect.any(AbortSignal)
+    );
+
+    // Dialog should now display recursive warning and "Delete recursively" button
+    expect(dialog?.textContent).toContain(i18n.t('files.deleteDirectoryNotEmpty'));
+    const recursiveButton = Array.from(dialog?.querySelectorAll<HTMLButtonElement>('button') ?? []).find((button) => button.textContent?.includes('recursively') || button.textContent?.includes('rekursiv'));
+    expect(recursiveButton).toBeDefined();
+
+    await act(async () => { recursiveButton?.click(); await Promise.resolve(); });
+
+    expect(vi.mocked(deleteFileEntry)).toHaveBeenNthCalledWith(
+      2,
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-dir-1',
+      true,
+      expect.any(AbortSignal)
+    );
   });
 });
 
