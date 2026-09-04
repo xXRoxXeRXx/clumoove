@@ -71,6 +71,7 @@ const (
 	AuditRepositoryDamageDetected AuditAction = "REPOSITORY_DAMAGE_DETECTED"
 	AuditFileUploadCompleted      AuditAction = "FILE_UPLOAD_COMPLETED"
 	AuditFileDirectoryCreated     AuditAction = "FILE_DIRECTORY_CREATED"
+	AuditFileItemDeleted          AuditAction = "FILE_ITEM_DELETED"
 )
 
 const (

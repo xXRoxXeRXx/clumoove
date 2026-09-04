@@ -91,6 +91,42 @@ func TestGoogleManagerDownloadUsesNativeID(t *testing.T) {
 	}
 }
 
+func TestGoogleManagerDeleteUsesNativeIDAndChecksEmptyDirectory(t *testing.T) {
+	requests := make([]string, 0, 3)
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/files/folder-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "folder-id", "mimeType": googleDriveFolderMIME})
+		case r.Method == http.MethodGet && r.URL.Path == "/files":
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []any{}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/files/folder-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "folder-id", "trashed": true})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	if err := provider.DeleteManagerItem(context.Background(), ManagerLocator{NativeID: "folder-id", Path: "/duplicate-name"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(requests, ",") != "GET /files/folder-id,GET /files,PATCH /files/folder-id" {
+		t.Fatalf("requests = %v", requests)
+	}
+}
+
+func TestGoogleManagerDeleteRejectsNonEmptyDirectory(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/files/folder-id" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "folder-id", "mimeType": googleDriveFolderMIME})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"files": []map[string]any{{"id": "child"}}})
+	}))
+	if err := provider.DeleteManagerItem(context.Background(), ManagerLocator{NativeID: "folder-id"}, false); !errors.Is(err, ErrManagerDirectoryNotEmpty) {
+		t.Fatalf("error = %v, want ErrManagerDirectoryNotEmpty", err)
+	}
+}
+
 func TestGoogleManagerResolveRejectsAmbiguousSibling(t *testing.T) {
 	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

@@ -117,6 +117,7 @@ type ManagerUploader interface {
 var (
 	ErrManagerConflict          = errors.New("file manager conflict")
 	ErrManagerUnsupported       = errors.New("file manager operation not supported")
+	ErrManagerDirectoryNotEmpty = errors.New("file manager directory is not empty")
 	ErrUploadSizeMismatch       = errors.New("upload size mismatch")
 	ErrUnsupportedMedia         = errors.New("unsupported media type")
 	ErrManagerDirectoryTooLarge = errors.New("directory too large")

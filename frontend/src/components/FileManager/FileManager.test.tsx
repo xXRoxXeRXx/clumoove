@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
 import { FileManager } from './FileManager';
-import { getFileCapabilities, listFileEntries, createDownloadTicket, createDirectory, type FileEntry } from '../../api/files';
+import { getFileCapabilities, listFileEntries, createDownloadTicket, createDirectory, deleteFileEntry, type FileEntry } from '../../api/files';
 import { listConnectionProfiles } from '../../api/profiles';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,6 +13,7 @@ vi.mock('../../api/files', () => ({
   listFileEntries: vi.fn(),
   createDownloadTicket: vi.fn(),
   createDirectory: vi.fn(),
+  deleteFileEntry: vi.fn(),
 }));
 
 vi.mock('../../api/profiles', () => ({
@@ -108,6 +109,8 @@ describe('FileManager component', () => {
     vi.mocked(listFileEntries).mockReset();
     vi.mocked(createDownloadTicket).mockReset();
     vi.mocked(createDirectory).mockReset();
+    vi.mocked(deleteFileEntry).mockReset();
+    vi.mocked(deleteFileEntry).mockResolvedValue({ ok: true, status: 204, data: {} });
 
     vi.mocked(listConnectionProfiles).mockResolvedValue({
       ok: true,
@@ -819,6 +822,32 @@ describe('FileManager component', () => {
     });
 
     expect(onOpenManager).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirms file deletion and refreshes the listing', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { capabilities: { ...mockCapabilities, delete_file: true } },
+    });
+    vi.mocked(listFileEntries).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { entries: [{ ...rootEntries[1], allowed_actions: ['download', 'delete'] }], next_cursor: null },
+    });
+    await act(async () => {
+      root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    const deleteButton = container.querySelector<HTMLButtonElement>('button[aria-label="Delete report.txt"]');
+    expect(deleteButton).not.toBeNull();
+    await act(async () => { deleteButton?.click(); await Promise.resolve(); });
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Delete item');
+    const confirmButton = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent === 'Delete');
+    await act(async () => { confirmButton?.click(); await Promise.resolve(); });
+    expect(vi.mocked(deleteFileEntry)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-1', 'ref-file-1', false, expect.any(AbortSignal));
+    expect(vi.mocked(listFileEntries)).toHaveBeenCalledTimes(2);
   });
 });
 

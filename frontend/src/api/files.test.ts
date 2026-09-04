@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiJson } from '../utils/apiClient';
-import { createDownloadTicket, getFileThumbnail, listFileEntries, resolveFilePath, uploadFile } from './files';
+import { createDownloadTicket, deleteFileEntry, getFileThumbnail, listFileEntries, resolveFilePath, uploadFile } from './files';
 
 vi.mock('../utils/apiClient', () => ({ apiJson: vi.fn() }));
 
@@ -70,6 +70,15 @@ describe('file API', () => {
     expect(apiJson).toHaveBeenCalledWith(
       'https://api.example.test/api/files/profiles/profile-id/download-tickets',
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ ref: 'opaque-file-ref' }) }),
+    );
+  });
+
+  it('deletes an entry with only its opaque ref and recursive flag', async () => {
+    await deleteFileEntry('https://api.example.test', 'token', 'profile id', 'opaque-entry-ref', true);
+
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/files/profiles/profile%20id/entries',
+      expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ ref: 'opaque-entry-ref', recursive: true }) }),
     );
   });
 

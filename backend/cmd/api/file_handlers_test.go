@@ -111,6 +111,32 @@ func TestFileReferenceRoundTripBindsUserAndProfile(t *testing.T) {
 	}
 }
 
+func TestManagedRootLocatorRecognizesPathAndGoogleRoots(t *testing.T) {
+	for _, test := range []struct {
+		provider string
+		locator  storage.ManagerLocator
+	}{
+		{"webdav", storage.ManagerLocator{Path: "/"}},
+		{"google", storage.ManagerLocator{NativeID: "root"}},
+	} {
+		if !isManagedRootLocator(test.provider, test.locator) {
+			t.Fatalf("root locator was not rejected: %#v", test.locator)
+		}
+	}
+	if isManagedRootLocator("google", storage.ManagerLocator{NativeID: "file-id"}) {
+		t.Fatal("ordinary native ID treated as root")
+	}
+}
+
+func TestAllowedFileActionsIncludesDeleteOnlyForAdvertisedCapabilities(t *testing.T) {
+	if got := allowedFileActions(storage.ManagerCapabilities{DeleteFile: true}, false); len(got) != 1 || got[0] != "delete" {
+		t.Fatalf("file actions = %#v", got)
+	}
+	if got := allowedFileActions(storage.ManagerCapabilities{DeleteRecursiveDirectory: true}, true); len(got) != 1 || got[0] != "delete" {
+		t.Fatalf("directory actions = %#v", got)
+	}
+}
+
 func TestHandleFileUploadRequiresKnownLength(t *testing.T) {
 	server := &APIServer{rateLimiter: allowAllFileRateLimiter{}}
 	request := httptest.NewRequest(http.MethodPut, "/api/files/profiles/profile-a/content", strings.NewReader("body"))
@@ -867,5 +893,4 @@ func TestHandleFileThumbnailValidations(t *testing.T) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDir.Code, recDir.Body.String())
 	}
 }
-
 

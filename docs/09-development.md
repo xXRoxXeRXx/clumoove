@@ -4,7 +4,7 @@ Guidance for working on Clumoove locally without Docker, plus code-quality tooli
 
 ## Cloud File Manager Tests
 
-File-manager changes require handler coverage for ownership, sealed-reference/cursor replay, pagination limits, tickets, stream slots, raw-upload header/length validation, and byte-exact stream handling. Frontend coverage must include XHR upload metadata/progress/abort, queue concurrency/retry, MIME-safe Blob previews, worker cleanup, and Blob URL revocation. Run `go test ./...` and `go vet ./...` in `backend`; run `npm test`, `npx tsc --noEmit --project tsconfig.app.json`, `npx eslint src`, and `npm run build` in `frontend`.
+File-manager changes require handler coverage for ownership, sealed-reference/cursor replay, root mutation rejection, capability and provider-interface gating, pagination limits, tickets, stream slots, raw-upload header/length validation, and byte-exact stream handling. Deletion coverage must include files, empty and non-empty directories, recursive confirmation, and redacted audit details. Frontend coverage must include delete actions in list and grid views, dialog keyboard/focus behavior, XHR upload metadata/progress/abort, queue concurrency/retry, MIME-safe Blob previews, worker cleanup, and Blob URL revocation. Run `go test ./...` and `go vet ./...` in `backend`; run `npm test`, `npx tsc --noEmit --project tsconfig.app.json`, `npx eslint src`, and `npm run build` in `frontend`.
 
 ---
 

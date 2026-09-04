@@ -155,6 +155,20 @@ export async function createDirectory(
   return apiJson<CreateDirectoryResponse>(profileUrl(apiUrl, profileId, '/directories'), init);
 }
 
+export async function deleteFileEntry(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  ref: string,
+  recursive: boolean,
+  signal?: AbortSignal,
+): Promise<ApiJsonResult<Record<string, never>>> {
+  const init = requestInit(token, signal);
+  init.method = 'DELETE';
+  init.body = JSON.stringify({ ref, recursive });
+  return apiJson<Record<string, never>>(profileUrl(apiUrl, profileId, '/entries'), init);
+}
+
 function encodeHeaderFileName(name: string): string {
   const bytes = new TextEncoder().encode(name);
   let binary = '';

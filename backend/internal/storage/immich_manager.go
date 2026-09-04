@@ -17,9 +17,41 @@ var (
 	_ ManagerConnector    = (*ImmichProvider)(nil)
 	_ ManagerLister       = (*ImmichProvider)(nil)
 	_ ManagerDownloader   = (*ImmichProvider)(nil)
+	_ ManagerDeleter      = (*ImmichProvider)(nil)
 	_ ManagerPathResolver = (*ImmichProvider)(nil)
 	_ ManagerThumbnailer  = (*ImmichProvider)(nil)
 )
+
+// DeleteManagerItem deletes exactly one asset by its sealed native Immich ID.
+// Manager locators must never fall back to their display path because paths are
+// not asset identities in Immich's flat library.
+func (p *ImmichProvider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
+	if locator.NativeID == "" {
+		return fmt.Errorf("immich manager delete: %w", ErrNotFound)
+	}
+	body, err := json.Marshal(map[string][]string{"ids": {locator.NativeID}})
+	if err != nil {
+		return err
+	}
+	resp, err := p.requestJSON(ctx, http.MethodDelete, "/assets", body)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNoContent:
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("immich manager delete: %w", ErrAuth)
+	case http.StatusNotFound:
+		return fmt.Errorf("immich manager delete: %w", ErrNotFound)
+	default:
+		return fmt.Errorf("immich manager delete failed, status: %d", resp.StatusCode)
+	}
+}
 
 // ConnectManager verifies connectivity to Immich.
 func (p *ImmichProvider) ConnectManager(ctx context.Context) (bool, error) {

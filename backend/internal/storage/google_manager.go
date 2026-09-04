@@ -55,8 +55,40 @@ func (p *GoogleProvider) ListManager(ctx context.Context, locator ManagerLocator
 var (
 	_ ManagerUploader         = (*GoogleProvider)(nil)
 	_ ManagerDirectoryCreator = (*GoogleProvider)(nil)
+	_ ManagerDeleter          = (*GoogleProvider)(nil)
 	_ ManagerThumbnailer      = (*GoogleProvider)(nil)
 )
+
+// DeleteManagerItem moves the selected Drive item to trash by immutable ID.
+// It intentionally does not use the migration-oriented path deletion method:
+// Drive permits duplicate sibling names.
+func (p *GoogleProvider) DeleteManagerItem(ctx context.Context, locator ManagerLocator, recursive bool) error {
+	if locator.NativeID == "" || locator.NativeID == "root" {
+		return fmt.Errorf("google manager delete: %w", ErrNotFound)
+	}
+	item, err := p.driveService.Files.Get(locator.NativeID).Fields("id,mimeType").Context(ctx).Do()
+	if err != nil {
+		return wrapGoogleNotFound(err)
+	}
+	if item.MimeType == googleDriveFolderMIME && !recursive {
+		children, childErr := p.driveService.Files.List().
+			Q(fmt.Sprintf("'%s' in parents and trashed = false", locator.NativeID)).
+			PageSize(1).
+			Fields("files(id)").
+			Context(ctx).
+			Do()
+		if childErr != nil {
+			return wrapGoogleNotFound(childErr)
+		}
+		if len(children.Files) > 0 {
+			return ErrManagerDirectoryNotEmpty
+		}
+	}
+	if _, err := p.driveService.Files.Update(locator.NativeID, &drive.File{Trashed: true}).Context(ctx).Do(); err != nil {
+		return wrapGoogleNotFound(err)
+	}
+	return nil
+}
 
 // CreateManagerDirectory creates a new directory in the selected Drive parent by immutable ID.
 func (p *GoogleProvider) CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error {

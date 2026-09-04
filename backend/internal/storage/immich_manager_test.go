@@ -253,3 +253,24 @@ func TestImmichManager(t *testing.T) {
 		}
 	})
 }
+
+func TestImmichManagerDeleteUsesNativeAssetID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/assets" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body struct{ IDs []string `json:"ids"` }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.IDs) != 1 || body.IDs[0] != "asset-id" {
+			t.Fatalf("delete body = %#v, err = %v", body, err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	provider := &ImmichProvider{BaseURL: server.URL, APIKey: "key", HTTPClient: server.Client()}
+	if err := provider.DeleteManagerItem(context.Background(), ManagerLocator{NativeID: "asset-id", Path: "/untrusted-name.jpg"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.DeleteManagerItem(context.Background(), ManagerLocator{Path: "/asset-id"}, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("path-only deletion error = %v, want ErrNotFound", err)
+	}
+}

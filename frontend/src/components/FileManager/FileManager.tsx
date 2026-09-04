@@ -11,10 +11,11 @@ import {
   ListBulletIcon,
   ProviderIcon,
   Squares2X2Icon,
+  TrashIcon,
   WrenchScrewdriverIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { createDirectory, getFileCapabilities, listFileEntries, createDownloadTicket, type FileBreadcrumb, type FileCapabilities, type FileEntry } from '../../api/files';
+import { createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, type FileBreadcrumb, type FileCapabilities, type FileEntry } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
@@ -80,6 +81,10 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [newDirName, setNewDirName] = useState('');
   const [creatingDir, setCreatingDir] = useState(false);
   const [createDirError, setCreateDirError] = useState('');
+  const [deleteEntry, setDeleteEntry] = useState<FileEntry | null>(null);
+  const [deletingEntry, setDeletingEntry] = useState(false);
+  const [deleteRecursive, setDeleteRecursive] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     try {
       const stored = localStorage.getItem('clumoove_file_manager_view_mode');
@@ -99,8 +104,11 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   };
   const createDirDialogRef = useRef<HTMLDivElement>(null);
   const createDirCancelRef = useRef<HTMLButtonElement>(null);
+  const deleteDialogRef = useRef<HTMLDivElement>(null);
+  const deleteCancelRef = useRef<HTMLButtonElement>(null);
   const profileRequestRef = useRef<AbortController | null>(null);
   const entriesRequestRef = useRef<AbortController | null>(null);
+  const deleteRequestRef = useRef<AbortController | null>(null);
   const latestEntriesRequestRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const uploadRefreshTimeoutRef = useRef<number | null>(null);
@@ -112,6 +120,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       setCreateDirError('');
     }
   }, isCreateDirOpen);
+  useFocusTrap(deleteDialogRef, deleteCancelRef, () => {
+    if (!deletingEntry) {
+      setDeleteEntry(null);
+      setDeleteError('');
+      setDeleteRecursive(false);
+    }
+  }, deleteEntry !== null);
 
   useEffect(() => {
     return () => {
@@ -182,6 +197,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       window.clearTimeout(timeoutId);
       profileRequestRef.current?.abort();
       entriesRequestRef.current?.abort();
+      deleteRequestRef.current?.abort();
     };
   }, [loadProfiles]);
 
@@ -358,6 +374,39 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       setCreateDirError('');
       void loadEntries(currentRef);
     }
+  };
+
+  const requestDelete = (entry: FileEntry) => {
+    if (!entry.allowed_actions.includes('delete') || deletingEntry) return;
+    setDeleteEntry(entry);
+    setDeleteRecursive(entry.kind === 'directory' && !capabilities.delete_empty_directory && capabilities.delete_recursive_directory);
+    setDeleteError('');
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteEntry || deletingEntry) return;
+    setDeletingEntry(true);
+    setDeleteError('');
+    deleteRequestRef.current?.abort();
+    const controller = new AbortController();
+    deleteRequestRef.current = controller;
+    const result = await deleteFileEntry(apiUrl, token, profileId, deleteEntry.ref, deleteRecursive, controller.signal);
+    if (controller.signal.aborted) return;
+    if (result.ok === false) {
+      if (result.errorCode === 'FILES_DIRECTORY_NOT_EMPTY' && deleteEntry.kind === 'directory' && capabilities.delete_recursive_directory) {
+        setDeleteRecursive(true);
+        setDeleteError(t('files.deleteDirectoryNotEmpty'));
+      } else {
+        setDeleteError(translateApiError(result.errorCode));
+      }
+      setDeletingEntry(false);
+      return;
+    }
+    if (previewEntry?.ref === deleteEntry.ref) setPreviewEntry(null);
+    setDeleteEntry(null);
+    setDeleteRecursive(false);
+    setDeletingEntry(false);
+    void loadEntries(currentRef);
   };
 
   return (
@@ -600,6 +649,18 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                               >
                                 <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
                               </button>
+                              {entry.allowed_actions.includes('delete') && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); requestDelete(entry); }}
+                                  disabled={deletingEntry}
+                                  className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                                  aria-label={t('files.delete', { name: entry.name })}
+                                  title={t('files.delete', { name: entry.name })}
+                                >
+                                  <TrashIcon className="h-4 w-4" aria-hidden="true" />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
@@ -612,6 +673,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   {entries.map((entry) => {
                     const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
                     const canDownload = entry.kind === 'file' && entry.allowed_actions.includes('download') && capabilities.download;
+                    const canDelete = entry.allowed_actions.includes('delete');
 
                     return (
                       <div
@@ -643,6 +705,18 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             title={t('files.download', { name: entry.name })}
                           >
                             <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); requestDelete(entry); }}
+                            disabled={deletingEntry}
+                            className="ui-icon-button absolute top-2 left-2 p-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-[var(--color-bg-primary)]/90 hover:bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] rounded-md z-10 border border-[var(--color-border)]"
+                            aria-label={t('files.delete', { name: entry.name })}
+                            title={t('files.delete', { name: entry.name })}
+                          >
+                            <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
                           </button>
                         )}
                         <div className="relative w-full aspect-[4/3] flex items-center justify-center bg-[var(--color-bg-tertiary)]/40 overflow-hidden">
@@ -761,6 +835,23 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           </div>,
           document.body
         )}
+      {deleteEntry && createPortal(
+        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+          <div ref={deleteDialogRef} role="dialog" aria-modal="true" aria-labelledby="delete-entry-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
+            <h2 id="delete-entry-title" className="text-lg font-semibold text-[var(--color-text-primary)]">{t('files.deleteTitle')}</h2>
+            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
+              {deleteEntry.kind === 'file' ? t('files.deleteFileWarning', { name: deleteEntry.name }) : deleteRecursive ? t('files.deleteRecursiveWarning', { name: deleteEntry.name }) : t('files.deleteDirectoryWarning', { name: deleteEntry.name })}
+            </p>
+            {deleteError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{deleteError}</p>}
+            {deleteEntry.kind === 'directory' && deleteRecursive && !capabilities.delete_empty_directory && capabilities.delete_recursive_directory && <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.deleteOnlyRecursiveSupported')}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button ref={deleteCancelRef} type="button" onClick={() => { setDeleteEntry(null); setDeleteError(''); setDeleteRecursive(false); }} disabled={deletingEntry} className="ui-button-secondary px-3 py-2 text-sm">{t('common.cancel')}</button>
+              <button type="button" onClick={() => void confirmDelete()} disabled={deletingEntry || (deleteEntry.kind === 'directory' && !deleteRecursive && !capabilities.delete_empty_directory)} className="ui-button-danger px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50">
+                {deletingEntry ? t('common.loading') : deleteRecursive ? t('files.deleteRecursively') : t('files.deleteConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>, document.body)}
       {previewEntry && (
         <Suspense fallback={null}>
           <FilePreviewDialog

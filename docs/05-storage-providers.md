@@ -6,7 +6,7 @@ in `NewProvider` (`factory.go`). Only whitelisted provider strings may reach `Ne
 
 ## Cloud File Manager Capabilities
 
-`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. Every files provider exposes Phase-1 browse/download through the bounded read adapter. Providers (including Google Drive, HiDrive, Nextcloud, OneDrive, Dropbox, MagentaCLOUD, Seafile, Koofr, OpenCloud, and Immich) implement native `ManagerLister`, `ManagerDownloader`, `ManagerUploader`, `ManagerDirectoryCreator`, `ManagerPathResolver`, and `ManagerThumbnailer` contracts with native pagination, visual thumbnails/previews, and tested conflict strategies (`SKIP`, `OVERWRITE`, and bounded `RENAME`) according to their capabilities. Mutations, copy, and range download remain disabled for providers that have not implemented dedicated contracts.
+`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. File deletion is exposed only through `ManagerDeleter` and sealed manager locators; a root locator is never valid for deletion. Providers retain native deletion semantics, so the UI does not promise recovery. Empty and recursive directory deletion are separately advertised. Immich is flat and exposes only asset deletion through its native asset ID; it never exposes folder deletion.
 
 ---
 

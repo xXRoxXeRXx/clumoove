@@ -94,6 +94,11 @@ type fileDirectoryCreateRequest struct {
 	ParentRef string `json:"parent_ref"`
 }
 
+type fileDeleteRequest struct {
+	Ref       string `json:"ref"`
+	Recursive bool   `json:"recursive"`
+}
+
 type fileDirectoryCreateResponse struct {
 	Success bool   `json:"success"`
 	Name    string `json:"name"`
@@ -487,14 +492,78 @@ func createDirectoryLegacyManager(ctx context.Context, provider storage.StorageP
 }
 
 func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []string {
-	actions := make([]string, 0, 2)
+	actions := make([]string, 0, 3)
 	if !isDir && capabilities.Download {
 		actions = append(actions, "download")
 	}
 	if isDir && capabilities.Upload {
 		actions = append(actions, "upload")
 	}
+	if (!isDir && capabilities.DeleteFile) || (isDir && (capabilities.DeleteEmptyDirectory || capabilities.DeleteRecursiveDirectory)) {
+		actions = append(actions, "delete")
+	}
 	return actions
+}
+
+func isManagedRootLocator(provider string, locator storage.ManagerLocator) bool {
+	if locator.NativeID == "" {
+		return locator.Path == "" || canonicalManagedPath(locator.Path) == managedRootPath()
+	}
+	return provider == "google" && locator.NativeID == "root"
+}
+
+func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.requireUserID(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	var request fileDeleteRequest
+	if !decodeJSONBody(w, r, &request, normalJSONBodyLimit) {
+		return
+	}
+	profileID := r.PathValue("profileID")
+	reference, referenceErr := openFileReference(request.Ref, s.encryptionKey, userID, profileID)
+	if referenceErr != nil {
+		writeValidationError(w, ErrFilesInvalidRef)
+		return
+	}
+	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	defer resolved.close()
+	if isManagedRootLocator(resolved.profile.Provider, reference.Locator) {
+		writeValidationError(w, ErrFilesRootMutationForbidden)
+		return
+	}
+	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
+	supported := (reference.Kind == "file" && capabilities.DeleteFile) ||
+		(reference.Kind == "directory" && !request.Recursive && capabilities.DeleteEmptyDirectory) ||
+		(reference.Kind == "directory" && request.Recursive && capabilities.DeleteRecursiveDirectory)
+	if !supported {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+	deleter, ok := resolved.provider.(storage.ManagerDeleter)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+	if err := deleter.DeleteManagerItem(resolved.ctx, reference.Locator, request.Recursive); err != nil {
+		s.writeFileProviderError(w, err)
+		return
+	}
+	s.writeAudit(r, db.AuditFileItemDeleted, profileID, userID, map[string]interface{}{
+		"provider": resolved.profile.Provider,
+		"item_kind": reference.Kind,
+		"recursive": request.Recursive,
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *APIServer) handleFileCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -1224,6 +1293,8 @@ func (s *APIServer) writeFileProviderError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusRequestEntityTooLarge, ErrFilesDirectoryTooLarge)
 	case errors.Is(err, storage.ErrManagerUnsupported):
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+	case errors.Is(err, storage.ErrManagerDirectoryNotEmpty):
+		writeConflictError(w, ErrFilesDirectoryNotEmpty)
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, ErrFilesNotFound)
 	case errors.Is(err, storage.ErrAmbiguousPath):
