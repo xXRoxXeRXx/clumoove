@@ -99,6 +99,20 @@ type fileDeleteRequest struct {
 	Recursive bool   `json:"recursive"`
 }
 
+type fileMutationRequest struct {
+	Ref                  string `json:"ref"`
+	DestinationParentRef string `json:"destination_parent_ref,omitempty"`
+	NewName              string `json:"new_name,omitempty"`
+	ConflictStrategy     string `json:"conflict_strategy,omitempty"`
+}
+
+type fileMutationResponse struct {
+	Success bool   `json:"success"`
+	Status  string `json:"status"`
+	Name    string `json:"name"`
+	Native  bool   `json:"native"`
+}
+
 type fileDirectoryCreateResponse struct {
 	Success bool   `json:"success"`
 	Name    string `json:"name"`
@@ -492,7 +506,7 @@ func createDirectoryLegacyManager(ctx context.Context, provider storage.StorageP
 }
 
 func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []string {
-	actions := make([]string, 0, 3)
+	actions := make([]string, 0, 6)
 	if !isDir && capabilities.Download {
 		actions = append(actions, "download")
 	}
@@ -501,6 +515,12 @@ func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []
 	}
 	if (!isDir && capabilities.DeleteFile) || (isDir && (capabilities.DeleteEmptyDirectory || capabilities.DeleteRecursiveDirectory)) {
 		actions = append(actions, "delete")
+	}
+	if capabilities.Rename {
+		actions = append(actions, "rename")
+	}
+	if capabilities.Move {
+		actions = append(actions, "move", "copy")
 	}
 	return actions
 }
@@ -559,11 +579,163 @@ func (s *APIServer) handleFileEntryDelete(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.writeAudit(r, db.AuditFileItemDeleted, profileID, userID, map[string]interface{}{
-		"provider": resolved.profile.Provider,
+		"provider":  resolved.profile.Provider,
 		"item_kind": reference.Kind,
 		"recursive": request.Recursive,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *APIServer) handleFileEntryRename(w http.ResponseWriter, r *http.Request) {
+	s.handleFileEntryMutation(w, r, "rename")
+}
+
+func (s *APIServer) handleFileEntryCopy(w http.ResponseWriter, r *http.Request) {
+	s.handleFileEntryMutation(w, r, "copy")
+}
+
+func (s *APIServer) handleFileEntryMove(w http.ResponseWriter, r *http.Request) {
+	s.handleFileEntryMutation(w, r, "move")
+}
+
+func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Request, operation string) {
+	userID, ok := s.requireUserID(w, r)
+	if !ok {
+		return
+	}
+	if !s.allowFileRequest(r, userID, "files-mutation", fileMutationRateLimit) {
+		writeError(w, http.StatusTooManyRequests, ErrRateLimited)
+		return
+	}
+	var request fileMutationRequest
+	if !decodeJSONBody(w, r, &request, normalJSONBodyLimit) {
+		return
+	}
+	profileID := r.PathValue("profileID")
+	source, err := openFileReference(request.Ref, s.encryptionKey, userID, profileID)
+	if err != nil {
+		writeValidationError(w, ErrFilesInvalidRef)
+		return
+	}
+	if source.Locator.Path == "" {
+		writeValidationError(w, ErrFilesInvalidRef)
+		return
+	}
+	if source.Locator.Path == "" {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+	name := strings.TrimSpace(request.NewName)
+	if name == "" {
+		name = path.Base(source.Locator.Path)
+	}
+	if !validManagerUploadName(name) {
+		writeValidationError(w, ErrInvalidBody)
+		return
+	}
+	destination := storage.ManagerLocator{Path: path.Dir(source.Locator.Path)}
+	if request.DestinationParentRef != "" {
+		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, s.encryptionKey, userID, profileID)
+		if destinationErr != nil || destinationRef.Kind != "directory" || isManagedRootLocator("", destinationRef.Locator) || destinationRef.Locator.Path == "" {
+			writeValidationError(w, ErrFilesInvalidRef)
+			return
+		}
+		destination = destinationRef.Locator
+	}
+	if destination.NativeID != "" || destination.Path == "" {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
+	if err != nil {
+		s.writeFileProfileError(w, err)
+		return
+	}
+	defer resolved.close()
+	if isManagedRootLocator(resolved.profile.Provider, source.Locator) {
+		writeValidationError(w, ErrFilesRootMutationForbidden)
+		return
+	}
+	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
+	if (operation == "rename" && !capabilities.Rename) || (operation != "rename" && !capabilities.Move) {
+		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+		return
+	}
+	strategy := strings.ToUpper(strings.TrimSpace(request.ConflictStrategy))
+	if strategy != "" && strategy != "SKIP" && strategy != "OVERWRITE" && strategy != "RENAME" {
+		writeValidationError(w, ErrInvalidBody)
+		return
+	}
+	options := storage.ManagerMutationOptions{ConflictStrategy: storage.ManagerConflictStrategy(strategy)}
+	mutator := storage.NewPathManagerMutator(resolved.provider)
+	var result storage.ManagerMutationResult
+	if operation != "rename" {
+		streamID := generateRandomString(16)
+		if streamID == "" || !s.acquireFileStream(r.Context(), userID, "mutation", streamID, fileStreamLease) {
+			writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
+			return
+		}
+		defer s.releaseFileStream(r.Context(), userID, "mutation", streamID)
+		stopLeaseRenewal := make(chan struct{})
+		defer close(stopLeaseRenewal)
+		go s.renewFileStreamLease(stopLeaseRenewal, userID, "mutation", streamID)
+	}
+	switch operation {
+	case "rename":
+		result, err = mutator.RenameManagerItem(resolved.ctx, source.Locator, destination, name, options)
+	case "copy":
+		result, err = mutator.CopyManagerItem(resolved.ctx, source.Locator, destination, name, options)
+	case "move":
+		result, err = mutator.MoveManagerItem(resolved.ctx, source.Locator, destination, name, options)
+	}
+	if err != nil {
+		s.writeFileMutationError(w, err, capabilities)
+		return
+	}
+	if result.FinalName == "" {
+		writeError(w, http.StatusBadGateway, ErrFilesProviderUnavailable)
+		return
+	}
+	action := db.AuditFileItemRenamed
+	if operation == "copy" {
+		action = db.AuditFileItemCopied
+	} else if operation == "move" {
+		action = db.AuditFileItemMoved
+	}
+	s.writeAudit(r, action, profileID, userID, map[string]interface{}{
+		"provider":              resolved.profile.Provider,
+		"source_item_kind":      source.Kind,
+		"destination_item_kind": "directory",
+		"conflict_strategy":     strategy,
+		"native":                result.Native,
+		"outcome":               result.Status,
+	})
+	writeJSON(w, http.StatusOK, fileMutationResponse{Success: true, Status: result.Status, Name: result.FinalName, Native: result.Native})
+}
+
+func (s *APIServer) writeFileMutationError(w http.ResponseWriter, err error, capabilities storage.ManagerCapabilities) {
+	switch {
+	case errors.Is(err, storage.ErrManagerConflict):
+		strategies := make([]string, 0, 3)
+		if capabilities.ConflictSkip {
+			strategies = append(strategies, "SKIP")
+		}
+		if capabilities.ConflictOverwrite {
+			strategies = append(strategies, "OVERWRITE")
+		}
+		if capabilities.ConflictRename {
+			strategies = append(strategies, "RENAME")
+		}
+		writeJSON(w, http.StatusConflict, map[string]any{"error_code": ErrFilesConflict, "conflict_strategies": strategies})
+	case errors.Is(err, storage.ErrManagerDirectoryCycle):
+		writeValidationError(w, ErrFilesInvalidDestination)
+	case errors.Is(err, storage.ErrManagerNoop):
+		writeValidationError(w, ErrFilesNoop)
+	case errors.Is(err, storage.ErrManagerPartial):
+		writeError(w, http.StatusConflict, ErrFilesPartialOperation)
+	default:
+		s.writeFileProviderError(w, err)
+	}
 }
 
 func (s *APIServer) handleFileCapabilities(w http.ResponseWriter, r *http.Request) {
@@ -1034,7 +1206,6 @@ func (s *APIServer) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		"provider":  profile.Provider,
 		"item_kind": "file",
 		"result":    result.Status,
-		"name":      result.FinalName,
 	})
 	status := http.StatusCreated
 	if result.Status == "skipped" {
@@ -1112,7 +1283,6 @@ func (s *APIServer) handleFileDirectoryCreate(w http.ResponseWriter, r *http.Req
 	s.writeAudit(r, db.AuditFileDirectoryCreated, profileID, userID, map[string]interface{}{
 		"provider":  profile.Provider,
 		"item_kind": "directory",
-		"name":      name,
 	})
 
 	writeJSON(w, http.StatusCreated, fileDirectoryCreateResponse{Success: true, Name: name})

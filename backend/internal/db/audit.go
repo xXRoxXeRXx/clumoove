@@ -72,6 +72,9 @@ const (
 	AuditFileUploadCompleted      AuditAction = "FILE_UPLOAD_COMPLETED"
 	AuditFileDirectoryCreated     AuditAction = "FILE_DIRECTORY_CREATED"
 	AuditFileItemDeleted          AuditAction = "FILE_ITEM_DELETED"
+	AuditFileItemRenamed          AuditAction = "FILE_ITEM_RENAMED"
+	AuditFileItemCopied           AuditAction = "FILE_ITEM_COPIED"
+	AuditFileItemMoved            AuditAction = "FILE_ITEM_MOVED"
 )
 
 const (

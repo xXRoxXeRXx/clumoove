@@ -249,6 +249,9 @@ const (
 	ErrFilesStreamLimitReached    APIErrorCode = "FILES_STREAM_LIMIT_REACHED"
 	ErrFilesDownloadTicketInvalid APIErrorCode = "FILES_DOWNLOAD_TICKET_INVALID"
 	ErrFilesProviderUnavailable   APIErrorCode = "FILES_PROVIDER_UNAVAILABLE"
+	ErrFilesInvalidDestination    APIErrorCode = "FILES_INVALID_DESTINATION"
+	ErrFilesNoop                  APIErrorCode = "FILES_NOOP"
+	ErrFilesPartialOperation      APIErrorCode = "FILES_PARTIAL_OPERATION"
 )
 
 // writeError emits a structured error response carrying only a machine-readable

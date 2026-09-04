@@ -5,7 +5,7 @@ migration, synchronization, or backup flows through the system, and the resilien
 
 ## Cloud File Manager (Phase 1)
 
-The authenticated file manager is a direct, profile-bound API path and is not part of the migration queue. It resolves only saved `connection_profiles`, creates a provider through the normal factory, and streams downloads and raw uploads directly to the provider. It never accepts ad-hoc credentials, remote paths in URLs, or JWTs in download URLs. Uploads and deletion use explicit manager capabilities, an exact-length stream wrapper, and a Redis per-user lease; no migration primitive implicitly enables an interactive mutation. Deletion consumes only opaque, sealed item references, rejects root locators, and preserves provider-native permanence or trash behavior.
+The authenticated file manager is a direct, profile-bound API path and is not part of the migration queue. It resolves only saved `connection_profiles`, creates a provider through the normal factory, and streams downloads, uploads, and copy fallback directly to providers without disk buffering. It never accepts ad-hoc credentials, remote paths in URLs, or JWTs in download URLs. Uploads and copy/move mutations use explicit manager capabilities, an exact-length stream wrapper, and a Redis per-user lease; no migration primitive implicitly enables an interactive mutation. Rename, copy, and move consume only opaque same-profile references, reject roots, no-ops, and directory cycles, and require an explicit conflict retry. A move never deletes its source before its destination operation succeeds.
 
 ---
 

@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
 import { FileManager } from './FileManager';
-import { getFileCapabilities, listFileEntries, createDownloadTicket, createDirectory, deleteFileEntry, type FileEntry } from '../../api/files';
+import { getFileCapabilities, listFileEntries, createDownloadTicket, createDirectory, deleteFileEntry, renameFileEntry, copyFileEntry, moveFileEntry, type FileEntry } from '../../api/files';
 import { listConnectionProfiles } from '../../api/profiles';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -14,6 +14,9 @@ vi.mock('../../api/files', () => ({
   createDownloadTicket: vi.fn(),
   createDirectory: vi.fn(),
   deleteFileEntry: vi.fn(),
+  renameFileEntry: vi.fn(),
+  copyFileEntry: vi.fn(),
+  moveFileEntry: vi.fn(),
 }));
 
 vi.mock('../../api/profiles', () => ({
@@ -110,6 +113,9 @@ describe('FileManager component', () => {
     vi.mocked(createDownloadTicket).mockReset();
     vi.mocked(createDirectory).mockReset();
     vi.mocked(deleteFileEntry).mockReset();
+    vi.mocked(renameFileEntry).mockReset();
+    vi.mocked(copyFileEntry).mockReset();
+    vi.mocked(moveFileEntry).mockReset();
     vi.mocked(deleteFileEntry).mockResolvedValue({ ok: true, status: 204, data: {} });
 
     vi.mocked(listConnectionProfiles).mockResolvedValue({

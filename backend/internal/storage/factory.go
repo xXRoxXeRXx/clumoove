@@ -164,27 +164,29 @@ var providerRegistry = map[string]ProviderMetadata{
 }
 
 // managerCapabilityRegistry is deliberately independent from the storage
-// interface. Phase 1 exposes the existing, tested read operations for every
-// files provider. Mutations remain false until each provider has
-// manager-specific tests and semantics.
+// interface. Path-backed mutation capabilities use the validated manager
+// adapter; copy is currently streamed, so NativeCopy remains false until a
+// provider has a dedicated server-side manager-copy implementation and tests.
 var managerCapabilityRegistry = map[string]ManagerCapabilities{
-	"nextcloud":    {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"opencloud":    {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
-	"webdav":       {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"dropbox":      {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"nextcloud": {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"opencloud": {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
+	"webdav":    {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"dropbox":   {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	// Google Drive uses native IDs and is intentionally withheld until its
+	// dedicated manager rename/move adapter can preserve those semantics.
 	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"onedrive":     {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"hidrive":      {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"smb":          {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"s3":           {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
-	"sftp":         {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"ftp":          {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"magentacloud": {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"koofr":        {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
-	"local":        {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"onedrive":     {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"hidrive":      {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"smb":          {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"s3":           {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
+	"sftp":         {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"ftp":          {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"magentacloud": {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"koofr":        {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
+	"local":        {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"immich":       {Browse: true, NativePagination: true, Download: true, DeleteFile: true, Thumbnails: true},
-	"seafile":      {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
-	"mega":         {Browse: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"seafile":      {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
+	"mega":         {Browse: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 }
 
 // ManagerCapabilitiesFor returns static capabilities after applying runtime

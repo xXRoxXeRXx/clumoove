@@ -4,18 +4,22 @@ import {
   ArrowDownTrayIcon,
   ArrowLeftIcon,
   ArrowPathIcon,
+  ArrowRightIcon,
   ArrowUpIcon,
   ChevronRightIcon,
+	ClipboardDocumentIcon,
+	EllipsisVerticalIcon,
   FolderIcon,
   FolderPlusIcon,
   ListBulletIcon,
+  PencilIcon,
   ProviderIcon,
   Squares2X2Icon,
   TrashIcon,
   WrenchScrewdriverIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, type FileBreadcrumb, type FileCapabilities, type FileEntry } from '../../api/files';
+import { copyFileEntry, createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
@@ -85,6 +89,17 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [deletingEntry, setDeletingEntry] = useState(false);
   const [deleteRecursive, setDeleteRecursive] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [actionMenuEntry, setActionMenuEntry] = useState<FileEntry | null>(null);
+  const [renameEntry, setRenameEntry] = useState<FileEntry | null>(null);
+  const [renameName, setRenameName] = useState('');
+  const [mutationEntry, setMutationEntry] = useState<FileEntry | null>(null);
+  const [mutationOperation, setMutationOperation] = useState<'copy' | 'move' | null>(null);
+  const [pickerBreadcrumbs, setPickerBreadcrumbs] = useState<Breadcrumb[]>([]);
+  const [pickerEntries, setPickerEntries] = useState<FileEntry[]>([]);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [mutationError, setMutationError] = useState('');
+  const [conflictStrategies, setConflictStrategies] = useState<FileMutationConflictStrategy[] | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     try {
       const stored = localStorage.getItem('clumoove_file_manager_view_mode');
@@ -109,6 +124,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const profileRequestRef = useRef<AbortController | null>(null);
   const entriesRequestRef = useRef<AbortController | null>(null);
   const deleteRequestRef = useRef<AbortController | null>(null);
+  const mutationRequestRef = useRef<AbortController | null>(null);
+  const pickerRequestRef = useRef<AbortController | null>(null);
+  const renameDialogRef = useRef<HTMLDivElement>(null);
+  const renameCancelRef = useRef<HTMLButtonElement>(null);
+  const pickerDialogRef = useRef<HTMLDivElement>(null);
+  const pickerCancelRef = useRef<HTMLButtonElement>(null);
+  const conflictDialogRef = useRef<HTMLDivElement>(null);
+  const conflictCancelRef = useRef<HTMLButtonElement>(null);
   const latestEntriesRequestRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const uploadRefreshTimeoutRef = useRef<number | null>(null);
@@ -127,6 +150,15 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       setDeleteRecursive(false);
     }
   }, deleteEntry !== null);
+  const closeMutationDialogs = useCallback(() => {
+    if (mutationBusy) return;
+    mutationRequestRef.current?.abort();
+    pickerRequestRef.current?.abort();
+    setRenameEntry(null); setMutationEntry(null); setMutationOperation(null); setMutationError(''); setConflictStrategies(null);
+  }, [mutationBusy]);
+  useFocusTrap(renameDialogRef, renameCancelRef, closeMutationDialogs, renameEntry !== null);
+  useFocusTrap(pickerDialogRef, pickerCancelRef, closeMutationDialogs, mutationEntry !== null && conflictStrategies === null);
+  useFocusTrap(conflictDialogRef, conflictCancelRef, closeMutationDialogs, conflictStrategies !== null);
 
   useEffect(() => {
     return () => {
@@ -198,6 +230,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       profileRequestRef.current?.abort();
       entriesRequestRef.current?.abort();
       deleteRequestRef.current?.abort();
+      mutationRequestRef.current?.abort();
+      pickerRequestRef.current?.abort();
     };
   }, [loadProfiles]);
 
@@ -407,6 +441,90 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     setDeleteRecursive(false);
     setDeletingEntry(false);
     void loadEntries(currentRef);
+  };
+
+  const loadPickerEntries = useCallback(async (parentRef: string | null) => {
+    pickerRequestRef.current?.abort();
+    const controller = new AbortController();
+    pickerRequestRef.current = controller;
+    setPickerLoading(true);
+    const result = await listFileEntries(apiUrl, token, profileId, parentRef, undefined, controller.signal);
+    if (!controller.signal.aborted) {
+      setPickerEntries(result.ok ? result.data.entries.filter((entry) => entry.kind === 'directory') : []);
+      if (result.ok === false) setMutationError(translateApiError(result.errorCode));
+      setPickerLoading(false);
+    }
+  }, [apiUrl, profileId, token, translateApiError]);
+
+  const startRename = (entry: FileEntry) => {
+    setActionMenuEntry(null); setRenameEntry(entry); setRenameName(entry.name); setMutationError(''); setConflictStrategies(null);
+  };
+
+  const startDestinationPicker = (entry: FileEntry, operation: 'copy' | 'move') => {
+    setActionMenuEntry(null); setMutationEntry(entry); setMutationOperation(operation); setMutationError(''); setConflictStrategies(null);
+    const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
+    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null);
+  };
+
+  const executeMutation = async (strategy?: FileMutationConflictStrategy) => {
+    const entry = renameEntry ?? mutationEntry;
+    if (!entry || mutationBusy) return;
+    const operation = renameEntry ? 'rename' : mutationOperation;
+    if (!operation) return;
+    const newName = renameName.trim();
+    if (operation === 'rename' && !newName) {
+      setMutationError(t('files.nameRequired'));
+      return;
+    }
+    mutationRequestRef.current?.abort();
+    const controller = new AbortController();
+    mutationRequestRef.current = controller;
+    setMutationBusy(true); setMutationError('');
+    const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
+    const result = operation === 'rename'
+      ? await renameFileEntry(apiUrl, token, profileId, entry.ref, newName, strategy, controller.signal)
+      : operation === 'copy'
+        ? await copyFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal)
+        : await moveFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal);
+    if (controller.signal.aborted) return;
+    setMutationBusy(false);
+    if (result.ok === false) {
+      const options = (result.data as { conflict_strategies?: FileMutationConflictStrategy[] } | undefined)?.conflict_strategies;
+      if (result.errorCode === 'FILES_CONFLICT' && options?.length) {
+        setConflictStrategies(options);
+	      } else {
+	        setMutationError(result.errorCode === 'FILES_PARTIAL_OPERATION' ? t('files.partialWarning') : translateApiError(result.errorCode));
+      }
+      if (result.errorCode === 'FILES_PARTIAL_OPERATION') void loadEntries(currentRef);
+      return;
+    }
+    if (previewEntry?.ref === entry.ref && operation === 'move') setPreviewEntry(null);
+    setRenameEntry(null); setMutationEntry(null); setMutationOperation(null); setConflictStrategies(null); setMutationError('');
+    void loadEntries(currentRef);
+  };
+
+  const canRename = (entry: FileEntry) => capabilities.rename && entry.allowed_actions.includes('rename');
+  // Copy is supported through the same manager capability as move. The server
+  // reports whether it used a provider-native copy in the mutation response.
+  const canCopy = (entry: FileEntry) => capabilities.move && entry.allowed_actions.includes('copy');
+  const canMove = (entry: FileEntry) => capabilities.move && entry.allowed_actions.includes('move');
+  const hasEntryActions = (entry: FileEntry) => canRename(entry) || canCopy(entry) || canMove(entry) || (entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download')) || entry.allowed_actions.includes('delete');
+
+  const renderActionMenu = (entry: FileEntry) => {
+    if (!hasEntryActions(entry)) return null;
+    const isOpen = actionMenuEntry?.ref === entry.ref;
+    return <div className="relative inline-block text-left" onClick={(event) => event.stopPropagation()}>
+      <button type="button" className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.actionsFor', { name: entry.name })} aria-haspopup="menu" aria-expanded={isOpen} onClick={() => setActionMenuEntry(isOpen ? null : entry)}>
+	        <EllipsisVerticalIcon className="h-5 w-5" aria-hidden="true" />
+      </button>
+      {isOpen && <div role="menu" aria-label={t('files.actionsFor', { name: entry.name })} className="absolute right-0 z-20 mt-1 w-40 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-1 shadow-sm">
+        {canRename(entry) && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => startRename(entry)}><PencilIcon className="h-4 w-4" aria-hidden="true" />{t('files.rename')}</button>}
+        {canCopy(entry) && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => startDestinationPicker(entry, 'copy')}><ClipboardDocumentIcon className="h-4 w-4" aria-hidden="true" />{t('files.copy')}</button>}
+        {canMove(entry) && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => startDestinationPicker(entry, 'move')}><ArrowRightIcon className="h-4 w-4" aria-hidden="true" />{t('files.move')}</button>}
+        {entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download') && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => void download(entry)}><ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />{t('files.downloadAction')}</button>}
+        {entry.allowed_actions.includes('delete') && <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-[var(--color-danger)] hover:bg-[var(--color-hover)]" onClick={() => requestDelete(entry)}><TrashIcon className="h-4 w-4" aria-hidden="true" />{t('files.deleteAction')}</button>}
+      </div>}
+    </div>;
   };
 
   return (
@@ -636,31 +754,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                               {entry.modified_at ? formatDateTime(entry.modified_at) : t('common.unspecified')}
                             </td>
                             <td data-label={t('files.actions')} className="w-14 sm:w-16 px-3 py-2 text-right whitespace-nowrap shrink-0">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void download(entry);
-                                }}
-                                disabled={entry.kind === 'directory' || !entry.allowed_actions.includes('download') || !capabilities.download || downloadingRef !== null}
-                                className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
-                                aria-label={t('files.download', { name: entry.name })}
-                                title={t('files.download', { name: entry.name })}
-                              >
-                                <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
-                              </button>
-                              {entry.allowed_actions.includes('delete') && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); requestDelete(entry); }}
-                                  disabled={deletingEntry}
-                                  className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
-                                  aria-label={t('files.delete', { name: entry.name })}
-                                  title={t('files.delete', { name: entry.name })}
-                                >
-                                  <TrashIcon className="h-4 w-4" aria-hidden="true" />
-                                </button>
-                              )}
+                              {entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download') && <button type="button" onClick={(event) => { event.stopPropagation(); void download(entry); }} disabled={downloadingRef !== null} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.download', { name: entry.name })} title={t('files.download', { name: entry.name })}><ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" /></button>}
+                              {entry.allowed_actions.includes('delete') && <button type="button" onClick={(event) => { event.stopPropagation(); requestDelete(entry); }} disabled={deletingEntry} className="ui-icon-button p-2 hover:bg-[var(--color-hover)]" aria-label={t('files.delete', { name: entry.name })} title={t('files.delete', { name: entry.name })}><TrashIcon className="h-4 w-4" aria-hidden="true" /></button>}
+                              {renderActionMenu(entry)}
                             </td>
                           </tr>
                         );
@@ -672,8 +768,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 flex-1 auto-rows-max" role="grid" aria-label={t('files.title')}>
                   {entries.map((entry) => {
                     const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
-                    const canDownload = entry.kind === 'file' && entry.allowed_actions.includes('download') && capabilities.download;
-                    const canDelete = entry.allowed_actions.includes('delete');
 
                     return (
                       <div
@@ -692,33 +786,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                         }`}
                         title={entry.name}
                       >
-                        {canDownload && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void download(entry);
-                            }}
-                            disabled={downloadingRef !== null}
-                            className="ui-icon-button absolute top-2 right-2 p-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-[var(--color-bg-primary)]/90 hover:bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] rounded-md z-10 backdrop-blur-xs shadow-xs border border-[var(--color-border)]"
-                            aria-label={t('files.download', { name: entry.name })}
-                            title={t('files.download', { name: entry.name })}
-                          >
-                            <ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                        )}
-                        {canDelete && (
-                          <button
-                            type="button"
-                            onClick={(e) => { e.stopPropagation(); requestDelete(entry); }}
-                            disabled={deletingEntry}
-                            className="ui-icon-button absolute top-2 left-2 p-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-[var(--color-bg-primary)]/90 hover:bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] rounded-md z-10 border border-[var(--color-border)]"
-                            aria-label={t('files.delete', { name: entry.name })}
-                            title={t('files.delete', { name: entry.name })}
-                          >
-                            <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                        )}
+                         <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">{renderActionMenu(entry)}</div>
+                         {entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download') && <button type="button" onClick={(event) => { event.stopPropagation(); void download(entry); }} disabled={downloadingRef !== null} className="ui-icon-button absolute top-2 left-2 z-10 p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100" aria-label={t('files.download', { name: entry.name })}><ArrowDownTrayIcon className="h-3.5 w-3.5" aria-hidden="true" /></button>}
+                         {entry.allowed_actions.includes('delete') && <button type="button" onClick={(event) => { event.stopPropagation(); requestDelete(entry); }} disabled={deletingEntry} className="ui-icon-button absolute left-10 top-2 z-10 p-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100" aria-label={t('files.delete', { name: entry.name })}><TrashIcon className="h-3.5 w-3.5" aria-hidden="true" /></button>}
                         <div className="relative w-full aspect-[4/3] flex items-center justify-center bg-[var(--color-bg-tertiary)]/40 overflow-hidden">
                           <FileThumbnail
                             apiUrl={apiUrl}
@@ -850,6 +920,41 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 {deletingEntry ? t('common.loading') : deleteRecursive ? t('files.deleteRecursively') : t('files.deleteConfirm')}
               </button>
             </div>
+          </div>
+        </div>, document.body)}
+      {renameEntry && createPortal(
+        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+          <div ref={renameDialogRef} role="dialog" aria-modal="true" aria-labelledby="rename-entry-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
+            <h2 id="rename-entry-title" className="text-lg font-semibold">{t('files.renameTitle')}</h2>
+            {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
+            <form className="mt-4 space-y-4" onSubmit={(event) => { event.preventDefault(); void executeMutation(); }}>
+              <label className="block text-sm font-medium" htmlFor="rename-entry-name">{t('files.name')}</label>
+              <input id="rename-entry-name" className="ui-input w-full px-3 py-2" value={renameName} disabled={mutationBusy} onChange={(event) => setRenameName(event.target.value)} autoFocus />
+              <div className="flex justify-end gap-2"><button ref={renameCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button><button type="submit" className="ui-button-primary px-3 py-2 text-sm" disabled={!renameName.trim() || mutationBusy}>{mutationBusy ? t('files.mutating') : t('files.rename')}</button></div>
+            </form>
+          </div>
+        </div>, document.body)}
+      {mutationEntry && mutationOperation && conflictStrategies === null && createPortal(
+        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+          <div ref={pickerDialogRef} role="dialog" aria-modal="true" aria-labelledby="destination-picker-title" tabIndex={-1} className="ui-card flex max-h-[85vh] w-full max-w-lg flex-col p-5">
+            <h2 id="destination-picker-title" className="text-lg font-semibold">{mutationOperation === 'copy' ? t('files.copyTitle') : t('files.moveTitle')}</h2>
+            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{t('files.destinationPickerDescription', { name: mutationEntry.name })}</p>
+            {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
+            <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>
+              {pickerBreadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={pickerLoading || index === pickerBreadcrumbs.length - 1} onClick={() => { const next = pickerBreadcrumbs.slice(0, index + 1); setPickerBreadcrumbs(next); void loadPickerEntries(next[next.length - 1]?.ref ?? null); }}>{breadcrumb.name}{index < pickerBreadcrumbs.length - 1 ? ' /' : ''}</button>)}
+            </nav>
+            <div className="mt-3 min-h-36 overflow-y-auto rounded border border-[var(--color-border)]">
+              {pickerLoading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : pickerBreadcrumbs.some((breadcrumb) => mutationEntry.kind === 'directory' && breadcrumb.ref === mutationEntry.ref) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : pickerEntries.filter((entry) => entry.ref !== mutationEntry.ref).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => { const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }]; setPickerBreadcrumbs(next); void loadPickerEntries(entry.ref); }}><FolderIcon className="h-4 w-4" aria-hidden="true" />{entry.name}</button>)}
+            </div>
+            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name })}</p>
+            <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy || (mutationOperation === 'move' && (mutationEntry.parent_ref ?? currentRef) === (pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null))} onClick={() => void executeMutation()}>{mutationBusy ? t('files.mutating') : mutationOperation === 'copy' ? t('files.copy') : t('files.move')}</button></div>
+          </div>
+        </div>, document.body)}
+      {conflictStrategies && (renameEntry || mutationEntry) && createPortal(
+        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+          <div ref={conflictDialogRef} role="dialog" aria-modal="true" aria-labelledby="mutation-conflict-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
+            <h2 id="mutation-conflict-title" className="text-lg font-semibold">{t('files.conflictTitle')}</h2><p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.conflictDescription')}</p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2"><button ref={conflictCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button>{conflictStrategies.map((strategy) => <button key={strategy} type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy} onClick={() => void executeMutation(strategy)}>{t(`files.conflict${strategy[0]}${strategy.slice(1).toLowerCase()}`)}</button>)}</div>
           </div>
         </div>, document.body)}
       {previewEntry && (

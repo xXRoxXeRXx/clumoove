@@ -58,6 +58,21 @@ export type ResolveFilePathResponse = {
 
 export type UploadConflictStrategy = 'SKIP' | 'OVERWRITE' | 'RENAME';
 
+export type FileMutationConflictStrategy = 'SKIP' | 'OVERWRITE' | 'RENAME';
+
+export type FileMutationResponse = {
+  success: boolean;
+  status: string;
+  name: string;
+  native: boolean;
+};
+
+export type FileMutationFailure = ApiJsonFailure<FileMutationResponse> & {
+  data?: { conflict_strategies?: FileMutationConflictStrategy[] };
+};
+
+export type FileMutationResult = ApiJsonResult<FileMutationResponse>;
+
 export type UploadFileResponse = {
   status: 'uploaded' | 'skipped' | 'renamed';
   name: string;
@@ -167,6 +182,74 @@ export async function deleteFileEntry(
   init.method = 'DELETE';
   init.body = JSON.stringify({ ref, recursive });
   return apiJson<Record<string, never>>(profileUrl(apiUrl, profileId, '/entries'), init);
+}
+
+type FileMutationRequest = {
+  ref: string;
+  destination_parent_ref?: string;
+  new_name?: string;
+  conflict_strategy?: FileMutationConflictStrategy;
+};
+
+async function mutateFileEntry(
+  operation: 'rename' | 'copy' | 'move',
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  body: FileMutationRequest,
+  signal?: AbortSignal,
+): Promise<FileMutationResult> {
+  const init = requestInit(token, signal);
+  init.body = JSON.stringify(body);
+  return apiJson<FileMutationResponse>(profileUrl(apiUrl, profileId, `/entries:${operation}`), init);
+}
+
+export function renameFileEntry(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  ref: string,
+  newName: string,
+  conflictStrategy?: FileMutationConflictStrategy,
+  signal?: AbortSignal,
+): Promise<FileMutationResult> {
+  return mutateFileEntry('rename', apiUrl, token, profileId, {
+    ref,
+    new_name: newName,
+    ...(conflictStrategy ? { conflict_strategy: conflictStrategy } : {}),
+  }, signal);
+}
+
+export function copyFileEntry(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  ref: string,
+  destinationParentRef: string | null,
+  conflictStrategy?: FileMutationConflictStrategy,
+  signal?: AbortSignal,
+): Promise<FileMutationResult> {
+  return mutateFileEntry('copy', apiUrl, token, profileId, {
+    ref,
+    ...(destinationParentRef ? { destination_parent_ref: destinationParentRef } : {}),
+    ...(conflictStrategy ? { conflict_strategy: conflictStrategy } : {}),
+  }, signal);
+}
+
+export function moveFileEntry(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  ref: string,
+  destinationParentRef: string | null,
+  conflictStrategy?: FileMutationConflictStrategy,
+  signal?: AbortSignal,
+): Promise<FileMutationResult> {
+  return mutateFileEntry('move', apiUrl, token, profileId, {
+    ref,
+    ...(destinationParentRef ? { destination_parent_ref: destinationParentRef } : {}),
+    ...(conflictStrategy ? { conflict_strategy: conflictStrategy } : {}),
+  }, signal);
 }
 
 function encodeHeaderFileName(name: string): string {

@@ -107,6 +107,44 @@ type ManagerUploadResult struct {
 	FinalName string
 }
 
+// ManagerMutationOptions controls an explicit user-selected name collision
+// resolution. An empty strategy means collisions are reported to the caller.
+type ManagerMutationOptions struct {
+	ConflictStrategy ManagerConflictStrategy
+}
+
+type ManagerConflictStrategy string
+
+const (
+	ManagerConflictSkip      ManagerConflictStrategy = "SKIP"
+	ManagerConflictOverwrite ManagerConflictStrategy = "OVERWRITE"
+	ManagerConflictRename    ManagerConflictStrategy = "RENAME"
+)
+
+// ManagerMutationResult describes the observable result without disclosing a
+// provider path or native ID.
+type ManagerMutationResult struct {
+	// Status is one of renamed, moved, copied, skipped, or renamed_on_conflict.
+	Status    string
+	FinalName string
+	Native    bool
+}
+
+// ManagerRenamer, ManagerMover, and ManagerCopier are manager-only contracts.
+// They intentionally do not imply that a migration StorageProvider primitive is
+// safe to expose to an interactive client.
+type ManagerRenamer interface {
+	RenameManagerItem(ctx context.Context, locator, parent ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error)
+}
+
+type ManagerMover interface {
+	MoveManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error)
+}
+
+type ManagerCopier interface {
+	CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error)
+}
+
 // ManagerUploader is deliberately separate from StorageProvider's migration
 // upload methods. A provider implements it only after its interactive upload
 // semantics, conflict handling, and locator safety have been tested.
@@ -115,12 +153,16 @@ type ManagerUploader interface {
 }
 
 var (
-	ErrManagerConflict          = errors.New("file manager conflict")
-	ErrManagerUnsupported       = errors.New("file manager operation not supported")
-	ErrManagerDirectoryNotEmpty = errors.New("file manager directory is not empty")
-	ErrUploadSizeMismatch       = errors.New("upload size mismatch")
-	ErrUnsupportedMedia         = errors.New("unsupported media type")
-	ErrManagerDirectoryTooLarge = errors.New("directory too large")
+	ErrManagerConflict           = errors.New("file manager conflict")
+	ErrManagerUnsupported        = errors.New("file manager operation not supported")
+	ErrManagerDirectoryNotEmpty  = errors.New("file manager directory is not empty")
+	ErrUploadSizeMismatch        = errors.New("upload size mismatch")
+	ErrUnsupportedMedia          = errors.New("unsupported media type")
+	ErrManagerDirectoryTooLarge  = errors.New("directory too large")
+	ErrManagerInvalidDestination = errors.New("invalid file manager destination")
+	ErrManagerDirectoryCycle     = errors.New("file manager directory cycle")
+	ErrManagerNoop               = errors.New("file manager operation is a no-op")
+	ErrManagerPartial            = errors.New("file manager operation partially completed")
 )
 
 // managerLocatorKey returns a stable sort key for a ManagerLocator, consistent
@@ -210,10 +252,6 @@ func (r *ExactSizeReader) checkTrailing() error {
 
 type ManagerDirectoryCreator interface {
 	CreateManagerDirectory(ctx context.Context, parent ManagerLocator, name string) error
-}
-
-type ManagerMover interface {
-	MoveManagerItem(ctx context.Context, locator, destination ManagerLocator, newName string) error
 }
 
 type ManagerDeleter interface {

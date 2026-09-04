@@ -6,7 +6,7 @@ in `NewProvider` (`factory.go`). Only whitelisted provider strings may reach `Ne
 
 ## Cloud File Manager Capabilities
 
-`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. File deletion is exposed only through `ManagerDeleter` and sealed manager locators; a root locator is never valid for deletion. Providers retain native deletion semantics, so the UI does not promise recovery. Empty and recursive directory deletion are separately advertised. Immich is flat and exposes only asset deletion through its native asset ID; it never exposes folder deletion.
+`ManagerCapabilities` in `storage/file_manager.go` is a separate optional contract from `StorageProvider`; transfer methods and `SupportsAtomicRename()` do not imply a manager operation. File deletion is exposed only through `ManagerDeleter` and sealed manager locators; a root locator is never valid for deletion. Path-backed rename, move, and streamed copy are exposed only through the manager mutation adapter after it validates type, collision, root, and directory-cycle semantics. Providers retain native deletion semantics, so the UI does not promise recovery. Empty and recursive directory deletion are separately advertised. Immich is flat and exposes only asset deletion through its native asset ID; it never exposes folder deletion.
 
 ---
 

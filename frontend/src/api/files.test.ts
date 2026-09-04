@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiJson } from '../utils/apiClient';
-import { createDownloadTicket, deleteFileEntry, getFileThumbnail, listFileEntries, resolveFilePath, uploadFile } from './files';
+import { copyFileEntry, createDownloadTicket, deleteFileEntry, getFileThumbnail, listFileEntries, moveFileEntry, renameFileEntry, resolveFilePath, uploadFile } from './files';
 
 vi.mock('../utils/apiClient', () => ({ apiJson: vi.fn() }));
 
@@ -80,6 +80,23 @@ describe('file API', () => {
       'https://api.example.test/api/files/profiles/profile%20id/entries',
       expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ ref: 'opaque-entry-ref', recursive: true }) }),
     );
+  });
+
+  it('sends rename, copy, and move mutations with sealed refs only', async () => {
+    vi.mocked(apiJson).mockClear();
+    await renameFileEntry('https://api.example.test', 'token', 'profile-id', 'sealed-source', 'renamed.txt');
+    await copyFileEntry('https://api.example.test', 'token', 'profile-id', 'sealed-source', 'sealed-destination', 'RENAME');
+    await moveFileEntry('https://api.example.test', 'token', 'profile-id', 'sealed-source', null, 'SKIP');
+
+    expect(apiJson).toHaveBeenNthCalledWith(1, 'https://api.example.test/api/files/profiles/profile-id/entries:rename', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ ref: 'sealed-source', new_name: 'renamed.txt' }),
+    }));
+    expect(apiJson).toHaveBeenNthCalledWith(2, 'https://api.example.test/api/files/profiles/profile-id/entries:copy', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ ref: 'sealed-source', destination_parent_ref: 'sealed-destination', conflict_strategy: 'RENAME' }),
+    }));
+    expect(apiJson).toHaveBeenNthCalledWith(3, 'https://api.example.test/api/files/profiles/profile-id/entries:move', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ ref: 'sealed-source', conflict_strategy: 'SKIP' }),
+    }));
   });
 
   it('sends quick-link paths only in the resolve request body', async () => {
