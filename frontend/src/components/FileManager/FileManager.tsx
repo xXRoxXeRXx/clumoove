@@ -55,6 +55,7 @@ const unavailableCapabilities: FileCapabilities = {
   mkdir: false,
   rename: false,
   move: false,
+  copy: false,
   delete_file: false,
   delete_empty_directory: false,
   delete_recursive_directory: false,
@@ -630,7 +631,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   };
 
   const canRename = (entry: FileEntry) => capabilities.rename && entry.allowed_actions.includes('rename');
-  const canCopy = (entry: FileEntry) => capabilities.move && entry.allowed_actions.includes('copy');
+  const canCopy = (entry: FileEntry) => capabilities.copy && entry.allowed_actions.includes('copy');
   const canMove = (entry: FileEntry) => capabilities.move && entry.allowed_actions.includes('move');
   const hasEntryActions = (entry: FileEntry) => canRename(entry) || canCopy(entry) || canMove(entry) || (entry.kind === 'file' && capabilities.download && entry.allowed_actions.includes('download')) || entry.allowed_actions.includes('delete');
 

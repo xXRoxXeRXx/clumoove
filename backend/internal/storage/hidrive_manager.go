@@ -18,10 +18,50 @@ var (
 	_ ManagerLister           = (*HiDriveProvider)(nil)
 	_ ManagerDownloader       = (*HiDriveProvider)(nil)
 	_ ManagerUploader         = (*HiDriveProvider)(nil)
+	_ ManagerCopier           = (*HiDriveProvider)(nil)
 	_ ManagerDirectoryCreator = (*HiDriveProvider)(nil)
 	_ ManagerPathResolver     = (*HiDriveProvider)(nil)
 	_ ManagerThumbnailer      = (*HiDriveProvider)(nil)
 )
+
+func (p *HiDriveProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return copyNativePathManagerItem(ctx, p, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, overwrite bool) error {
+		endpoint := "/file/copy"
+		if source.IsDir {
+			endpoint = "/dir/copy"
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.apiURL(endpoint), nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+p.AccessToken)
+		query := req.URL.Query()
+		query.Set("src", p.cleanPath(source.Path))
+		query.Set("dst", p.cleanPath(target))
+		if !source.IsDir {
+			query.Set("preserve_mtime", "true")
+		}
+		if overwrite {
+			query.Set("on_exist", "overwrite")
+		}
+		req.URL.RawQuery = query.Encode()
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("hidrive copy: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return ErrManagerConflict
+		}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+			return fmt.Errorf("hidrive copy failed with status: %d", resp.StatusCode)
+		}
+		return nil
+	})
+}
 
 // ConnectManager verifies connectivity to HiDrive via /user/me.
 func (p *HiDriveProvider) ConnectManager(ctx context.Context) (bool, error) {

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ var (
 	_ ManagerLister           = (*OneDriveProvider)(nil)
 	_ ManagerDownloader       = (*OneDriveProvider)(nil)
 	_ ManagerUploader         = (*OneDriveProvider)(nil)
+	_ ManagerCopier           = (*OneDriveProvider)(nil)
 	_ ManagerDirectoryCreator = (*OneDriveProvider)(nil)
 	_ ManagerPathResolver     = (*OneDriveProvider)(nil)
 	_ ManagerThumbnailer      = (*OneDriveProvider)(nil)
@@ -391,3 +393,198 @@ func (p *OneDriveProvider) ThumbnailManager(ctx context.Context, locator Manager
 
 	return resp.Body, contentType, nil
 }
+
+type oneDriveMonitorResponse struct {
+	Operation          string  `json:"operation"`
+	PercentageComplete float64 `json:"percentageComplete"`
+	Status             string  `json:"status"`
+	ResourceID         string  `json:"resourceId"`
+	Error              *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// CopyManagerItem copies a file or directory server-side through Microsoft Graph /copy.
+func (p *OneDriveProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return copyNativePathManagerItem(ctx, p, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, overwrite bool) error {
+		sourceURL, err := p.resourceURL(ctx, source.Path)
+		if err != nil {
+			return err
+		}
+		destDir := path.Dir(target)
+		destName := path.Base(target)
+		parentID, err := p.itemID(ctx, destDir)
+		if err != nil {
+			return err
+		}
+
+		if overwrite {
+			tempName := fmt.Sprintf(".clumoove-tmp-%d-%s", time.Now().UnixNano(), destName)
+			tempTarget := managerJoin(destDir, tempName)
+			if err := p.executeOneDriveCopy(ctx, sourceURL, parentID, tempName); err != nil {
+				return err
+			}
+			if err := p.DeleteFile(ctx, "files", target); err != nil {
+				_ = p.DeleteFile(ctx, "files", tempTarget)
+				return fmt.Errorf("onedrive copy overwrite delete destination: %w", err)
+			}
+			if err := p.RenameFile(ctx, "files", tempTarget, target); err != nil {
+				return fmt.Errorf("onedrive copy overwrite promote: %w", ErrManagerPartial)
+			}
+			return nil
+		}
+
+		return p.executeOneDriveCopy(ctx, sourceURL, parentID, destName)
+	})
+}
+
+func (p *OneDriveProvider) executeOneDriveCopy(ctx context.Context, sourceURL, parentID, name string) error {
+	payload := map[string]any{
+		"parentReference": map[string]string{"id": parentID},
+		"name":            name,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := p.request(ctx, http.MethodPost, sourceURL+"/copy", bytes.NewReader(body), true)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
+		return nil
+	case http.StatusAccepted:
+		loc := resp.Header.Get("Location")
+		validLoc, err := p.validMonitorURL(loc)
+		if err != nil {
+			return err
+		}
+		return p.pollOneDriveMonitor(ctx, validLoc)
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("onedrive copy: %w", ErrAuth)
+	case http.StatusNotFound:
+		return fmt.Errorf("onedrive copy: %w", ErrNotFound)
+	case http.StatusConflict:
+		return ErrManagerConflict
+	default:
+		return fmt.Errorf("onedrive copy failed with status: %d", resp.StatusCode)
+	}
+}
+
+func (p *OneDriveProvider) validMonitorURL(rawURL string) (string, error) {
+	if rawURL == "" {
+		return "", errors.New("onedrive copy returned empty monitor URL")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid onedrive monitor URL: %w", err)
+	}
+	base, err := url.Parse(p.apiBase)
+	if err != nil {
+		return "", fmt.Errorf("invalid onedrive base URL: %w", err)
+	}
+	if isLocalTestingEndpoint(p.apiBase) {
+		if parsed.Host != base.Host {
+			return "", fmt.Errorf("onedrive monitor host %q does not match test base host %q", parsed.Host, base.Host)
+		}
+		return parsed.String(), nil
+	}
+	if parsed.Scheme != "https" {
+		return "", errors.New("onedrive monitor URL must use https")
+	}
+	if parsed.Host != "graph.microsoft.com" && parsed.Host != base.Host {
+		return "", fmt.Errorf("onedrive monitor host %q must be graph.microsoft.com", parsed.Host)
+	}
+	return parsed.String(), nil
+}
+
+func (p *OneDriveProvider) pollOneDriveMonitor(ctx context.Context, monitorURL string) error {
+	waitInterval := 250 * time.Millisecond
+	if isLocalTestingEndpoint(p.apiBase) {
+		waitInterval = 20 * time.Millisecond
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		req, err := p.request(ctx, http.MethodGet, monitorURL, nil, true)
+		if err != nil {
+			return err
+		}
+		resp, err := p.httpClient.Do(req)
+		if err != nil {
+			return err
+		}
+
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return fmt.Errorf("onedrive monitor: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return fmt.Errorf("onedrive monitor: %w", ErrNotFound)
+		}
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+			resp.Body.Close()
+			return fmt.Errorf("onedrive monitor failed with status: %d", resp.StatusCode)
+		}
+
+		var monitor oneDriveMonitorResponse
+		decodeErr := json.NewDecoder(resp.Body).Decode(&monitor)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return fmt.Errorf("decode onedrive monitor: %w", decodeErr)
+		}
+
+		switch strings.ToLower(monitor.Status) {
+		case "completed":
+			return nil
+		case "failed":
+			if monitor.Error != nil {
+				code := strings.ToLower(monitor.Error.Code)
+				if code == "namealreadyexists" || strings.Contains(code, "conflict") {
+					return ErrManagerConflict
+				}
+				if code == "unauthenticated" || code == "invalidauthenticationtoken" {
+					return fmt.Errorf("onedrive monitor: %w", ErrAuth)
+				}
+				if code == "itemnotfound" {
+					return fmt.Errorf("onedrive monitor: %w", ErrNotFound)
+				}
+				return fmt.Errorf("onedrive copy failed: %s: %s", monitor.Error.Code, monitor.Error.Message)
+			}
+			return errors.New("onedrive copy operation failed")
+		case "inprogress", "notstarted", "":
+			// continue polling
+		default:
+			// unknown status, continue polling until terminal or context deadline
+		}
+
+		retryWait := waitInterval
+		if retryHeader := resp.Header.Get("Retry-After"); retryHeader != "" {
+			if secs, err := strconv.Atoi(retryHeader); err == nil && secs > 0 {
+				retryWait = time.Duration(secs) * time.Second
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryWait):
+		}
+	}
+}
+

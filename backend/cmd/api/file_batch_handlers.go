@@ -236,7 +236,7 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 	}
 	defer resolved.close()
 	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
-	if !capabilities.Move {
+	if (operation == "copy" && !capabilities.Copy) || (operation == "move" && !capabilities.Move) {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
@@ -250,12 +250,14 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 			return
 		}
 	}
-	streamID := generateRandomString(16)
-	if streamID == "" || !s.acquireFileStream(r.Context(), userID, "batch-mutation", streamID, fileStreamLease) {
-		writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
-		return
+	if operation == "copy" && !capabilities.NativeCopy {
+		streamID := generateRandomString(16)
+		if streamID == "" || !s.acquireFileStream(r.Context(), userID, "batch-mutation", streamID, fileStreamLease) {
+			writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
+			return
+		}
+		defer s.releaseFileStream(r.Context(), userID, "batch-mutation", streamID)
 	}
-	defer s.releaseFileStream(r.Context(), userID, "batch-mutation", streamID)
 	var mover storage.ManagerMover
 	var copier storage.ManagerCopier
 	if operation == "copy" {
@@ -281,8 +283,7 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 		}
 		name := path.Base(item.reference.Locator.Path)
 		if item.reference.Locator.NativeID != "" && item.reference.Locator.Path == "" {
-			results = append(results, fileBatchItemResult{Ref: item.ref, Status: "failed", ErrorCode: ErrInvalidBody})
-			continue
+			name = item.reference.Name
 		}
 		if sameManagedLocator(item.reference.Locator, destination) {
 			results = append(results, fileBatchItemResult{Ref: item.ref, Status: "failed", ErrorCode: ErrFilesNoop})

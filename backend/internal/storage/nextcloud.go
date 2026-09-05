@@ -1315,6 +1315,41 @@ func (p *davProvider) RenameFile(ctx context.Context, resourceType, oldPath, new
 	return nil
 }
 
+// CopyManagerItem copies a file or collection server-side through the shared
+// DAV implementation used by Nextcloud-family providers.
+func (p *davProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return copyNativePathManagerItem(ctx, p, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, overwrite bool) error {
+		req, err := p.newRequest("COPY", p.pb.resourceURL(p.baseURL(), p.Username, "files", source.Path), nil)
+		if err != nil {
+			return err
+		}
+		req = req.WithContext(ctx)
+		req.Header.Set("Destination", p.pb.resourceURL(p.baseURL(), p.Username, "files", target))
+		if overwrite {
+			req.Header.Set("Overwrite", "T")
+		} else {
+			req.Header.Set("Overwrite", "F")
+		}
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			return fmt.Errorf("%s copy: %w", p.name(), ErrAuth)
+		case http.StatusNotFound:
+			return fmt.Errorf("%s copy: %w", p.name(), ErrNotFound)
+		case http.StatusConflict, http.StatusPreconditionFailed:
+			return ErrManagerConflict
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("%s copy failed with status: %d", p.name(), resp.StatusCode)
+		}
+		return nil
+	})
+}
+
 // SupportsAtomicRename is true: WebDAV/Nextcloud MOVE is supported.
 func (p *davProvider) VerificationMode() VerificationMode { return VerificationSizeOnly }
 func (p *davProvider) SupportsAtomicRename() bool {
@@ -1413,3 +1448,4 @@ type NextcloudProvider struct {
 }
 
 var _ StorageProvider = (*NextcloudProvider)(nil)
+var _ ManagerCopier = (*NextcloudProvider)(nil)

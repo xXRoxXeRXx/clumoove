@@ -59,7 +59,95 @@ var (
 	_ ManagerThumbnailer      = (*GoogleProvider)(nil)
 	_ ManagerRenamer          = (*GoogleProvider)(nil)
 	_ ManagerMover            = (*GoogleProvider)(nil)
+	_ ManagerCopier           = (*GoogleProvider)(nil)
 )
+
+// CopyManagerItem copies Drive content using immutable IDs only. Drive cannot
+// copy folders directly, so folders are recreated and their children copied
+// through the Drive API without streaming bytes through this service.
+func (p *GoogleProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	if locator.NativeID == "" || locator.NativeID == "root" {
+		return ManagerMutationResult{}, ErrManagerInvalidDestination
+	}
+	source, err := p.driveService.Files.Get(locator.NativeID).Fields("id,name,mimeType,parents").Context(ctx).Do()
+	if err != nil {
+		return ManagerMutationResult{}, wrapGoogleNotFound(err)
+	}
+	destinationID := destination.NativeID
+	if destinationID == "" && destination.Path == "/" {
+		destinationID = "root"
+	}
+	if destinationID == "" {
+		return ManagerMutationResult{}, ErrManagerInvalidDestination
+	}
+	parent, err := p.driveService.Files.Get(destinationID).Fields("id,mimeType").Context(ctx).Do()
+	if err != nil {
+		return ManagerMutationResult{}, wrapGoogleNotFound(err)
+	}
+	if parent.Id == "" || parent.MimeType != googleDriveFolderMIME {
+		return ManagerMutationResult{}, ErrManagerInvalidDestination
+	}
+	if source.MimeType == googleDriveFolderMIME {
+		cycle, cycleErr := p.googleManagerWouldCreateCycle(ctx, source.Id, parent.Id)
+		if cycleErr != nil {
+			return ManagerMutationResult{}, cycleErr
+		}
+		if cycle {
+			return ManagerMutationResult{}, ErrManagerDirectoryCycle
+		}
+	}
+	matches, err := p.googleManagerChildrenByName(ctx, parent.Id, name)
+	if err != nil {
+		return ManagerMutationResult{}, err
+	}
+	finalName, status, conflict, err := p.googleManagerMutationName(ctx, parent.Id, name, source.MimeType == googleDriveFolderMIME, matches, options)
+	if err != nil {
+		return ManagerMutationResult{}, err
+	}
+	if status == "skipped" {
+		return ManagerMutationResult{Status: status, FinalName: finalName, Native: true}, nil
+	}
+	if source.MimeType == googleDriveFolderMIME {
+		if err := p.copyGoogleDirectory(ctx, source.Id, parent.Id, finalName); err != nil {
+			return ManagerMutationResult{}, fmt.Errorf("copy directory: %w", ErrManagerPartial)
+		}
+	} else if _, err := p.driveService.Files.Copy(source.Id, &drive.File{Name: finalName, Parents: []string{parent.Id}}).Context(ctx).Do(); err != nil {
+		return ManagerMutationResult{}, wrapGoogleError("google manager copy", err)
+	}
+	if conflict != nil {
+		if _, trashErr := p.driveService.Files.Update(conflict.Id, &drive.File{Trashed: true}).Context(ctx).Do(); trashErr != nil {
+			return ManagerMutationResult{}, wrapGoogleError("google manager overwrite", trashErr)
+		}
+		return ManagerMutationResult{Status: "overwritten", FinalName: finalName, Native: true}, nil
+	}
+	if status == "renamed_on_conflict" {
+		return ManagerMutationResult{Status: status, FinalName: finalName, Native: true}, nil
+	}
+	return ManagerMutationResult{Status: "copied", FinalName: finalName, Native: true}, nil
+}
+
+func (p *GoogleProvider) copyGoogleDirectory(ctx context.Context, sourceID, destinationID, name string) error {
+	created, err := p.driveService.Files.Create(&drive.File{Name: name, MimeType: googleDriveFolderMIME, Parents: []string{destinationID}}).Fields("id").Context(ctx).Do()
+	if err != nil {
+		return wrapGoogleError("google manager copy folder", err)
+	}
+	children, err := p.driveService.Files.List().Q(fmt.Sprintf("'%s' in parents and trashed = false", sourceID)).Fields("files(id,name,mimeType)").Context(ctx).Do()
+	if err != nil {
+		return wrapGoogleError("google manager list copy children", err)
+	}
+	for _, child := range children.Files {
+		if child.MimeType == googleDriveFolderMIME {
+			if err := p.copyGoogleDirectory(ctx, child.Id, created.Id, child.Name); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := p.driveService.Files.Copy(child.Id, &drive.File{Name: child.Name, Parents: []string{created.Id}}).Context(ctx).Do(); err != nil {
+			return wrapGoogleError("google manager copy child", err)
+		}
+	}
+	return nil
+}
 
 // RenameManagerItem changes a Drive item's name and, when an explicit parent
 // is supplied, moves it by immutable ID. An empty parent retains its current

@@ -419,3 +419,127 @@ func TestGoogleManagerThumbnailNotFound(t *testing.T) {
 		t.Fatalf("ThumbnailManager() error = %v, want ErrNotFound", err)
 	}
 }
+
+func TestGoogleManagerCopy(t *testing.T) {
+	t.Run("file overwrite copies then trashes conflict", func(t *testing.T) {
+		copyCalled := false
+		trashCalled := false
+
+		provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/files/source-file":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "source-file", "name": "source.txt", "mimeType": "text/plain", "parents": []string{"root"},
+				})
+			case r.Method == http.MethodGet && r.URL.Path == "/files/dest-parent":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "dest-parent", "mimeType": googleDriveFolderMIME,
+				})
+			case r.Method == http.MethodGet && r.URL.Path == "/files":
+				// Listing children by name
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"files": []map[string]any{{
+						"id": "existing-conflict-id", "name": "target.txt", "mimeType": "text/plain",
+					}},
+				})
+			case r.Method == http.MethodPost && r.URL.Path == "/files/source-file/copy":
+				copyCalled = true
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				if body["name"] != "target.txt" {
+					t.Errorf("copied name = %v, want target.txt", body["name"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "newly-copied-id", "name": "target.txt", "mimeType": "text/plain",
+				})
+			case (r.Method == http.MethodPatch || r.Method == http.MethodPut) && r.URL.Path == "/files/existing-conflict-id":
+				trashCalled = true
+				if !copyCalled {
+					t.Error("copy must happen before conflicting item is trashed")
+				}
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				if body["trashed"] != true {
+					t.Errorf("trashed = %v, want true", body["trashed"])
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "existing-conflict-id", "trashed": true})
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+
+		res, err := provider.CopyManagerItem(context.Background(), ManagerLocator{NativeID: "source-file"}, ManagerLocator{NativeID: "dest-parent"}, "target.txt", ManagerMutationOptions{ConflictStrategy: ManagerConflictOverwrite})
+		if err != nil {
+			t.Fatalf("CopyManagerItem() error = %v", err)
+		}
+		if !copyCalled {
+			t.Error("expected copy to be called")
+		}
+		if !trashCalled {
+			t.Error("expected conflict file to be trashed")
+		}
+		if res.Status != "overwritten" || res.FinalName != "target.txt" || !res.Native {
+			t.Errorf("unexpected result: %+v", res)
+		}
+	})
+
+	t.Run("directory overwrite refused", func(t *testing.T) {
+		provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/files/source-folder":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "source-folder", "name": "folderA", "mimeType": googleDriveFolderMIME, "parents": []string{"root"},
+				})
+			case r.Method == http.MethodGet && r.URL.Path == "/files/dest-parent":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "dest-parent", "mimeType": googleDriveFolderMIME,
+				})
+			case r.Method == http.MethodGet && r.URL.Path == "/files":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"files": []map[string]any{{
+						"id": "existing-folder-id", "name": "target-folder", "mimeType": googleDriveFolderMIME,
+					}},
+				})
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+
+		_, err := provider.CopyManagerItem(context.Background(), ManagerLocator{NativeID: "source-folder"}, ManagerLocator{NativeID: "dest-parent"}, "target-folder", ManagerMutationOptions{ConflictStrategy: ManagerConflictOverwrite})
+		if !errors.Is(err, ErrManagerConflict) {
+			t.Fatalf("error = %v, want ErrManagerConflict", err)
+		}
+	})
+
+	t.Run("conflict skip", func(t *testing.T) {
+		provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == "/files/source-file":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "source-file", "name": "source.txt", "mimeType": "text/plain", "parents": []string{"root"},
+				})
+			case r.Method == http.MethodGet && r.URL.Path == "/files/dest-parent":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "dest-parent", "mimeType": googleDriveFolderMIME,
+				})
+			case r.Method == http.MethodGet && r.URL.Path == "/files":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"files": []map[string]any{{
+						"id": "existing-conflict-id", "name": "target.txt", "mimeType": "text/plain",
+					}},
+				})
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+
+		res, err := provider.CopyManagerItem(context.Background(), ManagerLocator{NativeID: "source-file"}, ManagerLocator{NativeID: "dest-parent"}, "target.txt", ManagerMutationOptions{ConflictStrategy: ManagerConflictSkip})
+		if err != nil {
+			t.Fatalf("CopyManagerItem() error = %v", err)
+		}
+		if res.Status != "skipped" || res.FinalName != "target.txt" || !res.Native {
+			t.Errorf("unexpected result: %+v", res)
+		}
+	})
+}
+

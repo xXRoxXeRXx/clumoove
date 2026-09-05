@@ -31,8 +31,10 @@ type S3Provider struct {
 
 const s3UploadTargetParts int64 = 9000
 
-// Ensure S3Provider implements StorageProvider
-var _ StorageProvider = (*S3Provider)(nil)
+var (
+	_ StorageProvider = (*S3Provider)(nil)
+	_ ManagerCopier   = (*S3Provider)(nil)
+)
 
 func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 	u, err := url.Parse(rawURL)
@@ -548,46 +550,11 @@ func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newP
 	oldKey := p.cleanKey(oldPath)
 	newKey := p.cleanKey(newPath)
 
-	head, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(p.bucket),
-		Key:    aws.String(oldKey),
-	})
-	if err != nil {
-		if isS3AuthError(err) {
-			return ErrAuth
-		}
-		return fmt.Errorf("s3 head object failed during rename: %w", err)
+	if err := p.copyObject(ctx, oldKey, newKey); err != nil {
+		return err
 	}
 
-	var size int64
-	if head.ContentLength != nil {
-		size = *head.ContentLength
-	}
-
-	if size <= 5*1024*1024*1024 {
-		copySrc := url.PathEscape(p.bucket) + "/" + url.PathEscape(oldKey)
-		_, err = p.client.CopyObject(ctx, &s3.CopyObjectInput{
-			Bucket:     aws.String(p.bucket),
-			CopySource: aws.String(copySrc),
-			Key:        aws.String(newKey),
-		})
-		if err != nil {
-			if isS3AuthError(err) {
-				return ErrAuth
-			}
-			return fmt.Errorf("s3 copy object failed during rename: %w", err)
-		}
-	} else {
-		err = p.multipartCopy(ctx, oldKey, newKey, size)
-		if err != nil {
-			if isS3AuthError(err) {
-				return ErrAuth
-			}
-			return fmt.Errorf("s3 multipart copy failed during rename: %w", err)
-		}
-	}
-
-	_, err = p.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+	_, err := p.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(p.bucket),
 		Key:    aws.String(oldKey),
 	})
@@ -595,6 +562,72 @@ func (p *S3Provider) RenameFile(ctx context.Context, resourceType, oldPath, newP
 		return fmt.Errorf("s3 delete object failed during rename cleanup: %w", err)
 	}
 
+	return nil
+}
+
+// CopyManagerItem uses S3's server-side copy primitives. Prefix-backed
+// directories are copied object-by-object without routing content through the
+// API process; a failed directory copy reports partial completion.
+func (p *S3Provider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return copyNativePathManagerItem(ctx, p, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, _ bool) error {
+		if !source.IsDir {
+			return p.copyObject(ctx, p.cleanKey(source.Path), p.cleanKey(target))
+		}
+		if err := p.copyPrefix(ctx, p.cleanKey(source.Path), p.cleanKey(target)); err != nil {
+			return fmt.Errorf("copy directory: %w", ErrManagerPartial)
+		}
+		return nil
+	})
+}
+
+func (p *S3Provider) copyObject(ctx context.Context, sourceKey, targetKey string) error {
+	head, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(p.bucket), Key: aws.String(sourceKey)})
+	if err != nil {
+		if isS3AuthError(err) {
+			return ErrAuth
+		}
+		return fmt.Errorf("s3 head object failed during copy: %w", err)
+	}
+	size := int64(0)
+	if head.ContentLength != nil {
+		size = *head.ContentLength
+	}
+	if size <= 5*1024*1024*1024 {
+		copySource := url.PathEscape(p.bucket) + "/" + url.PathEscape(sourceKey)
+		_, err = p.client.CopyObject(ctx, &s3.CopyObjectInput{Bucket: aws.String(p.bucket), CopySource: aws.String(copySource), Key: aws.String(targetKey)})
+	} else {
+		err = p.multipartCopy(ctx, sourceKey, targetKey, size)
+	}
+	if err != nil {
+		if isS3AuthError(err) {
+			return ErrAuth
+		}
+		return fmt.Errorf("s3 copy object: %w", err)
+	}
+	return nil
+}
+
+func (p *S3Provider) copyPrefix(ctx context.Context, sourceKey, targetKey string) error {
+	sourcePrefix := strings.TrimSuffix(sourceKey, "/") + "/"
+	targetPrefix := strings.TrimSuffix(targetKey, "/") + "/"
+	paginator := s3.NewListObjectsV2Paginator(p.client, &s3.ListObjectsV2Input{Bucket: aws.String(p.bucket), Prefix: aws.String(sourcePrefix)})
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			if isS3AuthError(err) {
+				return ErrAuth
+			}
+			return fmt.Errorf("s3 list objects during copy: %w", err)
+		}
+		for _, object := range page.Contents {
+			if object.Key == nil || !strings.HasPrefix(*object.Key, sourcePrefix) {
+				continue
+			}
+			if err := p.copyObject(ctx, *object.Key, targetPrefix+strings.TrimPrefix(*object.Key, sourcePrefix)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

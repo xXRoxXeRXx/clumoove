@@ -18,6 +18,7 @@ var (
 	_ ManagerLister           = (*DropboxProvider)(nil)
 	_ ManagerDownloader       = (*DropboxProvider)(nil)
 	_ ManagerUploader         = (*DropboxProvider)(nil)
+	_ ManagerCopier           = (*DropboxProvider)(nil)
 	_ ManagerDirectoryCreator = (*DropboxProvider)(nil)
 	_ ManagerPathResolver     = (*DropboxProvider)(nil)
 	_ ManagerThumbnailer      = (*DropboxProvider)(nil)
@@ -31,6 +32,47 @@ type dbxManagerEntry struct {
 	Size           int64  `json:"size,omitempty"`
 	ContentHash    string `json:"content_hash,omitempty"`
 	ServerModified string `json:"server_modified,omitempty"`
+}
+
+// CopyManagerItem asks Dropbox to duplicate the selected path server-side.
+// It intentionally uses the sealed canonical path; Dropbox path mutations are
+// case-insensitive and the manager resolver canonicalizes the parent first.
+func (p *DropboxProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return copyNativePathManagerItem(ctx, p, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, _ bool) error {
+		body, err := json.Marshal(map[string]any{
+			"from_path":                p.cleanPath(source.Path),
+			"to_path":                  p.cleanPath(target),
+			"autorename":               false,
+			"allow_ownership_transfer": false,
+		})
+		if err != nil {
+			return err
+		}
+		req, err := p.newRequest("POST", "https://api.dropboxapi.com/2/files/copy_v2", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req = req.WithContext(ctx)
+		resp, err := p.do(ctx, req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			return fmt.Errorf("dropbox manager copy: %w", ErrAuth)
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			return fmt.Errorf("dropbox manager copy: %w", ErrNotFound)
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return ErrManagerConflict
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("dropbox manager copy failed with status: %d", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 type dbxManagerListFolderResponse struct {

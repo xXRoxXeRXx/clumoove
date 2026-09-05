@@ -367,6 +367,11 @@ func TestManagerCapabilityInterfaceSatisfaction(t *testing.T) {
 				t.Errorf("Dedicated provider %q has Move: true but no manager mover", tc.name)
 			}
 		}
+		if caps.Copy {
+			if _, ok := NewManagerCopier(tc.name, p); !ok {
+				t.Errorf("Dedicated provider %q has Copy: true but no manager copier", tc.name)
+			}
+		}
 	}
 }
 
@@ -375,7 +380,7 @@ func TestManagerMutationCapabilityRouting(t *testing.T) {
 		if providerType == "local" && runtime.GOOS == "windows" {
 			continue
 		}
-		if capabilities.Rename || capabilities.Move {
+		if capabilities.Rename || capabilities.Move || capabilities.Copy {
 			if providerType != "google" && !managerPathMutationProviders[providerType] {
 				t.Errorf("%s advertises manager mutations without a path or dedicated route", providerType)
 			}

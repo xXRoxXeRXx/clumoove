@@ -16,6 +16,36 @@ type PathManagerMutator struct {
 	native   func(ManagerLocator, ManagerLocator, string) bool
 }
 
+// copyNativePathManagerItem applies the shared path-backed manager validation
+// and conflict policy before a provider submits its server-side copy request.
+// The operation must not fall back to streamed bytes after it returns an error:
+// a provider may already have accepted an asynchronous native request.
+func copyNativePathManagerItem(ctx context.Context, provider StorageProvider, locator, destination ManagerLocator, name string, options ManagerMutationOptions, operation func(context.Context, CloudResource, string, bool) error) (ManagerMutationResult, error) {
+	mutator := newPathManagerMutator(provider, true)
+	source, _, err := mutator.validate(ctx, locator, destination, name)
+	if err != nil {
+		return ManagerMutationResult{}, err
+	}
+	return copyNativePathManagerItemWithSource(ctx, provider, source, locator, destination, name, options, operation)
+}
+
+// copyNativePathManagerItemWithSource executes native path-backed copy using an
+// already validated source resource, avoiding redundant stat roundtrips.
+func copyNativePathManagerItemWithSource(ctx context.Context, provider StorageProvider, source CloudResource, locator, destination ManagerLocator, name string, options ManagerMutationOptions, operation func(context.Context, CloudResource, string, bool) error) (ManagerMutationResult, error) {
+	mutator := newPathManagerMutator(provider, true)
+	finalName, status, err := mutator.resolveDestination(ctx, destination.Path, name, source.IsDir, options)
+	if err != nil || status == "skipped" {
+		return ManagerMutationResult{Status: status, FinalName: finalName}, err
+	}
+	if err := operation(ctx, source, managerJoin(destination.Path, finalName), options.ConflictStrategy == ManagerConflictOverwrite); err != nil {
+		return ManagerMutationResult{}, err
+	}
+	if status == "renamed_on_conflict" {
+		return ManagerMutationResult{Status: status, FinalName: finalName, Native: true}, nil
+	}
+	return ManagerMutationResult{Status: "copied", FinalName: finalName, Native: true}, nil
+}
+
 func NewPathManagerMutator(provider StorageProvider) *PathManagerMutator {
 	return newPathManagerMutator(provider, true)
 }
@@ -63,6 +93,10 @@ func (m *PathManagerMutator) CopyManagerItem(ctx context.Context, locator, desti
 	if err != nil {
 		return ManagerMutationResult{}, err
 	}
+	return m.copyValidated(ctx, source, destination, name, options)
+}
+
+func (m *PathManagerMutator) copyValidated(ctx context.Context, source CloudResource, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
 	finalName, status, err := m.resolveDestination(ctx, destination.Path, name, source.IsDir, options)
 	if err != nil || status == "skipped" {
 		return ManagerMutationResult{Status: status, FinalName: finalName}, err

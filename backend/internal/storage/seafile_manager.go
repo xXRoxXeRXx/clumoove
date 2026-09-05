@@ -19,10 +19,48 @@ var (
 	_ ManagerLister           = (*SeafileProvider)(nil)
 	_ ManagerDownloader       = (*SeafileProvider)(nil)
 	_ ManagerUploader         = (*SeafileProvider)(nil)
+	_ ManagerCopier           = (*SeafileProvider)(nil)
 	_ ManagerDirectoryCreator = (*SeafileProvider)(nil)
 	_ ManagerPathResolver     = (*SeafileProvider)(nil)
 	_ ManagerThumbnailer      = (*SeafileProvider)(nil)
 )
+
+// CopyManagerItem uses Seafile's native file-copy operation. Directory copies
+// retain the exact-size streamed fallback because recursive server semantics
+// vary by Seafile server version.
+func (p *SeafileProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	mutator := newPathManagerMutator(p, false)
+	source, _, err := mutator.validate(ctx, locator, destination, name)
+	if err != nil {
+		return ManagerMutationResult{}, err
+	}
+	if source.IsDir {
+		return mutator.copyValidated(ctx, source, destination, name, options)
+	}
+	return copyNativePathManagerItemWithSource(ctx, p, source, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, _ bool) error {
+		sourceRepo, sourcePath, _, err := p.resolveRepoAndPath(ctx, source.Path)
+		if err != nil {
+			return err
+		}
+		targetRepo, targetPath, _, err := p.resolveRepoAndPath(ctx, target)
+		if err != nil {
+			return err
+		}
+		form := url.Values{"operation": {"copy"}, "dst_repo": {targetRepo}, "dst_dir": {path.Dir(targetPath)}}
+		if err := p.seafileFileOperation(ctx, sourceRepo, sourcePath, form); err != nil {
+			return err
+		}
+		copiedPath := path.Join(path.Dir(targetPath), path.Base(sourcePath))
+		if copiedPath == targetPath {
+			return nil
+		}
+		rename := url.Values{"operation": {"rename"}, "newname": {path.Base(targetPath)}}
+		if err := p.seafileFileOperation(ctx, targetRepo, copiedPath, rename); err != nil {
+			return ErrManagerPartial
+		}
+		return nil
+	})
+}
 
 // ConnectManager verifies connectivity to Seafile.
 func (p *SeafileProvider) ConnectManager(ctx context.Context) (bool, error) {

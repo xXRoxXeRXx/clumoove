@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -410,3 +411,142 @@ func TestOneDriveManagerThumbnail(t *testing.T) {
 		}
 	})
 }
+
+func TestOneDriveManagerCopy(t *testing.T) {
+	t.Run("async success with monitor polling", func(t *testing.T) {
+		pollCount := 0
+		provider := newOneDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/root"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "root-id"})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/children"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"value": []any{}})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "source.txt"):
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "source-id", "name": "source.txt", "size": 128,
+				})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/copy"):
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				if body["name"] != "dest.txt" {
+					t.Errorf("body[name] = %v, want dest.txt", body["name"])
+				}
+				parentRef, _ := body["parentReference"].(map[string]any)
+				if parentRef["id"] != "root-id" {
+					t.Errorf("parentReference[id] = %v, want root-id", parentRef["id"])
+				}
+				w.Header().Set("Location", "http://"+r.Host+"/monitor/copy-123")
+				w.WriteHeader(http.StatusAccepted)
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/monitor/copy-123"):
+				pollCount++
+				if pollCount == 1 {
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"operation": "itemCopy", "status": "inProgress", "percentageComplete": 50.0,
+					})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"operation": "itemCopy", "status": "completed", "percentageComplete": 100.0,
+				})
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+
+		res, err := provider.CopyManagerItem(context.Background(), ManagerLocator{Path: "/source.txt"}, ManagerLocator{Path: "/"}, "dest.txt", ManagerMutationOptions{})
+		if err != nil {
+			t.Fatalf("CopyManagerItem() error = %v", err)
+		}
+		if res.Status != "copied" || res.FinalName != "dest.txt" || !res.Native {
+			t.Errorf("unexpected result: %+v", res)
+		}
+		if pollCount < 2 {
+			t.Errorf("pollCount = %d, want >= 2", pollCount)
+		}
+	})
+
+	t.Run("immediate completion", func(t *testing.T) {
+		provider := newOneDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/root"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "root-id"})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/children"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"value": []any{}})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "source.txt"):
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "source-id", "name": "source.txt", "size": 128,
+				})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/copy"):
+				w.WriteHeader(http.StatusOK)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+
+		res, err := provider.CopyManagerItem(context.Background(), ManagerLocator{Path: "/source.txt"}, ManagerLocator{Path: "/"}, "dest.txt", ManagerMutationOptions{})
+		if err != nil {
+			t.Fatalf("CopyManagerItem() error = %v", err)
+		}
+		if res.Status != "copied" || res.FinalName != "dest.txt" || !res.Native {
+			t.Errorf("unexpected result: %+v", res)
+		}
+	})
+
+	t.Run("conflict in monitor", func(t *testing.T) {
+		provider := newOneDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/root"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "root-id"})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/children"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"value": []any{}})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "source.txt"):
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "source-id", "name": "source.txt", "size": 128,
+				})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/copy"):
+				w.Header().Set("Location", "http://"+r.Host+"/monitor/conflict-123")
+				w.WriteHeader(http.StatusAccepted)
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/monitor/conflict-123"):
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"operation": "itemCopy", "status": "failed",
+					"error": map[string]any{
+						"code": "nameAlreadyExists", "message": "File exists",
+					},
+				})
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+
+		_, err := provider.CopyManagerItem(context.Background(), ManagerLocator{Path: "/source.txt"}, ManagerLocator{Path: "/"}, "dest.txt", ManagerMutationOptions{})
+		if !errors.Is(err, ErrManagerConflict) {
+			t.Fatalf("error = %v, want ErrManagerConflict", err)
+		}
+	})
+
+	t.Run("invalid monitor url host rejected", func(t *testing.T) {
+		provider := newOneDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/root"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "root-id"})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/children"):
+				_ = json.NewEncoder(w).Encode(map[string]any{"value": []any{}})
+			case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "source.txt"):
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"id": "source-id", "name": "source.txt", "size": 128,
+				})
+			case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/copy"):
+				w.Header().Set("Location", "https://malicious-host.example.com/monitor/123")
+				w.WriteHeader(http.StatusAccepted)
+			default:
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+		}))
+
+		_, err := provider.CopyManagerItem(context.Background(), ManagerLocator{Path: "/source.txt"}, ManagerLocator{Path: "/"}, "dest.txt", ManagerMutationOptions{})
+		if err == nil {
+			t.Fatal("expected error on malicious monitor host, got nil")
+		}
+	})
+}
+

@@ -43,6 +43,7 @@ type fileReference struct {
 	ProfileID    string                 `json:"profile_id"`
 	ResourceType string                 `json:"resource_type"`
 	Kind         string                 `json:"kind"`
+	Name         string                 `json:"name,omitempty"`
 	Locator      storage.ManagerLocator `json:"locator"`
 }
 
@@ -520,7 +521,10 @@ func allowedFileActions(capabilities storage.ManagerCapabilities, isDir bool) []
 		actions = append(actions, "rename")
 	}
 	if capabilities.Move {
-		actions = append(actions, "move", "copy")
+		actions = append(actions, "move")
+	}
+	if capabilities.Copy {
+		actions = append(actions, "copy")
 	}
 	return actions
 }
@@ -621,8 +625,7 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	if name == "" {
 		name = path.Base(source.Locator.Path)
 		if source.Locator.NativeID != "" && source.Locator.Path == "" {
-			writeValidationError(w, ErrInvalidBody)
-			return
+			name = source.Name
 		}
 	}
 	if !validManagerUploadName(name) {
@@ -657,7 +660,7 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
-	if (operation == "rename" && !capabilities.Rename) || (operation != "rename" && !capabilities.Move) {
+	if (operation == "rename" && !capabilities.Rename) || (operation == "move" && !capabilities.Move) || (operation == "copy" && !capabilities.Copy) {
 		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
 		return
 	}
@@ -668,7 +671,7 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	}
 	options := storage.ManagerMutationOptions{ConflictStrategy: storage.ManagerConflictStrategy(strategy)}
 	var result storage.ManagerMutationResult
-	if operation != "rename" {
+	if operation == "copy" && !capabilities.NativeCopy {
 		streamID := generateRandomString(16)
 		if streamID == "" || !s.acquireFileStream(r.Context(), userID, "mutation", streamID, fileStreamLease) {
 			writeError(w, http.StatusTooManyRequests, ErrFilesStreamLimitReached)
@@ -865,7 +868,7 @@ func (s *APIServer) handleFileEntriesList(w http.ResponseWriter, r *http.Request
 		if resource.IsDir {
 			kind = "directory"
 		}
-		ref, sealErr := sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: kind, Locator: resource.Locator}, s.encryptionKey)
+		ref, sealErr := sealFileReference(fileReference{UserID: userID, ProfileID: profileID, ResourceType: "files", Kind: kind, Name: resource.Name, Locator: resource.Locator}, s.encryptionKey)
 		if sealErr != nil {
 			writeError(w, http.StatusInternalServerError, ErrInternalError)
 			return

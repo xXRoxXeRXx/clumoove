@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-var _ StorageProvider = (*WebDAVProvider)(nil)
+var (
+	_ StorageProvider = (*WebDAVProvider)(nil)
+	_ ManagerCopier   = (*WebDAVProvider)(nil)
+)
 
 type WebDAVProvider struct {
 	BaseURL     string
@@ -596,6 +599,40 @@ func (p *WebDAVProvider) RenameFile(ctx context.Context, resourceType, oldPath, 
 		return fmt.Errorf("move failed with status: %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// CopyManagerItem copies a file or collection on the DAV server. The shared
+// manager helper performs all locator, destination, and conflict validation
+// before this request is submitted.
+func (p *WebDAVProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return copyNativePathManagerItem(ctx, p, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, overwrite bool) error {
+		req, err := p.newRequest("COPY", p.buildResourceURL(source.Path), nil)
+		if err != nil {
+			return err
+		}
+		req = req.WithContext(ctx)
+		req.Header.Set("Destination", p.buildResourceURL(target))
+		if overwrite {
+			req.Header.Set("Overwrite", "T")
+		} else {
+			req.Header.Set("Overwrite", "F")
+		}
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			return fmt.Errorf("webdav copy: %w", ErrAuth)
+		case http.StatusConflict, http.StatusPreconditionFailed:
+			return ErrManagerConflict
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("webdav copy failed with status: %d", resp.StatusCode)
+		}
+		return nil
+	})
 }
 
 // SupportsAtomicRename is true: WebDAV MOVE is supported.

@@ -215,8 +215,9 @@ func NewManagerMover(providerType string, provider StorageProvider) (ManagerMove
 	return newPathManagerMutatorWithClassifier(provider, managerPathMutationClassifier(providerType)), true
 }
 
-// NewManagerCopier returns the streaming path adapter for path-safe providers.
-// No provider currently advertises a dedicated native manager copy operation.
+// NewManagerCopier selects a provider's dedicated native manager implementation
+// before falling back to the exact-size streaming adapter for path-safe
+// providers that have no portable server-side copy operation.
 func NewManagerCopier(providerType string, provider StorageProvider) (ManagerCopier, bool) {
 	if copier, ok := provider.(ManagerCopier); ok {
 		return copier, true
@@ -228,27 +229,27 @@ func NewManagerCopier(providerType string, provider StorageProvider) (ManagerCop
 }
 
 // managerCapabilityRegistry is deliberately independent from the storage
-// interface. Path-backed mutation capabilities use the validated manager
-// adapter; copy is currently streamed, so NativeCopy remains false until a
-// provider has a dedicated server-side manager-copy implementation and tests.
+// interface. Copy explicitly reports whether a provider supports the manager
+// action; NativeCopy distinguishes server-side copies from the approved
+// streaming fallback.
 var managerCapabilityRegistry = map[string]ManagerCapabilities{
-	"nextcloud":    {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"opencloud":    {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
-	"webdav":       {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"dropbox":      {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"onedrive":     {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"hidrive":      {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"smb":          {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"s3":           {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
-	"sftp":         {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"ftp":          {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"magentacloud": {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"koofr":        {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
-	"local":        {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"nextcloud":    {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"opencloud":    {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
+	"webdav":       {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"dropbox":      {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"onedrive":     {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"hidrive":      {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"smb":          {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"s3":           {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true},
+	"sftp":         {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"ftp":          {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"magentacloud": {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"koofr":        {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
+	"local":        {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 	"immich":       {Browse: true, NativePagination: true, Download: true, DeleteFile: true, Thumbnails: true},
-	"seafile":      {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
-	"mega":         {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"seafile":      {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, NativeCopy: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: false, ConflictRename: true, Thumbnails: true},
+	"mega":         {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, Copy: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
 }
 
 // ManagerCapabilitiesFor returns static capabilities after applying runtime

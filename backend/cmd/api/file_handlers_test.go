@@ -782,6 +782,19 @@ func TestAllowedFileActions(t *testing.T) {
 	if len(noUploadDirActions) != 0 {
 		t.Fatalf("noUploadDirActions = %#v, want []", noUploadDirActions)
 	}
+
+	// Copy capability
+	copyOnly := storage.ManagerCapabilities{Copy: true}
+	copyActions := allowedFileActions(copyOnly, false)
+	foundCopy := false
+	for _, a := range copyActions {
+		if a == "copy" {
+			foundCopy = true
+		}
+	}
+	if !foundCopy {
+		t.Fatalf("copyActions = %#v, want copy included", copyActions)
+	}
 }
 
 func TestHandleFileDirectoryCreateValidations(t *testing.T) {
@@ -952,3 +965,4 @@ func TestHandleFileMutationValidations(t *testing.T) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDestFile.Code, recDestFile.Body.String())
 	}
 }
+

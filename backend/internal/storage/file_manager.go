@@ -21,6 +21,7 @@ type ManagerCapabilities struct {
 	Mkdir                    bool `json:"mkdir"`
 	Rename                   bool `json:"rename"`
 	Move                     bool `json:"move"`
+	Copy                     bool `json:"copy"`
 	DeleteFile               bool `json:"delete_file"`
 	DeleteEmptyDirectory     bool `json:"delete_empty_directory"`
 	DeleteRecursiveDirectory bool `json:"delete_recursive_directory"`

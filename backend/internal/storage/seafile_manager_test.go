@@ -290,4 +290,25 @@ func TestSeafileManager(t *testing.T) {
 			t.Errorf("UploadManager(invalid) expected error, got nil")
 		}
 	})
+
+	t.Run("CopyManagerItem", func(t *testing.T) {
+		// 1. Native file copy
+		res, err := provider.CopyManagerItem(context.Background(), ManagerLocator{Path: "/MyLibrary/picture.jpg"}, ManagerLocator{Path: "/MyLibrary/Documents"}, "new_pic.jpg", ManagerMutationOptions{})
+		if err != nil {
+			t.Fatalf("CopyManagerItem(file) error = %v", err)
+		}
+		if res.Status != "copied" || res.FinalName != "new_pic.jpg" || !res.Native {
+			t.Errorf("CopyManagerItem(file) = %+v, want copied new_pic.jpg (native)", res)
+		}
+
+		// 2. Conflict skip
+		res, err = provider.CopyManagerItem(context.Background(), ManagerLocator{Path: "/MyLibrary/picture.jpg"}, ManagerLocator{Path: "/MyLibrary"}, "picture.jpg", ManagerMutationOptions{ConflictStrategy: ManagerConflictSkip})
+		if err != nil {
+			t.Fatalf("CopyManagerItem(skip) error = %v", err)
+		}
+		if res.Status != "skipped" || res.FinalName != "picture.jpg" {
+			t.Errorf("CopyManagerItem(skip) = %+v, want skipped picture.jpg", res)
+		}
+	})
 }
+

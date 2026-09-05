@@ -30,7 +30,10 @@ type KoofrProvider struct {
 	mountID string
 }
 
-var _ StorageProvider = (*KoofrProvider)(nil)
+var (
+	_ StorageProvider = (*KoofrProvider)(nil)
+	_ ManagerCopier   = (*KoofrProvider)(nil)
+)
 
 // globalKoofrCreatedDirs avoids repeated existence and create requests across
 // short-lived provider instances constructed for individual tasks.
@@ -65,6 +68,35 @@ type koofrFileList struct {
 type koofrMoveRequest struct {
 	ToMountID string `json:"toMountId"`
 	ToPath    string `json:"toPath"`
+}
+
+func (p *KoofrProvider) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return copyNativePathManagerItem(ctx, p, locator, destination, name, options, func(ctx context.Context, source CloudResource, target string, _ bool) error {
+		mountID := p.connectedMountID()
+		if mountID == "" {
+			return ErrNotConnected
+		}
+		body, err := json.Marshal(koofrMoveRequest{ToMountID: mountID, ToPath: target})
+		if err != nil {
+			return err
+		}
+		req, err := p.mountRequest(ctx, http.MethodPut, "/files/copy", url.Values{"path": {source.Path}}, bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := p.do(req, http.StatusOK, http.StatusCreated, http.StatusConflict)
+		if resp != nil {
+			defer resp.Body.Close()
+		}
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode == http.StatusConflict {
+			return ErrManagerConflict
+		}
+		return nil
+	})
 }
 
 // NewKoofrProvider creates a provider for the public Koofr endpoint only.

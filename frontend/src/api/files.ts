@@ -21,6 +21,7 @@ export type FileCapabilities = {
   mkdir: boolean;
   rename: boolean;
   move: boolean;
+  copy?: boolean;
   delete_file: boolean;
   delete_empty_directory: boolean;
   delete_recursive_directory: boolean;
