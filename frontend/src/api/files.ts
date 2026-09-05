@@ -16,6 +16,7 @@ export type FileCapabilities = {
   browse: boolean;
   native_pagination: boolean;
   download: boolean;
+  archive?: boolean;
   upload: boolean;
   mkdir: boolean;
   rename: boolean;
@@ -65,6 +66,17 @@ export type FileMutationResponse = {
   status: string;
   name: string;
   native: boolean;
+};
+
+export type BatchItemResult = {
+  ref: string;
+  status: 'deleted' | 'copied' | 'moved' | 'conflict' | 'failed' | 'not_attempted';
+  error_code?: string;
+};
+
+export type BatchMutationResponse = {
+  results: BatchItemResult[];
+  conflict_strategies?: FileMutationConflictStrategy[];
 };
 
 export type FileMutationFailure = ApiJsonFailure<FileMutationResponse> & {
@@ -170,6 +182,18 @@ export async function createDirectory(
   return apiJson<CreateDirectoryResponse>(profileUrl(apiUrl, profileId, '/directories'), init);
 }
 
+export async function createArchiveTicket(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  refs: string[],
+  signal?: AbortSignal,
+): Promise<ApiJsonResult<DownloadTicketResponse>> {
+  const init = requestInit(token, signal);
+  init.body = JSON.stringify({ refs });
+  return apiJson<DownloadTicketResponse>(profileUrl(apiUrl, profileId, '/archive-tickets'), init);
+}
+
 export async function deleteFileEntry(
   apiUrl: string,
   token: string,
@@ -182,6 +206,18 @@ export async function deleteFileEntry(
   init.method = 'DELETE';
   init.body = JSON.stringify({ ref, recursive });
   return apiJson<Record<string, never>>(profileUrl(apiUrl, profileId, '/entries'), init);
+}
+
+export async function batchDeleteFileEntries(
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  items: Array<{ ref: string; recursive: boolean }>,
+  signal?: AbortSignal,
+): Promise<ApiJsonResult<BatchMutationResponse>> {
+  const init = requestInit(token, signal);
+  init.body = JSON.stringify({ items });
+  return apiJson<BatchMutationResponse>(profileUrl(apiUrl, profileId, '/entries:batch-delete'), init);
 }
 
 type FileMutationRequest = {
@@ -250,6 +286,25 @@ export function moveFileEntry(
     ...(destinationParentRef ? { destination_parent_ref: destinationParentRef } : {}),
     ...(conflictStrategy ? { conflict_strategy: conflictStrategy } : {}),
   }, signal);
+}
+
+export async function batchMutateFileEntries(
+  operation: 'copy' | 'move',
+  apiUrl: string,
+  token: string,
+  profileId: string,
+  refs: string[],
+  destinationParentRef: string | null,
+  conflictStrategy?: FileMutationConflictStrategy,
+  signal?: AbortSignal,
+): Promise<ApiJsonResult<BatchMutationResponse>> {
+  const init = requestInit(token, signal);
+  init.body = JSON.stringify({
+    refs,
+    ...(destinationParentRef ? { destination_parent_ref: destinationParentRef } : {}),
+    ...(conflictStrategy ? { conflict_strategy: conflictStrategy } : {}),
+  });
+  return apiJson<BatchMutationResponse>(profileUrl(apiUrl, profileId, `/entries:batch-${operation}`), init);
 }
 
 function encodeHeaderFileName(name: string): string {

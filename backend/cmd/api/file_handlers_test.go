@@ -28,7 +28,9 @@ func (blockAllFileRateLimiter) Allow(context.Context, string, string, int, time.
 }
 
 type legacyFileManagerTestProvider struct {
-	listings map[string][]storage.CloudResource
+	listings        map[string][]storage.CloudResource
+	downloadContent string
+	downloadErr     error
 }
 
 func (p *legacyFileManagerTestProvider) Close() error { return nil }
@@ -49,7 +51,14 @@ func (p *legacyFileManagerTestProvider) InspectResource(_ context.Context, _ str
 	return storage.CloudResource{}, storage.ErrNotFound
 }
 func (p *legacyFileManagerTestProvider) StreamDownload(context.Context, string, string) (io.ReadCloser, error) {
-	return io.NopCloser(strings.NewReader("content")), nil
+	if p.downloadErr != nil {
+		return nil, p.downloadErr
+	}
+	content := p.downloadContent
+	if content == "" {
+		content = "content"
+	}
+	return io.NopCloser(strings.NewReader(content)), nil
 }
 func (p *legacyFileManagerTestProvider) StreamUpload(context.Context, string, string, io.Reader, int64) error {
 	return nil
@@ -943,4 +952,3 @@ func TestHandleFileMutationValidations(t *testing.T) {
 		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recDestFile.Code, recDestFile.Body.String())
 	}
 }
-

@@ -16,6 +16,7 @@ type ManagerCapabilities struct {
 	Browse                   bool `json:"browse"`
 	NativePagination         bool `json:"native_pagination"`
 	Download                 bool `json:"download"`
+	Archive                  bool `json:"archive"`
 	Upload                   bool `json:"upload"`
 	Mkdir                    bool `json:"mkdir"`
 	Rename                   bool `json:"rename"`

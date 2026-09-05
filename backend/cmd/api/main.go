@@ -370,8 +370,13 @@ func (server *APIServer) setupRoutes() *http.ServeMux {
 	mux.Handle("PUT /api/files/profiles/{profileID}/content", jwtMiddleware(http.HandlerFunc(server.handleFileUpload)))
 	mux.Handle("POST /api/files/profiles/{profileID}/directories", jwtMiddleware(http.HandlerFunc(server.handleFileDirectoryCreate)))
 	mux.Handle("POST /api/files/profiles/{profileID}/download-tickets", jwtMiddleware(http.HandlerFunc(server.handleFileDownloadTicket)))
+	mux.Handle("POST /api/files/profiles/{profileID}/archive-tickets", jwtMiddleware(http.HandlerFunc(server.handleFileArchiveTicket)))
+	mux.Handle("POST /api/files/profiles/{profileID}/entries:batch-delete", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesBatchDelete)))
+	mux.Handle("POST /api/files/profiles/{profileID}/entries:batch-copy", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesBatchCopy)))
+	mux.Handle("POST /api/files/profiles/{profileID}/entries:batch-move", jwtMiddleware(http.HandlerFunc(server.handleFileEntriesBatchMove)))
 	mux.Handle("POST /api/files/profiles/{profileID}/thumbnail", jwtMiddleware(http.HandlerFunc(server.handleFileThumbnail)))
 	mux.HandleFunc("GET /api/files/download/{ticket}", server.handleFileDownload)
+	mux.HandleFunc("GET /api/files/archive/{ticket}", server.handleFileArchive)
 
 	// Administrative routes require both a current JWT and the ADMIN role.
 	mux.Handle("POST /api/admin/users", adminRouteMiddleware(http.HandlerFunc(server.handleAdminCreateUser)))

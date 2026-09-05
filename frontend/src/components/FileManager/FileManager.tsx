@@ -19,7 +19,7 @@ import {
   WrenchScrewdriverIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { copyFileEntry, createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
+import { batchDeleteFileEntries, batchMutateFileEntries, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, type BatchItemResult, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
@@ -50,6 +50,7 @@ const unavailableCapabilities: FileCapabilities = {
   browse: false,
   native_pagination: false,
   download: false,
+  archive: false,
   upload: false,
   mkdir: false,
   rename: false,
@@ -80,6 +81,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [downloadingRef, setDownloadingRef] = useState<string | null>(null);
+  const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
+  const [batchOperation, setBatchOperation] = useState<'copy' | 'move' | null>(null);
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchConflictRefs, setBatchConflictRefs] = useState<string[]>([]);
+  const [batchResults, setBatchResults] = useState<BatchItemResult[]>([]);
   const [previewEntry, setPreviewEntry] = useState<FileEntry | null>(null);
   const [isCreateDirOpen, setIsCreateDirOpen] = useState(false);
   const [newDirName, setNewDirName] = useState('');
@@ -127,6 +135,9 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const createDirCancelRef = useRef<HTMLButtonElement>(null);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const deleteCancelRef = useRef<HTMLButtonElement>(null);
+  const batchDeleteDialogRef = useRef<HTMLDivElement>(null);
+  const batchDeleteCancelRef = useRef<HTMLButtonElement>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
   const profileRequestRef = useRef<AbortController | null>(null);
   const entriesRequestRef = useRef<AbortController | null>(null);
   const deleteRequestRef = useRef<AbortController | null>(null);
@@ -156,14 +167,17 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       setDeleteRecursive(false);
     }
   }, deleteEntry !== null);
+  useFocusTrap(batchDeleteDialogRef, batchDeleteCancelRef, () => {
+    if (!batchDeleting) setBatchDeleteOpen(false);
+  }, batchDeleteOpen);
   const closeMutationDialogs = useCallback(() => {
     if (mutationBusy) return;
     mutationRequestRef.current?.abort();
     pickerRequestRef.current?.abort();
-    setRenameEntry(null); setMutationEntry(null); setMutationOperation(null); setMutationError(''); setConflictStrategies(null);
+    setRenameEntry(null); setMutationEntry(null); setMutationOperation(null); setBatchOperation(null); setBatchConflictRefs([]); setMutationError(''); setConflictStrategies(null);
   }, [mutationBusy]);
   useFocusTrap(renameDialogRef, renameCancelRef, closeMutationDialogs, renameEntry !== null);
-  useFocusTrap(pickerDialogRef, pickerCancelRef, closeMutationDialogs, mutationEntry !== null && conflictStrategies === null);
+  useFocusTrap(pickerDialogRef, pickerCancelRef, closeMutationDialogs, ((mutationEntry !== null && mutationOperation !== null) || batchOperation !== null) && conflictStrategies === null);
   useFocusTrap(conflictDialogRef, conflictCancelRef, closeMutationDialogs, conflictStrategies !== null);
 
   useEffect(() => {
@@ -202,6 +216,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const currentBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
   const currentRef = currentBreadcrumb?.ref ?? null;
+  const selectedEntries = entries.filter((entry) => selectedRefs.has(entry.ref));
+  const allLoadedSelected = entries.length > 0 && entries.every((entry) => selectedRefs.has(entry.ref));
+  const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
+  }, [allLoadedSelected, someLoadedSelected]);
 
   const loadEntries = useCallback(async (parentRef: string | null) => {
     if (!profileId || !capabilities.browse) return;
@@ -287,6 +308,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
         ? initialBreadcrumbs.map((breadcrumb) => ({ ref: breadcrumb.ref || null, name: breadcrumb.name }))
         : [{ ref: null, name: selectedProfile.name }];
       setBreadcrumbs(resolvedBreadcrumbs);
+      setSelectedRefs(new Set());
       setEntries([]);
       setNextCursor(null);
       setError('');
@@ -365,6 +387,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const openDirectory = (entry: FileEntry) => {
     if (entry.kind !== 'directory' || !capabilities.browse) return;
     setBreadcrumbs((current) => [...current, { ref: entry.ref, name: entry.name }]);
+    setSelectedRefs(new Set());
     void loadEntries(entry.ref);
   };
 
@@ -381,6 +404,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     const parentBreadcrumbs = breadcrumbs.slice(0, -1);
     const parentRef = parentBreadcrumbs[parentBreadcrumbs.length - 1]?.ref ?? null;
     setBreadcrumbs(parentBreadcrumbs);
+    setSelectedRefs(new Set());
     void loadEntries(parentRef);
   };
 
@@ -394,6 +418,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     const targetBreadcrumbs = breadcrumbs.slice(0, index + 1);
     const targetRef = targetBreadcrumbs[targetBreadcrumbs.length - 1]?.ref ?? null;
     setBreadcrumbs(targetBreadcrumbs);
+    setSelectedRefs(new Set());
     void loadEntries(targetRef);
   };
 
@@ -409,6 +434,49 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       window.location.assign(new URL(result.data.download_url, apiUrl).toString());
     }
     setDownloadingRef(null);
+  };
+
+  const toggleSelection = (ref: string) => {
+    setSelectedRefs((current) => {
+      const next = new Set(current);
+      if (next.has(ref)) next.delete(ref); else next.add(ref);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedRefs((current) => {
+      const next = new Set(current);
+      if (allLoadedSelected) entries.forEach((entry) => next.delete(entry.ref));
+      else entries.forEach((entry) => next.add(entry.ref));
+      return next;
+    });
+  };
+
+  const selectedCan = (action: 'download' | 'delete' | 'copy' | 'move') => selectedEntries.length > 0 && selectedEntries.every((entry) => action === 'download'
+    ? capabilities.archive === true
+    : entry.allowed_actions.includes(action));
+
+  const downloadArchive = async () => {
+    if (!selectedCan('download') || batchBusy) return;
+    setBatchBusy(true); setError(''); setBatchResults([]);
+    const result = await createArchiveTicket(apiUrl, token, profileId, selectedEntries.map((entry) => entry.ref));
+    if (result.ok === false) setError(translateApiError(result.errorCode));
+    else window.location.assign(new URL(result.data.download_url, apiUrl).toString());
+    setBatchBusy(false);
+  };
+
+  const deleteSelected = async () => {
+    if (!selectedCan('delete') || batchDeleting) return;
+    setBatchDeleting(true); setBatchResults([]);
+    const result = await batchDeleteFileEntries(apiUrl, token, profileId, selectedEntries.map((entry) => ({ ref: entry.ref, recursive: entry.kind === 'directory' })));
+    setBatchDeleting(false); setBatchDeleteOpen(false);
+    if (result.ok === false) setError(translateApiError(result.errorCode));
+    else {
+      setBatchResults(result.data.results);
+      setSelectedRefs(new Set());
+      void loadEntries(currentRef);
+    }
   };
 
   const uploadCompleted = useCallback((completedProfileID: string) => {
@@ -495,6 +563,33 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     setMenuState(null); setMutationEntry(entry); setMutationOperation(operation); setMutationError(''); setConflictStrategies(null);
     const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
     setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null);
+  };
+
+  const startBatchDestinationPicker = (operation: 'copy' | 'move') => {
+    if (!selectedCan(operation) || batchBusy) return;
+    setBatchOperation(operation); setBatchConflictRefs([]); setBatchResults([]); setMutationError(''); setConflictStrategies(null);
+    const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
+    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null);
+  };
+
+  const executeBatchMutation = async (strategy?: FileMutationConflictStrategy) => {
+    if (!batchOperation || batchBusy) return;
+    const refs = strategy ? batchConflictRefs : selectedEntries.map((entry) => entry.ref);
+    if (refs.length === 0) return;
+    setBatchBusy(true); setMutationError('');
+    const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
+    const result = await batchMutateFileEntries(batchOperation, apiUrl, token, profileId, refs, destinationRef, strategy);
+    setBatchBusy(false);
+    if (result.ok === false) { setMutationError(translateApiError(result.errorCode)); return; }
+    setBatchResults(result.data.results);
+    const conflicts = result.data.results.filter((item) => item.status === 'conflict').map((item) => item.ref);
+    if (conflicts.length > 0 && !strategy) {
+      setBatchConflictRefs(conflicts);
+      setConflictStrategies(result.data.conflict_strategies ?? null);
+      return;
+    }
+    setBatchOperation(null); setBatchConflictRefs([]); setConflictStrategies(null); setSelectedRefs(new Set());
+    void loadEntries(currentRef);
   };
 
   const executeMutation = async (strategy?: FileMutationConflictStrategy) => {
@@ -730,7 +825,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <div className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.selectProfile')}</div>
           ) : (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-3">
+               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-3">
                 <div className="flex min-w-0 items-center gap-1.5 flex-1">
                   <button
                     type="button"
@@ -757,7 +852,18 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       </span>
                     ))}
                   </nav>
-                </div>
+               </div>
+               {selectedEntries.length > 0 && (
+                 <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/50 px-3 py-2" role="toolbar" aria-label={t('files.selectionActions')}>
+                   <span className="mr-1 text-sm font-medium">{t('files.selectedCount', { count: selectedEntries.length })}</span>
+                   <button type="button" className="ui-button-secondary inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('download') || batchBusy} onClick={() => void downloadArchive()}><ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />{t('files.downloadArchive')}</button>
+                   <button type="button" className="ui-button-secondary px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('copy') || batchBusy} onClick={() => startBatchDestinationPicker('copy')}>{t('files.copy')}</button>
+                   <button type="button" className="ui-button-secondary px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('move') || batchBusy} onClick={() => startBatchDestinationPicker('move')}>{t('files.move')}</button>
+                   <button type="button" className="ui-button-danger px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('delete') || batchBusy} onClick={() => setBatchDeleteOpen(true)}>{t('files.deleteAction')}</button>
+                   <button type="button" className="ml-auto ui-button-secondary px-2.5 py-1.5 text-xs" onClick={() => setSelectedRefs(new Set())}>{t('files.clearSelection')}</button>
+                 </div>
+               )}
+               {batchResults.length > 0 && <p className="mx-3 mt-3 ui-alert px-3 py-2 text-sm" role="status">{t('files.batchResultSummary', { success: batchResults.filter((item) => ['deleted', 'copied', 'moved'].includes(item.status)).length, failed: batchResults.filter((item) => item.status === 'failed').length })}</p>}
                 <div className="flex items-center gap-2 shrink-0">
                   <FileUploadControl
                     apiUrl={apiUrl}
@@ -837,6 +943,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   <table className="ui-table ui-responsive-table w-full table-fixed text-sm">
                     <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
                       <tr>
+                        <th scope="col" className="w-10 px-3 py-2 font-medium"><input ref={selectAllRef} type="checkbox" checked={allLoadedSelected} onChange={toggleSelectAll} aria-label={t('files.selectAll')} /></th>
                         <th scope="col" className="px-3 py-2 font-medium">{t('files.name')}</th>
                         <th scope="col" className="w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.size')}</th>
                         <th scope="col" className="w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.modified')}</th>
@@ -853,6 +960,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             onContextMenu={(event) => handleContextMenu(event, entry)}
                             className={`border-t border-[var(--color-border)] hover:bg-[var(--color-hover)] transition-colors ${isInteractive ? 'cursor-pointer' : ''}`}
                           >
+                            <td className="w-10 px-3 py-2"><input type="checkbox" checked={selectedRefs.has(entry.ref)} onClick={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} /></td>
                             <td data-label={t('files.name')} className="px-3 py-2 min-w-0 max-w-0">
                               <button
                                 type="button"
@@ -929,6 +1037,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                         }`}
                         title={entry.name}
                       >
+                        <input type="checkbox" className="absolute left-2 top-2 z-20" checked={selectedRefs.has(entry.ref)} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} />
                         {hasEntryActions(entry) && (
                           <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                             <button
@@ -1076,6 +1185,15 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             </div>
           </div>
         </div>, document.body)}
+      {batchDeleteOpen && createPortal(
+        <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
+          <div ref={batchDeleteDialogRef} role="dialog" aria-modal="true" aria-labelledby="batch-delete-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
+            <h2 id="batch-delete-title" className="text-lg font-semibold">{t('files.batchDeleteTitle')}</h2>
+            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.batchDeleteWarning', { count: selectedEntries.length })}</p>
+            {selectedEntries.some((entry) => entry.kind === 'directory') && <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.batchDeleteRecursive')}</p>}
+            <div className="mt-5 flex justify-end gap-2"><button ref={batchDeleteCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={batchDeleting} onClick={() => setBatchDeleteOpen(false)}>{t('common.cancel')}</button><button type="button" className="ui-button-danger px-3 py-2 text-sm" disabled={batchDeleting} onClick={() => void deleteSelected()}>{batchDeleting ? t('common.loading') : t('files.deleteRecursively')}</button></div>
+          </div>
+        </div>, document.body)}
       {renameEntry && createPortal(
         <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
           <div ref={renameDialogRef} role="dialog" aria-modal="true" aria-labelledby="rename-entry-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
@@ -1088,27 +1206,27 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             </form>
           </div>
         </div>, document.body)}
-      {mutationEntry && mutationOperation && conflictStrategies === null && createPortal(
+      {((mutationEntry && mutationOperation) || batchOperation) && conflictStrategies === null && createPortal(
         <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
           <div ref={pickerDialogRef} role="dialog" aria-modal="true" aria-labelledby="destination-picker-title" tabIndex={-1} className="ui-card flex max-h-[85vh] w-full max-w-lg flex-col p-5">
-            <h2 id="destination-picker-title" className="text-lg font-semibold">{mutationOperation === 'copy' ? t('files.copyTitle') : t('files.moveTitle')}</h2>
-            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{t('files.destinationPickerDescription', { name: mutationEntry.name })}</p>
+            <h2 id="destination-picker-title" className="text-lg font-semibold">{(mutationOperation ?? batchOperation) === 'copy' ? t('files.copyTitle') : t('files.moveTitle')}</h2>
+            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{mutationEntry ? t('files.destinationPickerDescription', { name: mutationEntry.name }) : t('files.batchDestinationPickerDescription', { count: selectedEntries.length })}</p>
             {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
             <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>
               {pickerBreadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={pickerLoading || index === pickerBreadcrumbs.length - 1} onClick={() => { const next = pickerBreadcrumbs.slice(0, index + 1); setPickerBreadcrumbs(next); void loadPickerEntries(next[next.length - 1]?.ref ?? null); }}>{breadcrumb.name}{index < pickerBreadcrumbs.length - 1 ? ' /' : ''}</button>)}
             </nav>
             <div className="mt-3 min-h-36 overflow-y-auto rounded border border-[var(--color-border)]">
-              {pickerLoading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : pickerBreadcrumbs.some((breadcrumb) => mutationEntry.kind === 'directory' && breadcrumb.ref === mutationEntry.ref) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : pickerEntries.filter((entry) => entry.ref !== mutationEntry.ref).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => { const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }]; setPickerBreadcrumbs(next); void loadPickerEntries(entry.ref); }}><FolderIcon className="h-4 w-4" aria-hidden="true" />{entry.name}</button>)}
+               {pickerLoading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : pickerBreadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : pickerEntries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => { const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }]; setPickerBreadcrumbs(next); void loadPickerEntries(entry.ref); }}><FolderIcon className="h-4 w-4" aria-hidden="true" />{entry.name}</button>)}
             </div>
             <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name })}</p>
-            <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy || (mutationOperation === 'move' && (mutationEntry.parent_ref ?? currentRef) === (pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null))} onClick={() => void executeMutation()}>{mutationBusy ? t('files.mutating') : mutationOperation === 'copy' ? t('files.copy') : t('files.move')}</button></div>
+            <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={() => batchOperation ? void executeBatchMutation() : void executeMutation()}>{mutationBusy || batchBusy ? t('files.mutating') : (mutationOperation ?? batchOperation) === 'copy' ? t('files.copy') : t('files.move')}</button></div>
           </div>
         </div>, document.body)}
-      {conflictStrategies && (renameEntry || mutationEntry) && createPortal(
+      {conflictStrategies && (renameEntry || mutationEntry || batchOperation) && createPortal(
         <div className="fixed inset-0 z-[var(--layer-dialog)] flex items-center justify-center bg-[var(--color-overlay)] p-4">
           <div ref={conflictDialogRef} role="dialog" aria-modal="true" aria-labelledby="mutation-conflict-title" tabIndex={-1} className="ui-card w-full max-w-md p-5">
-            <h2 id="mutation-conflict-title" className="text-lg font-semibold">{t('files.conflictTitle')}</h2><p className="mt-2 text-sm text-[var(--color-text-secondary)]">{t('files.conflictDescription')}</p>
-            <div className="mt-4 flex flex-wrap justify-end gap-2"><button ref={conflictCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button>{conflictStrategies.map((strategy) => <button key={strategy} type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy} onClick={() => void executeMutation(strategy)}>{t(`files.conflict${strategy[0]}${strategy.slice(1).toLowerCase()}`)}</button>)}</div>
+            <h2 id="mutation-conflict-title" className="text-lg font-semibold">{t('files.conflictTitle')}</h2><p className="mt-2 text-sm text-[var(--color-text-secondary)]">{batchOperation ? t('files.batchConflictDescription', { count: batchConflictRefs.length }) : t('files.conflictDescription')}</p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2"><button ref={conflictCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button>{conflictStrategies.map((strategy) => <button key={strategy} type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={() => batchOperation ? void executeBatchMutation(strategy) : void executeMutation(strategy)}>{t(`files.conflict${strategy[0]}${strategy.slice(1).toLowerCase()}`)}</button>)}</div>
           </div>
         </div>, document.body)}
       {previewEntry && (

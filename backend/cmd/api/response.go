@@ -252,6 +252,7 @@ const (
 	ErrFilesInvalidDestination    APIErrorCode = "FILES_INVALID_DESTINATION"
 	ErrFilesNoop                  APIErrorCode = "FILES_NOOP"
 	ErrFilesPartialOperation      APIErrorCode = "FILES_PARTIAL_OPERATION"
+	ErrFilesArchiveLimitExceeded  APIErrorCode = "FILES_ARCHIVE_LIMIT_EXCEEDED"
 )
 
 // writeError emits a structured error response carrying only a machine-readable

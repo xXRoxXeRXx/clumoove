@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { apiJson } from '../utils/apiClient';
-import { copyFileEntry, createDownloadTicket, deleteFileEntry, getFileThumbnail, listFileEntries, moveFileEntry, renameFileEntry, resolveFilePath, uploadFile } from './files';
+import { batchDeleteFileEntries, batchMutateFileEntries, copyFileEntry, createArchiveTicket, createDownloadTicket, deleteFileEntry, getFileThumbnail, listFileEntries, moveFileEntry, renameFileEntry, resolveFilePath, uploadFile } from './files';
 
 vi.mock('../utils/apiClient', () => ({ apiJson: vi.fn() }));
 
@@ -73,12 +73,30 @@ describe('file API', () => {
     );
   });
 
+  it('creates an archive ticket from opaque refs only', async () => {
+    await createArchiveTicket('https://api.example.test', 'token', 'profile-id', ['sealed-file', 'sealed-directory']);
+
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/files/profiles/profile-id/archive-tickets',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ refs: ['sealed-file', 'sealed-directory'] }) }),
+    );
+  });
+
   it('deletes an entry with only its opaque ref and recursive flag', async () => {
     await deleteFileEntry('https://api.example.test', 'token', 'profile id', 'opaque-entry-ref', true);
 
     expect(apiJson).toHaveBeenCalledWith(
       'https://api.example.test/api/files/profiles/profile%20id/entries',
       expect.objectContaining({ method: 'DELETE', body: JSON.stringify({ ref: 'opaque-entry-ref', recursive: true }) }),
+    );
+  });
+
+  it('sends batch delete items with opaque refs and recursive flags', async () => {
+    await batchDeleteFileEntries('https://api.example.test', 'token', 'profile-id', [{ ref: 'sealed-file', recursive: false }, { ref: 'sealed-directory', recursive: true }]);
+
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/files/profiles/profile-id/entries:batch-delete',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ items: [{ ref: 'sealed-file', recursive: false }, { ref: 'sealed-directory', recursive: true }] }) }),
     );
   });
 
@@ -97,6 +115,15 @@ describe('file API', () => {
     expect(apiJson).toHaveBeenNthCalledWith(3, 'https://api.example.test/api/files/profiles/profile-id/entries:move', expect.objectContaining({
       method: 'POST', body: JSON.stringify({ ref: 'sealed-source', conflict_strategy: 'SKIP' }),
     }));
+  });
+
+  it('sends batch mutations with a shared sealed destination and explicit retry strategy', async () => {
+    await batchMutateFileEntries('copy', 'https://api.example.test', 'token', 'profile-id', ['sealed-a', 'sealed-b'], 'sealed-destination', 'OVERWRITE');
+
+    expect(apiJson).toHaveBeenCalledWith(
+      'https://api.example.test/api/files/profiles/profile-id/entries:batch-copy',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ refs: ['sealed-a', 'sealed-b'], destination_parent_ref: 'sealed-destination', conflict_strategy: 'OVERWRITE' }) }),
+    );
   });
 
   it('sends quick-link paths only in the resolve request body', async () => {
