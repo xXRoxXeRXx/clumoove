@@ -31,6 +31,7 @@ type fileBatchMutationRequest struct {
 type fileBatchItemResult struct {
 	Ref       string       `json:"ref"`
 	Status    string       `json:"status"`
+	Native    bool         `json:"native"`
 	ErrorCode APIErrorCode `json:"error_code,omitempty"`
 }
 
@@ -112,6 +113,8 @@ func fileBatchError(err error) APIErrorCode {
 		return ErrFilesInvalidDestination
 	case errors.Is(err, storage.ErrManagerNoop):
 		return ErrFilesNoop
+	case errors.Is(err, storage.ErrManagerPartial):
+		return ErrFilesPartialOperation
 	case errors.Is(err, storage.ErrManagerDirectoryNotEmpty):
 		return ErrFilesDirectoryNotEmpty
 	case errors.Is(err, storage.ErrNotFound):
@@ -253,7 +256,21 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 		return
 	}
 	defer s.releaseFileStream(r.Context(), userID, "batch-mutation", streamID)
-	mutator := storage.NewPathManagerMutator(resolved.provider)
+	var mover storage.ManagerMover
+	var copier storage.ManagerCopier
+	if operation == "copy" {
+		copier, _ = storage.NewManagerCopier(resolved.profile.Provider, resolved.provider)
+		if copier == nil {
+			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+			return
+		}
+	} else {
+		mover, _ = storage.NewManagerMover(resolved.profile.Provider, resolved.provider)
+		if mover == nil {
+			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+			return
+		}
+	}
 	results := make([]fileBatchItemResult, 0, len(items))
 	for i, item := range items {
 		if r.Context().Err() != nil {
@@ -263,24 +280,26 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 			break
 		}
 		name := path.Base(item.reference.Locator.Path)
-		if item.reference.Locator.NativeID != "" {
-			name = "item"
+		if item.reference.Locator.NativeID != "" && item.reference.Locator.Path == "" {
+			results = append(results, fileBatchItemResult{Ref: item.ref, Status: "failed", ErrorCode: ErrInvalidBody})
+			continue
 		}
 		if sameManagedLocator(item.reference.Locator, destination) {
 			results = append(results, fileBatchItemResult{Ref: item.ref, Status: "failed", ErrorCode: ErrFilesNoop})
 			continue
 		}
 		var mutationErr error
+		var mutationResult storage.ManagerMutationResult
 		if operation == "copy" {
-			_, mutationErr = mutator.CopyManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
+			mutationResult, mutationErr = copier.CopyManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
 		} else {
-			_, mutationErr = mutator.MoveManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
+			mutationResult, mutationErr = mover.MoveManagerItem(resolved.ctx, item.reference.Locator, destination, name, storage.ManagerMutationOptions{ConflictStrategy: strategy})
 		}
 		status := "copied"
 		if operation == "move" {
 			status = "moved"
 		}
-		result := fileBatchItemResult{Ref: item.ref, Status: status}
+		result := fileBatchItemResult{Ref: item.ref, Status: status, Native: mutationResult.Native}
 		if mutationErr != nil {
 			result.ErrorCode = fileBatchError(mutationErr)
 			if result.ErrorCode == ErrFilesConflict && strategy == "" {
@@ -288,12 +307,14 @@ func (s *APIServer) handleFileEntriesBatchMutation(w http.ResponseWriter, r *htt
 			} else {
 				result.Status = "failed"
 			}
+		} else if mutationResult.Status != "" {
+			result.Status = mutationResult.Status
 		}
 		action := db.AuditFileItemCopied
 		if operation == "move" {
 			action = db.AuditFileItemMoved
 		}
-		s.writeAudit(r, action, profileID, userID, map[string]interface{}{"provider": resolved.profile.Provider, "source_item_kind": item.reference.Kind, "destination_item_kind": "directory", "conflict_strategy": strategy, "outcome": result.Status})
+		s.writeAudit(r, action, profileID, userID, map[string]interface{}{"provider": resolved.profile.Provider, "source_item_kind": item.reference.Kind, "destination_item_kind": "directory", "conflict_strategy": strategy, "native": result.Native, "outcome": result.Status})
 		results = append(results, result)
 	}
 	response := fileBatchResponse{Results: results}

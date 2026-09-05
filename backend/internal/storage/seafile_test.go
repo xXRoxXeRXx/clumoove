@@ -406,3 +406,87 @@ func TestSeafileProviderAuthAndOperations(t *testing.T) {
 		t.Fatalf("RenameFile failed: %v", err)
 	}
 }
+
+func TestSeafileRenameFileMovesAcrossDirectoriesNatively(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/repos/repo-a/file/" || r.URL.Query().Get("p") != "/source/report.txt" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.String())
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Form.Get("operation") != "move" || r.Form.Get("dst_repo") != "repo-a" || r.Form.Get("dst_dir") != "/destination" {
+			t.Fatalf("move form = %#v", r.Form)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	provider := &SeafileProvider{
+		BaseURL: server.URL, Token: "token", HTTPClient: server.Client(),
+		repoCache: map[string]string{"Library": "repo-a"},
+	}
+
+	if err := provider.RenameFile(context.Background(), "files", "/Library/source/report.txt", "/Library/destination/report.txt"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSeafileRenameFileRetainsNativeRenameWithinDirectory(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Form.Get("operation") != "rename" || r.Form.Get("newname") != "new.txt" {
+			t.Fatalf("rename form = %#v", r.Form)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	provider := &SeafileProvider{
+		BaseURL: server.URL, Token: "token", HTTPClient: server.Client(),
+		repoCache: map[string]string{"Library": "repo-a"},
+	}
+
+	if err := provider.RenameFile(context.Background(), "files", "/Library/directory/old.txt", "/Library/directory/new.txt"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSeafileRenameFileReportsPartialAfterFailedPostMoveRename(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		switch requests {
+		case 1:
+			if r.Form.Get("operation") != "move" || r.Form.Get("dst_dir") != "/destination" {
+				t.Fatalf("initial move = %#v", r.Form)
+			}
+			w.WriteHeader(http.StatusOK)
+		case 2:
+			if r.Form.Get("operation") != "rename" || r.Form.Get("newname") != "renamed.txt" || r.URL.Query().Get("p") != "/destination/original.txt" {
+				t.Fatalf("follow-up rename = %s %#v", r.URL.String(), r.Form)
+			}
+			w.WriteHeader(http.StatusInternalServerError)
+		case 3:
+			if r.Form.Get("operation") != "move" || r.Form.Get("dst_dir") != "/source" {
+				t.Fatalf("rollback = %#v", r.Form)
+			}
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+	provider := &SeafileProvider{
+		BaseURL: server.URL, Token: "token", HTTPClient: server.Client(),
+		repoCache: map[string]string{"Library": "repo-a"},
+	}
+
+	err := provider.RenameFile(context.Background(), "files", "/Library/source/original.txt", "/Library/destination/renamed.txt")
+	if !errors.Is(err, ErrManagerPartial) {
+		t.Fatalf("RenameFile() error = %v, want ErrManagerPartial", err)
+	}
+}

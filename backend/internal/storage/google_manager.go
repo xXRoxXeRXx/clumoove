@@ -57,7 +57,160 @@ var (
 	_ ManagerDirectoryCreator = (*GoogleProvider)(nil)
 	_ ManagerDeleter          = (*GoogleProvider)(nil)
 	_ ManagerThumbnailer      = (*GoogleProvider)(nil)
+	_ ManagerRenamer          = (*GoogleProvider)(nil)
+	_ ManagerMover            = (*GoogleProvider)(nil)
 )
+
+// RenameManagerItem changes a Drive item's name and, when an explicit parent
+// is supplied, moves it by immutable ID. An empty parent retains its current
+// parent, which is used by ordinary rename requests.
+func (p *GoogleProvider) RenameManagerItem(ctx context.Context, locator, parent ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return p.mutateManagerItem(ctx, locator, parent, name, options, "renamed", true)
+}
+
+// MoveManagerItem moves a Drive item to a destination parent by immutable ID.
+func (p *GoogleProvider) MoveManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
+	return p.mutateManagerItem(ctx, locator, destination, name, options, "moved", false)
+}
+
+func (p *GoogleProvider) mutateManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions, status string, retainParentWhenEmpty bool) (ManagerMutationResult, error) {
+	if locator.NativeID == "" || locator.NativeID == "root" {
+		return ManagerMutationResult{}, ErrManagerInvalidDestination
+	}
+	source, err := p.driveService.Files.Get(locator.NativeID).
+		Fields("id,name,mimeType,parents").
+		Context(ctx).
+		Do()
+	if err != nil {
+		return ManagerMutationResult{}, wrapGoogleNotFound(err)
+	}
+	if len(source.Parents) == 0 {
+		return ManagerMutationResult{}, ErrManagerInvalidDestination
+	}
+
+	destinationID := destination.NativeID
+	if destinationID == "" {
+		if retainParentWhenEmpty {
+			destinationID = source.Parents[0]
+		} else if destination.Path == "/" {
+			destinationID = "root"
+		} else {
+			return ManagerMutationResult{}, ErrManagerInvalidDestination
+		}
+	}
+	// Resolve the root alias to its immutable ID as well. This makes no-op
+	// detection and parent replacement consistent for explicit root locators.
+	parent, parentErr := p.driveService.Files.Get(destinationID).Fields("id,mimeType,parents").Context(ctx).Do()
+	if parentErr != nil {
+		return ManagerMutationResult{}, wrapGoogleNotFound(parentErr)
+	}
+	if parent.MimeType != googleDriveFolderMIME || parent.Id == "" {
+		return ManagerMutationResult{}, ErrManagerInvalidDestination
+	}
+	destinationID = parent.Id
+	if source.MimeType == googleDriveFolderMIME {
+		cycle, cycleErr := p.googleManagerWouldCreateCycle(ctx, source.Id, destinationID)
+		if cycleErr != nil {
+			return ManagerMutationResult{}, cycleErr
+		}
+		if cycle {
+			return ManagerMutationResult{}, ErrManagerDirectoryCycle
+		}
+	}
+
+	matches, err := p.googleManagerChildrenByName(ctx, destinationID, name)
+	if err != nil {
+		return ManagerMutationResult{}, err
+	}
+	matches = googleManagerWithoutID(matches, source.Id)
+	finalName, resultStatus, conflict, err := p.googleManagerMutationName(ctx, destinationID, name, source.MimeType == googleDriveFolderMIME, matches, options)
+	if err != nil {
+		return ManagerMutationResult{}, err
+	}
+	if resultStatus == "skipped" {
+		return ManagerMutationResult{Status: resultStatus, FinalName: finalName, Native: true}, nil
+	}
+	if len(source.Parents) == 1 && source.Parents[0] == destinationID && source.Name == finalName {
+		return ManagerMutationResult{}, ErrManagerNoop
+	}
+	if conflict != nil {
+		if _, trashErr := p.driveService.Files.Update(conflict.Id, &drive.File{Trashed: true}).Context(ctx).Do(); trashErr != nil {
+			return ManagerMutationResult{}, wrapGoogleError("google manager overwrite", trashErr)
+		}
+	}
+	update := p.driveService.Files.Update(source.Id, &drive.File{Name: finalName}).Context(ctx)
+	if destinationID != source.Parents[0] || len(source.Parents) > 1 {
+		update = update.AddParents(destinationID).RemoveParents(strings.Join(source.Parents, ","))
+	}
+	if _, err := update.Do(); err != nil {
+		return ManagerMutationResult{}, wrapGoogleError("google manager move", err)
+	}
+	if resultStatus == "renamed_on_conflict" {
+		status = resultStatus
+	}
+	return ManagerMutationResult{Status: status, FinalName: finalName, Native: true}, nil
+}
+
+func (p *GoogleProvider) googleManagerWouldCreateCycle(ctx context.Context, sourceID, destinationID string) (bool, error) {
+	visited := make(map[string]struct{}, 16)
+	for depth := 0; destinationID != "root" && depth < 100; depth++ {
+		if destinationID == sourceID {
+			return true, nil
+		}
+		if _, seen := visited[destinationID]; seen {
+			return true, nil
+		}
+		visited[destinationID] = struct{}{}
+		item, err := p.driveService.Files.Get(destinationID).Fields("id,parents").Context(ctx).Do()
+		if err != nil {
+			return false, wrapGoogleNotFound(err)
+		}
+		if len(item.Parents) == 0 {
+			return false, nil
+		}
+		destinationID = item.Parents[0]
+	}
+	return destinationID != "root", nil
+}
+
+func (p *GoogleProvider) googleManagerMutationName(ctx context.Context, parentID, name string, sourceIsDir bool, matches []*drive.File, options ManagerMutationOptions) (string, string, *drive.File, error) {
+	if len(matches) == 0 {
+		return name, "", nil, nil
+	}
+	switch options.ConflictStrategy {
+	case ManagerConflictSkip:
+		return name, "skipped", nil, nil
+	case ManagerConflictRename:
+		for suffix := 1; suffix <= 100; suffix++ {
+			candidate := managerRenamedName(name, suffix)
+			candidateMatches, err := p.googleManagerChildrenByName(ctx, parentID, candidate)
+			if err != nil {
+				return "", "", nil, err
+			}
+			if len(candidateMatches) == 0 {
+				return candidate, "renamed_on_conflict", nil, nil
+			}
+		}
+		return "", "", nil, ErrManagerConflict
+	case ManagerConflictOverwrite:
+		if sourceIsDir || len(matches) != 1 || matches[0].MimeType == googleDriveFolderMIME {
+			return "", "", nil, ErrManagerConflict
+		}
+		return name, "", matches[0], nil
+	default:
+		return "", "", nil, ErrManagerConflict
+	}
+}
+
+func googleManagerWithoutID(items []*drive.File, id string) []*drive.File {
+	filtered := items[:0]
+	for _, item := range items {
+		if item.Id != id {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
 
 // DeleteManagerItem moves the selected Drive item to trash by immutable ID.
 // It intentionally does not use the migration-oriented path deletion method:

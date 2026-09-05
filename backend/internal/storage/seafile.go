@@ -1155,17 +1155,57 @@ func (p *SeafileProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 		return ErrUnsupportedResourceType
 	}
 
-	repoID, oldRepoPath, _, err := p.resolveRepoAndPath(ctx, oldPath)
+	sourceRepoID, sourceRepoPath, _, err := p.resolveRepoAndPath(ctx, oldPath)
 	if err != nil {
 		return err
 	}
+	destinationRepoID, destinationRepoPath, _, err := p.resolveRepoAndPath(ctx, newPath)
+	if err != nil {
+		return err
+	}
+	if sourceRepoID == "" || destinationRepoID == "" {
+		return ErrManagerInvalidDestination
+	}
 
-	newName := path.Base(newPath)
-	reqURL := fmt.Sprintf("%s/api2/repos/%s/file/?p=%s", p.BaseURL, repoID, url.QueryEscape(oldRepoPath))
 	form := url.Values{}
-	form.Set("operation", "rename")
-	form.Set("newname", newName)
+	if sourceRepoID == destinationRepoID && path.Dir(sourceRepoPath) == path.Dir(destinationRepoPath) {
+		form.Set("operation", "rename")
+		form.Set("newname", path.Base(destinationRepoPath))
+		return p.seafileFileOperation(ctx, sourceRepoID, sourceRepoPath, form)
+	}
 
+	// Seafile's native move keeps the source name. When the manager requests a
+	// different final name, rename only after the move completes.
+	form.Set("operation", "move")
+	form.Set("dst_repo", destinationRepoID)
+	form.Set("dst_dir", path.Dir(destinationRepoPath))
+	if err := p.seafileFileOperation(ctx, sourceRepoID, sourceRepoPath, form); err != nil {
+		return err
+	}
+	if path.Base(sourceRepoPath) == path.Base(destinationRepoPath) {
+		return nil
+	}
+
+	movedPath := path.Join(path.Dir(destinationRepoPath), path.Base(sourceRepoPath))
+	rename := url.Values{}
+	rename.Set("operation", "rename")
+	rename.Set("newname", path.Base(destinationRepoPath))
+	if err := p.seafileFileOperation(ctx, destinationRepoID, movedPath, rename); err == nil {
+		return nil
+	}
+
+	// The failed rename leaves a moved source. Attempt to restore its original
+	// location, but never expose provider error details through the manager API.
+	rollback := url.Values{}
+	rollback.Set("operation", "move")
+	rollback.Set("dst_repo", sourceRepoID)
+	rollback.Set("dst_dir", path.Dir(sourceRepoPath))
+	_ = p.seafileFileOperation(ctx, destinationRepoID, movedPath, rollback)
+	return ErrManagerPartial
+}
+
+func (p *SeafileProvider) seafileFileOperation(ctx context.Context, repoID, repoPath string, form url.Values) error {
+	reqURL := fmt.Sprintf("%s/api2/repos/%s/file/?p=%s", p.BaseURL, repoID, url.QueryEscape(repoPath))
 	req, err := p.newAuthRequest(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
@@ -1182,9 +1222,15 @@ func (p *SeafileProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 		p.invalidateToken()
 		return ErrAuth
 	}
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return ErrManagerConflict
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("seafile rename file status %d", resp.StatusCode)
+		return fmt.Errorf("seafile rename or move file status %d", resp.StatusCode)
 	}
 
 	return nil

@@ -617,17 +617,13 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		writeValidationError(w, ErrFilesInvalidRef)
 		return
 	}
-	if source.Locator.Path == "" {
-		writeValidationError(w, ErrFilesInvalidRef)
-		return
-	}
-	if source.Locator.Path == "" {
-		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-		return
-	}
 	name := strings.TrimSpace(request.NewName)
 	if name == "" {
 		name = path.Base(source.Locator.Path)
+		if source.Locator.NativeID != "" && source.Locator.Path == "" {
+			writeValidationError(w, ErrInvalidBody)
+			return
+		}
 	}
 	if !validManagerUploadName(name) {
 		writeValidationError(w, ErrInvalidBody)
@@ -636,18 +632,19 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	destination := storage.ManagerLocator{Path: managedRootPath()}
 	if operation == "rename" {
 		destination = storage.ManagerLocator{Path: path.Dir(source.Locator.Path)}
+		if source.Locator.NativeID != "" && request.DestinationParentRef == "" {
+			// Google rename requests without an explicit parent retain the source's
+			// immutable parent instead of deriving it from a display path.
+			destination = storage.ManagerLocator{}
+		}
 	}
 	if request.DestinationParentRef != "" {
 		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, s.encryptionKey, userID, profileID)
-		if destinationErr != nil || destinationRef.Kind != "directory" || destinationRef.Locator.Path == "" {
+		if destinationErr != nil || destinationRef.Kind != "directory" {
 			writeValidationError(w, ErrFilesInvalidRef)
 			return
 		}
 		destination = destinationRef.Locator
-	}
-	if destination.Path == "" {
-		writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
-		return
 	}
 	resolved, err := s.resolveFileProfile(r.Context(), userID, profileID)
 	if err != nil {
@@ -670,7 +667,6 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	options := storage.ManagerMutationOptions{ConflictStrategy: storage.ManagerConflictStrategy(strategy)}
-	mutator := storage.NewPathManagerMutator(resolved.provider)
 	var result storage.ManagerMutationResult
 	if operation != "rename" {
 		streamID := generateRandomString(16)
@@ -685,11 +681,26 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	}
 	switch operation {
 	case "rename":
-		result, err = mutator.RenameManagerItem(resolved.ctx, source.Locator, destination, name, options)
+		renamer, supported := storage.NewManagerRenamer(resolved.profile.Provider, resolved.provider)
+		if !supported {
+			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+			return
+		}
+		result, err = renamer.RenameManagerItem(resolved.ctx, source.Locator, destination, name, options)
 	case "copy":
-		result, err = mutator.CopyManagerItem(resolved.ctx, source.Locator, destination, name, options)
+		copier, supported := storage.NewManagerCopier(resolved.profile.Provider, resolved.provider)
+		if !supported {
+			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+			return
+		}
+		result, err = copier.CopyManagerItem(resolved.ctx, source.Locator, destination, name, options)
 	case "move":
-		result, err = mutator.MoveManagerItem(resolved.ctx, source.Locator, destination, name, options)
+		mover, supported := storage.NewManagerMover(resolved.profile.Provider, resolved.provider)
+		if !supported {
+			writeError(w, http.StatusNotImplemented, ErrFilesUnsupportedOperation)
+			return
+		}
+		result, err = mover.MoveManagerItem(resolved.ctx, source.Locator, destination, name, options)
 	}
 	if err != nil {
 		s.writeFileMutationError(w, err, capabilities)

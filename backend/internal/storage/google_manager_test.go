@@ -226,6 +226,110 @@ func TestGoogleManagerCreateDirectorySuccessAndConflict(t *testing.T) {
 	}
 }
 
+func TestGoogleManagerMoveUsesIDsAndReplacesParent(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/files/source-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "source-id", "name": "report.txt", "mimeType": "text/plain", "parents": []string{"source-parent"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/files/destination-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "destination-id", "mimeType": googleDriveFolderMIME, "parents": []string{"root"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/files":
+			if query := r.URL.Query().Get("q"); query != "'destination-id' in parents and name = 'renamed.txt' and trashed = false" {
+				t.Fatalf("conflict query = %q", query)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []any{}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/files/source-id":
+			if r.URL.Query().Get("addParents") != "destination-id" || r.URL.Query().Get("removeParents") != "source-parent" {
+				t.Fatalf("parent update query = %q", r.URL.RawQuery)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["name"] != "renamed.txt" {
+				t.Fatalf("update body = %#v", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "source-id", "name": "renamed.txt"})
+		default:
+			t.Fatalf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+
+	result, err := provider.MoveManagerItem(context.Background(), ManagerLocator{NativeID: "source-id"}, ManagerLocator{NativeID: "destination-id"}, "renamed.txt", ManagerMutationOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != (ManagerMutationResult{Status: "moved", FinalName: "renamed.txt", Native: true}) {
+		t.Fatalf("MoveManagerItem() = %#v", result)
+	}
+}
+
+func TestGoogleManagerMoveRejectsDirectoryCycle(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files/source-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "source-id", "name": "source", "mimeType": googleDriveFolderMIME, "parents": []string{"root"}})
+		case "/files/child-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "child-id", "mimeType": googleDriveFolderMIME, "parents": []string{"source-id"}})
+		default:
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+	}))
+
+	_, err := provider.MoveManagerItem(context.Background(), ManagerLocator{NativeID: "source-id"}, ManagerLocator{NativeID: "child-id"}, "source", ManagerMutationOptions{})
+	if !errors.Is(err, ErrManagerDirectoryCycle) {
+		t.Fatalf("MoveManagerItem() error = %v, want ErrManagerDirectoryCycle", err)
+	}
+}
+
+func TestGoogleManagerMoveAcceptsRootNativeID(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/files/source-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "source-id", "name": "report.txt", "mimeType": "text/plain", "parents": []string{"source-parent"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/files/root":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "root-id", "mimeType": googleDriveFolderMIME})
+		case r.Method == http.MethodGet && r.URL.Path == "/files":
+			if query := r.URL.Query().Get("q"); query != "'root-id' in parents and name = 'report.txt' and trashed = false" {
+				t.Fatalf("conflict query = %q", query)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"files": []any{}})
+		case r.Method == http.MethodPatch && r.URL.Path == "/files/source-id":
+			if r.URL.Query().Get("addParents") != "root-id" || r.URL.Query().Get("removeParents") != "source-parent" {
+				t.Fatalf("parent update query = %q", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "source-id"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	result, err := provider.MoveManagerItem(context.Background(), ManagerLocator{NativeID: "source-id"}, ManagerLocator{NativeID: "root"}, "report.txt", ManagerMutationOptions{})
+	if err != nil || result.Status != "moved" || !result.Native {
+		t.Fatalf("MoveManagerItem() = (%#v, %v)", result, err)
+	}
+}
+
+func TestGoogleManagerCycleWalkRejectsExistingParentLoop(t *testing.T) {
+	provider := newGoogleManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files/source-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "source-id", "name": "source", "mimeType": googleDriveFolderMIME, "parents": []string{"root"}})
+		case "/files/destination-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "destination-id", "mimeType": googleDriveFolderMIME, "parents": []string{"loop-id"}})
+		case "/files/loop-id":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "loop-id", "parents": []string{"destination-id"}})
+		default:
+			t.Fatalf("unexpected request %s", r.URL.Path)
+		}
+	}))
+
+	_, err := provider.MoveManagerItem(context.Background(), ManagerLocator{NativeID: "source-id"}, ManagerLocator{NativeID: "destination-id"}, "source", ManagerMutationOptions{})
+	if !errors.Is(err, ErrManagerDirectoryCycle) {
+		t.Fatalf("MoveManagerItem() error = %v, want ErrManagerDirectoryCycle", err)
+	}
+}
+
 type googleTestTransport func(req *http.Request) (*http.Response, error)
 
 func (f googleTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {

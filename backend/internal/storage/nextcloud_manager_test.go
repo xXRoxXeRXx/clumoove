@@ -640,7 +640,7 @@ func TestNextcloudManagerMoveWithNativeID(t *testing.T) {
   </d:response>
 </d:multistatus>`))
 		case r.Method == "PROPFIND" && r.URL.Path == "/remote.php/dav/files/testuser/target-folder" && r.Header.Get("Depth") == "1":
-			// Destination listing: empty
+			// The conflicting name forces the manager adapter to use its suffix.
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8" ?>
 <d:multistatus xmlns:d="DAV:">
@@ -651,10 +651,17 @@ func TestNextcloudManagerMoveWithNativeID(t *testing.T) {
       <d:status>HTTP/1.1 200 OK</d:status>
     </d:propstat>
   </d:response>
+  <d:response>
+    <d:href>/remote.php/dav/files/testuser/target-folder/file.txt</d:href>
+    <d:propstat>
+      <d:prop><d:getcontentlength>12</d:getcontentlength></d:prop>
+      <d:status>HTTP/1.1 200 OK</d:status>
+    </d:propstat>
+  </d:response>
 </d:multistatus>`))
 		case r.Method == "MOVE":
 			moved = true
-			if !strings.HasSuffix(r.Header.Get("Destination"), "/files/testuser/target-folder/file.txt") {
+			if !strings.HasSuffix(r.Header.Get("Destination"), "/files/testuser/target-folder/file%20%281%29.txt") {
 				t.Fatalf("unexpected Destination header %q", r.Header.Get("Destination"))
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -666,14 +673,17 @@ func TestNextcloudManagerMoveWithNativeID(t *testing.T) {
 	mutator := NewPathManagerMutator(provider)
 	source := ManagerLocator{Path: "/file.txt", NativeID: "file-id-123"}
 	dest := ManagerLocator{Path: "/target-folder", NativeID: "folder-id-456"}
-	res, err := mutator.MoveManagerItem(context.Background(), source, dest, "file.txt", ManagerMutationOptions{})
+	res, err := mutator.MoveManagerItem(context.Background(), source, dest, "file.txt", ManagerMutationOptions{ConflictStrategy: ManagerConflictRename})
 	if err != nil {
 		t.Fatalf("MoveManagerItem failed: %v", err)
+	}
+	if !res.Native {
+		t.Fatal("path-backed DAV move should report a single native operation")
 	}
 	if !moved {
 		t.Fatal("expected MOVE to be called")
 	}
-	if res.Status != "moved" || res.FinalName != "file.txt" {
+	if res.Status != "renamed_on_conflict" || res.FinalName != "file (1).txt" {
 		t.Fatalf("unexpected result: %#v", res)
 	}
 }

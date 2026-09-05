@@ -239,8 +239,8 @@ func TestManagerReadCapabilitiesCoverEveryFilesProvider(t *testing.T) {
 
 func TestGoogleManagerUploadCapabilities(t *testing.T) {
 	capabilities := ManagerCapabilitiesFor("google")
-	if !capabilities.Upload || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename {
-		t.Fatalf("Google manager capabilities = %#v, want tested upload support", capabilities)
+	if !capabilities.Upload || !capabilities.Rename || !capabilities.Move || !capabilities.ConflictSkip || !capabilities.ConflictOverwrite || !capabilities.ConflictOverwriteAtomic || !capabilities.ConflictRename {
+		t.Fatalf("Google manager capabilities = %#v, want tested upload and mutation support", capabilities)
 	}
 }
 
@@ -357,6 +357,44 @@ func TestManagerCapabilityInterfaceSatisfaction(t *testing.T) {
 				t.Errorf("Dedicated provider %q has Thumbnails: true but does not implement ManagerThumbnailer", tc.name)
 			}
 		}
+		if caps.Rename {
+			if _, ok := NewManagerRenamer(tc.name, p); !ok {
+				t.Errorf("Dedicated provider %q has Rename: true but no manager renamer", tc.name)
+			}
+		}
+		if caps.Move {
+			if _, ok := NewManagerMover(tc.name, p); !ok {
+				t.Errorf("Dedicated provider %q has Move: true but no manager mover", tc.name)
+			}
+		}
+	}
+}
+
+func TestManagerMutationCapabilityRouting(t *testing.T) {
+	for providerType, capabilities := range managerCapabilityRegistry {
+		if providerType == "local" && runtime.GOOS == "windows" {
+			continue
+		}
+		if capabilities.Rename || capabilities.Move {
+			if providerType != "google" && !managerPathMutationProviders[providerType] {
+				t.Errorf("%s advertises manager mutations without a path or dedicated route", providerType)
+			}
+		}
+	}
+	if managerPathMutationClassifier("s3")(ManagerLocator{}, ManagerLocator{}, "") {
+		t.Fatal("S3 copy/delete must not report a single native operation")
+	}
+	if managerPathMutationClassifier("mega")(ManagerLocator{Path: "/from/report.txt"}, ManagerLocator{Path: "/to"}, "report.txt") {
+		t.Fatal("MEGA cross-directory move must not report a single native operation")
+	}
+	if !managerPathMutationClassifier("mega")(ManagerLocator{Path: "/folder/report.txt"}, ManagerLocator{Path: "/folder"}, "renamed.txt") {
+		t.Fatal("MEGA same-directory rename should report a single native operation")
+	}
+	if managerPathMutationClassifier("seafile")(ManagerLocator{Path: "/Library/from/report.txt"}, ManagerLocator{Path: "/Library/to"}, "renamed.txt") {
+		t.Fatal("Seafile move followed by rename must not report a single native operation")
+	}
+	if !managerPathMutationClassifier("seafile")(ManagerLocator{Path: "/Library/folder/report.txt"}, ManagerLocator{Path: "/Library/folder"}, "renamed.txt") {
+		t.Fatal("Seafile same-directory rename should report a single native operation")
 	}
 }
 

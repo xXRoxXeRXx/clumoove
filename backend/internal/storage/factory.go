@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path"
 	"runtime"
 )
 
@@ -163,18 +164,79 @@ var providerRegistry = map[string]ProviderMetadata{
 	},
 }
 
+// managerPathMutationProviders identifies providers whose sealed manager
+// locators are canonical paths and whose rename primitive can safely back the
+// shared mutation adapter. Providers with immutable-ID manager locators must
+// implement their own manager mutation contracts instead.
+var managerPathMutationProviders = map[string]bool{
+	"nextcloud": true, "opencloud": true, "webdav": true, "dropbox": true,
+	"onedrive": true, "hidrive": true, "smb": true, "s3": true,
+	"sftp": true, "ftp": true, "magentacloud": true, "koofr": true,
+	"local": true, "seafile": true, "mega": true,
+}
+
+func managerPathMutationClassifier(providerType string) func(ManagerLocator, ManagerLocator, string) bool {
+	return func(locator, destination ManagerLocator, name string) bool {
+		switch providerType {
+		case "s3":
+			return false
+		case "mega":
+			return path.Dir(locator.Path) == path.Clean(destination.Path)
+		case "seafile":
+			// A renamed cross-directory Seafile item requires move then rename.
+			return path.Base(locator.Path) == name || path.Dir(locator.Path) == path.Clean(destination.Path)
+		default:
+			return true
+		}
+	}
+}
+
+// NewManagerRenamer selects a provider's dedicated manager implementation
+// before falling back to the path adapter for explicitly path-safe providers.
+func NewManagerRenamer(providerType string, provider StorageProvider) (ManagerRenamer, bool) {
+	if renamer, ok := provider.(ManagerRenamer); ok {
+		return renamer, true
+	}
+	if !managerPathMutationProviders[providerType] {
+		return nil, false
+	}
+	return newPathManagerMutatorWithClassifier(provider, managerPathMutationClassifier(providerType)), true
+}
+
+// NewManagerMover selects a provider's dedicated manager implementation
+// before falling back to the path adapter for explicitly path-safe providers.
+func NewManagerMover(providerType string, provider StorageProvider) (ManagerMover, bool) {
+	if mover, ok := provider.(ManagerMover); ok {
+		return mover, true
+	}
+	if !managerPathMutationProviders[providerType] {
+		return nil, false
+	}
+	return newPathManagerMutatorWithClassifier(provider, managerPathMutationClassifier(providerType)), true
+}
+
+// NewManagerCopier returns the streaming path adapter for path-safe providers.
+// No provider currently advertises a dedicated native manager copy operation.
+func NewManagerCopier(providerType string, provider StorageProvider) (ManagerCopier, bool) {
+	if copier, ok := provider.(ManagerCopier); ok {
+		return copier, true
+	}
+	if !managerPathMutationProviders[providerType] {
+		return nil, false
+	}
+	return newPathManagerMutator(provider, false), true
+}
+
 // managerCapabilityRegistry is deliberately independent from the storage
 // interface. Path-backed mutation capabilities use the validated manager
 // adapter; copy is currently streamed, so NativeCopy remains false until a
 // provider has a dedicated server-side manager-copy implementation and tests.
 var managerCapabilityRegistry = map[string]ManagerCapabilities{
-	"nextcloud": {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	"opencloud": {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
-	"webdav":    {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
-	"dropbox":   {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
-	// Google Drive uses native IDs and is intentionally withheld until its
-	// dedicated manager rename/move adapter can preserve those semantics.
-	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"nextcloud":    {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"opencloud":    {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: false},
+	"webdav":       {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},
+	"dropbox":      {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
+	"google":       {Browse: true, NativePagination: true, Download: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"onedrive":     {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"hidrive":      {Browse: true, NativePagination: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, DeleteEmptyDirectory: true, DeleteRecursiveDirectory: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true, Thumbnails: true},
 	"smb":          {Browse: true, Download: true, Archive: true, Upload: true, Mkdir: true, Rename: true, Move: true, DeleteFile: true, ConflictSkip: true, ConflictOverwrite: true, ConflictOverwriteAtomic: true, ConflictRename: true},

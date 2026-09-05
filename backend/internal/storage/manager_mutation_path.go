@@ -10,13 +10,22 @@ import (
 
 // PathManagerMutator is an opt-in adapter for providers with canonical,
 // path-backed manager locators. It validates manager semantics before invoking
-// migration primitives; callers must never construct it for native-ID locators.
+// migration primitives; callers must never construct it for ID-only locators.
 type PathManagerMutator struct {
 	provider StorageProvider
+	native   func(ManagerLocator, ManagerLocator, string) bool
 }
 
 func NewPathManagerMutator(provider StorageProvider) *PathManagerMutator {
-	return &PathManagerMutator{provider: provider}
+	return newPathManagerMutator(provider, true)
+}
+
+func newPathManagerMutator(provider StorageProvider, native bool) *PathManagerMutator {
+	return newPathManagerMutatorWithClassifier(provider, func(ManagerLocator, ManagerLocator, string) bool { return native })
+}
+
+func newPathManagerMutatorWithClassifier(provider StorageProvider, native func(ManagerLocator, ManagerLocator, string) bool) *PathManagerMutator {
+	return &PathManagerMutator{provider: provider, native: native}
 }
 
 func (m *PathManagerMutator) RenameManagerItem(ctx context.Context, locator, parent ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
@@ -39,13 +48,14 @@ func (m *PathManagerMutator) move(ctx context.Context, locator, destination Mana
 	if resultStatus == "renamed_on_conflict" {
 		status = resultStatus
 	}
+	target = managerJoin(destination.Path, finalName)
 	if source.Path == target {
 		return ManagerMutationResult{}, ErrManagerNoop
 	}
 	if err := m.provider.RenameFile(ctx, "files", source.Path, target); err != nil {
 		return ManagerMutationResult{}, err
 	}
-	return ManagerMutationResult{Status: status, FinalName: finalName}, nil
+	return ManagerMutationResult{Status: status, FinalName: finalName, Native: m.native(locator, destination, finalName)}, nil
 }
 
 func (m *PathManagerMutator) CopyManagerItem(ctx context.Context, locator, destination ManagerLocator, name string, options ManagerMutationOptions) (ManagerMutationResult, error) {
