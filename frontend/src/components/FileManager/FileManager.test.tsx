@@ -999,5 +999,160 @@ describe('FileManager component', () => {
       expect.any(AbortSignal)
     );
   });
+
+  it('collapses deep breadcrumbs into ellipsis menu and navigates to intermediate folder', async () => {
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          initialBreadcrumbs={[
+            { ref: null, name: 'Root' },
+            { ref: 'ref-folder-1', name: 'Folder 1' },
+            { ref: 'ref-folder-2', name: 'Folder 2' },
+            { ref: 'ref-folder-3', name: 'Folder 3' },
+            { ref: 'ref-folder-4', name: 'Current' },
+          ]}
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    // Verify Root, Folder 3 (parent), and Current are directly rendered
+    expect(container.textContent).toContain('Root');
+    expect(container.textContent).toContain('Folder 3');
+    expect(container.textContent).toContain('Current');
+
+    // Folder 1 and Folder 2 should not be visible outside the menu yet
+    const nav = container.querySelector('nav');
+    expect(nav).not.toBeNull();
+    const navButtons = Array.from(nav?.querySelectorAll('button') ?? []);
+    expect(navButtons.some((b) => b.textContent === 'Folder 1')).toBe(false);
+
+    // Ellipsis button should be rendered
+    const moreBtn = nav?.querySelector<HTMLButtonElement>(
+      'button[aria-label="More folders"], button[aria-label="Weitere Ordner"], button[title="More folders"], button[title="Weitere Ordner"]'
+    );
+    expect(moreBtn).toBeDefined();
+
+    // Click ellipsis button to open menu
+    await act(async () => {
+      moreBtn?.click();
+      await Promise.resolve();
+    });
+
+    const menu = nav?.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+    expect(menu?.textContent).toContain('Folder 1');
+    expect(menu?.textContent).toContain('Folder 2');
+
+    // Click Folder 1 inside the menu
+    const folder1Item = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []).find(
+      (b) => b.textContent?.includes('Folder 1')
+    );
+    expect(folder1Item).toBeDefined();
+
+    await act(async () => {
+      folder1Item?.click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(vi.mocked(listFileEntries)).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-folder-1',
+      undefined,
+      expect.any(AbortSignal)
+    );
+  });
+
+  it('switches to selection mode header on file selection and clears on close button click', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { capabilities: { ...mockCapabilities, download: true, mkdir: true } },
+    });
+    vi.mocked(listFileEntries).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        entries: [
+          {
+            ref: 'ref-file-1',
+            name: 'report.txt',
+            display_path: '/report.txt',
+            kind: 'file',
+            size: 1024,
+            allowed_actions: ['download', 'delete'],
+          },
+        ],
+        next_cursor: null,
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    // Normal mode: New folder button is present
+    const newFolderBtn = container.querySelector(
+      'button[aria-label="New folder"], button[aria-label="Neuer Ordner"]'
+    );
+    expect(newFolderBtn).not.toBeNull();
+
+    // Select file
+    const fileCheckbox = container.querySelector<HTMLInputElement>(
+      'tbody input[type="checkbox"]'
+    );
+    expect(fileCheckbox).not.toBeNull();
+
+    await act(async () => {
+      fileCheckbox?.click();
+      await Promise.resolve();
+    });
+
+    // Selection mode: Toolbar is active
+    const selectionToolbar = container.querySelector('[role="toolbar"]');
+    expect(selectionToolbar).not.toBeNull();
+    expect(selectionToolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 1 }));
+
+    // New folder button and upload control should be hidden during selection
+    const newFolderInSelection = container.querySelector(
+      'button[aria-label="New folder"], button[aria-label="Neuer Ordner"]'
+    );
+    expect(newFolderInSelection).toBeNull();
+
+    // Clear selection button should be present
+    const clearBtn = selectionToolbar?.querySelector<HTMLButtonElement>(
+      'button[aria-label="Clear selection"], button[aria-label="Auswahl aufheben"]'
+    );
+    expect(clearBtn).toBeDefined();
+
+    // Click clear button
+    await act(async () => {
+      clearBtn?.click();
+      await Promise.resolve();
+    });
+
+    // Selection toolbar is removed and normal header is restored
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="New folder"], button[aria-label="Neuer Ordner"]')
+    ).not.toBeNull();
+  });
 });
 

@@ -599,6 +599,7 @@
     "noProfiles": "No saved connections are available.",
     "selectProfile": "Select a connection to browse its files.",
     "breadcrumb": "Current folder",
+    "moreFolders": "More folders",
     "viewMode": "View mode",
     "viewList": "List view",
     "viewGrid": "Grid view",

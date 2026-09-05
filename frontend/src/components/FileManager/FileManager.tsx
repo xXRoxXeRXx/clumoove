@@ -5,9 +5,11 @@ import {
   ArrowLeftIcon,
   ArrowPathIcon,
   ArrowRightIcon,
+  ArrowsRightLeftIcon,
   ArrowUpIcon,
   ChevronRightIcon,
 	ClipboardDocumentIcon,
+  EllipsisHorizontalIcon,
 	EllipsisVerticalIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -17,6 +19,7 @@ import {
   Squares2X2Icon,
   TrashIcon,
   WrenchScrewdriverIcon,
+  XMarkIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
 import { batchDeleteFileEntries, batchMutateFileEntries, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, type BatchItemResult, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
@@ -115,6 +118,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState('');
   const [conflictStrategies, setConflictStrategies] = useState<FileMutationConflictStrategy[] | null>(null);
+  const [isBreadcrumbMenuOpen, setIsBreadcrumbMenuOpen] = useState(false);
+  const breadcrumbMenuRef = useRef<HTMLDivElement>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>(() => {
     try {
       const stored = localStorage.getItem('clumoove_file_manager_view_mode');
@@ -213,6 +218,26 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       window.removeEventListener('scroll', handleScroll, true);
     };
   }, [menuState]);
+
+  useEffect(() => {
+    if (!isBreadcrumbMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent | MouseEvent) => {
+      if (breadcrumbMenuRef.current && !breadcrumbMenuRef.current.contains(event.target as Node)) {
+        setIsBreadcrumbMenuOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsBreadcrumbMenuOpen(false);
+      }
+    };
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isBreadcrumbMenuOpen]);
 
   const selectedProfile = profiles.find((profile) => profile.id === profileId) ?? null;
   const currentBreadcrumb = breadcrumbs[breadcrumbs.length - 1];
@@ -382,11 +407,13 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   const selectProfile = (id: string) => {
     if (id === profileId) return;
+    setIsBreadcrumbMenuOpen(false);
     onProfileChange(id);
   };
 
   const openDirectory = (entry: FileEntry) => {
     if (entry.kind !== 'directory' || !capabilities.browse) return;
+    setIsBreadcrumbMenuOpen(false);
     setBreadcrumbs((current) => [...current, { ref: entry.ref, name: entry.name }]);
     setSelectedRefs(new Set());
     void loadEntries(entry.ref);
@@ -402,6 +429,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   const goUp = () => {
     if (breadcrumbs.length <= 1) return;
+    setIsBreadcrumbMenuOpen(false);
     const parentBreadcrumbs = breadcrumbs.slice(0, -1);
     const parentRef = parentBreadcrumbs[parentBreadcrumbs.length - 1]?.ref ?? null;
     setBreadcrumbs(parentBreadcrumbs);
@@ -416,6 +444,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   const goToBreadcrumb = (index: number) => {
     if (index === breadcrumbs.length - 1) return;
+    setIsBreadcrumbMenuOpen(false);
     const targetBreadcrumbs = breadcrumbs.slice(0, index + 1);
     const targetRef = targetBreadcrumbs[targetBreadcrumbs.length - 1]?.ref ?? null;
     setBreadcrumbs(targetBreadcrumbs);
@@ -755,6 +784,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     );
   };
 
+  const shouldCollapseBreadcrumbs = breadcrumbs.length > 3;
+  const rootBreadcrumb = breadcrumbs[0];
+  const collapsedBreadcrumbs = shouldCollapseBreadcrumbs ? breadcrumbs.slice(1, -2) : [];
+  const parentBreadcrumb = shouldCollapseBreadcrumbs ? breadcrumbs[breadcrumbs.length - 2] : null;
+  const currentBreadcrumbItem = shouldCollapseBreadcrumbs ? breadcrumbs[breadcrumbs.length - 1] : null;
+
   return (
     <section className="w-full space-y-5" aria-labelledby="file-manager-title">
       {/* Back Header */}
@@ -826,112 +861,250 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <div className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.selectProfile')}</div>
           ) : (
             <>
-               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--color-border)] p-3">
-                <div className="flex min-w-0 items-center gap-1.5 flex-1">
-                  <button
-                    type="button"
-                    onClick={goUp}
-                    disabled={!capabilities.browse || breadcrumbs.length <= 1 || entriesLoading}
-                    className="ui-icon-button p-2 hover:bg-[var(--color-hover)] shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                    aria-label={t('files.up')}
-                    title={t('files.up')}
-                  >
-                    <ArrowUpIcon className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                  <nav className="flex min-w-0 flex-wrap items-center gap-1 text-sm" aria-label={t('files.breadcrumb')}>
-                    {breadcrumbs.map((breadcrumb, index) => (
-                      <span key={breadcrumb.ref ?? 'root'} className="inline-flex min-w-0 items-center gap-1">
-                        {index > 0 && <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
-                        <button
-                          type="button"
-                          onClick={() => goToBreadcrumb(index)}
-                          disabled={index === breadcrumbs.length - 1}
-                          className="max-w-44 truncate rounded px-1 py-0.5 disabled:text-[var(--color-text-primary)] hover:bg-[var(--color-hover)]"
-                        >
-                          {breadcrumb.name}
-                        </button>
-                      </span>
-                    ))}
-                  </nav>
-               </div>
-               {selectedEntries.length > 0 && (
-                 <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)]/50 px-3 py-2" role="toolbar" aria-label={t('files.selectionActions')}>
-                   <span className="mr-1 text-sm font-medium">{t('files.selectedCount', { count: selectedEntries.length })}</span>
-                   <button type="button" className="ui-button-secondary inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('download') || batchBusy} onClick={() => void downloadArchive()}><ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />{t('files.downloadArchive')}</button>
-                   <button type="button" className="ui-button-secondary px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('copy') || batchBusy} onClick={() => startBatchDestinationPicker('copy')}>{t('files.copy')}</button>
-                   <button type="button" className="ui-button-secondary px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('move') || batchBusy} onClick={() => startBatchDestinationPicker('move')}>{t('files.move')}</button>
-                   <button type="button" className="ui-button-danger px-2.5 py-1.5 text-xs disabled:opacity-50" disabled={!selectedCan('delete') || batchBusy} onClick={() => setBatchDeleteOpen(true)}>{t('files.deleteAction')}</button>
-                   <button type="button" className="ml-auto ui-button-secondary px-2.5 py-1.5 text-xs" onClick={() => setSelectedRefs(new Set())}>{t('files.clearSelection')}</button>
-                 </div>
-               )}
-               {batchResults.length > 0 && <p className="mx-3 mt-3 ui-alert px-3 py-2 text-sm" role="status">{t('files.batchResultSummary', { success: batchResults.filter((item) => ['deleted', 'copied', 'moved'].includes(item.status)).length, failed: batchResults.filter((item) => item.status === 'failed').length })}</p>}
-                <div className="flex items-center gap-2 shrink-0">
-                  <FileUploadControl
-                    apiUrl={apiUrl}
-                    token={token}
-                    profileId={profileId}
-                    parentRef={currentRef}
-                    capabilities={capabilities}
-                    disabled={entriesLoading}
-                    onCompleted={uploadCompleted}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCreateDirOpen(true);
-                      setNewDirName('');
-                      setCreateDirError('');
-                    }}
-                    disabled={entriesLoading || !capabilities.mkdir}
-                    className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-                    title={!capabilities.mkdir ? t('files.mkdirUnavailable') : t('files.newFolder')}
-                    aria-label={t('files.newFolder')}
-                  >
-                    <FolderPlusIcon className="h-4 w-4" aria-hidden="true" />
-                    <span className="hidden sm:inline">{t('files.newFolder')}</span>
-                  </button>
-                  <div className="flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5" role="group" aria-label={t('files.viewMode')}>
+              {selectedEntries.length > 0 ? (
+                <div
+                  className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-selection-bg)]/20 px-3 py-2.5"
+                  role="toolbar"
+                  aria-label={t('files.selectionActions')}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
                     <button
                       type="button"
-                      onClick={() => handleViewModeChange('list')}
-                      aria-pressed={viewMode === 'list'}
-                      aria-label={t('files.viewList')}
-                      title={t('files.viewList')}
-                      className={`p-1.5 rounded-md transition-colors ${
-                        viewMode === 'list'
-                          ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-xs'
-                          : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                      }`}
+                      onClick={() => setSelectedRefs(new Set())}
+                      className="ui-icon-button p-1.5 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shrink-0"
+                      title={t('files.clearSelection')}
+                      aria-label={t('files.clearSelection')}
                     >
-                      <ListBulletIcon className="h-4 w-4" aria-hidden="true" />
+                      <XMarkIcon className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                    <span className="text-sm font-semibold text-[var(--color-text-primary)] whitespace-nowrap">
+                      {t('files.selectedCount', { count: selectedEntries.length })}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                    <button
+                      type="button"
+                      className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      disabled={!selectedCan('download') || batchBusy}
+                      onClick={() => void downloadArchive()}
+                    >
+                      <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
+                      <span>{t('files.downloadArchive')}</span>
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleViewModeChange('grid')}
-                      aria-pressed={viewMode === 'grid'}
-                      aria-label={t('files.viewGrid')}
-                      title={t('files.viewGrid')}
-                      className={`p-1.5 rounded-md transition-colors ${
-                        viewMode === 'grid'
-                          ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-xs'
-                          : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-                      }`}
+                      className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      disabled={!selectedCan('copy') || batchBusy}
+                      onClick={() => startBatchDestinationPicker('copy')}
                     >
-                      <Squares2X2Icon className="h-4 w-4" aria-hidden="true" />
+                      <ClipboardDocumentIcon className="h-4 w-4" aria-hidden="true" />
+                      <span>{t('files.copy')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      disabled={!selectedCan('move') || batchBusy}
+                      onClick={() => startBatchDestinationPicker('move')}
+                    >
+                      <ArrowsRightLeftIcon className="h-4 w-4" aria-hidden="true" />
+                      <span>{t('files.move')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="ui-button-danger inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      disabled={!selectedCan('delete') || batchBusy}
+                      onClick={() => setBatchDeleteOpen(true)}
+                    >
+                      <TrashIcon className="h-4 w-4" aria-hidden="true" />
+                      <span>{t('files.deleteAction')}</span>
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={refresh}
-                    disabled={!capabilities.browse}
-                    className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
-                    aria-label={t('files.refresh')}
-                    title={t('files.refresh')}
-                  >
-                    <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
-                  </button>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] p-3">
+                  <div className="flex min-w-0 items-center gap-1.5 flex-1">
+                    <button
+                      type="button"
+                      onClick={goUp}
+                      disabled={!capabilities.browse || breadcrumbs.length <= 1 || entriesLoading}
+                      className="ui-icon-button p-2 hover:bg-[var(--color-hover)] shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                      aria-label={t('files.up')}
+                      title={t('files.up')}
+                    >
+                      <ArrowUpIcon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <nav className="flex min-w-0 flex-nowrap items-center gap-1 text-sm overflow-hidden" aria-label={t('files.breadcrumb')}>
+                      {shouldCollapseBreadcrumbs ? (
+                        <>
+                          {rootBreadcrumb && (
+                            <span className="inline-flex min-w-0 items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => goToBreadcrumb(0)}
+                                className="max-w-28 sm:max-w-36 md:max-w-44 truncate rounded px-1 py-0.5 hover:bg-[var(--color-hover)]"
+                                title={rootBreadcrumb.name}
+                              >
+                                {rootBreadcrumb.name}
+                              </button>
+                            </span>
+                          )}
+                          <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />
+                          <div className="relative inline-flex items-center shrink-0" ref={breadcrumbMenuRef}>
+                            <button
+                              type="button"
+                              onClick={() => setIsBreadcrumbMenuOpen((open) => !open)}
+                              aria-expanded={isBreadcrumbMenuOpen}
+                              aria-haspopup="menu"
+                              aria-label={t('files.moreFolders')}
+                              title={t('files.moreFolders')}
+                              className="rounded px-1.5 py-0.5 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors"
+                            >
+                              <EllipsisHorizontalIcon className="h-4 w-4" aria-hidden="true" />
+                            </button>
+                            {isBreadcrumbMenuOpen && (
+                              <div
+                                role="menu"
+                                aria-label={t('files.moreFolders')}
+                                className="absolute left-0 top-full mt-1 z-30 min-w-48 max-w-64 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] p-1 shadow-lg backdrop-blur-xs"
+                              >
+                                {collapsedBreadcrumbs.map((crumb, idx) => {
+                                  const targetIndex = 1 + idx;
+                                  return (
+                                    <button
+                                      key={crumb.ref ?? targetIndex}
+                                      type="button"
+                                      role="menuitem"
+                                      onClick={() => {
+                                        goToBreadcrumb(targetIndex);
+                                        setIsBreadcrumbMenuOpen(false);
+                                      }}
+                                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-hover)] hover:text-[var(--color-text-primary)] transition-colors"
+                                      title={crumb.name}
+                                    >
+                                      <FolderIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />
+                                      <span className="truncate">{crumb.name}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                          <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />
+                          {parentBreadcrumb && (
+                            <span className="inline-flex min-w-0 items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => goToBreadcrumb(breadcrumbs.length - 2)}
+                                className="max-w-28 sm:max-w-36 md:max-w-44 truncate rounded px-1 py-0.5 hover:bg-[var(--color-hover)]"
+                                title={parentBreadcrumb.name}
+                              >
+                                {parentBreadcrumb.name}
+                              </button>
+                            </span>
+                          )}
+                          <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />
+                          {currentBreadcrumbItem && (
+                            <span className="inline-flex min-w-0 items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                disabled
+                                className="max-w-28 sm:max-w-36 md:max-w-44 truncate rounded px-1 py-0.5 font-semibold text-[var(--color-text-primary)]"
+                                title={currentBreadcrumbItem.name}
+                              >
+                                {currentBreadcrumbItem.name}
+                              </button>
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        breadcrumbs.map((breadcrumb, index) => (
+                          <span key={breadcrumb.ref ?? 'root'} className="inline-flex min-w-0 items-center gap-1 shrink-0">
+                            {index > 0 && <ChevronRightIcon className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" aria-hidden="true" />}
+                            <button
+                              type="button"
+                              onClick={() => goToBreadcrumb(index)}
+                              disabled={index === breadcrumbs.length - 1}
+                              className="max-w-28 sm:max-w-36 md:max-w-44 truncate rounded px-1 py-0.5 disabled:text-[var(--color-text-primary)] disabled:font-semibold hover:bg-[var(--color-hover)]"
+                              title={breadcrumb.name}
+                            >
+                              {breadcrumb.name}
+                            </button>
+                          </span>
+                        ))
+                      )}
+                    </nav>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <FileUploadControl
+                      apiUrl={apiUrl}
+                      token={token}
+                      profileId={profileId}
+                      parentRef={currentRef}
+                      capabilities={capabilities}
+                      disabled={entriesLoading}
+                      onCompleted={uploadCompleted}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreateDirOpen(true);
+                        setNewDirName('');
+                        setCreateDirError('');
+                      }}
+                      disabled={entriesLoading || !capabilities.mkdir}
+                      className="ui-button-secondary inline-flex items-center gap-2 px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                      title={!capabilities.mkdir ? t('files.mkdirUnavailable') : t('files.newFolder')}
+                      aria-label={t('files.newFolder')}
+                    >
+                      <FolderPlusIcon className="h-4 w-4" aria-hidden="true" />
+                      <span className="hidden sm:inline">{t('files.newFolder')}</span>
+                    </button>
+                    <div className="flex items-center rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-0.5" role="group" aria-label={t('files.viewMode')}>
+                      <button
+                        type="button"
+                        onClick={() => handleViewModeChange('list')}
+                        aria-pressed={viewMode === 'list'}
+                        aria-label={t('files.viewList')}
+                        title={t('files.viewList')}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          viewMode === 'list'
+                            ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-xs'
+                            : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                        }`}
+                      >
+                        <ListBulletIcon className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleViewModeChange('grid')}
+                        aria-pressed={viewMode === 'grid'}
+                        aria-label={t('files.viewGrid')}
+                        title={t('files.viewGrid')}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          viewMode === 'grid'
+                            ? 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-primary)] shadow-xs'
+                            : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+                        }`}
+                      >
+                        <Squares2X2Icon className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={refresh}
+                      disabled={!capabilities.browse}
+                      className="ui-icon-button p-2 hover:bg-[var(--color-hover)]"
+                      aria-label={t('files.refresh')}
+                      title={t('files.refresh')}
+                    >
+                      <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              )}
+              {batchResults.length > 0 && <p className="mx-3 mt-3 ui-alert px-3 py-2 text-sm" role="status">{t('files.batchResultSummary', { success: batchResults.filter((item) => ['deleted', 'copied', 'moved'].includes(item.status)).length, failed: batchResults.filter((item) => item.status === 'failed').length })}</p>}
 
               {!capabilities.browse && !entriesLoading ? (
                 <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.listUnavailable')}</p>

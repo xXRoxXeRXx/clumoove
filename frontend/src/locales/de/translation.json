@@ -599,6 +599,7 @@
     "noProfiles": "Es sind keine gespeicherten Verbindungen verfügbar.",
     "selectProfile": "Wähle eine Verbindung, um ihre Dateien zu durchsuchen.",
     "breadcrumb": "Aktueller Ordner",
+    "moreFolders": "Weitere Ordner",
     "viewMode": "Ansicht",
     "viewList": "Listenansicht",
     "viewGrid": "Rasteransicht",

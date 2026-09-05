@@ -22,6 +22,7 @@ export {
   ClockIcon,
   EyeIcon,
 	EyeSlashIcon,
+	EllipsisHorizontalIcon,
 	EllipsisVerticalIcon,
   MagnifyingGlassIcon,
   MagnifyingGlassMinusIcon,
