@@ -22,7 +22,7 @@ import {
   XMarkIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { batchDeleteFileEntries, batchMutateFileEntries, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, getFileCapabilities, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, type BatchItemResult, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy } from '../../api/files';
+import { batchDeleteFileEntries, batchMutateFileEntries, cancelCrossProfileFileTransfer, copyFileEntry, createArchiveTicket, createDirectory, deleteFileEntry, getFileCapabilities, listCrossProfileFileTransfers, listFileEntries, createDownloadTicket, moveFileEntry, renameFileEntry, startCrossProfileFileTransfer, type BatchItemResult, type FileBreadcrumb, type FileCapabilities, type FileEntry, type FileMutationConflictStrategy, type FileTransferSummary } from '../../api/files';
 import { listConnectionProfiles, type ConnectionProfilePublic } from '../../api/profiles';
 import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
@@ -113,6 +113,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [mutationEntry, setMutationEntry] = useState<FileEntry | null>(null);
   const [mutationOperation, setMutationOperation] = useState<'copy' | 'move' | null>(null);
   const [pickerBreadcrumbs, setPickerBreadcrumbs] = useState<Breadcrumb[]>([]);
+  const [pickerProfileId, setPickerProfileId] = useState(profileId);
+  const [transfers, setTransfers] = useState<FileTransferSummary[]>([]);
   const [pickerEntries, setPickerEntries] = useState<FileEntry[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
   const [mutationBusy, setMutationBusy] = useState(false);
@@ -387,6 +389,27 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     };
   }, [apiUrl, initialBreadcrumbs, selectedProfile, token, translateApiError]);
 
+  const loadTransfers = useCallback(async () => {
+    if (!profileId) return;
+    const result = await listCrossProfileFileTransfers(apiUrl, token, profileId);
+    if (result.ok) setTransfers(result.data.transfers ?? []);
+  }, [apiUrl, profileId, token]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void loadTransfers(), 5000);
+    const initialLoad = window.setTimeout(() => void loadTransfers(), 0);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(initialLoad);
+    };
+  }, [loadTransfers]);
+
+  const cancelTransfer = async (transferId: string) => {
+    const result = await cancelCrossProfileFileTransfer(apiUrl, token, transferId);
+    if (result.ok === false) setError(translateApiError(result.errorCode));
+    else void loadTransfers();
+  };
+
   useEffect(() => {
     if (!nextCursor || entriesLoading || loadingMore || !capabilities.browse) return;
     const target = sentinelRef.current;
@@ -572,18 +595,28 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     void loadEntries(currentRef);
   };
 
-  const loadPickerEntries = useCallback(async (parentRef: string | null) => {
+  const loadPickerEntries = useCallback(async (parentRef: string | null, targetProfileId: string) => {
     pickerRequestRef.current?.abort();
     const controller = new AbortController();
     pickerRequestRef.current = controller;
     setPickerLoading(true);
-    const result = await listFileEntries(apiUrl, token, profileId, parentRef, undefined, controller.signal);
+    const result = await listFileEntries(apiUrl, token, targetProfileId, parentRef, undefined, controller.signal);
     if (!controller.signal.aborted) {
       setPickerEntries(result.ok ? result.data.entries.filter((entry) => entry.kind === 'directory') : []);
       if (result.ok === false) setMutationError(translateApiError(result.errorCode));
       setPickerLoading(false);
     }
-  }, [apiUrl, profileId, token, translateApiError]);
+  }, [apiUrl, token, translateApiError]);
+
+  const selectPickerProfile = (targetProfileId: string) => {
+    const target = profiles.find((profile) => profile.id === targetProfileId);
+    if (!target) return;
+    setPickerProfileId(targetProfileId);
+    setPickerBreadcrumbs([{ ref: null, name: target.name }]);
+    setPickerEntries([]);
+    setMutationError('');
+    void loadPickerEntries(null, targetProfileId);
+  };
 
   const startRename = (entry: FileEntry) => {
     setMenuState(null); setRenameEntry(entry); setRenameName(entry.name); setMutationError(''); setConflictStrategies(null);
@@ -591,15 +624,17 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
 
   const startDestinationPicker = (entry: FileEntry, operation: 'copy' | 'move') => {
     setMenuState(null); setMutationEntry(entry); setMutationOperation(operation); setMutationError(''); setConflictStrategies(null);
+    setPickerProfileId(profileId);
     const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
-    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null);
+    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null, profileId);
   };
 
   const startBatchDestinationPicker = (operation: 'copy' | 'move') => {
     if (!selectedCan(operation) || batchBusy) return;
     setBatchOperation(operation); setBatchConflictRefs([]); setBatchResults([]); setMutationError(''); setConflictStrategies(null);
+    setPickerProfileId(profileId);
     const initial = [{ ref: null, name: selectedProfile?.name ?? t('files.title') }];
-    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null);
+    setPickerBreadcrumbs(initial); setPickerEntries([]); void loadPickerEntries(null, profileId);
   };
 
   const executeBatchMutation = async (strategy?: FileMutationConflictStrategy) => {
@@ -608,6 +643,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     if (refs.length === 0) return;
     setBatchBusy(true); setMutationError('');
     const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
+    if (pickerProfileId !== profileId) {
+      const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, refs, pickerProfileId, destinationRef, batchOperation, strategy);
+      setBatchBusy(false);
+      if (result.ok === false) setMutationError(translateApiError(result.errorCode));
+      else { setBatchOperation(null); setBatchConflictRefs([]); setConflictStrategies(null); setSelectedRefs(new Set()); void loadEntries(currentRef); }
+      void loadTransfers();
+      return;
+    }
     const result = await batchMutateFileEntries(batchOperation, apiUrl, token, profileId, refs, destinationRef, strategy);
     setBatchBusy(false);
     if (result.ok === false) { setMutationError(translateApiError(result.errorCode)); return; }
@@ -637,6 +680,15 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     mutationRequestRef.current = controller;
     setMutationBusy(true); setMutationError('');
     const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
+    if (operation !== 'rename' && pickerProfileId !== profileId) {
+      const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, [entry.ref], pickerProfileId, destinationRef, operation, strategy, controller.signal);
+      if (controller.signal.aborted) return;
+      setMutationBusy(false);
+      if (result.ok === false) { setMutationError(translateApiError(result.errorCode)); return; }
+      setMutationEntry(null); setMutationOperation(null); setConflictStrategies(null); setMutationError('');
+      void loadTransfers();
+      return;
+    }
     const result = operation === 'rename'
       ? await renameFileEntry(apiUrl, token, profileId, entry.ref, newName, strategy, controller.signal)
       : operation === 'copy'
@@ -861,6 +913,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <div className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.selectProfile')}</div>
           ) : (
             <>
+              {transfers.length > 0 && <section className="border-b border-[var(--color-border)] px-4 py-3" aria-label={t('files.transferStatus')}>
+                <h2 className="text-sm font-semibold">{t('files.transferStatus')}</h2>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {transfers.map((transfer) => <li key={transfer.id} className="flex items-center justify-between gap-3 text-[var(--color-text-secondary)]"><span className="truncate">{transfer.operation === 'move' ? t('files.move') : t('files.copy')}: {transfer.source_profile_name} → {transfer.target_profile_name} ({transfer.processed_files}/{transfer.total_files})</span>{['INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED_CONNECTION_LOSS'].includes(transfer.status) ? <button type="button" className="ui-button-secondary px-2 py-1 text-xs" onClick={() => void cancelTransfer(transfer.id)}>{t('common.cancel')}</button> : <span>{transfer.status}</span>}</li>)}
+                </ul>
+              </section>}
               {selectedEntries.length > 0 ? (
                 <div
                   className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:-top-5 before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none before:-z-10"
@@ -1387,11 +1445,15 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <h2 id="destination-picker-title" className="text-lg font-semibold">{(mutationOperation ?? batchOperation) === 'copy' ? t('files.copyTitle') : t('files.moveTitle')}</h2>
             <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{mutationEntry ? t('files.destinationPickerDescription', { name: mutationEntry.name }) : t('files.batchDestinationPickerDescription', { count: selectedEntries.length })}</p>
             {mutationError && <p className="ui-alert ui-alert-error mt-3 px-3 py-2 text-sm" role="alert">{mutationError}</p>}
+            <label className="mt-3 block text-sm font-medium" htmlFor="destination-profile">{t('files.destinationProfile')}</label>
+            <select id="destination-profile" className="ui-input mt-1 w-full px-3 py-2" value={pickerProfileId} disabled={pickerLoading || mutationBusy || batchBusy} onChange={(event) => selectPickerProfile(event.target.value)}>
+              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+            </select>
             <nav className="mt-3 flex flex-wrap gap-1 text-sm" aria-label={t('files.destinationBreadcrumb')}>
-              {pickerBreadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={pickerLoading || index === pickerBreadcrumbs.length - 1} onClick={() => { const next = pickerBreadcrumbs.slice(0, index + 1); setPickerBreadcrumbs(next); void loadPickerEntries(next[next.length - 1]?.ref ?? null); }}>{breadcrumb.name}{index < pickerBreadcrumbs.length - 1 ? ' /' : ''}</button>)}
+              {pickerBreadcrumbs.map((breadcrumb, index) => <button key={breadcrumb.ref ?? 'root'} type="button" className="rounded px-1 py-0.5 hover:bg-[var(--color-hover)]" disabled={pickerLoading || index === pickerBreadcrumbs.length - 1} onClick={() => { const next = pickerBreadcrumbs.slice(0, index + 1); setPickerBreadcrumbs(next); void loadPickerEntries(next[next.length - 1]?.ref ?? null, pickerProfileId); }}>{breadcrumb.name}{index < pickerBreadcrumbs.length - 1 ? ' /' : ''}</button>)}
             </nav>
             <div className="mt-3 min-h-36 overflow-y-auto rounded border border-[var(--color-border)]">
-               {pickerLoading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : pickerBreadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : pickerEntries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => { const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }]; setPickerBreadcrumbs(next); void loadPickerEntries(entry.ref); }}><FolderIcon className="h-4 w-4" aria-hidden="true" />{entry.name}</button>)}
+               {pickerLoading ? <div className="p-4"><LoadingIndicator label={t('common.loading')} size="sm" /></div> : pickerBreadcrumbs.some((breadcrumb) => selectedEntries.some((entry) => entry.kind === 'directory' && breadcrumb.ref === entry.ref)) ? <p className="p-3 text-sm text-[var(--color-text-secondary)]">{t('files.noValidDestination')}</p> : pickerEntries.filter((entry) => !selectedEntries.some((selected) => selected.ref === entry.ref)).map((entry) => <button key={entry.ref} type="button" className="flex w-full items-center gap-2 border-b border-[var(--color-border)] px-3 py-2 text-left text-sm hover:bg-[var(--color-hover)]" onClick={() => { const next = [...pickerBreadcrumbs, { ref: entry.ref, name: entry.name }]; setPickerBreadcrumbs(next); void loadPickerEntries(entry.ref, pickerProfileId); }}><FolderIcon className="h-4 w-4" aria-hidden="true" />{entry.name}</button>)}
             </div>
             <p className="mt-3 text-sm text-[var(--color-text-secondary)]">{t('files.destinationSelected', { name: pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name })}</p>
             <div className="mt-5 flex justify-end gap-2"><button ref={pickerCancelRef} type="button" className="ui-button-secondary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={closeMutationDialogs}>{t('common.cancel')}</button><button type="button" className="ui-button-primary px-3 py-2 text-sm" disabled={mutationBusy || batchBusy} onClick={() => batchOperation ? void executeBatchMutation() : void executeMutation()}>{mutationBusy || batchBusy ? t('files.mutating') : (mutationOperation ?? batchOperation) === 'copy' ? t('files.copy') : t('files.move')}</button></div>

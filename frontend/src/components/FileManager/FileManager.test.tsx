@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
 import { FileManager } from './FileManager';
-import { getFileCapabilities, listFileEntries, createDownloadTicket, createDirectory, deleteFileEntry, renameFileEntry, copyFileEntry, moveFileEntry, type FileEntry } from '../../api/files';
+import { getFileCapabilities, listCrossProfileFileTransfers, listFileEntries, createDownloadTicket, createDirectory, deleteFileEntry, renameFileEntry, copyFileEntry, moveFileEntry, startCrossProfileFileTransfer, type FileEntry } from '../../api/files';
 import { listConnectionProfiles } from '../../api/profiles';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -17,6 +17,9 @@ vi.mock('../../api/files', () => ({
   renameFileEntry: vi.fn(),
   copyFileEntry: vi.fn(),
   moveFileEntry: vi.fn(),
+  listCrossProfileFileTransfers: vi.fn(),
+  cancelCrossProfileFileTransfer: vi.fn(),
+  startCrossProfileFileTransfer: vi.fn(),
 }));
 
 vi.mock('../../api/profiles', () => ({
@@ -110,12 +113,16 @@ describe('FileManager component', () => {
     vi.mocked(listConnectionProfiles).mockReset();
     vi.mocked(getFileCapabilities).mockReset();
     vi.mocked(listFileEntries).mockReset();
+    vi.mocked(listCrossProfileFileTransfers).mockReset();
+    vi.mocked(listCrossProfileFileTransfers).mockResolvedValue({ ok: true, status: 200, data: { transfers: [] } });
     vi.mocked(createDownloadTicket).mockReset();
     vi.mocked(createDirectory).mockReset();
     vi.mocked(deleteFileEntry).mockReset();
     vi.mocked(renameFileEntry).mockReset();
     vi.mocked(copyFileEntry).mockReset();
     vi.mocked(moveFileEntry).mockReset();
+    vi.mocked(startCrossProfileFileTransfer).mockReset();
+    vi.mocked(startCrossProfileFileTransfer).mockResolvedValue({ ok: true, status: 202, data: { transfer_id: 'transfer-1' } });
     vi.mocked(deleteFileEntry).mockResolvedValue({ ok: true, status: 204, data: {} });
 
     vi.mocked(listConnectionProfiles).mockResolvedValue({
@@ -215,6 +222,57 @@ describe('FileManager component', () => {
     expect(container.textContent).toContain('Google Drive');
     expect(container.textContent).toContain('Documents');
     expect(container.textContent).toContain('report.txt');
+  });
+
+  it('switches the existing destination picker to another profile and queues a background copy', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({ ok: true, status: 200, data: { capabilities: { ...mockCapabilities, copy: true } } });
+    vi.mocked(listFileEntries).mockResolvedValue({ ok: true, status: 200, data: { entries: [{ ...rootEntries[1], allowed_actions: ['copy'] }], next_cursor: null } });
+    await act(async () => {
+      root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const selectEntry = container.querySelector<HTMLInputElement>('input[aria-label="Select report.txt"]');
+    await act(async () => { selectEntry?.click(); await Promise.resolve(); });
+    const copy = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === 'Copy');
+    await act(async () => { copy?.click(); await Promise.resolve(); });
+
+    const profileSelect = document.querySelector<HTMLSelectElement>('#destination-profile');
+    expect(profileSelect).not.toBeNull();
+    await act(async () => {
+      if (profileSelect) {
+        profileSelect.value = 'profile-2';
+        profileSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(vi.mocked(listFileEntries)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-2', null, undefined, expect.any(AbortSignal));
+
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent === 'Copy');
+    await act(async () => { confirm?.click(); await Promise.resolve(); });
+    expect(vi.mocked(startCrossProfileFileTransfer)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-1', ['ref-file-1'], 'profile-2', null, 'copy', undefined);
+  });
+
+  it('keeps same-profile copies on the existing direct mutation endpoint', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({ ok: true, status: 200, data: { capabilities: { ...mockCapabilities, copy: true } } });
+    vi.mocked(listFileEntries).mockResolvedValue({ ok: true, status: 200, data: { entries: [{ ...rootEntries[1], allowed_actions: ['copy'] }], next_cursor: null } });
+    vi.mocked(copyFileEntry).mockResolvedValue({ ok: true, status: 200, data: { success: true, status: 'copied', name: 'report.txt', native: true } });
+    await act(async () => {
+      root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const action = container.querySelector<HTMLButtonElement>('button[aria-label="Actions for report.txt"]');
+    await act(async () => { action?.click(); await Promise.resolve(); });
+    const copy = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((button) => button.textContent === 'Copy');
+    await act(async () => { copy?.click(); await Promise.resolve(); });
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent === 'Copy');
+    await act(async () => { confirm?.click(); await Promise.resolve(); });
+    expect(vi.mocked(copyFileEntry)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-1', 'ref-file-1', null, undefined, expect.any(AbortSignal));
+    expect(vi.mocked(startCrossProfileFileTransfer)).not.toHaveBeenCalled();
   });
 
   it('handles profile selection via onProfileChange', async () => {

@@ -651,6 +651,8 @@
     "nameRequired": "Gib einen Namen ein.",
     "mutating": "Wird ausgeführt...",
     "destinationPickerDescription": "Wähle einen Zielordner für {{name}}.",
+    "destinationProfile": "Zielverbindung",
+    "transferStatus": "Hintergrundübertragungen",
     "destinationBreadcrumb": "Zielordner",
     "destinationSelected": "Ausgewähltes Ziel: {{name}}",
     "conflictTitle": "Eintrag existiert bereits",

@@ -271,7 +271,7 @@ func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string)
 		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
 		       created_at, updated_at, target_dir, threads
 		FROM migrations
-		WHERE user_id = $1
+		WHERE user_id = $1 AND COALESCE(picker_session_id, '') NOT LIKE 'file-manager-transfer:%'
 		ORDER BY created_at DESC
 	`
 	rows, err := db.QueryContext(ctx, query, userID)

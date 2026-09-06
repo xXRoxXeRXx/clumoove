@@ -80,6 +80,29 @@ export type BatchMutationResponse = {
   conflict_strategies?: FileMutationConflictStrategy[];
 };
 
+export type FileTransferResponse = { transfer_id: string };
+export type FileTransferSummary = {
+  id: string; operation: 'copy' | 'move'; status: string; source_profile_name: string; target_profile_name: string;
+  total_files: number; processed_files: number; failed_files: number; skipped_files: number;
+};
+
+export async function startCrossProfileFileTransfer(
+  apiUrl: string, token: string, sourceProfileId: string, refs: string[], targetProfileId: string,
+  targetParentRef: string | null, operation: 'copy' | 'move', conflictStrategy?: FileMutationConflictStrategy, signal?: AbortSignal,
+): Promise<ApiJsonResult<FileTransferResponse>> {
+  const init = requestInit(token, signal);
+  init.body = JSON.stringify({ refs, target_profile_id: targetProfileId, ...(targetParentRef ? { target_parent_ref: targetParentRef } : {}), operation, ...(conflictStrategy ? { conflict_strategy: conflictStrategy } : {}) });
+  return apiJson<FileTransferResponse>(profileUrl(apiUrl, sourceProfileId, '/transfers'), init);
+}
+
+export async function listCrossProfileFileTransfers(apiUrl: string, token: string, profileId: string, signal?: AbortSignal): Promise<ApiJsonResult<{ transfers: FileTransferSummary[] }>> {
+  return apiJson<{ transfers: FileTransferSummary[] }>(profileUrl(apiUrl, profileId, '/transfers'), { headers: { Authorization: `Bearer ${token}` }, signal });
+}
+
+export async function cancelCrossProfileFileTransfer(apiUrl: string, token: string, transferId: string, signal?: AbortSignal): Promise<ApiJsonResult<Record<string, never>>> {
+  return apiJson<Record<string, never>>(`${apiUrl}/api/files/transfers/${encodeURIComponent(transferId)}/cancel`, requestInit(token, signal));
+}
+
 export type FileMutationFailure = ApiJsonFailure<FileMutationResponse> & {
   data?: { conflict_strategies?: FileMutationConflictStrategy[] };
 };

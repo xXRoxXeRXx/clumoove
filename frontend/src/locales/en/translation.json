@@ -651,6 +651,8 @@
     "nameRequired": "Enter a name.",
     "mutating": "Working...",
     "destinationPickerDescription": "Choose a destination folder for {{name}}.",
+    "destinationProfile": "Destination connection",
+    "transferStatus": "Background transfers",
     "destinationBreadcrumb": "Destination folder",
     "destinationSelected": "Selected destination: {{name}}",
     "conflictTitle": "Item already exists",

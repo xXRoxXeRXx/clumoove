@@ -204,6 +204,14 @@ func ResolveTargetPath(resourceType, filePath string, metadata []byte, targetDir
 	return path.Clean(relativePath)
 }
 
+func fileManagerTransferOperation(pickerSessionID string) string {
+	const marker = "file-manager-transfer:"
+	if !strings.HasPrefix(pickerSessionID, marker) {
+		return ""
+	}
+	return strings.TrimPrefix(pickerSessionID, marker)
+}
+
 // immichFilenameFromMetadata extracts the original filename that an Immich
 // asset was indexed with. It is stored either as a top-level immich_filename
 // key or inside custom_props.immich_filename.
@@ -1230,6 +1238,16 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 					processorLogf("Warning: metadata propagation failed for task %s (target provider %s): %v", task.ID, mig.TargetProvider, err)
 				}
 			}
+		}
+	}
+
+	// File-manager moves reuse the transfer pipeline but must never remove the
+	// source until the destination stream has completed successfully. Directory
+	// entries are intentionally not removed here: their content may still be
+	// queued and an empty directory is safer than a partially removed tree.
+	if fileManagerTransferOperation(mig.PickerSessionID) == "move" && task.ResourceType == "files" {
+		if err := sourceClient.DeleteFile(ctx, task.ResourceType, task.FilePath); err != nil {
+			return fmt.Errorf("delete source after file-manager move: %w", err)
 		}
 	}
 

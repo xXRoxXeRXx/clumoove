@@ -425,6 +425,23 @@ func TestConnLossCounts(t *testing.T) {
 	}
 }
 
+func TestFileManagerTransferOperation(t *testing.T) {
+	tests := []struct {
+		marker string
+		want   string
+	}{
+		{marker: "file-manager-transfer:move", want: "move"},
+		{marker: "file-manager-transfer:copy", want: "copy"},
+		{marker: "batch-move", want: ""},
+		{marker: "", want: ""},
+	}
+	for _, tt := range tests {
+		if got := fileManagerTransferOperation(tt.marker); got != tt.want {
+			t.Errorf("fileManagerTransferOperation(%q) = %q, want %q", tt.marker, got, tt.want)
+		}
+	}
+}
+
 func TestResolveTargetPath(t *testing.T) {
 	t.Run("unconditional target join when source path matches targetDir prefix", func(t *testing.T) {
 		task := &db.Task{ResourceType: "files", FilePath: "/docs/file.txt"}
