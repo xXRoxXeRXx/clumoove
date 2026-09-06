@@ -863,7 +863,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <>
               {selectedEntries.length > 0 ? (
                 <div
-                  className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[var(--radius-lg)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none"
+                  className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none"
                   role="toolbar"
                   aria-label={t('files.selectionActions')}
                 >
@@ -923,7 +923,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   </div>
                 </div>
               ) : (
-                <div className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 rounded-t-[var(--radius-lg)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none">
+                <div className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none">
                   <div className="flex min-w-0 items-center gap-1.5 flex-1">
                     <button
                       type="button"
