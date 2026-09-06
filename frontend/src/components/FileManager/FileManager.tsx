@@ -814,7 +814,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       {initialPathFallback && <p className="ui-alert px-3 py-2 text-sm" role="status">{t('files.pathFallback')}</p>}
 
       <div className="grid gap-5 lg:grid-cols-[15rem_minmax(0,1fr)] items-start">
-        <aside className="ui-card flex flex-col justify-between p-3 min-h-[160px] self-start lg:sticky lg:top-16 z-10" aria-label={t('files.profiles')}>
+        <aside className="ui-card flex flex-col justify-between p-3 min-h-[160px] self-start lg:sticky lg:top-20 z-10" aria-label={t('files.profiles')}>
           <div>
             <div className="mb-2 px-2">
               <h2 className="text-sm font-semibold">{t('files.profiles')}</h2>
@@ -863,7 +863,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <>
               {selectedEntries.length > 0 ? (
                 <div
-                  className="sticky top-16 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[calc(var(--radius-lg,1rem)-1px)] shadow-xs relative"
+                  className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[calc(var(--radius-lg,1rem)-1px)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:border-b before:border-[var(--color-border)] before:pointer-events-none"
                   role="toolbar"
                   aria-label={t('files.selectionActions')}
                 >
@@ -923,7 +923,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   </div>
                 </div>
               ) : (
-                <div className="sticky top-16 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 rounded-t-[calc(var(--radius-lg,1rem)-1px)] shadow-xs">
+                <div className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 rounded-t-[calc(var(--radius-lg,1rem)-1px)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:border-b before:border-[var(--color-border)] before:pointer-events-none">
                   <div className="flex min-w-0 items-center gap-1.5 flex-1">
                     <button
                       type="button"
