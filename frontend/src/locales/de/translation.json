@@ -653,6 +653,7 @@
     "destinationPickerDescription": "Wähle einen Zielordner für {{name}}.",
     "destinationProfile": "Zielverbindung",
     "transferStatus": "Hintergrundübertragungen",
+    "cancelTransfer": "Übertragung abbrechen",
     "destinationBreadcrumb": "Zielordner",
     "destinationSelected": "Ausgewähltes Ziel: {{name}}",
     "conflictTitle": "Eintrag existiert bereits",

@@ -10,7 +10,7 @@ import {
   XMarkIcon,
 } from '../icons';
 import { useTranslation } from 'react-i18next';
-import { uploadFile, type FileCapabilities, type UploadConflictStrategy } from '../../api/files';
+import { uploadFile, type FileCapabilities, type FileTransferSummary, type UploadConflictStrategy } from '../../api/files';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
@@ -34,6 +34,8 @@ type FileUploadControlProps = {
   capabilities: FileCapabilities;
   disabled?: boolean;
   onCompleted: (profileId: string) => void;
+  backgroundTransfers?: FileTransferSummary[];
+  onCancelBackgroundTransfer?: (transferId: string) => void;
 };
 
 function availableStrategies(capabilities: FileCapabilities): UploadConflictStrategy[] {
@@ -47,7 +49,7 @@ function nextTaskID(): string {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
-export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabilities, disabled = false, onCompleted }: FileUploadControlProps) {
+export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabilities, disabled = false, onCompleted, backgroundTransfers = [], onCancelBackgroundTransfer = () => undefined }: FileUploadControlProps) {
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
   const translateApiError = useApiError();
@@ -150,9 +152,13 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
   const isUploadDisabled = disabled || !capabilities.upload;
 
   // Queue summary metrics
-  const totalCount = tasks.length;
-  const completedCount = tasks.filter((t) => t.status === 'uploaded' || t.status === 'skipped' || t.status === 'renamed').length;
-  const inProgressCount = tasks.filter((t) => t.status === 'uploading' || t.status === 'queued').length;
+  const completedUploadCount = tasks.filter((t) => t.status === 'uploaded' || t.status === 'skipped' || t.status === 'renamed').length;
+  const inProgressUploadCount = tasks.filter((t) => t.status === 'uploading' || t.status === 'queued').length;
+  const isBackgroundTransferActive = (status: string) => ['INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED_CONNECTION_LOSS'].includes(status);
+  const completedBackgroundCount = backgroundTransfers.filter((transfer) => !isBackgroundTransferActive(transfer.status)).length;
+  const totalCount = tasks.length + backgroundTransfers.length;
+  const completedCount = completedUploadCount + completedBackgroundCount;
+  const inProgressCount = inProgressUploadCount + backgroundTransfers.length - completedBackgroundCount;
   const failedCount = tasks.filter((t) => t.status === 'failed').length;
 
   const totalBytes = tasks.reduce((sum, t) => sum + Math.max(t.file.size, 1), 0);
@@ -166,8 +172,12 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
     return sum;
   }, 0);
 
-  const overallPercent = totalBytes > 0 ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100)) : 0;
-  const isAllDone = totalCount > 0 && inProgressCount === 0;
+  const backgroundTotalFiles = backgroundTransfers.reduce((sum, transfer) => sum + transfer.total_files, 0);
+  const backgroundProcessedFiles = backgroundTransfers.reduce((sum, transfer) => sum + transfer.processed_files, 0);
+  const overallPercent = totalBytes > 0
+    ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100))
+    : backgroundTotalFiles > 0 ? Math.min(100, Math.round((backgroundProcessedFiles / backgroundTotalFiles) * 100)) : 0;
+  const canClearUploads = tasks.length > 0 && inProgressUploadCount === 0;
 
   return (
     <>
@@ -185,7 +195,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
         </button>
       </div>
 
-      {tasks.length > 0 && (
+      {(tasks.length > 0 || backgroundTransfers.length > 0) && (
         <aside aria-label={t('files.uploadQueue')}>
           {!isExpanded ? (
             /* Compact Floating Pill (Bottom Center) */
@@ -217,7 +227,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
                 </div>
                 <ChevronUpIcon className="h-4 w-4 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
               </button>
-              {isAllDone && (
+              {canClearUploads && (
                 <button
                   type="button"
                   onClick={() => setTasks([])}
@@ -242,7 +252,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {completedCount > 0 && inProgressCount > 0 && (
+                  {completedUploadCount > 0 && inProgressUploadCount > 0 && (
                     <button
                       type="button"
                       onClick={clearCompleted}
@@ -261,7 +271,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
                   >
                     <ChevronDownIcon className="h-4 w-4" aria-hidden="true" />
                   </button>
-                  {isAllDone && (
+                  {canClearUploads && (
                     <button
                       type="button"
                       onClick={() => setTasks([])}
@@ -285,6 +295,23 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
 
               {/* Scrollable List of Files (Sized for ~10 visible items) */}
               <ul className="max-h-[380px] overflow-y-auto divide-y divide-[var(--color-border)]/50 p-2">
+                {backgroundTransfers.map((transfer) => {
+                  const active = isBackgroundTransferActive(transfer.status);
+                  const progress = transfer.total_files > 0 ? Math.min(100, Math.round((transfer.processed_files / transfer.total_files) * 100)) : 0;
+                  return (
+                    <li key={transfer.id} className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
+                      <ArrowPathIcon className={`h-5 w-5 shrink-0 ${active ? 'animate-spin text-[var(--color-info-text)]' : 'text-[var(--color-text-secondary)]'}`} aria-hidden="true" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-medium text-[var(--color-text-primary)] text-xs sm:text-sm">{transfer.operation === 'move' ? t('files.move') : t('files.copy')}: {transfer.source_profile_name} → {transfer.target_profile_name}</span>
+                          <span className="text-xs text-[var(--color-text-secondary)] shrink-0">{transfer.processed_files}/{transfer.total_files}</span>
+                        </div>
+                        <div className="h-1 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5"><div className={`h-full transition-all duration-200 ${transfer.failed_files > 0 ? 'bg-[var(--color-progress-error)]' : 'bg-[var(--color-info-text)]'}`} style={{ width: `${progress}%` }} /></div>
+                      </div>
+                      {active && <button type="button" onClick={() => onCancelBackgroundTransfer(transfer.id)} className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-error-text)]" aria-label={t('files.cancelTransfer')} title={t('files.cancelTransfer')}><XMarkIcon className="h-4 w-4" aria-hidden="true" /></button>}
+                    </li>
+                  );
+                })}
                 {tasks.map((task) => (
                   <li key={task.id} className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
                     <FileIcon name={task.file.name} mimeType={task.file.type} className="h-5 w-5 shrink-0" />

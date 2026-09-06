@@ -913,12 +913,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <div className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.selectProfile')}</div>
           ) : (
             <>
-              {transfers.length > 0 && <section className="border-b border-[var(--color-border)] px-4 py-3" aria-label={t('files.transferStatus')}>
-                <h2 className="text-sm font-semibold">{t('files.transferStatus')}</h2>
-                <ul className="mt-2 space-y-1 text-sm">
-                  {transfers.map((transfer) => <li key={transfer.id} className="flex items-center justify-between gap-3 text-[var(--color-text-secondary)]"><span className="truncate">{transfer.operation === 'move' ? t('files.move') : t('files.copy')}: {transfer.source_profile_name} → {transfer.target_profile_name} ({transfer.processed_files}/{transfer.total_files})</span>{['INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED_CONNECTION_LOSS'].includes(transfer.status) ? <button type="button" className="ui-button-secondary px-2 py-1 text-xs" onClick={() => void cancelTransfer(transfer.id)}>{t('common.cancel')}</button> : <span>{transfer.status}</span>}</li>)}
-                </ul>
-              </section>}
               {selectedEntries.length > 0 ? (
                 <div
                   className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:-top-5 before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none before:-z-10"
@@ -1104,6 +1098,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       capabilities={capabilities}
                       disabled={entriesLoading}
                       onCompleted={uploadCompleted}
+                      backgroundTransfers={transfers}
+                      onCancelBackgroundTransfer={(transferId) => void cancelTransfer(transferId)}
                     />
                     <button
                       type="button"

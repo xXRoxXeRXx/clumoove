@@ -653,6 +653,7 @@
     "destinationPickerDescription": "Choose a destination folder for {{name}}.",
     "destinationProfile": "Destination connection",
     "transferStatus": "Background transfers",
+    "cancelTransfer": "Cancel transfer",
     "destinationBreadcrumb": "Destination folder",
     "destinationSelected": "Selected destination: {{name}}",
     "conflictTitle": "Item already exists",
