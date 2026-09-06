@@ -863,7 +863,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <>
               {selectedEntries.length > 0 ? (
                 <div
-                  className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[calc(var(--radius-lg,1rem)-1px)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:border-b before:border-[var(--color-border)] before:pointer-events-none"
+                  className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[var(--radius-lg)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none"
                   role="toolbar"
                   aria-label={t('files.selectionActions')}
                 >
@@ -923,7 +923,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   </div>
                 </div>
               ) : (
-                <div className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 rounded-t-[calc(var(--radius-lg,1rem)-1px)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:border-b before:border-[var(--color-border)] before:pointer-events-none">
+                <div className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3 rounded-t-[var(--radius-lg)] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:bottom-full before:-left-[1px] before:-right-[1px] before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none">
                   <div className="flex min-w-0 items-center gap-1.5 flex-1">
                     <button
                       type="button"
@@ -1207,12 +1207,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                             openEntry(entry);
                           }
                         }}
-                        className={`group relative flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden transition-all hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs ${
+                        className={`group isolate relative flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden transition-all hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs ${
                           isInteractive ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]' : 'opacity-70'
                         }`}
                         title={entry.name}
                       >
-                        <input type="checkbox" className="absolute left-2 top-2 z-20" checked={selectedRefs.has(entry.ref)} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} />
+                        <input type="checkbox" className="absolute left-2 top-2 z-10" checked={selectedRefs.has(entry.ref)} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} />
                         {hasEntryActions(entry) && (
                           <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                             <button
