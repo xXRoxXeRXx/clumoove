@@ -2,8 +2,8 @@
 
 ## Schema Migrations & Queries
 - **Dual-Update Contract**:
-  - Every schema change must be added to [db/schema.sql](file:///c:/Users/meyer/Development/clumoove/db/schema.sql) for clean installs.
-  - The same change must also be added as an idempotent `CREATE TABLE IF NOT EXISTS` or `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement inside `InitDB()` in [backend/internal/db/db.go](file:///c:/Users/meyer/Development/clumoove/backend/internal/db/db.go) for automatic startup migrations.
+  - Every schema change must be added to [db/schema.sql](../db/schema.sql) for clean installs.
+  - The same change must also be added as an idempotent `CREATE TABLE IF NOT EXISTS` or `ALTER TABLE … ADD COLUMN IF NOT EXISTS` statement inside `InitDB()` in [backend/internal/db/db.go](../backend/internal/db/db.go) for automatic startup migrations.
 - **Parameterized SQL**: All database operations must use parameterized placeholders (`$1`, `$2`, …). Never format or concatenate untrusted inputs into SQL strings.
 
 ## Multi-Tenancy & Ownership Enforcement

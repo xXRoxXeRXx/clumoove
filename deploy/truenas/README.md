@@ -33,7 +33,7 @@ Create datasets on your TrueNAS pool (for example under `/mnt/tank/apps/clumoove
 
 1. Open the TrueNAS SCALE Web UI and navigate to **Apps**.
 2. Click the three dots (top right) and select **Install via YAML** (or **Custom App**).
-3. Paste the contents of [docker-compose.yml](file:///c:/Users/meyer/Development/clumoove/deploy/truenas/docker-compose.yml).
+3. Paste the contents of [docker-compose.yml](./docker-compose.yml).
 4. Configure your environment variables and dataset paths:
    - `ENCRYPTION_SECRET_KEY`: A secure 32+ character random string.
    - `JWT_SECRET_KEY`: A secure 32+ character random string.

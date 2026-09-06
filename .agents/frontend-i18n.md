@@ -1,7 +1,7 @@
 # Frontend & Internationalization
 
 ## UI Styling & Tokens
-- **Design System Tokens**: Use semantic `ui-*` utility classes and color tokens defined in [frontend/src/index.css](file:///c:/Users/meyer/Development/clumoove/frontend/src/index.css).
+- **Design System Tokens**: Use semantic `ui-*` utility classes and color tokens defined in [frontend/src/index.css](../frontend/src/index.css).
 - **Styling Prohibitions**: Do not reintroduce deprecated patterns such as `portal-*`, `glass-*`, `shadow-portal*`, decorative gradient overlays, heavy backdrop blur, oversize shadows, or scaling hover effects. Keep interfaces clean, responsive, and token-driven.
 - **Icons**:
   - Use `@heroicons/react` for all UI controls, navigation, and state indicators.
