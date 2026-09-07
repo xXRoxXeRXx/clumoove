@@ -154,7 +154,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
   // Queue summary metrics
   const completedUploadCount = tasks.filter((t) => t.status === 'uploaded' || t.status === 'skipped' || t.status === 'renamed').length;
   const inProgressUploadCount = tasks.filter((t) => t.status === 'uploading' || t.status === 'queued').length;
-  const isBackgroundTransferActive = (status: string) => ['INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED_CONNECTION_LOSS'].includes(status);
+  const isBackgroundTransferActive = (status: string) => ['PENDING', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(status);
   const completedBackgroundCount = backgroundTransfers.filter((transfer) => !isBackgroundTransferActive(transfer.status)).length;
   const totalCount = tasks.length + backgroundTransfers.length;
   const completedCount = completedUploadCount + completedBackgroundCount;
