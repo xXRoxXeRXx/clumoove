@@ -221,6 +221,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   }, []);
 
   useEffect(() => {
+    if (batchResults.length === 0) return;
+    const timer = window.setTimeout(() => {
+      setBatchResults([]);
+    }, 4000);
+    return () => window.clearTimeout(timer);
+  }, [batchResults]);
+
+  useEffect(() => {
     if (!menuState) return;
     const handlePointerDown = (event: PointerEvent | MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -712,7 +720,6 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
           );
           return;
         }
-        setBatchResults(result.data.results);
         const failures = result.data.results.filter((item) => item.status === 'failed' || item.status === 'conflict');
         if (failures.length > 0) {
           const summary = t('files.batchResultSummary', {
@@ -1285,7 +1292,25 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                   </div>
                 </div>
               )}
-              {batchResults.length > 0 && <p className="mx-3 mt-3 ui-alert px-3 py-2 text-sm" role="status">{t('files.batchResultSummary', { success: batchResults.filter((item) => ['deleted', 'copied', 'moved'].includes(item.status)).length, failed: batchResults.filter((item) => item.status === 'failed').length })}</p>}
+              {batchResults.length > 0 && (
+                <div className="mx-3 mt-3 flex items-center justify-between gap-2 ui-alert px-3 py-2 text-sm" role="status">
+                  <span>
+                    {t('files.batchResultSummary', {
+                      success: batchResults.filter((item) => ['deleted', 'copied', 'moved'].includes(item.status)).length,
+                      failed: batchResults.filter((item) => item.status === 'failed').length,
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setBatchResults([])}
+                    className="ui-icon-button p-0.5 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shrink-0"
+                    aria-label={t('common.cancel')}
+                    title={t('common.cancel')}
+                  >
+                    <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              )}
 
               {!capabilities.browse && !entriesLoading ? (
                 <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.listUnavailable')}</p>
