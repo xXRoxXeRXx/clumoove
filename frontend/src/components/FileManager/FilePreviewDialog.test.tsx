@@ -4,12 +4,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import i18n from '../../i18n';
 import { FilePreviewDialog } from './FilePreviewDialog';
-import { createDownloadTicket, type FileEntry } from '../../api/files';
+import { createDownloadTicket, getFileThumbnailResult, type FileEntry } from '../../api/files';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('../../api/files', () => ({
   createDownloadTicket: vi.fn(),
+  getFileThumbnailResult: vi.fn(),
 }));
 
 vi.mock('react-pdf', () => ({
@@ -82,6 +83,7 @@ describe('FilePreviewDialog', () => {
   beforeEach(async () => {
     await i18n.changeLanguage('en');
     vi.mocked(createDownloadTicket).mockReset();
+    vi.mocked(getFileThumbnailResult).mockReset();
     vi.mocked(createDownloadTicket).mockResolvedValue({
       ok: true,
       status: 200,
@@ -594,6 +596,154 @@ describe('FilePreviewDialog', () => {
     expect(videoElement?.controls).toBe(true);
     expect(videoElement?.autoplay).toBe(true);
     expect(videoElement?.playsInline).toBe(true);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('loads and renders an image using a widescreen thumbnail (1920) when supportsThumbnails is true', async () => {
+    const mockBlob = new Blob(['mock image thumbnail'], { type: 'image/jpeg' });
+    vi.mocked(getFileThumbnailResult).mockResolvedValue({
+      blob: mockBlob,
+      status: 200,
+    });
+
+    const imageEntry = makeEntry('photo.jpg', 'image/jpeg', 5000);
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={imageEntry}
+          supportsThumbnails={true}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(getFileThumbnailResult).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'safe-ref',
+      1920,
+      1080,
+      expect.any(AbortSignal)
+    );
+    expect(createDownloadTicket).not.toHaveBeenCalled();
+
+    const imgElement = document.querySelector<HTMLImageElement>('img[alt="photo.jpg"]');
+    expect(imgElement).not.toBeNull();
+  });
+
+  it('falls back to download ticket when thumbnail fetch fails', async () => {
+    vi.mocked(getFileThumbnailResult).mockResolvedValue({
+      blob: null,
+      status: 415,
+    });
+
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-img',
+      },
+    });
+
+    const mockBlob = new Blob(['mock original image'], { type: 'image/jpeg' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(mockBlob, {
+        status: 200,
+        headers: { 'Content-Length': String(mockBlob.size) },
+      })
+    );
+
+    const imageEntry = makeEntry('photo.jpg', 'image/jpeg', 5000);
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={imageEntry}
+          supportsThumbnails={true}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(getFileThumbnailResult).toHaveBeenCalled();
+    expect(createDownloadTicket).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'safe-ref',
+      expect.any(AbortSignal)
+    );
+
+    const imgElement = document.querySelector<HTMLImageElement>('img[alt="photo.jpg"]');
+    expect(imgElement).not.toBeNull();
+
+    fetchSpy.mockRestore();
+  });
+
+  it('uses download ticket directly when supportsThumbnails is false', async () => {
+    vi.mocked(createDownloadTicket).mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: {
+        download_url: '/api/files/download/ticket-img',
+      },
+    });
+
+    const mockBlob = new Blob(['mock original image'], { type: 'image/jpeg' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(mockBlob, {
+        status: 200,
+        headers: { 'Content-Length': String(mockBlob.size) },
+      })
+    );
+
+    const imageEntry = makeEntry('photo.jpg', 'image/jpeg', 5000);
+
+    await act(async () => {
+      root.render(
+        <FilePreviewDialog
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          entry={imageEntry}
+          supportsThumbnails={false}
+          onClose={onClose}
+          onDownload={onDownload}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(getFileThumbnailResult).not.toHaveBeenCalled();
+    expect(createDownloadTicket).toHaveBeenCalled();
+
+    const imgElement = document.querySelector<HTMLImageElement>('img[alt="photo.jpg"]');
+    expect(imgElement).not.toBeNull();
 
     fetchSpy.mockRestore();
   });

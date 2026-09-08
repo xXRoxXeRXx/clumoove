@@ -446,8 +446,10 @@ func mapDropboxThumbnailSize(width, height int) string {
 		return "w640h480"
 	case maxDim <= 960:
 		return "w960h640"
-	default:
+	case maxDim <= 1024:
 		return "w1024h768"
+	default:
+		return "w2048h1536"
 	}
 }
 
@@ -459,11 +461,11 @@ func (p *DropboxProvider) ThumbnailManager(ctx context.Context, locator ManagerL
 	if height <= 0 {
 		height = 256
 	}
-	if width > 1024 {
-		width = 1024
+	if width > 2048 {
+		width = 2048
 	}
-	if height > 1024 {
-		height = 1024
+	if height > 2048 {
+		height = 2048
 	}
 
 	sizeStr := mapDropboxThumbnailSize(width, height)

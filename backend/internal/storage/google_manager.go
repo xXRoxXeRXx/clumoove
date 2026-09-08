@@ -596,8 +596,8 @@ func (p *GoogleProvider) ThumbnailManager(ctx context.Context, locator ManagerLo
 		}
 		if maxDim < 32 {
 			maxDim = 32
-		} else if maxDim > 1024 {
-			maxDim = 1024
+		} else if maxDim > 2048 {
+			maxDim = 2048
 		}
 		if idx := strings.LastIndex(thumbnailURL, "=s"); idx != -1 {
 			thumbnailURL = thumbnailURL[:idx] + fmt.Sprintf("=s%d", maxDim)

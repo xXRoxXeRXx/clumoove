@@ -916,6 +916,28 @@ func TestHandleFileThumbnailValidations(t *testing.T) {
 	}
 }
 
+func TestComputeThumbnailDimensions(t *testing.T) {
+	tests := []struct {
+		inW, inH     int
+		wantW, wantH int
+	}{
+		{0, 0, 256, 256},
+		{-1, -1, 256, 256},
+		{1920, 0, 1920, 1080},
+		{0, 1080, 1920, 1080},
+		{1920, 1080, 1920, 1080},
+		{3000, 3000, 2048, 2048},
+		{256, 256, 256, 256},
+	}
+	for _, tc := range tests {
+		w, h := computeThumbnailDimensions(tc.inW, tc.inH)
+		if w != tc.wantW || h != tc.wantH {
+			t.Errorf("computeThumbnailDimensions(%d, %d) = (%d, %d), want (%d, %d)",
+				tc.inW, tc.inH, w, h, tc.wantW, tc.wantH)
+		}
+	}
+}
+
 func TestHandleFileMutationValidations(t *testing.T) {
 	server := &APIServer{
 		rateLimiter:   allowAllFileRateLimiter{},

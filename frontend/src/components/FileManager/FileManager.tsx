@@ -1645,6 +1645,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             profileId={profileId}
             entry={previewEntry}
             entries={entries}
+            supportsThumbnails={capabilities.thumbnails}
             onNavigate={(entry) => setPreviewEntry(entry)}
             onClose={() => setPreviewEntry(null)}
             onDownload={(entry) => void download(entry)}

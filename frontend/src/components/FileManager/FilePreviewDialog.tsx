@@ -12,11 +12,11 @@ import {
 import DOMPurify from 'dompurify';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { useTranslation } from 'react-i18next';
-import { createDownloadTicket, type FileEntry } from '../../api/files';
+import { createDownloadTicket, getFileThumbnailResult, type FileEntry } from '../../api/files';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
-import { canPreview, previewKindFor, previewLimit } from './filePreview';
+import { canPreview, getPreviewThumbnailDimensions, previewKindFor, previewLimit } from './filePreview';
 import DocxWorker from './docxPreview.worker.ts?worker';
 import XlsxWorker from './xlsxPreview.worker.ts?worker';
 import pdfWorkerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -71,15 +71,17 @@ function sanitizeDocx(html: string): string {
   return document.body.innerHTML;
 }
 
+
 type FilePreviewContentProps = {
   apiUrl: string;
   token: string;
   profileId: string;
   entry: FileEntry;
+  supportsThumbnails?: boolean;
   onDownload: (entry: FileEntry) => void;
 };
 
-function FilePreviewContent({ apiUrl, token, profileId, entry, onDownload }: FilePreviewContentProps) {
+function FilePreviewContent({ apiUrl, token, profileId, entry, supportsThumbnails, onDownload }: FilePreviewContentProps) {
   const { t } = useTranslation();
   const { formatBytes, formatDateTime } = useFormat();
   const translateApiError = useApiError();
@@ -109,6 +111,30 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, onDownload }: Fil
     let objectUrl: string | null = null;
     let worker: Worker | null = null;
     const load = async () => {
+      if (kind === 'image' && supportsThumbnails) {
+        const { width, height } = getPreviewThumbnailDimensions();
+        try {
+          const thumbResult = await getFileThumbnailResult(
+            apiUrl,
+            token,
+            profileId,
+            entry.ref,
+            width,
+            height,
+            controller.signal
+          );
+          if (controller.signal.aborted) return;
+          if (thumbResult.blob && thumbResult.status === 200) {
+            objectUrl = URL.createObjectURL(thumbResult.blob);
+            setBlobUrl(objectUrl);
+            setState('ready');
+            return;
+          }
+        } catch (thumbErr) {
+          if (controller.signal.aborted || (thumbErr instanceof DOMException && thumbErr.name === 'AbortError')) return;
+        }
+      }
+
       const ticket = await createDownloadTicket(apiUrl, token, profileId, entry.ref, controller.signal);
       if (controller.signal.aborted) return;
       if (ticket.ok === false) {
@@ -159,7 +185,7 @@ function FilePreviewContent({ apiUrl, token, profileId, entry, onDownload }: Fil
       worker?.terminate();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [apiUrl, entry, kind, profileId, token, translateApiError]);
+  }, [apiUrl, entry, kind, profileId, supportsThumbnails, token, translateApiError]);
 
   if (state === 'loading') {
     return <p className="ui-empty py-12 text-center">{t('files.previewLoading')}</p>;
@@ -311,12 +337,13 @@ type FilePreviewDialogProps = {
   profileId: string;
   entry: FileEntry;
   entries?: FileEntry[];
+  supportsThumbnails?: boolean;
   onNavigate?: (entry: FileEntry) => void;
   onClose: () => void;
   onDownload: (entry: FileEntry) => void;
 };
 
-export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, onNavigate, onClose, onDownload }: FilePreviewDialogProps) {
+export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, supportsThumbnails, onNavigate, onClose, onDownload }: FilePreviewDialogProps) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -438,6 +465,7 @@ export function FilePreviewDialog({ apiUrl, token, profileId, entry, entries, on
             token={token}
             profileId={profileId}
             entry={entry}
+            supportsThumbnails={supportsThumbnails}
             onDownload={onDownload}
           />
         </div>

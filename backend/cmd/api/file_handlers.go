@@ -1080,20 +1080,7 @@ func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	width := request.Width
-	height := request.Height
-	if width <= 0 {
-		width = 256
-	}
-	if height <= 0 {
-		height = 256
-	}
-	if width > 1024 {
-		width = 1024
-	}
-	if height > 1024 {
-		height = 1024
-	}
+	width, height := computeThumbnailDimensions(request.Width, request.Height)
 
 	stream, contentType, thumbnailErr := thumbnailer.ThumbnailManager(resolved.ctx, reference.Locator, width, height)
 	if thumbnailErr != nil {
@@ -1122,6 +1109,32 @@ func (s *APIServer) handleFileThumbnail(w http.ResponseWriter, r *http.Request) 
 	h.Set("Content-Security-Policy", "default-src 'none'")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, stream)
+}
+
+func computeThumbnailDimensions(requestedWidth, requestedHeight int) (int, int) {
+	width := requestedWidth
+	height := requestedHeight
+	if width <= 0 && height <= 0 {
+		width = 256
+		height = 256
+	} else if width <= 0 {
+		width = (height * 16) / 9
+		if width <= 0 {
+			width = height
+		}
+	} else if height <= 0 {
+		height = (width * 9) / 16
+		if height <= 0 {
+			height = width
+		}
+	}
+	if width > 2048 {
+		width = 2048
+	}
+	if height > 2048 {
+		height = 2048
+	}
+	return width, height
 }
 
 // handleFileUpload accepts only a raw file body. Parent locators remain sealed

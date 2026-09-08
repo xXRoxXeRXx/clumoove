@@ -353,6 +353,28 @@ func TestDropboxManager(t *testing.T) {
 		}
 	})
 
+	t.Run("mapDropboxThumbnailSize", func(t *testing.T) {
+		tests := []struct {
+			w, h int
+			want string
+		}{
+			{32, 32, "w32h32"},
+			{64, 64, "w64h64"},
+			{128, 128, "w128h128"},
+			{256, 256, "w256h256"},
+			{480, 320, "w480h320"},
+			{640, 480, "w640h480"},
+			{960, 640, "w960h640"},
+			{1024, 768, "w1024h768"},
+			{1920, 1080, "w2048h1536"},
+		}
+		for _, tc := range tests {
+			if got := mapDropboxThumbnailSize(tc.w, tc.h); got != tc.want {
+				t.Errorf("mapDropboxThumbnailSize(%d, %d) = %s, want %s", tc.w, tc.h, got, tc.want)
+			}
+		}
+	})
+
 	t.Run("ResolveManagerPath", func(t *testing.T) {
 		// Root
 		rootLoc, rootCrumbs, fallback, err := provider.ResolveManagerPath(context.Background(), "/")

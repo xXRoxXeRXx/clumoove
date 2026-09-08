@@ -60,3 +60,11 @@ export function canPreview(entry: FileEntry): boolean {
 export function previewLimit(kind: PreviewKind): number {
   return limits[kind];
 }
+
+export function getPreviewThumbnailDimensions(): { width: number; height: number } {
+  const isPortrait = typeof window !== 'undefined' && window.innerHeight > window.innerWidth;
+  if (isPortrait) {
+    return { width: 1080, height: 1920 };
+  }
+  return { width: 1920, height: 1080 };
+}
