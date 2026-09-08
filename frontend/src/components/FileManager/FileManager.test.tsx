@@ -273,6 +273,47 @@ describe('FileManager component', () => {
     await act(async () => { confirm?.click(); await Promise.resolve(); });
     expect(vi.mocked(copyFileEntry)).toHaveBeenCalledWith('https://api.example.test', 'jwt-token', 'profile-1', 'ref-file-1', null, undefined, expect.any(AbortSignal));
     expect(vi.mocked(startCrossProfileFileTransfer)).not.toHaveBeenCalled();
+    // Modal dialog is closed immediately
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('runs same-profile copy asynchronously in transfer queue without blocking UI modal', async () => {
+    vi.mocked(getFileCapabilities).mockResolvedValue({ ok: true, status: 200, data: { capabilities: { ...mockCapabilities, copy: true } } });
+    vi.mocked(listFileEntries).mockResolvedValue({ ok: true, status: 200, data: { entries: [{ ...rootEntries[1], allowed_actions: ['copy'] }], next_cursor: null } });
+    const copyDeferred = deferred<{ ok: true; status: 200; data: { success: true; status: string; name: string; native: boolean } }>();
+    vi.mocked(copyFileEntry).mockReturnValue(copyDeferred.promise);
+
+    await act(async () => {
+      root.render(<FileManager apiUrl="https://api.example.test" token="jwt-token" profileId="profile-1" onProfileChange={onProfileChange} />);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const action = container.querySelector<HTMLButtonElement>('button[aria-label="Actions for report.txt"]');
+    await act(async () => { action?.click(); await Promise.resolve(); });
+    const copy = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find((button) => button.textContent === 'Copy');
+    await act(async () => { copy?.click(); await Promise.resolve(); });
+
+    // Dialog is open initially
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+
+    const confirm = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((button) => button.textContent === 'Copy');
+    await act(async () => { confirm?.click(); await Promise.resolve(); });
+
+    // Dialog closes immediately even while copyFileEntry is still pending
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    // Transfer pill/queue button is present in the UI
+    const transferPill = container.querySelector('button[aria-label*="Transfers"], button[aria-label*="Übertragungen"]');
+    expect(transferPill).not.toBeNull();
+
+    // Now resolve copyFileEntry
+    await act(async () => {
+      copyDeferred.resolve({ ok: true, status: 200, data: { success: true, status: 'copied', name: 'report.txt', native: true } });
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(vi.mocked(listFileEntries)).toHaveBeenCalled();
   });
 
   it('handles profile selection via onProfileChange', async () => {

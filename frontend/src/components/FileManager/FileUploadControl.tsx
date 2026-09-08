@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowPathIcon,
+  ArrowRightIcon,
   ArrowUpTrayIcon,
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ClipboardDocumentIcon,
   FileIcon,
   XMarkIcon,
 } from '../icons';
@@ -14,6 +16,16 @@ import { uploadFile, type FileCapabilities, type FileTransferSummary, type Uploa
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
+
+export type InternalTransfer = {
+  id: string;
+  operation: 'copy' | 'move';
+  sourceName: string;
+  destinationName: string;
+  itemCount: number;
+  status: 'queued' | 'copying' | 'moving' | 'copied' | 'moved' | 'failed' | 'cancelled';
+  error?: string;
+};
 
 type QueueTask = {
   id: string;
@@ -36,6 +48,10 @@ type FileUploadControlProps = {
   onCompleted: (profileId: string) => void;
   backgroundTransfers?: FileTransferSummary[];
   onCancelBackgroundTransfer?: (transferId: string) => void;
+  onDismissBackgroundTransfer?: (transferId: string) => void;
+  internalTransfers?: InternalTransfer[];
+  onCancelInternalTransfer?: (transferId: string) => void;
+  onDismissInternalTransfer?: (transferId: string) => void;
 };
 
 function availableStrategies(capabilities: FileCapabilities): UploadConflictStrategy[] {
@@ -49,7 +65,21 @@ function nextTaskID(): string {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 }
 
-export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabilities, disabled = false, onCompleted, backgroundTransfers = [], onCancelBackgroundTransfer = () => undefined }: FileUploadControlProps) {
+export function FileUploadControl({
+  apiUrl,
+  token,
+  profileId,
+  parentRef,
+  capabilities,
+  disabled = false,
+  onCompleted,
+  backgroundTransfers = [],
+  onCancelBackgroundTransfer = () => undefined,
+  onDismissBackgroundTransfer = () => undefined,
+  internalTransfers = [],
+  onCancelInternalTransfer = () => undefined,
+  onDismissInternalTransfer = () => undefined,
+}: FileUploadControlProps) {
   const { t } = useTranslation();
   const { formatBytes } = useFormat();
   const translateApiError = useApiError();
@@ -67,12 +97,69 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
   const strategies = availableStrategies(capabilities);
   useFocusTrap(dialogRef, cancelRef, () => setPending([]), pending.length > 0);
 
-  useEffect(() => () => {
-    controllers.current.forEach((controller) => controller.abort());
-    if (backoffTimeoutRef.current !== null) {
-      window.clearTimeout(backoffTimeoutRef.current);
+  // Auto-dismiss tracking for completed items
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set());
+  const dismissTimers = useRef(new Map<string, number>());
+
+  const dismissItem = useCallback((id: string) => {
+    const timer = dismissTimers.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      dismissTimers.current.delete(id);
     }
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    setTasks((current) => current.filter((t) => t.id !== id));
+    onDismissBackgroundTransfer(id);
+    onDismissInternalTransfer(id);
+  }, [onDismissBackgroundTransfer, onDismissInternalTransfer]);
+
+  const scheduleDismiss = useCallback((id: string) => {
+    if (dismissTimers.current.has(id)) return;
+    const timer = window.setTimeout(() => {
+      dismissTimers.current.delete(id);
+      dismissItem(id);
+    }, 4000);
+    dismissTimers.current.set(id, timer);
+  }, [dismissItem]);
+
+  useEffect(() => {
+    const timers = dismissTimers.current;
+    const activeControllers = controllers.current;
+    return () => {
+      activeControllers.forEach((controller) => controller.abort());
+      if (backoffTimeoutRef.current !== null) {
+        window.clearTimeout(backoffTimeoutRef.current);
+      }
+      timers.forEach((timer) => window.clearTimeout(timer));
+      timers.clear();
+    };
   }, []);
+
+  // Watch for completed tasks and schedule auto-dismissal
+  useEffect(() => {
+    for (const task of tasks) {
+      if (!dismissedIds.has(task.id) && (task.status === 'uploaded' || task.status === 'skipped' || task.status === 'renamed')) {
+        scheduleDismiss(task.id);
+      }
+    }
+    for (const it of internalTransfers) {
+      if (!dismissedIds.has(it.id) && (it.status === 'copied' || it.status === 'moved')) {
+        scheduleDismiss(it.id);
+      }
+    }
+    for (const bt of backgroundTransfers) {
+      if (!dismissedIds.has(bt.id)) {
+        const isDone = bt.status === 'COMPLETED' || (bt.total_files > 0 && bt.processed_files >= bt.total_files);
+        if (isDone) {
+          scheduleDismiss(bt.id);
+        }
+      }
+    }
+  }, [backgroundTransfers, dismissedIds, internalTransfers, scheduleDismiss, tasks]);
 
   useEffect(() => {
     if (backoffUntilRef.current > Date.now()) {
@@ -113,7 +200,6 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
       }).finally(() => {
         running.current.delete(task.id);
         controllers.current.delete(task.id);
-        // Trigger queue scheduling after a completion without polling the API.
         setTasks((current) => [...current]);
       });
     }
@@ -145,24 +231,32 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
     setTasks((current) => current.map((task) => task.id === id ? { ...task, status: 'queued', loaded: 0, error: undefined } : task));
   };
 
-  const clearCompleted = () => {
-    setTasks((current) => current.filter((task) => task.status === 'uploading' || task.status === 'queued' || task.status === 'failed'));
-  };
-
   const isUploadDisabled = disabled || !capabilities.upload;
 
-  // Queue summary metrics
-  const completedUploadCount = tasks.filter((t) => t.status === 'uploaded' || t.status === 'skipped' || t.status === 'renamed').length;
-  const inProgressUploadCount = tasks.filter((t) => t.status === 'uploading' || t.status === 'queued').length;
+  // Filter visible items that haven't been dismissed
+  const visibleTasks = tasks.filter((t) => !dismissedIds.has(t.id));
+  const visibleInternalTransfers = internalTransfers.filter((it) => !dismissedIds.has(it.id));
   const isBackgroundTransferActive = (status: string) => ['PENDING', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED', 'PAUSED_CONNECTION_LOSS'].includes(status);
-  const completedBackgroundCount = backgroundTransfers.filter((transfer) => !isBackgroundTransferActive(transfer.status)).length;
-  const totalCount = tasks.length + backgroundTransfers.length;
-  const completedCount = completedUploadCount + completedBackgroundCount;
-  const inProgressCount = inProgressUploadCount + backgroundTransfers.length - completedBackgroundCount;
-  const failedCount = tasks.filter((t) => t.status === 'failed').length;
+  const visibleBackgroundTransfers = backgroundTransfers.filter((bt) => !dismissedIds.has(bt.id));
 
-  const totalBytes = tasks.reduce((sum, t) => sum + Math.max(t.file.size, 1), 0);
-  const loadedBytes = tasks.reduce((sum, t) => {
+  // Summary counts
+  const completedUploadCount = visibleTasks.filter((t) => t.status === 'uploaded' || t.status === 'skipped' || t.status === 'renamed').length;
+  const inProgressUploadCount = visibleTasks.filter((t) => t.status === 'uploading' || t.status === 'queued').length;
+
+  const completedInternalCount = visibleInternalTransfers.filter((it) => it.status === 'copied' || it.status === 'moved').length;
+  const inProgressInternalCount = visibleInternalTransfers.filter((it) => it.status === 'copying' || it.status === 'moving' || it.status === 'queued').length;
+
+  const completedBackgroundCount = visibleBackgroundTransfers.filter((bt) => bt.status === 'COMPLETED' || (bt.total_files > 0 && bt.processed_files >= bt.total_files)).length;
+  const inProgressBackgroundCount = visibleBackgroundTransfers.filter((bt) => isBackgroundTransferActive(bt.status) && bt.processed_files < bt.total_files).length;
+
+  const totalCount = visibleTasks.length + visibleInternalTransfers.length + visibleBackgroundTransfers.length;
+  const completedCount = completedUploadCount + completedInternalCount + completedBackgroundCount;
+  const inProgressCount = inProgressUploadCount + inProgressInternalCount + inProgressBackgroundCount;
+  const failedCount = visibleTasks.filter((t) => t.status === 'failed').length + visibleInternalTransfers.filter((it) => it.status === 'failed').length;
+
+  // Overall percent calculation
+  const totalBytes = visibleTasks.reduce((sum, t) => sum + Math.max(t.file.size, 1), 0);
+  const loadedBytes = visibleTasks.reduce((sum, t) => {
     if (t.status === 'uploaded' || t.status === 'skipped' || t.status === 'renamed') {
       return sum + Math.max(t.file.size, 1);
     }
@@ -172,15 +266,43 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
     return sum;
   }, 0);
 
-  const backgroundTotalFiles = backgroundTransfers.reduce((sum, transfer) => sum + transfer.total_files, 0);
-  const backgroundProcessedFiles = backgroundTransfers.reduce((sum, transfer) => sum + transfer.processed_files, 0);
+  const backgroundTotalFiles = visibleBackgroundTransfers.reduce((sum, transfer) => sum + transfer.total_files, 0);
+  const backgroundProcessedFiles = visibleBackgroundTransfers.reduce((sum, transfer) => sum + transfer.processed_files, 0);
+
   const overallPercent = totalBytes > 0
     ? Math.min(100, Math.round((loadedBytes / totalBytes) * 100))
-    : backgroundTotalFiles > 0 ? Math.min(100, Math.round((backgroundProcessedFiles / backgroundTotalFiles) * 100)) : 0;
-  const canClearUploads = tasks.length > 0 && inProgressUploadCount === 0;
+    : (backgroundTotalFiles + visibleInternalTransfers.length) > 0
+      ? Math.min(100, Math.round(((backgroundProcessedFiles + completedInternalCount) / (backgroundTotalFiles + visibleInternalTransfers.length)) * 100))
+      : completedCount > 0 ? 100 : 0;
+
+  const canClear = totalCount > 0 && inProgressCount === 0;
+
+  const clearCompleted = () => {
+    visibleTasks.forEach((t) => {
+      if (t.status === 'uploaded' || t.status === 'skipped' || t.status === 'renamed') dismissItem(t.id);
+    });
+    visibleInternalTransfers.forEach((it) => {
+      if (it.status === 'copied' || it.status === 'moved') dismissItem(it.id);
+    });
+    visibleBackgroundTransfers.forEach((bt) => {
+      if (bt.status === 'COMPLETED' || (bt.total_files > 0 && bt.processed_files >= bt.total_files)) dismissItem(bt.id);
+    });
+  };
+
+  const clearAllQueue = () => {
+    visibleTasks.forEach((t) => dismissItem(t.id));
+    visibleInternalTransfers.forEach((it) => dismissItem(it.id));
+    visibleBackgroundTransfers.forEach((bt) => dismissItem(bt.id));
+  };
 
   return (
     <>
+      <style>{`
+        @keyframes transferCountdownDrain {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+      `}</style>
       <div className="relative" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!isUploadDisabled) selectFiles(event.dataTransfer.files); }}>
         <input ref={inputRef} type="file" multiple disabled={isUploadDisabled} className="sr-only" onChange={(event) => { selectFiles(event.target.files); event.currentTarget.value = ''; }} />
         <button
@@ -195,7 +317,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
         </button>
       </div>
 
-      {(tasks.length > 0 || backgroundTransfers.length > 0) && (
+      {totalCount > 0 && (
         <aside aria-label={t('files.uploadQueue')}>
           {!isExpanded ? (
             /* Compact Floating Pill (Bottom Center) */
@@ -227,10 +349,10 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
                 </div>
                 <ChevronUpIcon className="h-4 w-4 shrink-0 text-[var(--color-text-secondary)]" aria-hidden="true" />
               </button>
-              {canClearUploads && (
+              {canClear && (
                 <button
                   type="button"
-                  onClick={() => setTasks([])}
+                  onClick={clearAllQueue}
                   className="ui-icon-button -mr-1 p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                   aria-label={t('files.clearQueue')}
                   title={t('files.clearQueue')}
@@ -252,7 +374,7 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
-                  {completedUploadCount > 0 && inProgressUploadCount > 0 && (
+                  {completedCount > 0 && inProgressCount > 0 && (
                     <button
                       type="button"
                       onClick={clearCompleted}
@@ -271,10 +393,10 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
                   >
                     <ChevronDownIcon className="h-4 w-4" aria-hidden="true" />
                   </button>
-                  {canClearUploads && (
+                  {canClear && (
                     <button
                       type="button"
-                      onClick={() => setTasks([])}
+                      onClick={clearAllQueue}
                       className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                       aria-label={t('files.clearQueue')}
                       title={t('files.clearQueue')}
@@ -293,96 +415,239 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
                 />
               </div>
 
-              {/* Scrollable List of Files (Sized for ~10 visible items) */}
+              {/* Scrollable List of Transfers */}
               <ul className="max-h-[380px] overflow-y-auto divide-y divide-[var(--color-border)]/50 p-2">
-                {backgroundTransfers.map((transfer) => {
-                  const active = isBackgroundTransferActive(transfer.status);
-                  const progress = transfer.total_files > 0 ? Math.min(100, Math.round((transfer.processed_files / transfer.total_files) * 100)) : 0;
+                {/* 1. Same-provider internal copy/move transfers */}
+                {visibleInternalTransfers.map((it) => {
+                  const isDone = it.status === 'copied' || it.status === 'moved';
+                  const isActive = it.status === 'copying' || it.status === 'moving' || it.status === 'queued';
+                  const Icon = it.operation === 'move' ? ArrowRightIcon : ClipboardDocumentIcon;
                   return (
-                    <li key={transfer.id} className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
-                      <ArrowPathIcon className={`h-5 w-5 shrink-0 ${active ? 'animate-spin text-[var(--color-info-text)]' : 'text-[var(--color-text-secondary)]'}`} aria-hidden="true" />
+                    <li key={it.id} className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
+                      <div className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+                        {isDone ? (
+                          <CheckCircleIcon className="h-5 w-5 text-[var(--color-success-text)]" aria-hidden="true" />
+                        ) : (
+                          <Icon className={`h-5 w-5 ${isActive ? 'animate-pulse text-[var(--color-info-text)]' : 'text-[var(--color-text-secondary)]'}`} aria-hidden="true" />
+                        )}
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate font-medium text-[var(--color-text-primary)] text-xs sm:text-sm">{transfer.operation === 'move' ? t('files.move') : t('files.copy')}: {transfer.source_profile_name} → {transfer.target_profile_name}</span>
-                          <span className="text-xs text-[var(--color-text-secondary)] shrink-0">{transfer.processed_files}/{transfer.total_files}</span>
+                          <span className="truncate font-medium text-[var(--color-text-primary)] text-xs sm:text-sm">
+                            {it.operation === 'move' ? t('files.move') : t('files.copy')}: {it.sourceName} → {it.destinationName}
+                          </span>
+                          <span className={`text-xs ${isDone ? 'text-[var(--color-success-text)] font-medium' : it.status === 'failed' ? 'text-[var(--color-error-text)] font-semibold' : 'text-[var(--color-info-text)]'}`}>
+                            {t(`files.uploadStatus.${it.status}`)}
+                          </span>
                         </div>
-                        <div className="h-1 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5"><div className={`h-full transition-all duration-200 ${transfer.failed_files > 0 ? 'bg-[var(--color-progress-error)]' : 'bg-[var(--color-info-text)]'}`} style={{ width: `${progress}%` }} /></div>
+                        {isActive && (
+                          <div className="h-1 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5">
+                            <div className="h-full bg-[var(--color-info-text)] animate-pulse w-full" />
+                          </div>
+                        )}
+                        {isDone && (
+                          <div className="h-0.5 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5" aria-hidden="true">
+                            <div
+                              className="h-full bg-[var(--color-progress-success)]"
+                              style={{ animation: 'transferCountdownDrain 4000ms linear forwards' }}
+                            />
+                          </div>
+                        )}
+                        {it.status === 'failed' && (
+                          <span role="alert" className="text-xs text-[var(--color-error-text)] mt-0.5 truncate block">
+                            {it.error}
+                          </span>
+                        )}
                       </div>
-                      {active && <button type="button" onClick={() => onCancelBackgroundTransfer(transfer.id)} className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-error-text)]" aria-label={t('files.cancelTransfer')} title={t('files.cancelTransfer')}><XMarkIcon className="h-4 w-4" aria-hidden="true" /></button>}
+                      <div className="shrink-0">
+                        {isActive ? (
+                          <button
+                            type="button"
+                            onClick={() => onCancelInternalTransfer(it.id)}
+                            className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-error-text)]"
+                            aria-label={t('files.cancelTransfer')}
+                            title={t('files.cancelTransfer')}
+                          >
+                            <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => dismissItem(it.id)}
+                            className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                            aria-label={t('files.dismissTransfer')}
+                            title={t('files.dismissTransfer')}
+                          >
+                            <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
                     </li>
                   );
                 })}
-                {tasks.map((task) => (
-                  <li key={task.id} className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
-                    <FileIcon name={task.file.name} mimeType={task.file.type} className="h-5 w-5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate font-medium text-[var(--color-text-primary)] text-xs sm:text-sm" title={task.file.name}>
-                          {task.file.name}
-                        </span>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs text-[var(--color-text-secondary)]">
-                            {formatBytes(task.file.size)}
+
+                {/* 2. Cross-profile background transfers */}
+                {visibleBackgroundTransfers.map((transfer) => {
+                  const isDone = transfer.status === 'COMPLETED' || (transfer.total_files > 0 && transfer.processed_files >= transfer.total_files);
+                  const active = !isDone && isBackgroundTransferActive(transfer.status);
+                  const progress = transfer.total_files > 0 ? Math.min(100, Math.round((transfer.processed_files / transfer.total_files) * 100)) : 0;
+                  return (
+                    <li key={transfer.id} className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
+                      {isDone ? (
+                        <CheckCircleIcon className="h-5 w-5 shrink-0 text-[var(--color-success-text)]" aria-hidden="true" />
+                      ) : (
+                        <ArrowPathIcon className={`h-5 w-5 shrink-0 ${active ? 'animate-spin text-[var(--color-info-text)]' : 'text-[var(--color-text-secondary)]'}`} aria-hidden="true" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-medium text-[var(--color-text-primary)] text-xs sm:text-sm">
+                            {transfer.operation === 'move' ? t('files.move') : t('files.copy')}: {transfer.source_profile_name} → {transfer.target_profile_name}
                           </span>
-                          {task.status === 'uploading' ? (
-                            <span className="text-xs font-semibold text-[var(--color-info-text)]">
-                              {Math.round(task.loaded / Math.max(task.file.size, 1) * 100)}%
-                            </span>
-                          ) : task.status === 'uploaded' ? (
-                            <span className="text-xs font-medium text-[var(--color-success-text)] flex items-center gap-0.5">
-                              <CheckCircleIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                              {t('files.uploadStatus.uploaded')}
-                            </span>
-                          ) : (
-                            <span className={`text-xs ${task.status === 'failed' ? 'text-[var(--color-error-text)] font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
-                              {t(`files.uploadStatus.${task.status}`)}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-[var(--color-text-secondary)]">{transfer.processed_files}/{transfer.total_files}</span>
+                            {isDone && (
+                              <span className="text-xs font-medium text-[var(--color-success-text)]">
+                                {t('files.uploadStatus.completed')}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        {active && (
+                          <div className="h-1 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5">
+                            <div className={`h-full transition-all duration-200 ${transfer.failed_files > 0 ? 'bg-[var(--color-progress-error)]' : 'bg-[var(--color-info-text)]'}`} style={{ width: `${progress}%` }} />
+                          </div>
+                        )}
+                        {isDone && (
+                          <div className="h-0.5 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5" aria-hidden="true">
+                            <div
+                              className="h-full bg-[var(--color-progress-success)]"
+                              style={{ animation: 'transferCountdownDrain 4000ms linear forwards' }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                      <div className="shrink-0">
+                        {active ? (
+                          <button
+                            type="button"
+                            onClick={() => onCancelBackgroundTransfer(transfer.id)}
+                            className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-error-text)]"
+                            aria-label={t('files.cancelTransfer')}
+                            title={t('files.cancelTransfer')}
+                          >
+                            <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => dismissItem(transfer.id)}
+                            className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                            aria-label={t('files.dismissTransfer')}
+                            title={t('files.dismissTransfer')}
+                          >
+                            <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+
+                {/* 3. Direct browser uploads */}
+                {visibleTasks.map((task) => {
+                  const isDone = task.status === 'uploaded' || task.status === 'skipped' || task.status === 'renamed';
+                  return (
+                    <li key={task.id} className="flex items-center gap-2.5 px-2 py-2 text-sm rounded-md hover:bg-[var(--color-hover)] transition-colors">
+                      <FileIcon name={task.file.name} mimeType={task.file.type} className="h-5 w-5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-medium text-[var(--color-text-primary)] text-xs sm:text-sm" title={task.file.name}>
+                            {task.file.name}
+                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-[var(--color-text-secondary)]">
+                              {formatBytes(task.file.size)}
+                            </span>
+                            {task.status === 'uploading' ? (
+                              <span className="text-xs font-semibold text-[var(--color-info-text)]">
+                                {Math.round(task.loaded / Math.max(task.file.size, 1) * 100)}%
+                              </span>
+                            ) : isDone ? (
+                              <span className="text-xs font-medium text-[var(--color-success-text)] flex items-center gap-0.5">
+                                <CheckCircleIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                                {t(`files.uploadStatus.${task.status}`)}
+                              </span>
+                            ) : (
+                              <span className={`text-xs ${task.status === 'failed' ? 'text-[var(--color-error-text)] font-semibold' : 'text-[var(--color-text-secondary)]'}`}>
+                                {t(`files.uploadStatus.${task.status}`)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {task.status === 'uploading' && (
+                          <div className="h-1 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5">
+                            <div
+                              className="h-full bg-[var(--color-info-text)] transition-all duration-200"
+                              style={{ width: `${Math.round(task.loaded / Math.max(task.file.size, 1) * 100)}%` }}
+                            />
+                          </div>
+                        )}
+
+                        {isDone && (
+                          <div className="h-0.5 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5" aria-hidden="true">
+                            <div
+                              className="h-full bg-[var(--color-progress-success)]"
+                              style={{ animation: 'transferCountdownDrain 4000ms linear forwards' }}
+                            />
+                          </div>
+                        )}
+
+                        {task.status === 'failed' && (
+                          <span role="alert" className="text-xs text-[var(--color-error-text)] mt-0.5 truncate block">
+                            {task.error}
+                          </span>
+                        )}
                       </div>
 
-                      {task.status === 'uploading' && (
-                        <div className="h-1 w-full rounded-full bg-[var(--color-progress-track)] overflow-hidden mt-1.5">
-                          <div
-                            className="h-full bg-[var(--color-info-text)] transition-all duration-200"
-                            style={{ width: `${Math.round(task.loaded / Math.max(task.file.size, 1) * 100)}%` }}
-                          />
-                        </div>
-                      )}
-
-                      {task.status === 'failed' && (
-                        <span role="alert" className="text-xs text-[var(--color-error-text)] mt-0.5 truncate block">
-                          {task.error}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="shrink-0">
-                      {(task.status === 'queued' || task.status === 'uploading') && (
-                        <button
-                          type="button"
-                          onClick={() => cancelTask(task.id)}
-                          className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-error-text)]"
-                          aria-label={t('files.cancelUpload', { name: task.file.name })}
-                          title={t('files.cancelUpload', { name: task.file.name })}
-                        >
-                          <XMarkIcon className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                      )}
-                      {(task.status === 'failed' || task.status === 'cancelled') && (
-                        <button
-                          type="button"
-                          onClick={() => retryTask(task.id)}
-                          className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                          aria-label={t('common.retry')}
-                          title={t('common.retry')}
-                        >
-                          <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                      )}
-                    </div>
-                  </li>
-                ))}
+                      <div className="shrink-0 flex items-center gap-1">
+                        {(task.status === 'queued' || task.status === 'uploading') && (
+                          <button
+                            type="button"
+                            onClick={() => cancelTask(task.id)}
+                            className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-error-text)]"
+                            aria-label={t('files.cancelUpload', { name: task.file.name })}
+                            title={t('files.cancelUpload', { name: task.file.name })}
+                          >
+                            <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        )}
+                        {(task.status === 'failed' || task.status === 'cancelled') && (
+                          <button
+                            type="button"
+                            onClick={() => retryTask(task.id)}
+                            className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                            aria-label={t('common.retry')}
+                            title={t('common.retry')}
+                          >
+                            <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        )}
+                        {(isDone || task.status === 'failed' || task.status === 'cancelled') && (
+                          <button
+                            type="button"
+                            onClick={() => dismissItem(task.id)}
+                            className="ui-icon-button p-1 hover:bg-[var(--color-hover)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                            aria-label={t('files.dismissTransfer')}
+                            title={t('files.dismissTransfer')}
+                          >
+                            <XMarkIcon className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -430,4 +695,3 @@ export function FileUploadControl({ apiUrl, token, profileId, parentRef, capabil
     </>
   );
 }
-

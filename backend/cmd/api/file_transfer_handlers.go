@@ -50,9 +50,12 @@ func (s *APIServer) handleFileTransfersList(w http.ResponseWriter, r *http.Reque
 		FROM migrations m
 		LEFT JOIN connection_profiles source ON source.id = m.source_profile_id
 		LEFT JOIN connection_profiles target ON target.id = m.target_profile_id
-		WHERE m.user_id = $1 AND m.source_profile_id = $2
+		WHERE m.user_id = $1 AND (m.source_profile_id = $2 OR m.target_profile_id = $2)
 		  AND m.picker_session_id LIKE 'file-manager-transfer:%'
-		  AND m.status IN ('PENDING', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED', 'PAUSED_CONNECTION_LOSS')
+		  AND (
+		       m.status IN ('PENDING', 'INDEXING', 'RUNNING', 'VERIFYING', 'PAUSED', 'PAUSED_CONNECTION_LOSS')
+		       OR (m.status IN ('COMPLETED', 'COMPLETED_WITH_ERRORS', 'FAILED') AND m.updated_at > NOW() - INTERVAL '1 minute')
+		  )
 		ORDER BY m.created_at DESC LIMIT 20`, userID, profileID)
 	if err != nil {
 		s.logf(r, "file transfer list: %v", err)

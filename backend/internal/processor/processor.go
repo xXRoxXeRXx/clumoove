@@ -212,6 +212,12 @@ func fileManagerTransferOperation(pickerSessionID string) string {
 	return strings.TrimPrefix(pickerSessionID, marker)
 }
 
+func (p *Processor) reconcileFileManagerTransferIfDone(mig *db.Migration) {
+	if p.db != nil && mig != nil && fileManagerTransferOperation(mig.PickerSessionID) != "" {
+		_ = db.ReconcileMigrationProgress(p.db, mig.ID)
+	}
+}
+
 // immichFilenameFromMetadata extracts the original filename that an Immich
 // asset was indexed with. It is stored either as a top-level immich_filename
 // key or inside custom_props.immich_filename.
@@ -909,11 +915,15 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		}
 		task.Status = "COMPLETED"
 		task.ErrorMessage = sql.NullString{}
+		if fileManagerTransferOperation(mig.PickerSessionID) != "" {
+			task.ChecksumVerified = true
+		}
 		if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, 0, 0, 0, 0); err != nil {
 			return err
 		}
 		p.clearConnLoss(mig.ID)
 		p.clearConnLossTask(task.ID)
+		p.reconcileFileManagerTransferIfDone(mig)
 		return nil
 	}
 
@@ -1276,6 +1286,9 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// Update task to COMPLETED
 	task.Status = "COMPLETED"
 	task.ErrorMessage = sql.NullString{}
+	if fileManagerTransferOperation(mig.PickerSessionID) != "" {
+		task.ChecksumVerified = true
+	}
 	if err := db.UpdateMigrationTaskAndProgress(p.db, ctx, task, 1, task.FileSize, 0, 0, 0); err != nil {
 		return err
 	}
@@ -1291,6 +1304,7 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 	// Re-sync the live counter to the now-authoritative processed_bytes so the
 	// speed/ETA display cannot stay above total_bytes after a retried upload.
 	_ = db.ResetLiveBytes(p.db, ctx, mig.ID)
+	p.reconcileFileManagerTransferIfDone(mig)
 
 	return nil
 }
@@ -1468,6 +1482,9 @@ func (p *Processor) handleTaskFailure(ctx context.Context, payload *queue.Payloa
 		// Task is now terminal: drop its per-task connection-loss counter so the
 		// in-memory map does not grow unbounded across a long-running worker.
 		p.clearConnLossTask(task.ID)
+		if migErr == nil && mig != nil {
+			p.reconcileFileManagerTransferIfDone(mig)
+		}
 
 		processorLogf("[Worker %s] Task %s failed permanently after %d attempts\n", p.workerID, task.ID, task.Attempts)
 	}

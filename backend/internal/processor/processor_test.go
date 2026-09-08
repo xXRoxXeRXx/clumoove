@@ -442,6 +442,20 @@ func TestFileManagerTransferOperation(t *testing.T) {
 	}
 }
 
+func TestReconcileFileManagerTransferIfDone(t *testing.T) {
+	p := &Processor{}
+	// Nil migration should safely no-op without panic
+	p.reconcileFileManagerTransferIfDone(nil)
+
+	// Non-file-manager migration should no-op
+	migNonFM := &db.Migration{ID: "m1", PickerSessionID: "batch-move"}
+	p.reconcileFileManagerTransferIfDone(migNonFM)
+
+	// Marker with nil db should safely no-op without panic
+	migFM := &db.Migration{ID: "m2", PickerSessionID: "file-manager-transfer:copy"}
+	p.reconcileFileManagerTransferIfDone(migFM)
+}
+
 func TestResolveTargetPath(t *testing.T) {
 	t.Run("unconditional target join when source path matches targetDir prefix", func(t *testing.T) {
 		task := &db.Task{ResourceType: "files", FilePath: "/docs/file.txt"}

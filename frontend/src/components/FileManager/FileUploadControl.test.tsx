@@ -371,7 +371,9 @@ describe('FileUploadControl component', () => {
 
     // Expanded overlay shows filename and minimize button
     expect(container.textContent).toContain('doc.pdf');
-    const minimizeBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Minimize queue"], button[aria-label="Warteschlange minimieren"]');
+    const minimizeBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Minimize transfers"], button[aria-label="Minimize queue"], button[aria-label="Übertragungen minimieren"], button[aria-label="Warteschlange minimieren"]'
+    );
     expect(minimizeBtn).not.toBeNull();
 
     // Minimize back to pill
@@ -384,7 +386,9 @@ describe('FileUploadControl component', () => {
     expect(container.querySelector('button[aria-expanded="false"]')).not.toBeNull();
 
     // Clear queue when all done
-    const clearBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Clear queue"], button[aria-label="Warteschlange leeren"]');
+    const clearBtn = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Clear transfers"], button[aria-label="Clear queue"], button[aria-label="Übertragungen leeren"], button[aria-label="Warteschlange leeren"]'
+    );
     expect(clearBtn).not.toBeNull();
     await act(async () => {
       clearBtn?.click();
@@ -393,6 +397,112 @@ describe('FileUploadControl component', () => {
 
     // Queue is now empty and dismissed
     expect(container.querySelector('aside')).toBeNull();
+  });
+
+  it('auto-dismisses completed uploads after 4 seconds', async () => {
+    vi.useFakeTimers();
+    vi.mocked(uploadFile).mockResolvedValue({
+      ok: true,
+      status: 201,
+      data: { status: 'uploaded', name: 'autodismiss.pdf' },
+    });
+
+    await act(async () => {
+      root.render(
+        <FileUploadControl
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          parentRef="ref-root"
+          capabilities={mockFullCapabilities}
+          onCompleted={onCompleted}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
+    await act(async () => {
+      Object.defineProperty(fileInput, 'files', { value: [makeFile('autodismiss.pdf')], writable: true });
+      fileInput?.dispatchEvent(new Event('change', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const dialog = document.querySelector('[role="dialog"]');
+    const startBtn = Array.from(dialog!.querySelectorAll('button')).find((b) => b.textContent?.includes('Start upload') || b.textContent?.includes('Upload starten'));
+    await act(async () => {
+      startBtn?.click();
+      await Promise.resolve();
+    });
+
+    // Upload completes
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('aside')).not.toBeNull();
+
+    // Advance timers by 4000ms
+    await act(async () => {
+      vi.advanceTimersByTime(4000);
+      await Promise.resolve();
+    });
+
+    // Queue is now empty and dismissed
+    expect(container.querySelector('aside')).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('renders and manages internal copy/move transfers', async () => {
+    const onCancelInternalTransfer = vi.fn();
+    const onDismissInternalTransfer = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <FileUploadControl
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          parentRef="ref-root"
+          capabilities={mockFullCapabilities}
+          onCompleted={onCompleted}
+          internalTransfers={[
+            {
+              id: 'it-1',
+              operation: 'copy',
+              sourceName: 'file1.txt',
+              destinationName: 'Documents',
+              itemCount: 1,
+              status: 'copying',
+            },
+          ]}
+          onCancelInternalTransfer={onCancelInternalTransfer}
+          onDismissInternalTransfer={onDismissInternalTransfer}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    expect(container.querySelector('aside')).not.toBeNull();
+
+    // Expand
+    const expandBtn = container.querySelector<HTMLButtonElement>('button[aria-expanded="false"]');
+    await act(async () => {
+      expandBtn?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain('file1.txt');
+    expect(container.textContent).toContain('Documents');
+
+    // Cancel active internal transfer
+    const cancelBtn = container.querySelector<HTMLButtonElement>('button[aria-label="Cancel transfer"], button[aria-label="Übertragung abbrechen"]');
+    expect(cancelBtn).not.toBeNull();
+    await act(async () => {
+      cancelBtn?.click();
+      await Promise.resolve();
+    });
+    expect(onCancelInternalTransfer).toHaveBeenCalledWith('it-1');
   });
 
   it('aborts active upload controllers on unmount', async () => {

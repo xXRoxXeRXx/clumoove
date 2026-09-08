@@ -28,7 +28,7 @@ import { LoadingIndicator } from '../LoadingIndicator';
 import { useApiError } from '../../utils/apiError';
 import { useFormat } from '../../utils/format';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { FileUploadControl } from './FileUploadControl';
+import { FileUploadControl, type InternalTransfer } from './FileUploadControl';
 import { FileThumbnail } from './FileThumbnail';
 
 const FilePreviewDialog = lazy(() => import('./FilePreviewDialog').then((m) => ({ default: m.FilePreviewDialog })));
@@ -70,6 +70,10 @@ const unavailableCapabilities: FileCapabilities = {
   range_download: false,
   thumbnails: false,
 };
+
+function nextTransferID(): string {
+  return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+}
 
 export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, initialPathFallback = false, onProfileChange, onOpenManager, onBack }: FileManagerProps) {
   const { t } = useTranslation();
@@ -117,6 +121,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const [transfers, setTransfers] = useState<FileTransferSummary[]>([]);
   const [pickerEntries, setPickerEntries] = useState<FileEntry[]>([]);
   const [pickerLoading, setPickerLoading] = useState(false);
+  const [internalTransfers, setInternalTransfers] = useState<InternalTransfer[]>([]);
+  const internalControllers = useRef(new Map<string, AbortController>());
   const [mutationBusy, setMutationBusy] = useState(false);
   const [mutationError, setMutationError] = useState('');
   const [conflictStrategies, setConflictStrategies] = useState<FileMutationConflictStrategy[] | null>(null);
@@ -189,11 +195,29 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   useFocusTrap(conflictDialogRef, conflictCancelRef, closeMutationDialogs, conflictStrategies !== null);
 
   useEffect(() => {
+    const controllers = internalControllers.current;
     return () => {
+      controllers.forEach((controller) => controller.abort());
+      controllers.clear();
       if (uploadRefreshTimeoutRef.current !== null) {
         window.clearTimeout(uploadRefreshTimeoutRef.current);
       }
     };
+  }, []);
+
+  const cancelInternalTransfer = useCallback((transferId: string) => {
+    const controller = internalControllers.current.get(transferId);
+    if (controller) {
+      controller.abort();
+      internalControllers.current.delete(transferId);
+    }
+    setInternalTransfers((prev) =>
+      prev.map((t) => (t.id === transferId ? { ...t, status: 'cancelled' } : t))
+    );
+  }, []);
+
+  const dismissInternalTransfer = useCallback((transferId: string) => {
+    setInternalTransfers((prev) => prev.filter((t) => t.id !== transferId));
   }, []);
 
   useEffect(() => {
@@ -643,6 +667,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     if (refs.length === 0) return;
     setBatchBusy(true); setMutationError('');
     const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
+    const destinationName = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name ?? t('files.title');
+
     if (pickerProfileId !== profileId) {
       const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, refs, pickerProfileId, destinationRef, batchOperation, strategy);
       setBatchBusy(false);
@@ -651,18 +677,65 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       void loadTransfers();
       return;
     }
-    const result = await batchMutateFileEntries(batchOperation, apiUrl, token, profileId, refs, destinationRef, strategy);
+
+    // Same-profile batch copy or move: non-blocking in background transfer queue
+    const op = batchOperation;
+    const count = refs.length;
+    const transferId = nextTransferID();
+    const controller = new AbortController();
+    internalControllers.current.set(transferId, controller);
+
+    const transfer: InternalTransfer = {
+      id: transferId,
+      operation: op,
+      sourceName: t('files.selectedCount', { count }),
+      destinationName,
+      itemCount: count,
+      status: op === 'copy' ? 'copying' : 'moving',
+    };
+    setInternalTransfers((prev) => [...prev, transfer]);
+
+    setBatchOperation(null);
+    setBatchConflictRefs([]);
+    setConflictStrategies(null);
+    setSelectedRefs(new Set());
     setBatchBusy(false);
-    if (result.ok === false) { setMutationError(translateApiError(result.errorCode)); return; }
-    setBatchResults(result.data.results);
-    const conflicts = result.data.results.filter((item) => item.status === 'conflict').map((item) => item.ref);
-    if (conflicts.length > 0 && !strategy) {
-      setBatchConflictRefs(conflicts);
-      setConflictStrategies(result.data.conflict_strategies ?? null);
-      return;
-    }
-    setBatchOperation(null); setBatchConflictRefs([]); setConflictStrategies(null); setSelectedRefs(new Set());
-    void loadEntries(currentRef);
+    setMutationError('');
+
+    batchMutateFileEntries(op, apiUrl, token, profileId, refs, destinationRef, strategy, controller.signal)
+      .then((result) => {
+        internalControllers.current.delete(transferId);
+        if (controller.signal.aborted) return;
+        if (result.ok === false) {
+          setInternalTransfers((prev) =>
+            prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: translateApiError(result.errorCode) } : t))
+          );
+          return;
+        }
+        setBatchResults(result.data.results);
+        const failures = result.data.results.filter((item) => item.status === 'failed' || item.status === 'conflict');
+        if (failures.length > 0) {
+          const summary = t('files.batchResultSummary', {
+            success: result.data.results.length - failures.length,
+            failed: failures.length,
+          });
+          setInternalTransfers((prev) =>
+            prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: summary } : t))
+          );
+        } else {
+          setInternalTransfers((prev) =>
+            prev.map((t) => (t.id === transferId ? { ...t, status: op === 'copy' ? 'copied' : 'moved' } : t))
+          );
+        }
+        void loadEntries(currentRef);
+      })
+      .catch((err) => {
+        internalControllers.current.delete(transferId);
+        if (controller.signal.aborted) return;
+        setInternalTransfers((prev) =>
+          prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: String(err) } : t))
+        );
+      });
   };
 
   const executeMutation = async (strategy?: FileMutationConflictStrategy) => {
@@ -680,6 +753,8 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
     mutationRequestRef.current = controller;
     setMutationBusy(true); setMutationError('');
     const destinationRef = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.ref ?? null;
+    const destinationName = pickerBreadcrumbs[pickerBreadcrumbs.length - 1]?.name ?? t('files.title');
+
     if (operation !== 'rename' && pickerProfileId !== profileId) {
       const result = await startCrossProfileFileTransfer(apiUrl, token, profileId, [entry.ref], pickerProfileId, destinationRef, operation, strategy, controller.signal);
       if (controller.signal.aborted) return;
@@ -689,26 +764,73 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       void loadTransfers();
       return;
     }
-    const result = operation === 'rename'
-      ? await renameFileEntry(apiUrl, token, profileId, entry.ref, newName, strategy, controller.signal)
-      : operation === 'copy'
-        ? await copyFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal)
-        : await moveFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal);
-    if (controller.signal.aborted) return;
-    setMutationBusy(false);
-    if (result.ok === false) {
-      const options = (result.data as { conflict_strategies?: FileMutationConflictStrategy[] } | undefined)?.conflict_strategies;
-      if (result.errorCode === 'FILES_CONFLICT' && options?.length) {
-        setConflictStrategies(options);
-	      } else {
-	        setMutationError(result.errorCode === 'FILES_PARTIAL_OPERATION' ? t('files.partialWarning') : translateApiError(result.errorCode));
+
+    if (operation === 'rename') {
+      const result = await renameFileEntry(apiUrl, token, profileId, entry.ref, newName, strategy, controller.signal);
+      if (controller.signal.aborted) return;
+      setMutationBusy(false);
+      if (result.ok === false) {
+        const options = (result.data as { conflict_strategies?: FileMutationConflictStrategy[] } | undefined)?.conflict_strategies;
+        if (result.errorCode === 'FILES_CONFLICT' && options?.length) {
+          setConflictStrategies(options);
+        } else {
+          setMutationError(result.errorCode === 'FILES_PARTIAL_OPERATION' ? t('files.partialWarning') : translateApiError(result.errorCode));
+        }
+        if (result.errorCode === 'FILES_PARTIAL_OPERATION') void loadEntries(currentRef);
+        return;
       }
-      if (result.errorCode === 'FILES_PARTIAL_OPERATION') void loadEntries(currentRef);
+      setRenameEntry(null); setMutationEntry(null); setMutationOperation(null); setConflictStrategies(null); setMutationError('');
+      void loadEntries(currentRef);
       return;
     }
-    if (previewEntry?.ref === entry.ref && operation === 'move') setPreviewEntry(null);
-    setRenameEntry(null); setMutationEntry(null); setMutationOperation(null); setConflictStrategies(null); setMutationError('');
-    void loadEntries(currentRef);
+
+    // Same-profile copy or move: non-blocking in background transfer queue
+    const transferId = nextTransferID();
+    const transfer: InternalTransfer = {
+      id: transferId,
+      operation,
+      sourceName: entry.name,
+      destinationName,
+      itemCount: 1,
+      status: operation === 'copy' ? 'copying' : 'moving',
+    };
+    internalControllers.current.set(transferId, controller);
+    setInternalTransfers((prev) => [...prev, transfer]);
+
+    // Close destination picker modal immediately so UI is not blocked
+    setMutationEntry(null);
+    setMutationOperation(null);
+    setConflictStrategies(null);
+    setMutationError('');
+    setMutationBusy(false);
+
+    const mutationPromise = operation === 'copy'
+      ? copyFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal)
+      : moveFileEntry(apiUrl, token, profileId, entry.ref, destinationRef, strategy, controller.signal);
+
+    mutationPromise.then((result) => {
+      internalControllers.current.delete(transferId);
+      if (controller.signal.aborted) return;
+      if (result.ok === false) {
+        const err = result.errorCode === 'FILES_PARTIAL_OPERATION' ? t('files.partialWarning') : translateApiError(result.errorCode);
+        setInternalTransfers((prev) =>
+          prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: err } : t))
+        );
+        if (result.errorCode === 'FILES_PARTIAL_OPERATION') void loadEntries(currentRef);
+        return;
+      }
+      setInternalTransfers((prev) =>
+        prev.map((t) => (t.id === transferId ? { ...t, status: operation === 'copy' ? 'copied' : 'moved' } : t))
+      );
+      if (previewEntry?.ref === entry.ref && operation === 'move') setPreviewEntry(null);
+      void loadEntries(currentRef);
+    }).catch((err) => {
+      internalControllers.current.delete(transferId);
+      if (controller.signal.aborted) return;
+      setInternalTransfers((prev) =>
+        prev.map((t) => (t.id === transferId ? { ...t, status: 'failed', error: String(err) } : t))
+      );
+    });
   };
 
   const canRename = (entry: FileEntry) => capabilities.rename && entry.allowed_actions.includes('rename');
@@ -1100,6 +1222,10 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                       onCompleted={uploadCompleted}
                       backgroundTransfers={transfers}
                       onCancelBackgroundTransfer={(transferId) => void cancelTransfer(transferId)}
+                      onDismissBackgroundTransfer={(transferId) => setTransfers((prev) => prev.filter((t) => t.id !== transferId))}
+                      internalTransfers={internalTransfers}
+                      onCancelInternalTransfer={cancelInternalTransfer}
+                      onDismissInternalTransfer={dismissInternalTransfer}
                     />
                     <button
                       type="button"
