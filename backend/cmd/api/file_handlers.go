@@ -30,8 +30,8 @@ const (
 	fileUploadRateLimit       = 600
 	fileThumbnailRateLimit    = 3600
 	fileRateWindow            = time.Minute
-	fileDefaultPageSize       = 100
-	fileMaximumPageSize       = 200
+	fileDefaultPageSize       = 500
+	fileMaximumPageSize       = 1000
 	fileMaximumDirectoryItems = 10000
 	fileTicketTTL             = time.Minute
 	fileStreamLease           = 2 * time.Minute

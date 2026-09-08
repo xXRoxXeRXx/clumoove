@@ -409,7 +409,7 @@ func TestHandleFileEntriesListValidation(t *testing.T) {
 		{
 			name:       "limit exceeds maximum",
 			claims:     &auth.Claims{UserID: "u1"},
-			body:       `{"resource_type":"files","limit":500}`,
+			body:       `{"resource_type":"files","limit":1001}`,
 			wantStatus: http.StatusBadRequest,
 			wantCode:   ErrInvalidBody,
 		},

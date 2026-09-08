@@ -26,7 +26,7 @@ Conflict strategies are allowlisted as `SKIP`, `OVERWRITE`, or `RENAME`. Migrati
 | Route | Protection | Purpose |
 |---|---|---|
 | `GET /files/profiles/{profileID}/capabilities` | JWT | Returns profile and explicit manager capabilities. |
-| `POST /files/profiles/{profileID}/entries:list` | JWT | Lists `files` with optional opaque `parent_ref`, sealed cursor, and a maximum limit of 200. |
+| `POST /files/profiles/{profileID}/entries:list` | JWT | Lists `files` with optional opaque `parent_ref`, sealed cursor, default limit of 500, and a maximum limit of 1000. |
 | `POST /files/profiles/{profileID}/entries:resolve` | JWT | Resolves a stored path to sealed breadcrumbs, returning the nearest existing parent when necessary. |
 | `DELETE /files/profiles/{profileID}/entries` | JWT | Deletes an item from `{ "ref", "recursive" }`; only sealed refs are accepted and root locators are forbidden. |
 | `POST /files/profiles/{profileID}/entries:rename` | JWT | Renames one item from sealed `{ "ref", "destination_parent_ref"?, "new_name"?, "conflict_strategy"? }`. |
