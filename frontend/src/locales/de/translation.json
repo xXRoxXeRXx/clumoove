@@ -631,6 +631,7 @@
     "clearSelection": "Auswahl aufheben",
     "selectedCount_one": "{{count}} Eintrag ausgewählt",
     "selectedCount_other": "{{count}} Einträge ausgewählt",
+    "selectedCountShort": "{{count}} ausgewählt",
     "downloadArchive": "ZIP herunterladen",
     "batchDeleteTitle": "Ausgewählte Einträge löschen",
     "batchDeleteWarning_one": "Ausgewählten Eintrag löschen? Diese Aktion kann dauerhaft sein.",

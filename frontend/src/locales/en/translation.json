@@ -631,6 +631,7 @@
     "clearSelection": "Clear selection",
     "selectedCount_one": "{{count}} item selected",
     "selectedCount_other": "{{count}} items selected",
+    "selectedCountShort": "{{count}} selected",
     "downloadArchive": "Download ZIP",
     "batchDeleteTitle": "Delete selected items",
     "batchDeleteWarning_one": "Delete the selected item? This action may be permanent.",

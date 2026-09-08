@@ -1044,12 +1044,12 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             <>
               {selectedEntries.length > 0 ? (
                 <div
-                  className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2.5 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:-top-5 before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none before:-z-10"
+                  className="sticky top-16 lg:top-20 z-10 flex items-center justify-between gap-2 sm:gap-3 border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-2.5 sm:px-3 py-2 sm:py-2.5 rounded-t-[var(--radius-lg)] -mt-[1px] -mx-[1px] shadow-xs relative before:content-[''] before:hidden lg:before:block before:absolute before:-top-5 before:left-0 before:right-0 before:h-5 before:bg-[var(--color-bg-primary)] before:pointer-events-none before:-z-10"
                   role="toolbar"
                   aria-label={t('files.selectionActions')}
                 >
                   <div className="absolute inset-0 bg-[var(--color-selection-bg)]/15 pointer-events-none rounded-t-[inherit]" />
-                  <div className="flex items-center gap-2 min-w-0 relative z-10">
+                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 relative z-10">
                     <button
                       type="button"
                       onClick={() => setSelectedRefs(new Set())}
@@ -1059,47 +1059,60 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     >
                       <XMarkIcon className="h-5 w-5" aria-hidden="true" />
                     </button>
-                    <span className="text-sm font-semibold text-[var(--color-text-primary)] whitespace-nowrap">
-                      {t('files.selectedCount', { count: selectedEntries.length })}
+                    <span className="text-sm font-semibold text-[var(--color-text-primary)] truncate" title={t('files.selectedCount', { count: selectedEntries.length })}>
+                      <span className="hidden sm:inline">
+                        {t('files.selectedCount', { count: selectedEntries.length })}
+                      </span>
+                      <span className="sm:hidden">
+                        {t('files.selectedCountShort', { count: selectedEntries.length })}
+                      </span>
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end relative z-10">
+                  <div className="flex items-center gap-1 sm:gap-2 shrink-0 relative z-10">
                     <button
                       type="button"
-                      className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      className="ui-button-secondary inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
                       disabled={!selectedCan('download') || batchBusy}
                       onClick={() => void downloadArchive()}
+                      title={t('files.downloadArchive')}
+                      aria-label={t('files.downloadArchive')}
                     >
-                      <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
-                      <span>{t('files.downloadArchive')}</span>
+                      <ArrowDownTrayIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="hidden md:inline">{t('files.downloadArchive')}</span>
                     </button>
                     <button
                       type="button"
-                      className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      className="ui-button-secondary inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
                       disabled={!selectedCan('copy') || batchBusy}
                       onClick={() => startBatchDestinationPicker('copy')}
+                      title={t('files.copy')}
+                      aria-label={t('files.copy')}
                     >
-                      <ClipboardDocumentIcon className="h-4 w-4" aria-hidden="true" />
-                      <span>{t('files.copy')}</span>
+                      <ClipboardDocumentIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="hidden md:inline">{t('files.copy')}</span>
                     </button>
                     <button
                       type="button"
-                      className="ui-button-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      className="ui-button-secondary inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
                       disabled={!selectedCan('move') || batchBusy}
                       onClick={() => startBatchDestinationPicker('move')}
+                      title={t('files.move')}
+                      aria-label={t('files.move')}
                     >
-                      <ArrowsRightLeftIcon className="h-4 w-4" aria-hidden="true" />
-                      <span>{t('files.move')}</span>
+                      <ArrowsRightLeftIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="hidden md:inline">{t('files.move')}</span>
                     </button>
                     <button
                       type="button"
-                      className="ui-button-danger inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+                      className="ui-button-danger inline-flex items-center justify-center gap-1.5 p-2 md:px-3 md:py-1.5 text-xs font-medium disabled:opacity-50 shrink-0"
                       disabled={!selectedCan('delete') || batchBusy}
                       onClick={() => setBatchDeleteOpen(true)}
+                      title={t('files.deleteAction')}
+                      aria-label={t('files.deleteAction')}
                     >
-                      <TrashIcon className="h-4 w-4" aria-hidden="true" />
-                      <span>{t('files.deleteAction')}</span>
+                      <TrashIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="hidden md:inline">{t('files.deleteAction')}</span>
                     </button>
                   </div>
                 </div>
