@@ -1333,14 +1333,14 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 <p className="ui-empty p-8 text-sm flex-1 flex items-center justify-center">{t('files.emptyDirectory')}</p>
               ) : viewMode === 'list' ? (
                 <div className="overflow-x-auto flex-1">
-                  <table className="ui-table ui-responsive-table w-full table-fixed text-sm">
+                  <table className="ui-table w-full table-fixed text-sm">
                     <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
                       <tr>
                         <th scope="col" className="w-10 px-3 py-2 font-medium"><input ref={selectAllRef} type="checkbox" checked={allLoadedSelected} onChange={toggleSelectAll} aria-label={t('files.selectAll')} /></th>
                         <th scope="col" className="px-3 py-2 font-medium">{t('files.name')}</th>
-                        <th scope="col" className="w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.size')}</th>
-                        <th scope="col" className="w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.modified')}</th>
-                        <th scope="col" className="w-14 sm:w-16 px-3 py-2 font-medium text-right shrink-0"><span className="sr-only">{t('files.actions')}</span></th>
+                        <th scope="col" className="hidden sm:table-cell w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.size')}</th>
+                        <th scope="col" className="hidden sm:table-cell w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.modified')}</th>
+                        <th scope="col" className="w-12 sm:w-16 px-2 sm:px-3 py-2 font-medium text-right shrink-0"><span className="sr-only">{t('files.actions')}</span></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1362,10 +1362,10 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                                   openEntry(entry);
                                 }}
                                 disabled={entry.kind === 'directory' && (!capabilities.browse || entriesLoading)}
-                                className="inline-flex max-w-full items-center gap-3 min-w-0 text-left ui-link disabled:cursor-not-allowed disabled:opacity-55"
+                                className="inline-flex w-full items-center gap-2.5 sm:gap-3 min-w-0 text-left ui-link disabled:cursor-not-allowed disabled:opacity-55"
                                 title={entry.name}
                               >
-                                <div className="relative w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-[var(--color-bg-tertiary)]/40 border border-[var(--color-border)]/60 flex items-center justify-center">
+                                <div className="relative w-9 h-9 sm:w-10 sm:h-10 shrink-0 rounded-lg overflow-hidden bg-[var(--color-bg-tertiary)]/40 border border-[var(--color-border)]/60 flex items-center justify-center">
                                   <FileThumbnail
                                     apiUrl={apiUrl}
                                     token={token}
@@ -1378,16 +1378,27 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                                     fallbackIconClassName="h-5 w-5"
                                   />
                                 </div>
-                                <span className="truncate font-medium">{entry.name}</span>
+                                <div className="min-w-0 flex-1">
+                                  <span className="truncate block font-medium text-sm text-[var(--color-text-primary)]">{entry.name}</span>
+                                  <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-secondary)] sm:hidden mt-0.5 truncate font-normal">
+                                    <span>{entry.kind === 'directory' ? t('files.directory') : formatBytes(entry.size)}</span>
+                                    {entry.modified_at && (
+                                      <>
+                                        <span aria-hidden="true">•</span>
+                                        <span className="truncate">{formatDateTime(entry.modified_at)}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
                               </button>
                             </td>
-                            <td data-label={t('files.size')} className="w-28 sm:w-32 px-3 py-2 text-[var(--color-text-secondary)] whitespace-nowrap shrink-0">
+                            <td data-label={t('files.size')} className="hidden sm:table-cell w-28 sm:w-32 px-3 py-2 text-[var(--color-text-secondary)] whitespace-nowrap shrink-0">
                               {entry.kind === 'directory' ? t('files.directory') : formatBytes(entry.size)}
                             </td>
-                            <td data-label={t('files.modified')} className="w-36 sm:w-44 px-3 py-2 text-[var(--color-text-secondary)] whitespace-nowrap shrink-0">
+                            <td data-label={t('files.modified')} className="hidden sm:table-cell w-36 sm:w-44 px-3 py-2 text-[var(--color-text-secondary)] whitespace-nowrap shrink-0">
                               {entry.modified_at ? formatDateTime(entry.modified_at) : t('common.unspecified')}
                             </td>
-                            <td data-label={t('files.actions')} className="w-14 sm:w-16 px-3 py-2 text-right whitespace-nowrap shrink-0">
+                            <td data-label={t('files.actions')} className="w-12 sm:w-16 px-2 sm:px-3 py-2 text-right whitespace-nowrap shrink-0">
                               {hasEntryActions(entry) && (
                                 <button
                                   type="button"
