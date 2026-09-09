@@ -279,6 +279,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const selectedEntries = entries.filter((entry) => selectedRefs.has(entry.ref));
   const allLoadedSelected = entries.length > 0 && entries.every((entry) => selectedRefs.has(entry.ref));
   const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
+  const isSelectionMode = selectedRefs.size > 0;
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
@@ -527,6 +528,17 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       if (next.has(ref)) next.delete(ref); else next.add(ref);
       return next;
     });
+  };
+
+  const handleEntryClick = (entry: FileEntry, event?: React.MouseEvent | React.KeyboardEvent) => {
+    if (isSelectionMode || event?.ctrlKey || event?.metaKey) {
+      toggleSelection(entry.ref);
+      return;
+    }
+    const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
+    if (isInteractive) {
+      openEntry(entry);
+    }
   };
 
   const toggleSelectAll = () => {
@@ -1346,22 +1358,28 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <tbody>
                       {entries.map((entry) => {
                         const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
+                        const isSelected = selectedRefs.has(entry.ref);
                         return (
                           <tr
                             key={entry.ref}
-                            onClick={() => isInteractive && openEntry(entry)}
+                            aria-selected={isSelectionMode ? isSelected : undefined}
+                            onClick={(event) => handleEntryClick(entry, event)}
                             onContextMenu={(event) => handleContextMenu(event, entry)}
-                            className={`border-t border-[var(--color-border)] hover:bg-[var(--color-hover)] transition-colors ${isInteractive ? 'cursor-pointer' : ''}`}
+                            className={`border-t border-[var(--color-border)] transition-colors ${
+                              isSelected
+                                ? 'bg-[var(--color-selection-bg)]/20 hover:bg-[var(--color-selection-bg)]/30'
+                                : 'hover:bg-[var(--color-hover)]'
+                            } ${isInteractive || isSelectionMode ? 'cursor-pointer' : ''}`}
                           >
-                            <td className="w-10 px-3 py-2"><input type="checkbox" checked={selectedRefs.has(entry.ref)} onClick={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} /></td>
+                            <td className="w-10 px-3 py-2"><input type="checkbox" checked={isSelected} onClick={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} /></td>
                             <td data-label={t('files.name')} className="px-3 py-2 min-w-0 max-w-0">
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openEntry(entry);
+                                  handleEntryClick(entry, e);
                                 }}
-                                disabled={entry.kind === 'directory' && (!capabilities.browse || entriesLoading)}
+                                disabled={!isSelectionMode && entry.kind === 'directory' && (!capabilities.browse || entriesLoading)}
                                 className="inline-flex w-full items-center gap-2.5 sm:gap-3 min-w-0 text-left ui-link disabled:cursor-not-allowed disabled:opacity-55"
                                 title={entry.name}
                               >
@@ -1422,26 +1440,32 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 flex-1 auto-rows-max" role="grid" aria-label={t('files.title')}>
                   {entries.map((entry) => {
                     const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
+                    const isSelected = selectedRefs.has(entry.ref);
 
                     return (
                       <div
                         key={entry.ref}
                         role="gridcell"
-                        tabIndex={isInteractive ? 0 : undefined}
-                        onClick={() => isInteractive && openEntry(entry)}
+                        aria-selected={isSelectionMode ? isSelected : undefined}
+                        tabIndex={isInteractive || isSelectionMode ? 0 : undefined}
+                        onClick={(event) => handleEntryClick(entry, event)}
                         onContextMenu={(event) => handleContextMenu(event, entry)}
                         onKeyDown={(e) => {
-                          if ((e.key === 'Enter' || e.key === ' ') && isInteractive) {
+                          if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            openEntry(entry);
+                            handleEntryClick(entry, e);
                           }
                         }}
-                        className={`group isolate relative flex flex-col justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden transition-all hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs ${
-                          isInteractive ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]' : 'opacity-70'
+                        className={`group isolate relative flex flex-col justify-between rounded-xl border transition-all ${
+                          isSelected
+                            ? 'border-[var(--color-text-primary)] ring-2 ring-[var(--color-text-primary)]/20 bg-[var(--color-selection-bg)]/20 shadow-xs'
+                            : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-hover)] hover:border-[var(--color-border-hover,var(--color-border))] hover:shadow-xs'
+                        } ${
+                          isInteractive || isSelectionMode ? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]' : 'opacity-70'
                         }`}
                         title={entry.name}
                       >
-                        <input type="checkbox" className="absolute left-2 top-2 z-10" checked={selectedRefs.has(entry.ref)} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} />
+                        <input type="checkbox" className="absolute left-2 top-2 z-10" checked={isSelected} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()} onChange={() => toggleSelection(entry.ref)} aria-label={t('files.selectEntry', { name: entry.name })} />
                         {hasEntryActions(entry) && (
                           <div className="absolute right-2 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                             <button

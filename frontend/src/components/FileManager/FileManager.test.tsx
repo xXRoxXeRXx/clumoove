@@ -1253,5 +1253,185 @@ describe('FileManager component', () => {
       container.querySelector('button[aria-label="New folder"], button[aria-label="Neuer Ordner"]')
     ).not.toBeNull();
   });
+
+  it('adds further elements to selection when clicking anywhere on a row during selection mode', async () => {
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    // Initially 0 items selected
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+
+    // Select the first element via checkbox
+    const checkboxes = container.querySelectorAll<HTMLInputElement>('tbody input[type="checkbox"]');
+    expect(checkboxes.length).toBeGreaterThanOrEqual(2);
+
+    await act(async () => {
+      checkboxes[0]?.click();
+      await Promise.resolve();
+    });
+
+    // Selection mode is now active (count: 1)
+    const toolbar = container.querySelector('[role="toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 1 }));
+
+    // Click anywhere on the SECOND row (e.g. the row itself or directory name button)
+    const rows = container.querySelectorAll('tbody tr');
+    const secondRow = rows[1];
+    expect(secondRow).toBeDefined();
+
+    await act(async () => {
+      secondRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // Should NOT have opened/navigated into the directory
+    expect(vi.mocked(listFileEntries)).not.toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-file-1',
+      undefined,
+      expect.any(AbortSignal)
+    );
+
+    // Instead, selection count should now be 2
+    expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 2 }));
+    expect(rows[0]?.getAttribute('aria-selected')).toBe('true');
+    expect(rows[1]?.getAttribute('aria-selected')).toBe('true');
+
+    // Click the name button of the second row to toggle it off
+    const secondRowButton = secondRow?.querySelector('button');
+    expect(secondRowButton).not.toBeNull();
+
+    await act(async () => {
+      secondRowButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // Count is back to 1, row 1 still selected, row 2 unselected
+    expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 1 }));
+    expect(rows[0]?.getAttribute('aria-selected')).toBe('true');
+    expect(rows[1]?.getAttribute('aria-selected')).toBe('false');
+
+    // Click the first row to toggle it off as well
+    await act(async () => {
+      rows[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // Selection mode is now exited
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+
+    // Now clicking the directory row navigates normally
+    const dirRow = Array.from(container.querySelectorAll('tbody tr')).find((row) => row.textContent?.includes('Documents'));
+    await act(async () => {
+      dirRow?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(vi.mocked(listFileEntries)).toHaveBeenCalledWith(
+      'https://api.example.test',
+      'jwt-token',
+      'profile-1',
+      'ref-dir-1',
+      undefined,
+      expect.any(AbortSignal)
+    );
+  });
+
+  it('toggles selection when clicking anywhere on a card in grid view during selection mode', async () => {
+    localStorage.setItem('clumoove_file_manager_view_mode', 'grid');
+
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    const gridCells = container.querySelectorAll<HTMLElement>('[role="gridcell"]');
+    expect(gridCells.length).toBeGreaterThanOrEqual(2);
+
+    // Select the first card via checkbox
+    const firstCheckbox = gridCells[0]?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    await act(async () => {
+      firstCheckbox?.click();
+      await Promise.resolve();
+    });
+
+    // Selection toolbar active with count 1
+    const toolbar = container.querySelector('[role="toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 1 }));
+
+    // Click anywhere on the second card
+    await act(async () => {
+      gridCells[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // Second card should be selected, count becomes 2
+    expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 2 }));
+    expect(gridCells[0]?.getAttribute('aria-selected')).toBe('true');
+    expect(gridCells[1]?.getAttribute('aria-selected')).toBe('true');
+
+    // Toggle second card via Space key
+    await act(async () => {
+      gridCells[1]?.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // Count is back to 1
+    expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 1 }));
+    expect(gridCells[1]?.getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('allows selecting an item directly with Ctrl or Cmd click when no items are selected', async () => {
+    await act(async () => {
+      root.render(
+        <FileManager
+          apiUrl="https://api.example.test"
+          token="jwt-token"
+          profileId="profile-1"
+          onProfileChange={onProfileChange}
+        />
+      );
+      await Promise.resolve();
+    });
+
+    await flushAsync();
+
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+
+    const firstRow = container.querySelector('tbody tr');
+    await act(async () => {
+      firstRow?.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      await Promise.resolve();
+    });
+
+    const toolbar = container.querySelector('[role="toolbar"]');
+    expect(toolbar).not.toBeNull();
+    expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 1 }));
+  });
 });
 
