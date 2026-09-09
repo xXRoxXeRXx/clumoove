@@ -1433,5 +1433,145 @@ describe('FileManager component', () => {
     expect(toolbar).not.toBeNull();
     expect(toolbar?.textContent).toContain(i18n.t('files.selectedCount', { count: 1 }));
   });
+
+  describe('table column sorting', () => {
+    const testEntries: FileEntry[] = [
+      {
+        ref: 'dir-beta',
+        name: 'BetaFolder',
+        display_path: '/BetaFolder',
+        kind: 'directory',
+        size: 0,
+        modified_at: '2026-01-01T00:00:00Z',
+        allowed_actions: ['download'],
+      },
+      {
+        ref: 'dir-alpha',
+        name: 'AlphaFolder',
+        display_path: '/AlphaFolder',
+        kind: 'directory',
+        size: 0,
+        modified_at: '2026-03-01T00:00:00Z',
+        allowed_actions: ['download'],
+      },
+      {
+        ref: 'file-small-old',
+        name: 'file-small-old.txt',
+        display_path: '/file-small-old.txt',
+        kind: 'file',
+        size: 100,
+        modified_at: '2026-01-15T00:00:00Z',
+        allowed_actions: ['download'],
+      },
+      {
+        ref: 'file-large-new',
+        name: 'file-large-new.txt',
+        display_path: '/file-large-new.txt',
+        kind: 'file',
+        size: 9999,
+        modified_at: '2026-05-20T00:00:00Z',
+        allowed_actions: ['download'],
+      },
+    ];
+
+    const getRowTitles = () =>
+      Array.from(container.querySelectorAll('tbody tr td[data-label="Name"] button')).map((r) => r.getAttribute('title'));
+
+    const renderManager = async () => {
+      vi.mocked(listFileEntries).mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { entries: testEntries, next_cursor: null },
+      });
+
+      await act(async () => {
+        root.render(
+          <FileManager
+            apiUrl="https://api.example.test"
+            token="jwt-token"
+            profileId="profile-1"
+            onProfileChange={onProfileChange}
+          />
+        );
+        await Promise.resolve();
+      });
+      await flushAsync();
+    };
+
+    it('sorts by name ascending by default and toggles to descending on click', async () => {
+      await renderManager();
+
+      const nameTh = container.querySelector('th[aria-sort="ascending"]');
+      expect(nameTh).not.toBeNull();
+      expect(nameTh?.textContent).toContain('Name');
+
+      const sizeTh = container.querySelectorAll('thead th')[2];
+      const modTh = container.querySelectorAll('thead th')[3];
+      expect(sizeTh?.getAttribute('aria-sort')).toBe('none');
+      expect(modTh?.getAttribute('aria-sort')).toBe('none');
+
+      // Default Name ASC: AlphaFolder, BetaFolder, file-large-new.txt, file-small-old.txt
+      expect(getRowTitles()).toEqual(['AlphaFolder', 'BetaFolder', 'file-large-new.txt', 'file-small-old.txt']);
+
+      // Click Name to toggle to DESC
+      const nameBtn = nameTh?.querySelector('button');
+      await act(async () => {
+        nameBtn?.click();
+        await Promise.resolve();
+      });
+
+      expect(nameTh?.getAttribute('aria-sort')).toBe('descending');
+      expect(getRowTitles()).toEqual(['BetaFolder', 'AlphaFolder', 'file-small-old.txt', 'file-large-new.txt']);
+    });
+
+    it('sorts by size descending first and toggles to ascending', async () => {
+      await renderManager();
+
+      const sizeTh = container.querySelectorAll('thead th')[2];
+      const sizeBtn = sizeTh?.querySelector('button');
+      await act(async () => {
+        sizeBtn?.click();
+        await Promise.resolve();
+      });
+
+      expect(sizeTh?.getAttribute('aria-sort')).toBe('descending');
+      const nameTh = container.querySelectorAll('thead th')[1];
+      expect(nameTh?.getAttribute('aria-sort')).toBe('none');
+
+      // Directories stay alphabetical, files sorted by size DESC (9999 then 100)
+      expect(getRowTitles()).toEqual(['AlphaFolder', 'BetaFolder', 'file-large-new.txt', 'file-small-old.txt']);
+
+      // Click Size again -> ASC (100 then 9999)
+      await act(async () => {
+        sizeBtn?.click();
+        await Promise.resolve();
+      });
+      expect(sizeTh?.getAttribute('aria-sort')).toBe('ascending');
+      expect(getRowTitles()).toEqual(['AlphaFolder', 'BetaFolder', 'file-small-old.txt', 'file-large-new.txt']);
+    });
+
+    it('sorts by date descending first and toggles to ascending', async () => {
+      await renderManager();
+
+      const modTh = container.querySelectorAll('thead th')[3];
+      const modBtn = modTh?.querySelector('button');
+      await act(async () => {
+        modBtn?.click();
+        await Promise.resolve();
+      });
+
+      expect(modTh?.getAttribute('aria-sort')).toBe('descending');
+      // Directories newest first (March then Jan), files newest first (May then Jan)
+      expect(getRowTitles()).toEqual(['AlphaFolder', 'BetaFolder', 'file-large-new.txt', 'file-small-old.txt']);
+
+      // Click Modified again -> ASC (oldest first)
+      await act(async () => {
+        modBtn?.click();
+        await Promise.resolve();
+      });
+      expect(modTh?.getAttribute('aria-sort')).toBe('ascending');
+      expect(getRowTitles()).toEqual(['BetaFolder', 'AlphaFolder', 'file-small-old.txt', 'file-large-new.txt']);
+    });
+  });
 });
 

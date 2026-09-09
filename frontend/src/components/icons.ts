@@ -11,6 +11,7 @@ export {
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
+  ChevronUpDownIcon,
 } from '@heroicons/react/24/outline';
 
 // Actions & Controls

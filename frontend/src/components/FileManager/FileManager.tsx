@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowDownTrayIcon,
@@ -7,7 +7,10 @@ import {
   ArrowRightIcon,
   ArrowsRightLeftIcon,
   ArrowUpIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
+  ChevronUpDownIcon,
 	ClipboardDocumentIcon,
   EllipsisHorizontalIcon,
 	EllipsisVerticalIcon,
@@ -37,6 +40,9 @@ type Breadcrumb = {
   ref: string | null;
   name: string;
 };
+
+export type SortField = 'name' | 'size' | 'modified';
+export type SortDirection = 'asc' | 'desc';
 
 type FileManagerProps = {
   apiUrl: string;
@@ -145,6 +151,77 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
       // ignore storage errors
     }
   };
+
+  const [sortField, setSortField] = useState<SortField>(() => {
+    try {
+      const stored = localStorage.getItem('clumoove_file_manager_sort_field');
+      if (stored === 'name' || stored === 'size' || stored === 'modified') return stored;
+    } catch {
+      // ignore storage errors
+    }
+    return 'name';
+  });
+
+  const [sortDirection, setSortDirection] = useState<SortDirection>(() => {
+    try {
+      const stored = localStorage.getItem('clumoove_file_manager_sort_dir');
+      if (stored === 'asc' || stored === 'desc') return stored;
+    } catch {
+      // ignore storage errors
+    }
+    return 'asc';
+  });
+
+  const handleSort = (field: SortField) => {
+    let nextField = field;
+    let nextDir: SortDirection;
+    if (sortField === field) {
+      nextDir = sortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+      nextField = field;
+      // Start size/modified columns descending (largest/newest first)
+      nextDir = field === 'name' ? 'asc' : 'desc';
+    }
+    setSortField(nextField);
+    setSortDirection(nextDir);
+    try {
+      localStorage.setItem('clumoove_file_manager_sort_field', nextField);
+      localStorage.setItem('clumoove_file_manager_sort_dir', nextDir);
+    } catch {
+      // ignore storage errors
+    }
+  };
+
+  const renderSortHeader = (field: SortField, label: string, sortLabel: string) => {
+    const isActive = sortField === field;
+    return (
+      <button
+        type="button"
+        onClick={() => handleSort(field)}
+        className="group -mx-1 -my-1 px-1 py-1 inline-flex items-center gap-1.5 font-medium hover:text-[var(--color-text-primary)] transition-colors select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)] rounded text-left"
+        title={isActive ? (sortDirection === 'asc' ? t('files.sortDescending') : t('files.sortAscending')) : sortLabel}
+        aria-label={`${label}: ${isActive ? (sortDirection === 'asc' ? t('files.sortAscending') : t('files.sortDescending')) : sortLabel}`}
+      >
+        <span className={isActive ? 'text-[var(--color-text-primary)] font-semibold' : 'text-[var(--color-text-secondary)] group-hover:text-[var(--color-text-primary)] transition-colors'}>
+          {label}
+        </span>
+        {isActive ? (
+          <span className="text-[var(--color-text-primary)] flex items-center shrink-0">
+            {sortDirection === 'asc' ? (
+              <ChevronUpIcon className="h-3.5 w-3.5 stroke-[2.5]" aria-hidden="true" />
+            ) : (
+              <ChevronDownIcon className="h-3.5 w-3.5 stroke-[2.5]" aria-hidden="true" />
+            )}
+          </span>
+        ) : (
+          <span className="opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity text-[var(--color-text-secondary)] flex items-center shrink-0">
+            <ChevronUpDownIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          </span>
+        )}
+      </button>
+    );
+  };
+
   const createDirDialogRef = useRef<HTMLDivElement>(null);
   const createDirCancelRef = useRef<HTMLButtonElement>(null);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
@@ -280,6 +357,52 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
   const allLoadedSelected = entries.length > 0 && entries.every((entry) => selectedRefs.has(entry.ref));
   const someLoadedSelected = entries.some((entry) => selectedRefs.has(entry.ref));
   const isSelectionMode = selectedRefs.size > 0;
+
+  const sortedEntries = useMemo(() => {
+    return [...entries].sort((a, b) => {
+      // Directories always appear first
+      if (a.kind !== b.kind) {
+        return a.kind === 'directory' ? -1 : 1;
+      }
+
+      if (sortField === 'name') {
+        const cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+
+      if (sortField === 'size') {
+        if (a.kind === 'directory') {
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+        }
+        const sizeA = a.size ?? 0;
+        const sizeB = b.size ?? 0;
+        if (sizeA !== sizeB) {
+          return sortDirection === 'asc' ? sizeA - sizeB : sizeB - sizeA;
+        }
+        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      }
+
+      if (sortField === 'modified') {
+        const hasA = Boolean(a.modified_at);
+        const hasB = Boolean(b.modified_at);
+        if (!hasA && !hasB) {
+          const cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+          return sortDirection === 'asc' ? cmp : -cmp;
+        }
+        if (!hasA) return 1;
+        if (!hasB) return -1;
+
+        const timeA = new Date(a.modified_at!).getTime();
+        const timeB = new Date(b.modified_at!).getTime();
+        if (timeA !== timeB) {
+          return sortDirection === 'asc' ? timeA - timeB : timeB - timeA;
+        }
+        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      }
+
+      return 0;
+    });
+  }, [entries, sortField, sortDirection]);
 
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = someLoadedSelected && !allLoadedSelected;
@@ -1349,14 +1472,32 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                     <thead className="bg-[var(--color-bg-tertiary)] text-left text-xs text-[var(--color-text-secondary)]">
                       <tr>
                         <th scope="col" className="w-10 px-3 py-2 font-medium"><input ref={selectAllRef} type="checkbox" checked={allLoadedSelected} onChange={toggleSelectAll} aria-label={t('files.selectAll')} /></th>
-                        <th scope="col" className="px-3 py-2 font-medium">{t('files.name')}</th>
-                        <th scope="col" className="hidden sm:table-cell w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.size')}</th>
-                        <th scope="col" className="hidden sm:table-cell w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0">{t('files.modified')}</th>
+                        <th
+                          scope="col"
+                          aria-sort={sortField === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          className="px-3 py-2 font-medium"
+                        >
+                          {renderSortHeader('name', t('files.name'), t('files.sortByName'))}
+                        </th>
+                        <th
+                          scope="col"
+                          aria-sort={sortField === 'size' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          className="hidden sm:table-cell w-28 sm:w-32 px-3 py-2 font-medium whitespace-nowrap shrink-0"
+                        >
+                          {renderSortHeader('size', t('files.size'), t('files.sortBySize'))}
+                        </th>
+                        <th
+                          scope="col"
+                          aria-sort={sortField === 'modified' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                          className="hidden sm:table-cell w-36 sm:w-44 px-3 py-2 font-medium whitespace-nowrap shrink-0"
+                        >
+                          {renderSortHeader('modified', t('files.modified'), t('files.sortByModified'))}
+                        </th>
                         <th scope="col" className="w-12 sm:w-16 px-2 sm:px-3 py-2 font-medium text-right shrink-0"><span className="sr-only">{t('files.actions')}</span></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {entries.map((entry) => {
+                      {sortedEntries.map((entry) => {
                         const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
                         const isSelected = selectedRefs.has(entry.ref);
                         return (
@@ -1438,7 +1579,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
                 </div>
               ) : (
                 <div className="p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 flex-1 auto-rows-max" role="grid" aria-label={t('files.title')}>
-                  {entries.map((entry) => {
+                  {sortedEntries.map((entry) => {
                     const isInteractive = (entry.kind === 'directory' && capabilities.browse && !entriesLoading) || entry.kind === 'file';
                     const isSelected = selectedRefs.has(entry.ref);
 
@@ -1668,7 +1809,7 @@ export function FileManager({ apiUrl, token, profileId, initialBreadcrumbs, init
             token={token}
             profileId={profileId}
             entry={previewEntry}
-            entries={entries}
+            entries={sortedEntries}
             supportsThumbnails={capabilities.thumbnails}
             onNavigate={(entry) => setPreviewEntry(entry)}
             onClose={() => setPreviewEntry(null)}
