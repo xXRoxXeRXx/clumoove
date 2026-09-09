@@ -988,3 +988,45 @@ func TestHandleFileMutationValidations(t *testing.T) {
 	}
 }
 
+func TestHandleFileRenameValidations(t *testing.T) {
+	server := &APIServer{
+		rateLimiter:   allowAllFileRateLimiter{},
+		encryptionKey: "test-encryption-key-for-files!!",
+	}
+
+	// 1. Missing claims -> 401 Unauthorized
+	req := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:rename", strings.NewReader(`{"ref":"abc","new_name":"test.txt"}`))
+	rec := httptest.NewRecorder()
+	server.handleFileEntryRename(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+
+	// 2. Invalid source ref -> 400 ErrFilesInvalidRef
+	reqInvalid := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:rename", strings.NewReader(`{"ref":"invalid","new_name":"test.txt"}`))
+	reqInvalid.SetPathValue("profileID", "p1")
+	reqInvalid = reqInvalid.WithContext(context.WithValue(reqInvalid.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	recInvalid := httptest.NewRecorder()
+	server.handleFileEntryRename(recInvalid, reqInvalid)
+	if recInvalid.Code != http.StatusBadRequest || !strings.Contains(recInvalid.Body.String(), string(ErrFilesInvalidRef)) {
+		t.Fatalf("status = %d, body = %s, want 400 ErrFilesInvalidRef", recInvalid.Code, recInvalid.Body.String())
+	}
+
+	// 3. Invalid new name (path traversal / slash) -> 400 ErrInvalidBody
+	sourceRef, _ := sealFileReference(fileReference{
+		UserID:       "u1",
+		ProfileID:    "p1",
+		ResourceType: "files",
+		Kind:         "file",
+		Locator:      storage.ManagerLocator{Path: "/folder/test.txt", NativeID: "file-123"},
+	}, server.encryptionKey)
+
+	reqSlash := httptest.NewRequest(http.MethodPost, "/api/files/profiles/p1/entries:rename", strings.NewReader(`{"ref":"`+sourceRef+`","new_name":"sub/test.txt"}`))
+	reqSlash.SetPathValue("profileID", "p1")
+	reqSlash = reqSlash.WithContext(context.WithValue(reqSlash.Context(), auth.ClaimsKey, &auth.Claims{UserID: "u1"}))
+	recSlash := httptest.NewRecorder()
+	server.handleFileEntryRename(recSlash, reqSlash)
+	if recSlash.Code != http.StatusBadRequest || !strings.Contains(recSlash.Body.String(), string(ErrInvalidBody)) {
+		t.Fatalf("status = %d, body = %s, want 400 ErrInvalidBody", recSlash.Code, recSlash.Body.String())
+	}
+}

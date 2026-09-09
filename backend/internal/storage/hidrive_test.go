@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 )
@@ -319,6 +320,23 @@ func TestHiDriveProviderDownloadUploadDeleteRename(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
+		case "/file/rename", "/dir/rename":
+			if r.Method == "POST" {
+				p := q.Get("path")
+				name := q.Get("name")
+				if data, ok := storedFiles[p]; ok {
+					dst := path.Join(path.Dir(p), name)
+					if !strings.HasPrefix(dst, "/") {
+						dst = "/" + dst
+					}
+					storedFiles[dst] = data
+					delete(storedFiles, p)
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 		case "/file/move", "/dir/move":
 			if r.Method == "POST" {
 				src := q.Get("src")
@@ -427,5 +445,39 @@ func TestHiDriveInspectResourceNotFound(t *testing.T) {
 	_, err := p.InspectResource(context.Background(), "files", "/missing.txt")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("InspectResource missing error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestHiDriveProviderRenameDirectory(t *testing.T) {
+	dirRenamed := false
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/meta":
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(hidriveMetaResponse{Path: "/folder", Name: "folder", Type: "dir"})
+		case "/dir/rename":
+			if r.Method == http.MethodPost {
+				q := r.URL.Query()
+				if q.Get("path") == "/folder" && q.Get("name") == "newfolder" && q.Get("on_exist") == "overwrite" {
+					dirRenamed = true
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				t.Fatalf("unexpected query params: %v", q)
+			}
+		default:
+			t.Fatalf("unexpected call: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	p, _ := NewHiDriveProvider("mock-token")
+	p.BaseURL = ts.URL
+	err := p.RenameFile(context.Background(), "files", "/folder", "/newfolder")
+	if err != nil {
+		t.Fatalf("RenameFile failed: %v", err)
+	}
+	if !dirRenamed {
+		t.Fatal("expected /dir/rename to be called")
 	}
 }

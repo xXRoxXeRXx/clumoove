@@ -633,14 +633,6 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	destination := storage.ManagerLocator{Path: managedRootPath()}
-	if operation == "rename" {
-		destination = storage.ManagerLocator{Path: path.Dir(source.Locator.Path)}
-		if source.Locator.NativeID != "" && request.DestinationParentRef == "" {
-			// Google rename requests without an explicit parent retain the source's
-			// immutable parent instead of deriving it from a display path.
-			destination = storage.ManagerLocator{}
-		}
-	}
 	if request.DestinationParentRef != "" {
 		destinationRef, destinationErr := openFileReference(request.DestinationParentRef, s.encryptionKey, userID, profileID)
 		if destinationErr != nil || destinationRef.Kind != "directory" {
@@ -658,6 +650,17 @@ func (s *APIServer) handleFileEntryMutation(w http.ResponseWriter, r *http.Reque
 	if isManagedRootLocator(resolved.profile.Provider, source.Locator) {
 		writeValidationError(w, ErrFilesRootMutationForbidden)
 		return
+	}
+	if operation == "rename" {
+		// Renames keep the item in its existing folder. For path-based providers,
+		// we derive destination from the source's parent directory, intentionally
+		// overriding any client-supplied DestinationParentRef.
+		destination = storage.ManagerLocator{Path: path.Dir(canonicalManagedPath(source.Locator.Path))}
+		if resolved.profile.Provider == "google" && request.DestinationParentRef == "" {
+			// Google rename requests without an explicit parent retain the source's
+			// immutable parent instead of deriving it from a display path.
+			destination = storage.ManagerLocator{}
+		}
 	}
 	capabilities := storage.ManagerCapabilitiesFor(resolved.profile.Provider)
 	if (operation == "rename" && !capabilities.Rename) || (operation == "move" && !capabilities.Move) || (operation == "copy" && !capabilities.Copy) {

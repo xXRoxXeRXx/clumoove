@@ -1205,35 +1205,51 @@ func (p *SeafileProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 }
 
 func (p *SeafileProvider) seafileFileOperation(ctx context.Context, repoID, repoPath string, form url.Values) error {
-	reqURL := fmt.Sprintf("%s/api2/repos/%s/file/?p=%s", p.BaseURL, repoID, url.QueryEscape(repoPath))
-	req, err := p.newAuthRequest(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	var lastStatus int
+	for _, endpoint := range []string{"file", "dir"} {
+		reqURL := fmt.Sprintf("%s/api2/repos/%s/%s/?p=%s", p.BaseURL, repoID, endpoint, url.QueryEscape(repoPath))
+		req, err := p.newAuthRequest(ctx, "POST", reqURL, strings.NewReader(form.Encode()))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := p.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to rename seafile file: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := p.HTTPClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("failed to rename seafile file: %w", err)
+		}
+		lastStatus = resp.StatusCode
 
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		p.invalidateToken()
-		return ErrAuth
-	}
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrNotFound
-	}
-	if resp.StatusCode == http.StatusConflict {
-		return ErrManagerConflict
-	}
-
-	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			return nil
+		}
+		if resp.StatusCode == http.StatusConflict {
+			resp.Body.Close()
+			return ErrManagerConflict
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			p.invalidateToken()
+			return ErrAuth
+		}
+		// If /file/ failed with 400 or 404, try /dir/ in case the target is a directory.
+		if endpoint == "file" && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusNotFound) {
+			resp.Body.Close()
+			continue
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return ErrNotFound
+		}
+		resp.Body.Close()
 		return fmt.Errorf("seafile rename or move file status %d", resp.StatusCode)
 	}
 
-	return nil
+	if lastStatus == http.StatusNotFound {
+		return ErrNotFound
+	}
+	return fmt.Errorf("seafile rename or move file status %d", lastStatus)
 }
 
 func (p *SeafileProvider) GetFileHash(ctx context.Context, resourceType, filePath string) (string, error) {

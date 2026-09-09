@@ -179,9 +179,9 @@ func TestHiDriveManagerUploadConflictStrategies(t *testing.T) {
 				w.WriteHeader(http.StatusCreated)
 				return
 			}
-			if r.URL.Path == "/file/move" && r.Method == http.MethodPost {
-				if r.URL.Query().Get("on_exist") != "overwrite" || !strings.HasSuffix(r.URL.Query().Get("dst"), "public/file.txt") {
-					t.Fatalf("expected move with on_exist=overwrite to public/file.txt, got query=%v", r.URL.Query())
+			if (r.URL.Path == "/file/rename" || r.URL.Path == "/file/move") && r.Method == http.MethodPost {
+				if r.URL.Query().Get("on_exist") != "overwrite" {
+					t.Fatalf("expected on_exist=overwrite, got query=%v", r.URL.Query())
 				}
 				renamedMoved = true
 				w.WriteHeader(http.StatusOK)

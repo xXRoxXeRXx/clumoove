@@ -729,10 +729,23 @@ func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	srcPath := p.cleanPath(oldPath)
 	dstPath := p.cleanPath(newPath)
 
-	endpoint := "/file/move"
+	isRename := path.Dir(srcPath) == path.Dir(dstPath)
 	meta, err := p.InspectResource(ctx, resourceType, srcPath)
-	if err == nil && meta.IsDir {
-		endpoint = "/dir/move"
+	isDir := err == nil && meta.IsDir
+
+	var endpoint string
+	if isRename {
+		if isDir {
+			endpoint = "/dir/rename"
+		} else {
+			endpoint = "/file/rename"
+		}
+	} else {
+		if isDir {
+			endpoint = "/dir/move"
+		} else {
+			endpoint = "/file/move"
+		}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", p.apiURL(endpoint), nil)
@@ -741,8 +754,13 @@ func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	}
 	req.Header.Set("Authorization", "Bearer "+p.AccessToken)
 	q := req.URL.Query()
-	q.Set("src", srcPath)
-	q.Set("dst", dstPath)
+	if isRename {
+		q.Set("path", srcPath)
+		q.Set("name", path.Base(dstPath))
+	} else {
+		q.Set("src", srcPath)
+		q.Set("dst", dstPath)
+	}
 	// The processor's overwrite flow uploads to a temporary name and then
 	// atomically moves it into place. Ask HiDrive to replace a raced existing
 	// destination instead of failing the finalisation.

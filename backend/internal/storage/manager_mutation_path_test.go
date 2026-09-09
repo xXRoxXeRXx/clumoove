@@ -246,3 +246,68 @@ func TestCopyNativePathManagerItemWithSource_DoesNotReinspect(t *testing.T) {
 		t.Errorf("unexpected result: %+v", res)
 	}
 }
+
+func TestPathManagerMutator_Rename(t *testing.T) {
+	ctx := context.Background()
+	var renamedSource, renamedTarget string
+	provider := &mockStorageProvider{
+		inspectFn: func(ctx context.Context, resourceType, path string) (CloudResource, error) {
+			if path == "/folder" {
+				return CloudResource{Path: "/folder", Name: "folder", IsDir: true}, nil
+			}
+			if path == "/folder/test.txt" {
+				return CloudResource{Path: "/folder/test.txt", Name: "test.txt", IsDir: false}, nil
+			}
+			if path == "/root.txt" {
+				return CloudResource{Path: "/root.txt", Name: "root.txt", IsDir: false}, nil
+			}
+			return CloudResource{Path: path, Name: "unknown", IsDir: false}, nil
+		},
+		listingFn: func(ctx context.Context, resourceType, dirPath string) ([]CloudResource, error) {
+			return []CloudResource{}, nil
+		},
+		renameFn: func(ctx context.Context, resourceType, oldPath, newPath string) error {
+			renamedSource = oldPath
+			renamedTarget = newPath
+			return nil
+		},
+	}
+
+	mutator := newPathManagerMutator(provider, true)
+
+	// 1. Rename file in subfolder
+	res, err := mutator.RenameManagerItem(ctx, ManagerLocator{Path: "/folder/test.txt", NativeID: "123"}, ManagerLocator{Path: "/folder"}, "newname.txt", ManagerMutationOptions{})
+	if err != nil {
+		t.Fatalf("RenameManagerItem failed: %v", err)
+	}
+	if res.Status != "renamed" || res.FinalName != "newname.txt" {
+		t.Fatalf("unexpected res: %+v", res)
+	}
+	if renamedSource != "/folder/test.txt" || renamedTarget != "/folder/newname.txt" {
+		t.Fatalf("renamedSource = %q, renamedTarget = %q", renamedSource, renamedTarget)
+	}
+
+	// 2. Rename file in root
+	res, err = mutator.RenameManagerItem(ctx, ManagerLocator{Path: "/root.txt", NativeID: "456"}, ManagerLocator{Path: "/"}, "renamed_root.txt", ManagerMutationOptions{})
+	if err != nil {
+		t.Fatalf("RenameManagerItem root failed: %v", err)
+	}
+	if res.Status != "renamed" || res.FinalName != "renamed_root.txt" {
+		t.Fatalf("unexpected res: %+v", res)
+	}
+	if renamedSource != "/root.txt" || renamedTarget != "/renamed_root.txt" {
+		t.Fatalf("renamedSource = %q, renamedTarget = %q", renamedSource, renamedTarget)
+	}
+
+	// 3. Rename to same name returns ErrManagerNoop
+	_, err = mutator.RenameManagerItem(ctx, ManagerLocator{Path: "/root.txt"}, ManagerLocator{Path: "/"}, "root.txt", ManagerMutationOptions{})
+	if !errors.Is(err, ErrManagerNoop) {
+		t.Fatalf("expected ErrManagerNoop, got: %v", err)
+	}
+
+	// 4. Empty destination path returns ErrManagerInvalidDestination
+	_, err = mutator.RenameManagerItem(ctx, ManagerLocator{Path: "/root.txt"}, ManagerLocator{}, "empty_dest.txt", ManagerMutationOptions{})
+	if !errors.Is(err, ErrManagerInvalidDestination) {
+		t.Fatalf("expected ErrManagerInvalidDestination, got: %v", err)
+	}
+}

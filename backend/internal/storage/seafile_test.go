@@ -490,3 +490,41 @@ func TestSeafileRenameFileReportsPartialAfterFailedPostMoveRename(t *testing.T) 
 		t.Fatalf("RenameFile() error = %v, want ErrManagerPartial", err)
 	}
 }
+
+func TestSeafileRenameDirectoryRetainsNativeRenameWithinDirectory(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if requests == 1 {
+			// First call to /file/ returns 404 since it's a directory
+			if r.URL.Path != "/api2/repos/repo-a/file/" {
+				t.Fatalf("expected /file/ request first, got %s", r.URL.Path)
+			}
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// Second call falls back to /dir/
+		if r.URL.Path != "/api2/repos/repo-a/dir/" {
+			t.Fatalf("expected /dir/ request second, got %s", r.URL.Path)
+		}
+		if r.Form.Get("operation") != "rename" || r.Form.Get("newname") != "newfolder" {
+			t.Fatalf("rename form = %#v", r.Form)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	provider := &SeafileProvider{
+		BaseURL: server.URL, Token: "token", HTTPClient: server.Client(),
+		repoCache: map[string]string{"Library": "repo-a"},
+	}
+
+	if err := provider.RenameFile(context.Background(), "files", "/Library/oldfolder", "/Library/newfolder"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected 2 requests (file attempt + dir fallback), got %d", requests)
+	}
+}
