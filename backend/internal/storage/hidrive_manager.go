@@ -41,7 +41,7 @@ func (p *HiDriveProvider) CopyManagerItem(ctx context.Context, locator, destinat
 		if !source.IsDir {
 			query.Set("preserve_mtime", "true")
 		}
-		if overwrite {
+		if overwrite && !source.IsDir {
 			query.Set("on_exist", "overwrite")
 		}
 		req.URL.RawQuery = query.Encode()

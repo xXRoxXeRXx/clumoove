@@ -454,11 +454,11 @@ func TestHiDriveProviderRenameDirectory(t *testing.T) {
 		switch r.URL.Path {
 		case "/meta":
 			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(hidriveMetaResponse{Path: "/folder", Name: "folder", Type: "dir"})
+			_ = json.NewEncoder(w).Encode(hidriveMetaResponse{Path: "root/users/john/folder", Name: "folder", Type: "dir"})
 		case "/dir/rename":
 			if r.Method == http.MethodPost {
 				q := r.URL.Query()
-				if q.Get("path") == "/folder" && q.Get("name") == "newfolder" && q.Get("on_exist") == "overwrite" {
+				if q.Get("path") == "/folder" && q.Get("name") == "newfolder" && q.Get("on_exist") == "" {
 					dirRenamed = true
 					w.WriteHeader(http.StatusOK)
 					return

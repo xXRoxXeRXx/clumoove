@@ -282,17 +282,16 @@ func (p *HiDriveProvider) InspectResource(ctx context.Context, resourceType, res
 	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
 		return CloudResource{}, err
 	}
-	metaPath, err := decodeHiDrivePath(meta.Path)
-	if err != nil {
-		return CloudResource{}, err
-	}
 	metaName, err := decodeHiDrivePath(meta.Name)
 	if err != nil {
 		return CloudResource{}, err
 	}
+	if metaName == "" {
+		metaName = path.Base(hdPath)
+	}
 
 	res := CloudResource{
-		Path:  metaPath,
+		Path:  hdPath,
 		Name:  metaName,
 		IsDir: meta.Type == "dir",
 		Size:  meta.Size,
@@ -731,7 +730,10 @@ func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 
 	isRename := path.Dir(srcPath) == path.Dir(dstPath)
 	meta, err := p.InspectResource(ctx, resourceType, srcPath)
-	isDir := err == nil && meta.IsDir
+	if err != nil {
+		return err
+	}
+	isDir := meta.IsDir
 
 	var endpoint string
 	if isRename {
@@ -764,7 +766,11 @@ func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 	// The processor's overwrite flow uploads to a temporary name and then
 	// atomically moves it into place. Ask HiDrive to replace a raced existing
 	// destination instead of failing the finalisation.
-	q.Set("on_exist", "overwrite")
+	// Note: HiDrive directory endpoints (/dir/rename and /dir/move) only support
+	// on_exist=autoname and reject on_exist=overwrite with HTTP 400 Bad Request.
+	if !isDir {
+		q.Set("on_exist", "overwrite")
+	}
 	req.URL.RawQuery = q.Encode()
 
 	resp, err := p.HTTPClient.Do(req)
@@ -775,6 +781,12 @@ func (p *HiDriveProvider) RenameFile(ctx context.Context, resourceType, oldPath,
 
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("hidrive rename: %w", ErrAuth)
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return ErrManagerConflict
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("hidrive rename failed, status: %d", resp.StatusCode)

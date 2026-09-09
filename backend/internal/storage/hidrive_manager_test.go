@@ -322,3 +322,41 @@ func TestHiDriveManagerThumbnail(t *testing.T) {
 		}
 	})
 }
+
+func TestHiDriveManagerRenameDirectory(t *testing.T) {
+	dirRenamed := false
+	provider := newHiDriveManagerTestProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		switch r.URL.Path {
+		case "/meta":
+			_ = json.NewEncoder(w).Encode(hidriveMetaResponse{Path: "root/users/john/myfolder", Name: "myfolder", Type: "dir"})
+		case "/dir":
+			_ = json.NewEncoder(w).Encode(hidriveDirResponse{Members: []hidriveDirMember{}})
+		case "/dir/rename":
+			if r.Method == http.MethodPost && q.Get("path") == "/myfolder" && q.Get("name") == "renamed_folder" && q.Get("on_exist") == "" {
+				dirRenamed = true
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			t.Fatalf("unexpected rename call: %s %s query=%v", r.Method, r.URL.Path, q)
+		default:
+			t.Fatalf("unexpected call: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	renamer, ok := NewManagerRenamer("hidrive", provider)
+	if !ok {
+		t.Fatal("expected hidrive to support ManagerRenamer")
+	}
+
+	res, err := renamer.RenameManagerItem(context.Background(), ManagerLocator{Path: "/myfolder"}, ManagerLocator{Path: "/"}, "renamed_folder", ManagerMutationOptions{})
+	if err != nil {
+		t.Fatalf("RenameManagerItem failed: %v", err)
+	}
+	if res.Status != "renamed" || res.FinalName != "renamed_folder" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	if !dirRenamed {
+		t.Fatal("expected /dir/rename to be called")
+	}
+}
