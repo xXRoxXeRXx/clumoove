@@ -47,7 +47,7 @@
   --layer-menu: 30;
   --layer-dialog: 40;
   --layer-toast: 50;
-  --color-file-folder: #a16207;
+  --color-file-folder: #000000;
   --color-file-image: #7e22ce;
   --color-file-video: #1d4ed8;
   --color-file-audio: #be123c;
@@ -123,7 +123,7 @@ html {
   --color-progress-warning: #fbbf24;
   --color-progress-error: #f87171;
   --color-overlay: rgb(9 9 11 / 0.72);
-  --color-file-folder: #fbbf24;
+  --color-file-folder: #ffffff;
   --color-file-image: #d8b4fe;
   --color-file-video: #93c5fd;
   --color-file-audio: #fda4af;
