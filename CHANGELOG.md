@@ -5,6 +5,35 @@ All notable changes to Clumoove will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-09-09
+
+### Added
+- **Cloud File Manager - Item Mutations & Batch Operations**:
+  - Direct file and directory mutations: rename, server-side move, and server-side copy for files and folders.
+  - Multi-item batch operations: contextual selection toolbar enabling multi-item move, copy, download, and deletion.
+  - Context menu and actions menu: right-click context menu and consolidated item dropdown for quick operations.
+  - Native server-side move and copy optimizations across supported cloud providers (Google Drive, OneDrive, Dropbox, Nextcloud, Seafile, HiDrive, Immich, S3) with automatic streaming fallback for cross-profile transfers.
+  - Managed directory and file deletion with optional recursive deletion for non-empty folders.
+- **Cross-Profile Transfers & Transfer Center**:
+  - Unified background transfer center: manage non-blocking copy and move transfers across different profiles and within the same profile.
+  - Live transfer tracking: clear status indicators, progress reporting, auto-dismissing notifications, and automatic cleanup of completed transfers.
+  - Increased default directory listing limit to 500 items for smoother navigation in large directories.
+- **File Manager UI & Interaction Enhancements**:
+  - Interactive multi-column table sorting: sort by name, size, and last modified date in ascending and descending order.
+  - Selection mode ergonomics: row and grid card clicks toggle selection when items are active, preserving direct navigation when nothing is selected, with Ctrl/Cmd+click selection support.
+  - Sticky header & profile sidebar: flush alignment with navigation bar (`top-16`), rounded card corners, top border preservation, and scrolling content mask.
+  - Responsive & mobile layout: compact mobile list layout and responsive selection toolbar actions fitting small screens.
+  - Media preview modal: widescreen aspect-ratio thumbnail previews for image and media files.
+  - Visual styling: updated directory folder icon styling for improved contrast and clarity.
+
+### Fixed
+- **HiDrive Storage Provider**:
+  - Resolved directory rename path resolution and omitted invalid `on_exist` parameter on directory rename requests.
+- **File Operations**:
+  - Prevented invalid destination error on rename by isolating destination parent path derivation and routing requests through dedicated provider endpoints.
+- **Transfer Center & Banners**:
+  - Corrected state handling to hide completed background transfers and automatically dismiss finished batch mutation banners.
+
 ## [0.17.0] - 2026-09-03
 
 ### Added
