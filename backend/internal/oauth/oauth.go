@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"backend/internal/version"
 )
 
 const maxOAuthResponseBodyBytes int64 = 1 << 20
@@ -59,6 +61,19 @@ var providerConfigs = map[string]ProviderConfig{
 	},
 }
 
+type userAgentTransport struct {
+	base http.RoundTripper
+}
+
+func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	currentUA := req.Header.Get("User-Agent")
+	if currentUA == "" || strings.HasPrefix(currentUA, "Go-http-client") {
+		req = req.Clone(req.Context())
+		req.Header.Set("User-Agent", version.UserAgent())
+	}
+	return t.base.RoundTrip(req)
+}
+
 // oauthClient keeps transport and endpoint dependencies together so tests can
 // use isolated clients without mutating package state. The default client and
 // providerConfigs are immutable after package initialization.
@@ -68,6 +83,20 @@ type oauthClient struct {
 }
 
 func newOAuthClient(httpClient *http.Client, configs map[string]ProviderConfig) *oauthClient {
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: 15 * time.Second,
+			Transport: &http.Transport{
+				IdleConnTimeout: 30 * time.Second,
+				MaxIdleConns:    10,
+			},
+		}
+	}
+	tr := httpClient.Transport
+	if tr == nil {
+		tr = http.DefaultTransport
+	}
+	httpClient.Transport = &userAgentTransport{base: tr}
 	return &oauthClient{httpClient: httpClient, configs: configs}
 }
 

@@ -17,6 +17,8 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/api/people/v1"
+
+	"backend/internal/version"
 )
 
 type GoogleProvider struct {
@@ -93,22 +95,22 @@ func NewGoogleProvider(ctx context.Context, token string) (*GoogleProvider, erro
 		ReadBufferSize:      256 * 1024,
 		WriteBufferSize:     256 * 1024,
 	}
-	baseClient := &http.Client{Transport: tr}
+	baseClient := &http.Client{Transport: newUserAgentTransport(tr)}
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, baseClient)
 
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	client := oauth2.NewClient(ctxWithClient, ts)
 
-	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(client))
+	driveSvc, err := drive.NewService(ctx, option.WithHTTPClient(client), option.WithUserAgent(version.UserAgent()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create drive service: %v", err)
 	}
 
-	calendarSvc, err := calendar.NewService(ctx, option.WithHTTPClient(client))
+	calendarSvc, err := calendar.NewService(ctx, option.WithHTTPClient(client), option.WithUserAgent(version.UserAgent()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create calendar service: %v", err)
 	}
-	peopleSvc, err := people.NewService(ctx, option.WithHTTPClient(client))
+	peopleSvc, err := people.NewService(ctx, option.WithHTTPClient(client), option.WithUserAgent(version.UserAgent()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create people service: %v", err)
 	}

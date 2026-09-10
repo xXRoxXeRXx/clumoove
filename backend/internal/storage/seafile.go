@@ -86,6 +86,7 @@ func NewSeafileProvider(urlStr, username, password string) (*SeafileProvider, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP client for seafile: %w", err)
 	}
+	client.Transport = newUserAgentTransport(client.Transport)
 
 	return &SeafileProvider{
 		BaseURL:    urlStr,
@@ -120,6 +121,7 @@ func (p *SeafileProvider) issuedLinkClient(rawURL string) (*http.Client, bool, e
 	if err != nil {
 		return nil, false, err
 	}
+	client.Transport = newUserAgentTransport(client.Transport)
 	return client, !sameHTTPEndpoint(base, link), nil
 }
 

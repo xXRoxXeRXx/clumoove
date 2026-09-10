@@ -94,7 +94,6 @@ func (p *WebDAVProvider) newRequest(method, urlStr string, body io.Reader) (*htt
 		return nil, err
 	}
 	req.SetBasicAuth(p.Username, p.Password)
-	req.Header.Set("User-Agent", "WebDAV-Migration-Worker/1.0")
 	return req, nil
 }
 

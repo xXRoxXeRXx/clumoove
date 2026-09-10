@@ -107,7 +107,7 @@ func NewDropboxProvider(token string) (*DropboxProvider, error) {
 	return &DropboxProvider{
 		AccessToken: token,
 		HTTPClient: &http.Client{
-			Transport: tr,
+			Transport: newUserAgentTransport(tr),
 			Timeout:   0,
 		},
 	}, nil
@@ -224,7 +224,6 @@ func (p *DropboxProvider) newRequest(method, urlStr string, body io.Reader) (*ht
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+p.AccessToken)
-	req.Header.Set("User-Agent", "Dropbox-Migration-Worker/1.0")
 	return req, nil
 }
 

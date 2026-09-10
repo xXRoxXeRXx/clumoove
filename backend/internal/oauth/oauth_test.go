@@ -14,6 +14,7 @@ import (
 
 	"backend/internal/crypto"
 	"backend/internal/observability"
+	"backend/internal/version"
 )
 
 const testEncryptionKey = "0123456789abcdef0123456789abcdef"
@@ -223,3 +224,33 @@ func TestIsProvider(t *testing.T) {
 		t.Error("IsProvider(nextcloud) = true, want false")
 	}
 }
+
+func TestOAuthUserAgent(t *testing.T) {
+	var capturedUA string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedUA = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"access_token":"tok","token_type":"Bearer"}`)
+	}))
+	defer server.Close()
+
+	client := newOAuthClient(server.Client(), map[string]ProviderConfig{
+		"test": {TokenURL: server.URL},
+	})
+
+	req, err := http.NewRequest(http.MethodPost, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.httpClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	wantUA := version.UserAgent()
+	if capturedUA != wantUA {
+		t.Errorf("OAuth client User-Agent = %q, want %q", capturedUA, wantUA)
+	}
+}
+

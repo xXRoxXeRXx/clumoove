@@ -71,7 +71,7 @@ func NewOneDriveProvider(token string) (*OneDriveProvider, error) {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 2 * time.Minute,
 	}
-	return newOneDriveProvider(token, defaultOneDriveAPIBase, &http.Client{Transport: transport}), nil
+	return newOneDriveProvider(token, defaultOneDriveAPIBase, &http.Client{Transport: newUserAgentTransport(transport)}), nil
 }
 
 // newOneDriveProvider is intentionally package-private so HTTP behavior can be

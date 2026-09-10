@@ -21,6 +21,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+
+	"backend/internal/version"
 )
 
 type S3Provider struct {
@@ -94,7 +96,7 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 	}
 	httpClient := &http.Client{
 		CheckRedirect: rejectEgressRedirect,
-		Transport:     transport,
+		Transport:     newUserAgentTransport(transport),
 	}
 	if endpoint != "" {
 		if epURL, err := url.Parse(endpoint); err == nil && epURL.Hostname() != "" {
@@ -107,6 +109,7 @@ func NewS3Provider(rawURL, accessKey, secretKey string) (*S3Provider, error) {
 		config.WithRegion(region),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 		config.WithHTTPClient(httpClient),
+		config.WithAppID(version.UserAgent()),
 		config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
 		config.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
 	)

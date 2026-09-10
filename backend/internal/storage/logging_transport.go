@@ -4,9 +4,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"backend/internal/observability"
+	"backend/internal/version"
 )
 
 type loggingTransport struct {
@@ -25,6 +27,11 @@ func newLoggingTransport(base http.RoundTripper) http.RoundTripper {
 }
 
 func (t *loggingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	currentUA := req.Header.Get("User-Agent")
+	if currentUA == "" || strings.HasPrefix(currentUA, "Go-http-client") {
+		req = req.Clone(req.Context())
+		req.Header.Set("User-Agent", version.UserAgent())
+	}
 	start := time.Now()
 	resp, err := t.base.RoundTrip(req)
 	duration := time.Since(start)

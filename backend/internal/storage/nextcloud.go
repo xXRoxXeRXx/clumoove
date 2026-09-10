@@ -38,7 +38,6 @@ type davProvider struct {
 	Password             string
 	HTTPClient           *http.Client
 	Threads              int
-	UserAgent            string
 	pb                   pathBuilder
 	disableChunkedUpload bool
 	// useBearerToken selects OAuth-style Bearer authentication instead of Basic
@@ -222,7 +221,6 @@ func NewNextcloudProvider(rawURL, username, password string) (*NextcloudProvider
 				CheckRedirect: rejectEgressRedirect,
 			},
 			Threads:                8,
-			UserAgent:              "Nextcloud-Migration-Worker/1.0",
 			pb:                     nextcloudPaths{},
 			supportedResourceTypes: map[string]bool{"files": true, "calendars": true, "contacts": true},
 		},
@@ -250,7 +248,6 @@ func (p *davProvider) newRequest(method, urlStr string, body io.Reader) (*http.R
 	} else {
 		req.SetBasicAuth(p.Username, p.Password)
 	}
-	req.Header.Set("User-Agent", p.UserAgent)
 	return req, nil
 }
 

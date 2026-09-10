@@ -64,9 +64,13 @@ func (p *MegaProvider) Connect(ctx context.Context) (bool, error) {
 
 	var lastErr error
 	for attempt := 0; attempt < megaConnectAttempts; attempt++ {
-		httpClient := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		}}
+		httpClient := &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: newUserAgentTransport(nil),
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
 		client := mega.New().SetClient(httpClient)
 		client.SetHTTPS(true)
 		client.SetLogger(func(string, ...any) {})
