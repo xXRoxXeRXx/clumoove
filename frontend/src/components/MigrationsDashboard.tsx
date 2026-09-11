@@ -11,9 +11,12 @@ import { apiErrorMessage, apiFetch, apiJson } from '../utils/apiClient';
 import { connectSseLoop } from '../utils/sse';
 import {
   ArrowPathIcon,
+  ArrowsRightLeftIcon,
   CalendarDaysIcon,
+  CircleStackIcon,
   CloudArrowDownIcon,
   CloudArrowUpIcon,
+  FolderIcon,
   PauseIcon,
   PlayIcon,
   TrashIcon,
@@ -498,6 +501,41 @@ export function MigrationsDashboard({
     selectTab(nextTab);
   }
 
+  const dashboardTabs = [
+    {
+      key: 'migrations' as const,
+      id: 'migrations-tab',
+      icon: ArrowsRightLeftIcon,
+      label: t('sync.tabMigrations'),
+      count: migrations.length,
+      panelId: 'migrations-panel',
+    },
+    {
+      key: 'sync' as const,
+      id: 'sync-tab',
+      icon: ArrowPathIcon,
+      label: t('sync.tabSyncs'),
+      count: syncJobs.length,
+      panelId: 'sync-panel',
+    },
+    {
+      key: 'backup' as const,
+      id: 'backup-tab',
+      icon: CircleStackIcon,
+      label: t('backup.tab'),
+      count: backupJobs.length,
+      panelId: 'backup-panel',
+    },
+    {
+      key: 'fileManager' as const,
+      id: 'filemanager-tab',
+      icon: FolderIcon,
+      label: t('sync.tabFileManager'),
+      panelId: undefined,
+      count: undefined,
+    },
+  ];
+
   return (
     <div className="w-full space-y-6">
       
@@ -572,85 +610,58 @@ export function MigrationsDashboard({
         </div>
       </div>
 
-      {/* Main Section with Segmented Pill Tabs & Search Filter Bar */}
+      {/* Navigation Tabs (Settings-style with Icons & Counts) */}
+      <div
+        className="flex flex-wrap items-center gap-2"
+        role="tablist"
+        aria-label={t('migrations.title')}
+      >
+        {dashboardTabs.map((item) => {
+          const isSelected = activeTab === item.key;
+          return (
+            <button
+              key={item.key}
+              ref={(node) => { tabRefs.current[item.key] = node; }}
+              id={item.id}
+              onClick={() => selectTab(item.key)}
+              role="tab"
+              aria-selected={item.key === 'fileManager' ? false : isSelected}
+              aria-controls={item.panelId}
+              tabIndex={item.key === 'fileManager' ? -1 : (isSelected ? 0 : -1)}
+              onKeyDown={(event) => handleTabKeyDown(event, item.key)}
+              className={`flex items-center gap-2 px-4 py-2 border font-medium text-sm transition-colors ${
+                isSelected && item.key !== 'fileManager'
+                  ? 'ui-button-primary border-[var(--color-bg-inverse)]'
+                  : 'ui-button-secondary hover:bg-[var(--color-bg-tertiary)]'
+              }`}
+            >
+              <item.icon className="w-4 h-4 shrink-0" aria-hidden="true" />
+              <span>{item.label}</span>
+              {typeof item.count === 'number' && (
+                <span
+                  className={`shrink-0 px-2 py-0.5 text-[10px] font-mono rounded-full ${
+                    isSelected && item.key !== 'fileManager'
+                      ? 'bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]'
+                      : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'
+                  }`}
+                >
+                  {item.count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Main Section with Search Filter Bar & Tab Content */}
       <div className="ui-card min-h-[560px] space-y-6 p-4 sm:p-6">
 
-        {/* Navigation Tabs & Controls Header */}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between pb-4 gap-4">
-          {/* Segmented Pill Tabs */}
-          <div className="flex w-full max-w-full items-center gap-1 border-b border-[var(--color-border)] overflow-x-auto ui-scrollbar-none pb-0.5 sm:pb-0 -mb-px" role="tablist" aria-label={t('migrations.title')}>
-            <button
-                ref={(node) => { tabRefs.current.migrations = node; }}
-                id="migrations-tab"
-              onClick={() => setActiveTab('migrations')}
-              role="tab"
-              aria-selected={activeTab === 'migrations'}
-              aria-controls="migrations-panel"
-              tabIndex={activeTab === 'migrations' ? 0 : -1}
-              onKeyDown={(event) => handleTabKeyDown(event, 'migrations')}
-              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium shrink-0 whitespace-nowrap -mb-px ${
-                activeTab === 'migrations'
-                  ? 'border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
-                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-              }`}
-            >
-              <span>{t('sync.tabMigrations')}</span>
-              <span className={`shrink-0 px-2 py-0.5 text-[10px] ${activeTab === 'migrations' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
-                {migrations.length}
-              </span>
-            </button>
-            <button
-                ref={(node) => { tabRefs.current.sync = node; }}
-              id="sync-tab"
-              onClick={() => setActiveTab('sync')}
-              role="tab"
-              aria-selected={activeTab === 'sync'}
-              aria-controls="sync-panel"
-              tabIndex={activeTab === 'sync' ? 0 : -1}
-              onKeyDown={(event) => handleTabKeyDown(event, 'sync')}
-              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium shrink-0 whitespace-nowrap -mb-px ${
-                activeTab === 'sync'
-                  ? 'border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
-                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-              }`}
-            >
-              <span>{t('sync.tabSyncs')}</span>
-              <span className={`shrink-0 px-2 py-0.5 text-[10px] ${activeTab === 'sync' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
-                {syncJobs.length}
-              </span>
-            </button>
-            <button
-              ref={(node) => { tabRefs.current.backup = node; }}
-              id="backup-tab"
-              onClick={() => setActiveTab('backup')}
-              role="tab"
-              aria-selected={activeTab === 'backup'}
-              aria-controls="backup-panel"
-              tabIndex={activeTab === 'backup' ? 0 : -1}
-              onKeyDown={(event) => handleTabKeyDown(event, 'backup')}
-              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium shrink-0 whitespace-nowrap -mb-px ${
-                activeTab === 'backup'
-                  ? 'border-b-2 border-[var(--color-text-primary)] text-[var(--color-text-primary)]'
-                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-              }`}
-            >
-              <span>{t('backup.tab')}</span>
-              <span className={`shrink-0 px-2 py-0.5 text-[10px] ${activeTab === 'backup' ? 'bg-[var(--color-bg-inverse)] text-[var(--color-text-inverse)]' : 'bg-[var(--color-bg-tertiary)] text-[var(--color-text-muted)]'}`}>
-                {backupJobs.length}
-              </span>
-            </button>
-            <button
-              ref={(node) => { tabRefs.current.fileManager = node; }}
-              id="filemanager-tab"
-              onClick={() => onOpenFilemanagerRoot?.()}
-              role="tab"
-              aria-selected={false}
-              tabIndex={-1}
-              onKeyDown={(event) => handleTabKeyDown(event, 'fileManager')}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] shrink-0 whitespace-nowrap -mb-px"
-            >
-              <span>{t('sync.tabFileManager')}</span>
-            </button>
+        {/* Controls / Filter Header */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between pb-4 border-b border-[var(--color-border)]/60 gap-4">
+          <div className="flex items-center gap-2">
+            <h2 className="font-display font-semibold text-base text-[var(--color-text-primary)]">
+              {activeTab === 'sync' ? t('sync.tabSyncs') : activeTab === 'backup' ? t('backup.tab') : t('sync.tabMigrations')}
+            </h2>
           </div>
 
           {/* Search Input & Status Filter Dropdown */}
@@ -678,7 +689,6 @@ export function MigrationsDashboard({
               <option value="failed">{t('migrations.filterFailed')}</option>
               <option value="paused">{t('migrations.filterPaused')}</option>
             </select>
-
           </div>
         </div>
 
