@@ -19,8 +19,8 @@ RUN chmod -R +x node_modules/.bin/ && npm run build
 FROM nginx:1.27-alpine AS prod
 # Configure Nginx for unprivileged non-root operation
 RUN rm -f /etc/nginx/conf.d/default.conf && \
-    sed -i '/user\s/d' /etc/nginx/nginx.conf && \
-    sed -i '/pid\s/d' /etc/nginx/nginx.conf && \
+    sed -i '/^[[:space:]]*user[[:space:]]/d' /etc/nginx/nginx.conf && \
+    sed -i '/^[[:space:]]*pid[[:space:]]/d' /etc/nginx/nginx.conf && \
     sed -i '1i pid /tmp/nginx.pid;' /etc/nginx/nginx.conf && \
     mkdir -p /run /var/run && \
     touch /run/nginx.pid && \
