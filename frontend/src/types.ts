@@ -96,6 +96,9 @@ export interface Migration {
   processed_bytes: number;
   live_bytes?: number;
   total_bytes: number;
+  verified_files?: number;
+  skipped_files?: number;
+  failed_files?: number;
   created_at: string;
 }
 
@@ -123,6 +126,7 @@ export interface SyncJob {
   processed_files: number;
   processed_bytes?: number;
   live_bytes?: number;
+  verified_files?: number;
   changed_files: number;
   deleted_files: number;
   failed_files: number;

@@ -1278,9 +1278,20 @@ func (p *Processor) processTask(ctx context.Context, payload *queue.Payload, thr
 		workerHash := fmt.Sprintf("%s:%s", workerHashAlgo, workerHashVal)
 		task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 		task.TargetHash = sql.NullString{String: workerHash, Valid: true}
+
+		if isDirectoryTask(task) {
+			task.ChecksumVerified = true
+		} else if targetClient.VerificationMode() == storage.VerificationSizeOnly {
+			// Existence and size were already verified by runTransferCore immediately after upload.
+			task.ChecksumVerified = true
+		} else if targetClient.VerificationMode() == storage.VerificationCryptographicHash {
+			// Fast inline verification using the existing connected targetClient
+			tryInlineHashVerify(ctx, task, targetClient, task.ResourceType, targetPath)
+		}
 	} else {
 		task.WorkerHash = sql.NullString{String: "DYNAMIC", Valid: true}
 		task.TargetHash = sql.NullString{String: "DYNAMIC", Valid: true}
+		task.ChecksumVerified = true
 	}
 
 	// Update task to COMPLETED

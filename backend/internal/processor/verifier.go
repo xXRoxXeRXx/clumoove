@@ -330,10 +330,19 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 	// for the entire pass so size-only targets never enter the hash-query path.
 	verificationMode := targetClient.VerificationMode()
 
-	// The dispatcher reserves exactly one process-wide verification slot for a
-	// pass. Keep task verification serial to honour that global budget and avoid
-	// assuming provider clients are safe for concurrent use.
 	numWorkers := 1
+	if verificationMode == storage.VerificationCryptographicHash {
+		numWorkers = cfg.Threads
+		if numWorkers <= 0 {
+			numWorkers = 4
+		}
+		if numWorkers > 8 {
+			numWorkers = 8
+		}
+		if numWorkers > total {
+			numWorkers = total
+		}
+	}
 
 	processorLogf("[VERIFIER] Starting checksum verification pass for %d tasks in %s %s (%d workers)\n", total, cfg.EntityType, cfg.EntityID, numWorkers)
 
@@ -473,13 +482,7 @@ func (p *Processor) runVerificationPass(ctx context.Context, cfg verificationPas
 						if isComparableHash(sourceAlgo) && isComparableHash(targetAlgo) && sourceAlgo == targetAlgo {
 							if cleanSource == cleanTarget {
 								processorLogf("[VERIFIER] [MATCH] %s | Algo: %s | Hash: %s\n", targetPath, targetAlgo, cleanTarget)
-								if cfg.TargetProvider == "immich" {
-									// A matching checksum from GET /assets/{id} already
-									// confirms the specific target asset exists.
-									_ = markVerified(task, targetHash)
-								} else {
-									_ = markVerifiedForFile(targetHash)
-								}
+								_ = markVerified(task, targetHash)
 							} else {
 								processorLogf("[VERIFIER] [MISMATCH] %s | Expected (%s): %s | Received (%s): %s — marking FAILED for automatic re-copy\n",
 									targetPath, sourceAlgo, cleanSource, targetAlgo, cleanTarget)

@@ -1460,6 +1460,12 @@ func (s *APIServer) migrationDetailPayload(ctx context.Context, mig *db.Migratio
 		s.logfContext(ctx, "Migration detail active paths error for %s: %v", mig.ID, err)
 		activeFiles = nil
 	}
+	if mig.Status == "VERIFYING" && len(activeFiles) == 0 {
+		verifyingFiles, vErr := db.GetVerifyingTaskPaths(s.db, ctx, mig.ID)
+		if vErr == nil && len(verifyingFiles) > 0 {
+			activeFiles = verifyingFiles
+		}
+	}
 	activeFile := ""
 	if len(activeFiles) > 0 {
 		activeFile = activeFiles[0]
@@ -1484,6 +1490,7 @@ func (s *APIServer) migrationDetailPayload(ctx context.Context, mig *db.Migratio
 		"live_bytes":           mig.LiveBytes,
 		"skipped_files":        mig.SkippedFiles,
 		"failed_files":         mig.FailedFiles,
+		"verified_files":       mig.VerifiedFiles,
 		"error_message":        "",
 		"active_file":          activeFile,
 		"active_files":         activeFiles,

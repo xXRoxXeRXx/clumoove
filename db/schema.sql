@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS migrations (
     processed_files INT NOT NULL DEFAULT 0,
     processed_bytes BIGINT NOT NULL DEFAULT 0,
     live_bytes BIGINT NOT NULL DEFAULT 0,
+    verified_files INT NOT NULL DEFAULT 0,
     skipped_files INT NOT NULL DEFAULT 0,
     failed_files INT NOT NULL DEFAULT 0,
     error_message TEXT,
@@ -122,6 +123,8 @@ CREATE INDEX IF NOT EXISTS idx_migrations_user_id ON migrations(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_migration_status ON tasks(migration_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_retry ON tasks(status, next_retry_at) WHERE status = 'FAILED' AND next_retry_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(status, created_at) WHERE status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_tasks_migration_verifying ON tasks(migration_id, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE;
+CREATE INDEX IF NOT EXISTS idx_tasks_sync_verifying ON tasks(sync_job_id, pass_generation, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE;
 
 -- Auto-update updated_at triggers
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -352,6 +355,7 @@ CREATE TABLE IF NOT EXISTS sync_jobs (
     processed_files INT NOT NULL DEFAULT 0,
     processed_bytes BIGINT NOT NULL DEFAULT 0,
     live_bytes BIGINT NOT NULL DEFAULT 0,
+    verified_files INT NOT NULL DEFAULT 0,
     changed_files INT NOT NULL DEFAULT 0,
     deleted_files INT NOT NULL DEFAULT 0,
     failed_files INT NOT NULL DEFAULT 0,

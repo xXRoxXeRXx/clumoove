@@ -66,6 +66,7 @@ type Migration struct {
 	ProcessedFiles               int                     `json:"processed_files"`
 	ProcessedBytes               int64                   `json:"processed_bytes"`
 	LiveBytes                    int64                   `json:"live_bytes"`
+	VerifiedFiles                int                     `json:"verified_files"`
 	SkippedFiles                 int                     `json:"skipped_files"`
 	FailedFiles                  int                     `json:"failed_files"`
 	ErrorMessage                 sql.NullString          `json:"error_message,omitempty"`
@@ -236,7 +237,7 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 		       target_url, target_username, target_password_encrypted, target_provider,
 		       target_refresh_token_encrypted, target_token_expires_at, COALESCE(target_mega_session_id_encrypted, ''), COALESCE(target_mega_master_key_encrypted, ''),
 		       status, conflict_strategy, total_files, total_bytes, processed_files,
-		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
+		       processed_bytes, live_bytes, verified_files, skipped_files, failed_files, error_message,
 		       created_at, updated_at, target_dir, threads, bandwidth_limit_mbps,
 		       picker_session_id, selected_paths, selected_calendars, selected_contacts
 		FROM migrations WHERE id = $1
@@ -248,7 +249,7 @@ func GetMigrationContext(ctx context.Context, db *sql.DB, id string) (*Migration
 		&m.TargetURL, &m.TargetUsername, &m.TargetPasswordEncrypted, &m.TargetProvider,
 		&m.TargetRefreshTokenEncrypted, &m.TargetTokenExpiresAt, &m.TargetMegaSessionIDEncrypted, &m.TargetMegaMasterKeyEncrypted,
 		&m.Status, &m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
-		&m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
+		&m.ProcessedBytes, &m.LiveBytes, &m.VerifiedFiles, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
 		&m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads, &m.BandwidthLimitMbps,
 		&m.PickerSessionID, &m.SelectedPaths, &m.SelectedCalendars, &m.SelectedContacts,
 	)
@@ -268,7 +269,7 @@ func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string)
 		SELECT id, user_id, source_profile_id, target_profile_id, source_url, source_username, source_provider,
 		       target_url, target_username, target_provider, status,
 		       conflict_strategy, total_files, total_bytes, processed_files,
-		       processed_bytes, live_bytes, skipped_files, failed_files, error_message,
+		       processed_bytes, live_bytes, verified_files, skipped_files, failed_files, error_message,
 		       created_at, updated_at, target_dir, threads
 		FROM migrations
 		WHERE user_id = $1 AND COALESCE(picker_session_id, '') NOT LIKE 'file-manager-transfer:%'
@@ -287,7 +288,7 @@ func GetMigrationsForUserContext(ctx context.Context, db *sql.DB, userID string)
 			&m.ID, &m.UserID, &m.SourceProfileID, &m.TargetProfileID, &m.SourceURL, &m.SourceUsername, &m.SourceProvider,
 			&m.TargetURL, &m.TargetUsername, &m.TargetProvider, &m.Status,
 			&m.ConflictStrategy, &m.TotalFiles, &m.TotalBytes, &m.ProcessedFiles,
-			&m.ProcessedBytes, &m.LiveBytes, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
+			&m.ProcessedBytes, &m.LiveBytes, &m.VerifiedFiles, &m.SkippedFiles, &m.FailedFiles, &m.ErrorMessage,
 			&m.CreatedAt, &m.UpdatedAt, &m.TargetDir, &m.Threads,
 		)
 		if err != nil {
@@ -805,6 +806,7 @@ func reconcileMigrationProgress(dbsql *sql.DB, migrationID string, generation *i
 				-- is dequeued, after which workers are intentionally barred from
 				-- claiming the task.
 				COUNT(*) FILTER (WHERE status IN ('PENDING', 'RUNNING') OR (status = 'FAILED' AND next_retry_at IS NOT NULL)) AS active_files,
+				COUNT(*) FILTER (WHERE status = 'COMPLETED' AND checksum_verified = TRUE) AS verified_files,
 				COUNT(*) FILTER (WHERE status = 'COMPLETED' AND checksum_verified = FALSE) AS unverified_files
 			FROM tasks
 			WHERE migration_id = $1
@@ -818,6 +820,7 @@ func reconcileMigrationProgress(dbsql *sql.DB, migrationID string, generation *i
 		SET processed_files = t.done_files + t.skip_files + t.fail_files + t.cancelled_files,
 		    processed_bytes = t.done_bytes,
 		    live_bytes      = t.done_bytes,
+		    verified_files  = t.verified_files,
 		    skipped_files   = t.skip_files,
 			failed_files    = t.fail_files + t.cancelled_files,
 			notification_generation = CASE

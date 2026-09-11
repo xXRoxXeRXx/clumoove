@@ -93,16 +93,23 @@ func ReleaseSyncJobVerificationLease(db *sql.DB, ctx context.Context, syncJobID 
 
 func MarkMigrationTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID string, targetHash string, generation int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
-		UPDATE tasks AS t
-		SET checksum_verified = TRUE,
-		    target_hash = CASE WHEN $2 <> '' THEN $2 ELSE t.target_hash END,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE t.id = $1 AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
-		  AND EXISTS (
-			SELECT 1 FROM migrations m
-			WHERE m.id = t.migration_id AND m.status = 'VERIFYING'
-			  AND m.verification_generation = $3 AND m.verification_lease_until > NOW()
-		  )
+		WITH verified AS (
+			UPDATE tasks AS t
+			SET checksum_verified = TRUE,
+			    target_hash = CASE WHEN $2 <> '' THEN $2 ELSE t.target_hash END,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE t.id = $1 AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
+			  AND EXISTS (
+				SELECT 1 FROM migrations m
+				WHERE m.id = t.migration_id AND m.status = 'VERIFYING'
+				  AND m.verification_generation = $3 AND m.verification_lease_until > NOW()
+			  )
+			RETURNING t.migration_id
+		)
+		UPDATE migrations m
+		SET verified_files = verified_files + 1, updated_at = CURRENT_TIMESTAMP
+		FROM verified v
+		WHERE m.id = v.migration_id
 	`, taskID, targetHash, generation)
 	if err != nil {
 		return false, err

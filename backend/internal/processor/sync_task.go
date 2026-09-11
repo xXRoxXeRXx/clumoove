@@ -175,6 +175,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 			return fmt.Errorf("failed to create directory %s: %w", mkPath, err)
 		}
 		task.Status = "COMPLETED"
+		task.ChecksumVerified = true
 		return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, 0) // count as 1 changed item, 0 bytes
 	}
 
@@ -217,6 +218,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 		// Success
 		task.Status = "COMPLETED"
+		task.ChecksumVerified = true
 		return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 0, 1, 0, 0) // filesDelta=1, deletedDelta=1
 	}
 
@@ -246,6 +248,7 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 
 		// Success
 		task.Status = "COMPLETED"
+		task.ChecksumVerified = true
 		return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, 0) // filesDelta=1, changedDelta=1
 	}
 
@@ -562,6 +565,14 @@ func (p *Processor) processSyncTask(ctx context.Context, payload *queue.Payload,
 	task.Status = "COMPLETED"
 	task.WorkerHash = sql.NullString{String: workerHash, Valid: true}
 	task.TargetHash = sql.NullString{String: workerHash, Valid: true}
+	if task.ResourceType != "files" || isDirectoryTask(task) {
+		task.ChecksumVerified = true
+	} else if tgtClient.VerificationMode() == storage.VerificationSizeOnly {
+		// Size was already verified by verifyTargetSize above.
+		task.ChecksumVerified = true
+	} else if tgtClient.VerificationMode() == storage.VerificationCryptographicHash {
+		tryInlineHashVerify(ctx, task, tgtClient, task.ResourceType, tgtPath)
+	}
 	return db.UpdateSyncTaskStatusAndIncrementProgress(p.db, ctx, task, 1, 1, 0, 0, task.FileSize) // filesDelta=1, changedDelta=1, bytesDelta=task.FileSize
 }
 

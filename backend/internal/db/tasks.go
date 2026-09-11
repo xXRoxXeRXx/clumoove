@@ -226,17 +226,24 @@ func MarkTaskChecksumVerified(db *sql.DB, ctx context.Context, taskID, targetHas
 // timeout has withdrawn the sync pass from VERIFYING.
 func MarkSyncTaskChecksumVerifiedWhileVerifying(db *sql.DB, ctx context.Context, taskID, targetHash string, runGeneration, verificationGeneration int) (bool, error) {
 	res, err := db.ExecContext(ctx, `
-		UPDATE tasks AS t
-		SET checksum_verified = TRUE,
-		    target_hash = CASE WHEN $2 <> '' THEN $2 ELSE t.target_hash END,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE t.id = $1 AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
-		  AND t.pass_generation = $3
-		  AND EXISTS (
-			SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id
-			  AND sj.status = 'VERIFYING' AND sj.run_generation = $3
-			  AND sj.verification_generation = $4 AND sj.verification_lease_until > NOW()
-		  )
+		WITH verified AS (
+			UPDATE tasks AS t
+			SET checksum_verified = TRUE,
+			    target_hash = CASE WHEN $2 <> '' THEN $2 ELSE t.target_hash END,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE t.id = $1 AND t.status = 'COMPLETED' AND t.checksum_verified = FALSE
+			  AND t.pass_generation = $3
+			  AND EXISTS (
+				SELECT 1 FROM sync_jobs sj WHERE sj.id = t.sync_job_id
+				  AND sj.status = 'VERIFYING' AND sj.run_generation = $3
+				  AND sj.verification_generation = $4 AND sj.verification_lease_until > NOW()
+			  )
+			RETURNING t.sync_job_id
+		)
+		UPDATE sync_jobs sj
+		SET verified_files = verified_files + 1, updated_at = CURRENT_TIMESTAMP
+		FROM verified v
+		WHERE sj.id = v.sync_job_id
 	`, taskID, targetHash, runGeneration, verificationGeneration)
 	if err != nil {
 		return false, err
@@ -335,10 +342,15 @@ func UpdateMigrationTaskAndProgress(db *sql.DB, ctx context.Context, t *Task, fi
 	} else if n != 1 {
 		return sql.ErrNoRows
 	}
+	verifiedDelta := 0
+	if t.ChecksumVerified {
+		verifiedDelta = 1
+	}
 	res, err = tx.ExecContext(ctx, `UPDATE migrations SET processed_files = processed_files + $1,
 		processed_bytes = processed_bytes + $2, live_bytes = live_bytes + $2 + $3,
-		skipped_files = skipped_files + $4, failed_files = failed_files + $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6`,
-		filesDelta, bytesDelta, liveBytesDelta, skippedDelta, failedDelta, t.MigrationID)
+		verified_files = verified_files + $4,
+		skipped_files = skipped_files + $5, failed_files = failed_files + $6, updated_at = CURRENT_TIMESTAMP WHERE id = $7`,
+		filesDelta, bytesDelta, liveBytesDelta, verifiedDelta, skippedDelta, failedDelta, t.MigrationID)
 	if err != nil {
 		return err
 	}
@@ -364,6 +376,33 @@ func GetActiveTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]
 		FROM tasks
 		WHERE migration_id = $1 AND status = 'RUNNING'
 		ORDER BY updated_at DESC
+	`
+	rows, err := db.QueryContext(ctx, query, migrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var fp string
+		var meta json.RawMessage
+		if err := rows.Scan(&fp, &meta); err != nil {
+			return nil, err
+		}
+		paths = append(paths, displayTaskName(fp, meta))
+	}
+	return paths, rows.Err()
+}
+
+// GetVerifyingTaskPaths returns paths of completed tasks awaiting checksum verification.
+func GetVerifyingTaskPaths(db *sql.DB, ctx context.Context, migrationID string) ([]string, error) {
+	query := `
+		SELECT file_path, metadata
+		FROM tasks
+		WHERE migration_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE
+		ORDER BY updated_at ASC
+		LIMIT 4
 	`
 	rows, err := db.QueryContext(ctx, query, migrationID)
 	if err != nil {

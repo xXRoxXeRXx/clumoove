@@ -351,7 +351,7 @@ export function MigrationsDashboard({
       .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
     if (!matchSearch) return false;
 
-    if (statusFilter === 'active') return m.status === 'RUNNING' || m.status === 'INDEXING';
+    if (statusFilter === 'active') return m.status === 'RUNNING' || m.status === 'INDEXING' || m.status === 'VERIFYING';
     if (statusFilter === 'completed') return m.status === 'COMPLETED' || m.status === 'COMPLETED_WITH_ERRORS';
     if (statusFilter === 'failed') return m.status === 'FAILED' || m.status === 'CANCELLED';
     if (statusFilter === 'paused') return m.status === 'PAUSED' || m.status === 'PAUSED_CONNECTION_LOSS';
@@ -441,8 +441,8 @@ export function MigrationsDashboard({
   const totalTransfers = totalMigrations + totalSyncs + totalBackups;
   const initialDataLoading = loading || syncLoading || backupLoading;
 
-  const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING').length;
-  const activeSyncs = syncJobs.filter(s => s.status === 'RUNNING' || s.status === 'INDEXING').length;
+  const activeMigrations = migrations.filter(m => m.status === 'RUNNING' || m.status === 'INDEXING' || m.status === 'VERIFYING').length;
+  const activeSyncs = syncJobs.filter(s => s.status === 'RUNNING' || s.status === 'INDEXING' || s.status === 'VERIFYING').length;
   const activeBackups = backupJobs.filter((job) => ['QUEUED', 'SCANNING', 'RUNNING', 'VERIFYING'].includes(job.status)).length;
   const activeTotal = activeMigrations + activeSyncs + activeBackups;
 
@@ -821,35 +821,45 @@ export function MigrationsDashboard({
 
                       {/* Progress */}
                       <td data-label={t('migrations.progress')} className="py-4 px-4">
-                        <div className="flex flex-col gap-1.5 min-w-[120px]">
-                          <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
-                            <span>
-                              {t('migrations.filesCount', { processed: mig.processed_files, total: mig.total_files })}
-                            </span>
-                            {mig.total_bytes > 0 && (
-                              <span>
-                                {formatBytes(mig.processed_bytes)}
-                              </span>
-                            )}
-                          </div>
-                          
-                          {/* Progress bar */}
-                           <ProgressBar
-                             label={t('migrations.progress')}
-                             valueText={t('migrations.filesCount', { processed: mig.processed_files, total: mig.total_files })}
-                             className="h-1.5"
-                             value={mig.total_files > 0 ? (mig.processed_files / mig.total_files) * 100 : 0}
-                              indicatorClassName={
-                                mig.status === 'FAILED'
-                                  ? 'ui-progress-error'
-                                  : mig.status === 'COMPLETED_WITH_ERRORS'
-                                    ? 'ui-progress-warning'
-                                    : mig.status === 'COMPLETED'
-                                      ? 'ui-progress-success'
-                                      : 'bg-[var(--color-bg-inverse)]'
-                              }
-                           />
-                        </div>
+                        {(() => {
+                          const verifiableFiles = Math.max(0, mig.total_files - (mig.skipped_files || 0));
+                          const isVerifying = mig.status === 'VERIFYING';
+                          const valueText = isVerifying
+                            ? t('migrations.verifyingCount', { verified: mig.verified_files || 0, total: verifiableFiles })
+                            : t('migrations.filesCount', { processed: mig.processed_files, total: mig.total_files });
+                          const progress = isVerifying
+                            ? (verifiableFiles > 0 ? ((mig.verified_files || 0) / verifiableFiles) * 100 : 0)
+                            : (mig.total_files > 0 ? (mig.processed_files / mig.total_files) * 100 : 0);
+                          return (
+                            <div className="flex flex-col gap-1.5 min-w-[120px]">
+                              <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
+                                <span>{valueText}</span>
+                                {!isVerifying && mig.total_bytes > 0 && (
+                                  <span>
+                                    {formatBytes(mig.processed_bytes)}
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {/* Progress bar */}
+                               <ProgressBar
+                                 label={t('migrations.progress')}
+                                 valueText={valueText}
+                                 className="h-1.5"
+                                 value={progress}
+                                  indicatorClassName={
+                                    mig.status === 'FAILED'
+                                      ? 'ui-progress-error'
+                                      : mig.status === 'COMPLETED_WITH_ERRORS'
+                                        ? 'ui-progress-warning'
+                                        : mig.status === 'COMPLETED'
+                                          ? 'ui-progress-success'
+                                          : 'bg-[var(--color-bg-inverse)]'
+                                  }
+                               />
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Actions */}
@@ -1006,7 +1016,7 @@ function SyncList({
       .some((val) => val && String(val).toLowerCase().includes(searchTerm.toLowerCase()));
     if (!matchSearch) return false;
 
-    if (statusFilter === 'active') return job.status === 'RUNNING' || job.status === 'INDEXING';
+    if (statusFilter === 'active') return job.status === 'RUNNING' || job.status === 'INDEXING' || job.status === 'VERIFYING';
     if (statusFilter === 'completed') return job.status === 'COMPLETED' || (job.status === 'IDLE' && job.last_run_status !== 'FAILED');
     if (statusFilter === 'failed') return job.status === 'FAILED' || (job.status === 'IDLE' && job.last_run_status === 'FAILED');
     if (statusFilter === 'paused') return job.status === 'PAUSED' || job.status === 'PAUSED_CONNECTION_LOSS';
@@ -1172,25 +1182,31 @@ function SyncList({
               </td>
               <td className="py-4 px-4 min-w-[140px]">
                 {(() => {
+                  const isVerifying = job.status === 'VERIFYING';
                   const totalBytes = job.total_bytes ?? 0;
                   const processedBytes = job.processed_bytes ?? 0;
                   const liveBytes = job.live_bytes ?? processedBytes;
                   const displayedBytes = totalBytes > 0
                     ? Math.min(totalBytes, Math.max(processedBytes, liveBytes))
                     : processedBytes;
-                  const progress = totalBytes > 0
-                    ? Math.min(100, Math.round((displayedBytes / totalBytes) * 100))
-                    : job.total_files > 0
-                      ? Math.min(100, Math.round((job.processed_files / job.total_files) * 100))
-                      : 0;
+                  const progress = isVerifying
+                    ? (job.total_files > 0 ? Math.min(100, Math.round(((job.verified_files || 0) / job.total_files) * 100)) : 0)
+                    : totalBytes > 0
+                      ? Math.min(100, Math.round((displayedBytes / totalBytes) * 100))
+                      : job.total_files > 0
+                        ? Math.min(100, Math.round((job.processed_files / job.total_files) * 100))
+                        : 0;
+                  const valueText = isVerifying
+                    ? t('migrations.verifyingCount', { verified: job.verified_files || 0, total: job.total_files })
+                    : t('migrations.filesCount', { processed: job.processed_files, total: job.total_files });
                   const color = job.status === 'FAILED' ? 'bg-[var(--color-error-text)]' : job.status === 'COMPLETED_WITH_ERRORS' ? 'bg-[var(--color-warning-border)]' : progress === 100 ? 'bg-[var(--color-success-text)]' : 'bg-[var(--color-bg-inverse)]';
                   return (
                     <div className="flex flex-col gap-1.5">
                       <div className="flex items-center justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
-                        <span>{t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })}</span>
-                        {totalBytes > 0 && <span>{formatBytes(displayedBytes)}</span>}
+                        <span>{valueText}</span>
+                        {!isVerifying && totalBytes > 0 && <span>{formatBytes(displayedBytes)}</span>}
                       </div>
-                      <ProgressBar label={t('migrations.progress')} value={progress} valueText={t('migrations.filesCount', { processed: job.processed_files, total: job.total_files })} className="h-1.5" indicatorClassName={color} />
+                      <ProgressBar label={t('migrations.progress')} value={progress} valueText={valueText} className="h-1.5" indicatorClassName={color} />
                     </div>
                   );
                 })()}

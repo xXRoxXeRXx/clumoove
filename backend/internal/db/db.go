@@ -517,6 +517,10 @@ $$ language 'plpgsql'`)
 			if err != nil {
 				log.Printf("Failed schema migration (migrations verification_lease_until): %v\n", err)
 			}
+			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS verified_files INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (migrations verified_files): %v\n", err)
+			}
 			_, err = db.Exec(`ALTER TABLE migrations ADD COLUMN IF NOT EXISTS failed_retry_done BOOLEAN NOT NULL DEFAULT FALSE`)
 			if err != nil {
 				log.Printf("Failed schema migration (migrations failed_retry_done): %v\n", err)
@@ -673,6 +677,7 @@ $$ language 'plpgsql'`)
 				processed_files INT NOT NULL DEFAULT 0,
 				processed_bytes BIGINT NOT NULL DEFAULT 0,
 				live_bytes BIGINT NOT NULL DEFAULT 0,
+				verified_files INT NOT NULL DEFAULT 0,
 				changed_files INT NOT NULL DEFAULT 0,
 				deleted_files INT NOT NULL DEFAULT 0,
 				failed_files INT NOT NULL DEFAULT 0,
@@ -683,6 +688,10 @@ $$ language 'plpgsql'`)
 				releaseLock()
 				db.Close()
 				return nil, fmt.Errorf("schema migration sync_jobs: %w", err)
+			}
+			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS verified_files INT NOT NULL DEFAULT 0`)
+			if err != nil {
+				log.Printf("Failed schema migration (sync_jobs verified_files): %v\n", err)
 			}
 			_, err = db.Exec(`ALTER TABLE sync_jobs ADD COLUMN IF NOT EXISTS bandwidth_limit_mbps INT NOT NULL DEFAULT 0`)
 			if err != nil {
@@ -820,6 +829,14 @@ $$ language 'plpgsql'`)
 			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_pending ON tasks(status, created_at) WHERE status = 'PENDING'`)
 			if err != nil {
 				log.Printf("Failed schema migration (idx_tasks_pending): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_migration_verifying ON tasks(migration_id, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_migration_verifying): %v\n", err)
+			}
+			_, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_sync_verifying ON tasks(sync_job_id, pass_generation, updated_at) WHERE status = 'COMPLETED' AND checksum_verified = FALSE`)
+			if err != nil {
+				log.Printf("Failed schema migration (idx_tasks_sync_verifying): %v\n", err)
 			}
 
 			_, err = db.Exec(`CREATE TABLE IF NOT EXISTS indexing_errors (

@@ -409,15 +409,41 @@ export function SyncDashboard({ syncId, apiUrl, token, onBack }: SyncDashboardPr
           <Badge variant="muted" label={job.direction === 'two_way' ? t('sync.twoWay') : t('sync.oneWay')} />
         </div>
 
-        {/* Live Transfer Progress (only shown while a run is active) */}
-        {(job.status === 'RUNNING' || job.status === 'INDEXING') && <TransferProgress progress={byteProgressPercent} rate={`${formatBytes(speed)}/s`} transferred={totalBytes > 0 ? `${formatBytes(effectiveBytesDisplay)} / ${formatBytes(totalBytes)}` : `${job.processed_files} / ${job.total_files}`} remaining={eta} labels={{ progress: t('dashboard.progress'), transferRate: t('dashboard.transferRate'), transferred: t('dashboard.transferred'), remaining: t('dashboard.remaining') }} />}
+        {/* Live Transfer Progress (shown while a run is active or verifying) */}
+        {(job.status === 'RUNNING' || job.status === 'INDEXING' || job.status === 'VERIFYING') && (
+          <TransferProgress
+            progress={job.status === 'VERIFYING'
+              ? (job.total_files > 0 ? Math.min(100, Math.round(((job.verified_files || 0) / job.total_files) * 100)) : 0)
+              : byteProgressPercent}
+            rate={job.status === 'VERIFYING' ? undefined : `${formatBytes(speed)}/s`}
+            transferred={job.status === 'VERIFYING'
+              ? `${job.verified_files || 0} / ${job.total_files}`
+              : (totalBytes > 0 ? `${formatBytes(effectiveBytesDisplay)} / ${formatBytes(totalBytes)}` : `${job.processed_files} / ${job.total_files}`)}
+            remaining={job.status === 'VERIFYING' ? undefined : eta}
+            labels={{
+              progress: job.status === 'VERIFYING' ? t('dashboard.verifyingChecksums') : t('dashboard.progress'),
+              transferRate: t('dashboard.transferRate'),
+              transferred: job.status === 'VERIFYING' ? t('dashboard.verifiedFiles') : t('dashboard.transferred'),
+              remaining: t('dashboard.remaining'),
+            }}
+          />
+        )}
 
         <TransferEndpoints sourceLabel={t('migrations.source')} targetLabel={t('migrations.target')} oauthLabel={t('migrations.oauth')} sourceProvider={job.source_provider} sourceUrl={job.source_url} selectedPaths={job.selected_paths} targetProvider={job.target_provider} targetUrl={job.target_url} targetDir={job.target_dir} />
 
         {/* Active transfers and run status follow the migration-detail layout. */}
         <div className="grid grid-cols-1 gap-6 pt-2 md:grid-cols-2">
           <ActiveTransfersPanel title={t('sync.activeTransfersTitle', { count: job.active_files?.length || 0, threads })} activeFiles={job.active_files} runningLabel={t('dashboard.running')} emptyLabel={t('dashboard.noActiveTransfers')} />
-          <TransferStatusPanel title={`${t('migrations.status')} & ${t('dashboard.progress')}`} rows={[{ label: t('dashboard.filesTotal'), value: job.total_files }, { label: t('sync.changedFiles'), value: job.changed_files, tone: 'success' }, { label: t('sync.deletedFiles'), value: job.deleted_files }, { label: t('dashboard.failed'), value: job.failed_files, tone: job.failed_files > 0 ? 'error' : 'default' }]} />
+          <TransferStatusPanel
+            title={`${t('migrations.status')} & ${t('dashboard.progress')}`}
+            rows={[
+              { label: t('dashboard.filesTotal'), value: job.total_files },
+              ...(job.status === 'VERIFYING' ? [{ label: t('dashboard.verifiedFiles'), value: `${job.verified_files || 0} / ${job.total_files}` }] : []),
+              { label: t('sync.changedFiles'), value: job.changed_files, tone: 'success' as const },
+              { label: t('sync.deletedFiles'), value: job.deleted_files },
+              { label: t('dashboard.failed'), value: job.failed_files, tone: job.failed_files > 0 ? 'error' as const : 'default' as const },
+            ]}
+          />
         </div>
 
         {/* Timing, Schedule & Configuration Grid */}

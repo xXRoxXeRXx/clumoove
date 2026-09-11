@@ -54,6 +54,7 @@ interface ProgressData {
   live_bytes?: number;
   skipped_files: number;
   failed_files: number;
+  verified_files?: number;
   error_message: string;
   active_file: string;
   active_files?: string[];
@@ -430,8 +431,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           <Badge variant="muted" label={t('sync.oneWay')} />
         </div>
 
-        {/* Live Transfer Progress (ONLY rendered when RUNNING or INDEXING) */}
-        {(data.status === 'RUNNING' || data.status === 'INDEXING') && <TransferProgress progress={byteProgressPercent} rate={`${formatBytes(speed)}/s`} transferred={`${formatBytes(effectiveBytesDisplay)} / ${formatBytes(data.total_bytes)}`} remaining={eta} labels={{ progress: t('dashboard.progress'), transferRate: t('dashboard.transferRate'), transferred: t('dashboard.transferred'), remaining: t('dashboard.remaining') }} />}
+        {/* Live Transfer Progress (rendered when RUNNING, INDEXING, or VERIFYING) */}
+        {(data.status === 'RUNNING' || data.status === 'INDEXING' || data.status === 'VERIFYING') && (
+          <TransferProgress
+            progress={data.status === 'VERIFYING'
+              ? (Math.max(0, data.total_files - data.skipped_files) > 0
+                  ? Math.min(100, Math.round(((data.verified_files || 0) / Math.max(1, data.total_files - data.skipped_files)) * 100))
+                  : 0)
+              : byteProgressPercent}
+            rate={data.status === 'VERIFYING' ? undefined : `${formatBytes(speed)}/s`}
+            transferred={data.status === 'VERIFYING'
+              ? `${data.verified_files || 0} / ${Math.max(0, data.total_files - data.skipped_files)}`
+              : `${formatBytes(effectiveBytesDisplay)} / ${formatBytes(data.total_bytes)}`}
+            remaining={data.status === 'VERIFYING' ? undefined : eta}
+            labels={{
+              progress: data.status === 'VERIFYING' ? t('dashboard.verifyingChecksums') : t('dashboard.progress'),
+              transferRate: t('dashboard.transferRate'),
+              transferred: data.status === 'VERIFYING' ? t('dashboard.verifiedFiles') : t('dashboard.transferred'),
+              remaining: t('dashboard.remaining'),
+            }}
+          />
+        )}
 
         <TransferEndpoints sourceLabel={t('migrations.source')} targetLabel={t('migrations.target')} oauthLabel={t('migrations.oauth')} sourceProvider={data.source_provider} sourceUrl={data.source_url} selectedPaths={data.selected_paths} targetProvider={data.target_provider} targetUrl={data.target_url} targetDir={data.target_dir} />
 
@@ -440,6 +460,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ migrationId, apiUrl, onRes
           <ActiveTransfersPanel title={t('dashboard.activeTransfers', { count: data.active_files?.length || 0, threads })} activeFiles={data.active_files} runningLabel={t('dashboard.running')} emptyLabel={t('dashboard.noActiveTransfers')} />
           <TransferStatusPanel title={`${t('migrations.status')} & ${t('dashboard.progress')}`}>
             <div className="space-y-2 font-sans text-xs text-[var(--color-text-muted)]">
+              {data.status === 'VERIFYING' && (
+                <div className="flex justify-between items-center py-1.5 border-b border-[var(--color-border-light)]">
+                  <span>{t('dashboard.verifiedFiles')}:</span>
+                  <span className="font-bold text-[var(--color-text-primary)] font-mono">
+                    {data.verified_files || 0} / {Math.max(0, data.total_files - data.skipped_files)}
+                  </span>
+                </div>
+              )}
               {data.resource_stats ? (
                 <>
                   {renderResourceSection(t('dashboard.files'), data.resource_stats.files, t)}

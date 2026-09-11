@@ -401,6 +401,10 @@ func (s *APIServer) handleGetSyncStatus(w http.ResponseWriter, r *http.Request) 
 		if activeFiles, err := db.GetActiveSyncTaskPaths(s.db, r.Context(), id); err == nil {
 			job.ActiveFiles = activeFiles
 		}
+	} else if job.Status == "VERIFYING" {
+		if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(s.db, r.Context(), id); err == nil {
+			job.ActiveFiles = verifyingFiles
+		}
 	}
 
 	writeJSON(w, http.StatusOK, job)
@@ -715,6 +719,10 @@ func (s *APIServer) handleSyncStream(w http.ResponseWriter, r *http.Request) {
 				if jobs[i].Status == "RUNNING" || jobs[i].Status == "INDEXING" {
 					if activeFiles, err := db.GetActiveSyncTaskPaths(s.db, r.Context(), jobs[i].ID); err == nil {
 						jobs[i].ActiveFiles = activeFiles
+					}
+				} else if jobs[i].Status == "VERIFYING" {
+					if verifyingFiles, err := db.GetVerifyingSyncTaskPaths(s.db, r.Context(), jobs[i].ID); err == nil {
+						jobs[i].ActiveFiles = verifyingFiles
 					}
 				}
 			}

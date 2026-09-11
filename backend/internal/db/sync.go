@@ -54,6 +54,7 @@ type SyncJob struct {
 	ProcessedFiles               int            `json:"processed_files"`
 	ProcessedBytes               int64          `json:"processed_bytes"`
 	LiveBytes                    int64          `json:"live_bytes"`
+	VerifiedFiles                int            `json:"verified_files"`
 	ChangedFiles                 int            `json:"changed_files"`
 	DeletedFiles                 int            `json:"deleted_files"`
 	FailedFiles                  int            `json:"failed_files"`
@@ -227,7 +228,7 @@ func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, er
 		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, run_generation, verification_generation, verification_lease_until, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
 		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
-		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
+		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, verified_files, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs WHERE id = $1
 	`
@@ -240,7 +241,7 @@ func GetSyncJobContext(ctx context.Context, db *sql.DB, id string) (*SyncJob, er
 		&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 		&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.RunGeneration, &s.VerificationGeneration, &s.VerificationLeaseUntil, &s.TargetDir,
 		&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
-		&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
+		&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.VerifiedFiles, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 		&s.CreatedAt, &s.UpdatedAt,
 	)
 	if err != nil {
@@ -275,7 +276,7 @@ func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) (
 		       delete_propagation, interval_minutes, threads, bandwidth_limit_mbps, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
 		       (SELECT next_run_at FROM schedules WHERE task_type = 'sync' AND task_id = sync_jobs.id AND is_active = TRUE LIMIT 1),
-		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
+		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, verified_files, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs
 		WHERE user_id = $1
@@ -295,7 +296,7 @@ func GetSyncJobsForUserContext(ctx context.Context, db *sql.DB, userID string) (
 			&s.TargetURL, &s.TargetUsername, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.BandwidthLimitMbps, &s.Status, &s.TargetDir,
 			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage, &s.NextRunAt,
-			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
+			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.VerifiedFiles, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 			&s.CreatedAt, &s.UpdatedAt,
 		)
 		if err != nil {
@@ -833,7 +834,7 @@ func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
 		       source_provider, target_provider, direction, conflict_strategy,
 		       delete_propagation, interval_minutes, threads, status, target_dir,
 		       selected_paths, last_run_at, last_run_status, error_message,
-		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, changed_files, deleted_files, failed_files,
+		       total_files, total_bytes, processed_files, processed_bytes, live_bytes, verified_files, changed_files, deleted_files, failed_files,
 		       created_at, updated_at
 		FROM sync_jobs
 		WHERE status IN ('IDLE', 'INDEXING', 'RUNNING', 'PAUSED_CONNECTION_LOSS')
@@ -855,7 +856,7 @@ func ListActiveSyncJobs(db *sql.DB) ([]SyncJob, error) {
 			&s.SourceProvider, &s.TargetProvider, &s.Direction, &s.ConflictStrategy,
 			&s.DeletePropagation, &s.IntervalMinutes, &s.Threads, &s.Status, &s.TargetDir,
 			&s.SelectedPaths, &s.LastRunAt, &s.LastRunStatus, &s.ErrorMessage,
-			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
+			&s.TotalFiles, &s.TotalBytes, &s.ProcessedFiles, &s.ProcessedBytes, &s.LiveBytes, &s.VerifiedFiles, &s.ChangedFiles, &s.DeletedFiles, &s.FailedFiles,
 			&s.CreatedAt, &s.UpdatedAt,
 		)
 		if err != nil {
@@ -1110,16 +1111,22 @@ func UpdateSyncTaskStatusAndIncrementProgress(db *sql.DB, ctx context.Context, t
 		return sql.ErrNoRows
 	}
 
+	verifiedDelta := 0
+	if t.ChecksumVerified {
+		verifiedDelta = 1
+	}
+
 	result, err = tx.ExecContext(ctx, `
 		UPDATE sync_jobs
 		SET processed_files = processed_files + $1,
 		    processed_bytes = processed_bytes + $2,
-		    changed_files = changed_files + $3,
-		    deleted_files = deleted_files + $4,
-		    failed_files = failed_files + $5,
+		    verified_files = verified_files + $3,
+		    changed_files = changed_files + $4,
+		    deleted_files = deleted_files + $5,
+		    failed_files = failed_files + $6,
 		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $6 AND run_generation = $7 AND status = 'RUNNING'
-	`, filesDelta, bytesDelta, changedDelta, deletedDelta, failedDelta, t.SyncJobID, t.PassGeneration)
+		WHERE id = $7 AND run_generation = $8 AND status = 'RUNNING'
+	`, filesDelta, bytesDelta, verifiedDelta, changedDelta, deletedDelta, failedDelta, t.SyncJobID, t.PassGeneration)
 	if err != nil {
 		return err
 	}
@@ -1381,6 +1388,30 @@ func UpdateSyncJobThreads(db *sql.DB, id string, threads int) error {
 // GetActiveSyncTaskPaths returns the file_paths of all tasks currently in RUNNING state for the given sync job.
 func GetActiveSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) ([]string, error) {
 	query := `SELECT file_path, metadata FROM tasks WHERE sync_job_id = $1 AND status = 'RUNNING' ORDER BY updated_at DESC`
+	rows, err := db.QueryContext(ctx, query, syncJobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		var meta json.RawMessage
+		if err := rows.Scan(&path, &meta); err != nil {
+			return nil, err
+		}
+		paths = append(paths, displayTaskName(path, meta))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return paths, nil
+}
+
+// GetVerifyingSyncTaskPaths returns paths of completed sync tasks awaiting verification.
+func GetVerifyingSyncTaskPaths(db *sql.DB, ctx context.Context, syncJobID string) ([]string, error) {
+	query := `SELECT file_path, metadata FROM tasks WHERE sync_job_id = $1 AND status = 'COMPLETED' AND checksum_verified = FALSE ORDER BY updated_at ASC LIMIT 4`
 	rows, err := db.QueryContext(ctx, query, syncJobID)
 	if err != nil {
 		return nil, err
